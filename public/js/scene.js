@@ -1251,7 +1251,9 @@ export class CourseScene {
   hidePuttGrid() {
     if (!this.puttGrid) return;
     this.dynamic.remove(this.puttGrid.group);
-    this.puttGrid.group.traverse((o) => { o.geometry?.dispose(); o.material?.dispose(); });
+    // (not a Sprite's geometry: three.js shares one between every Sprite - the far trees, the pin
+    // marker, the aim label - and disposing it breaks them all: every frame after fails, frozen)
+    this.puttGrid.group.traverse((o) => { if (!o.isSprite) o.geometry?.dispose(); o.material?.dispose(); });
     this.puttGrid = null;
   }
 
