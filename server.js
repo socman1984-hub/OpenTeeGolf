@@ -541,6 +541,10 @@ const httpServer = http.createServer(async (req, res) => {
       } catch (err) { return json(res, { error: err.message }, 502); }
       return json(res, { ok: true, state: mevo?.state || 'off' });
     }
+    if (p === '/api/mevo/log') {
+      res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8', 'Content-Disposition': 'attachment; filename="mevo-log.txt"' });
+      return fs.createReadStream(MEVO_LOG).on('error', () => res.end('(no log yet)')).pipe(res);
+    }
     if (p === '/api/mevo/video') return proxyMevoVideo(req, res);
     if (p === '/api/lm') {
       // How shots arrive: FS Golf (OpenConnect) or the Mevo+ directly

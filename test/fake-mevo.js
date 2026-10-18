@@ -97,14 +97,16 @@ export function fakeMevo({ videoPort = null, quiet = null } = {}) {
         }
       }
     });
-    seen.fireShot = () => {
+    // variant: { textType } sends the progress lines as another message type, { noTrigger } and
+    // { noProcessed } leave those lines out (firmware differences the client should cope with)
+    seen.fireShot = ({ textType = 0xe5, noTrigger = false, noProcessed = false } = {}) => {
       seen.armed = false;
-      reply(BUS.AVR, 0xe5, ascii('BALL TRIGGER: 10 ms back', 26));
+      if (!noTrigger) reply(BUS.AVR, textType, ascii('BALL TRIGGER: 10 ms back', 26));
       setTimeout(() => {
         reply(BUS.AVR, 0xd4, flightPayload());
         reply(BUS.AVR, 0xed, clubPayload());
         reply(BUS.AVR, 0xef, spinPayload());
-        reply(BUS.AVR, 0xe5, ascii('\nPROCESSED', 11));
+        if (!noProcessed) reply(BUS.AVR, textType, ascii('\nPROCESSED', 11));
       }, 50);
     };
   });

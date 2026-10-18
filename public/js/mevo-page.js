@@ -69,6 +69,10 @@ function render() {
       + (s.CarryDistance ? ` · carry ${Math.round(s.CarryDistance)} yd (Mevo+)` : '');
   }
   const fw = info.firmware;
+  if (info.lastText) {
+    const ago = Math.round((Date.now() - info.lastTextAt) / 1000);
+    $('last-text').textContent = `"${info.lastText}" (${ago < 60 ? `${ago} s` : `${Math.round(ago / 60)} min`} ago)`;
+  }
   $('fw').textContent = [
     info.model && `Model: ${info.model}`, info.ssid && `Network: ${info.ssid}`,
     fw?.dsp && `DSP: ${fw.dsp}`, fw?.avr && `AVR: ${fw.avr}`, fw?.camera && `Camera: ${fw.camera}`,

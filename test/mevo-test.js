@@ -59,6 +59,17 @@ try {
   await until(() => client.state === 'ready' && client.armed, 5000, 're-arm');
   check(true, 're-armed after the shot');
 
+  // Firmware differences: progress lines as plain text, no trigger line, no "PROCESSED"
+  for (const [v, what] of [[{ textType: 0xe3 }, 'progress sent as plain text'], [{ noTrigger: true }, 'no trigger line'], [{ noProcessed: true }, 'no "PROCESSED" line']]) {
+    const before = client.info.shots;
+    const got = new Promise((r) => client.once('shot', r));
+    seen.fireShot(v);
+    const sb = await Promise.race([got, new Promise((r) => setTimeout(() => r(null), 8000))]);
+    check(sb && Math.abs(sb.Speed - 150.3) < 0.2 && client.info.shots === before + 1, `shot read with ${what}`);
+    await until(() => client.state === 'ready' && client.armed, 8000, 're-arm');
+  }
+  check(client.info.lastText && client.info.lastTextAt, `device status line kept for the setup page ("${client.info.lastText}")`);
+
   client.setMode('putting');
   await until(() => seen.modes.at(-1) === MODES.putting && client.armed && client.state === 'ready', 5000, 'putting mode');
   check(true, 'switched to putting mode and re-armed');
