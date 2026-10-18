@@ -105,6 +105,15 @@ function broadcast(type, data) {
   for (const res of sseClients) res.write(msg);
 }
 
+// Download progress for the loading screen: counts ("3/12") or percentages in a message become a bar
+function reporter(course, task) {
+  return (msg) => {
+    console.log(`[${task}] ${msg}`);
+    const n = /(\d+)\s*\/\s*(\d+)/.exec(msg), pct = /(\d+)%/.exec(msg);
+    broadcast('progress', { course, task, msg, done: n ? +n[1] : pct ? +pct[1] : null, total: n ? +n[2] : pct ? 100 : null });
+  };
+}
+
 const lmState = { connected: false, ready: false, ballDetected: false, device: null, address: null, lastShotAt: null };
 const player = { Handed: 'RH', Club: 'DR', DistanceToTarget: 0 };
 
@@ -286,7 +295,7 @@ const httpServer = http.createServer(async (req, res) => {
       const geo = geoFor(readCourseData(f), real);
       if (!geo) return json(res, { error: 'Course position unknown — re-run the import to enable imagery' }, 404);
       const satDir = rf.replace(/\.real\.json$/i, '.sat');
-      const manifest = await ensureSatellite(satDir, geo, real.grid, (msg) => { console.log(`[imagery] ${msg}`); broadcast('imagery', { course: m[1], msg }); });
+      const manifest = await ensureSatellite(satDir, geo, real.grid, reporter(m[1], 'imagery'));
       return json(res, manifest);
     }
     if ((m = p.match(/^\/api\/courses\/([\w-]+)\/paths$/))) {
@@ -298,7 +307,7 @@ const httpServer = http.createServer(async (req, res) => {
       const geo = geoFor(cd, real);
       if (!geo) return json(res, []);
       const oob = (cd.pOOB?.coords || []).map((c) => [c.x, c.z]);
-      return json(res, await ensurePaths(rf.replace(/\.real\.json$/i, '.sat'), geo, real.grid, oob, (msg) => console.log(`[paths] ${msg}`)));
+      return json(res, await ensurePaths(rf.replace(/\.real\.json$/i, '.sat'), geo, real.grid, oob, reporter(m[1], 'paths')));
     }
     if ((m = p.match(/^\/api\/courses\/([\w-]+)\/buildings$/))) {
       const f = courseFile(m[1]);
@@ -307,7 +316,7 @@ const httpServer = http.createServer(async (req, res) => {
       const real = JSON.parse(fs.readFileSync(rf, 'utf8'));
       const geo = geoFor(readCourseData(f), real);
       if (!geo) return json(res, []);
-      return json(res, await ensureBuildings(rf.replace(/\.real\.json$/i, '.sat'), geo, real.grid, (msg) => console.log(`[buildings] ${msg}`)));
+      return json(res, await ensureBuildings(rf.replace(/\.real\.json$/i, '.sat'), geo, real.grid, reporter(m[1], 'buildings')));
     }
     if ((m = p.match(/^\/api\/courses\/([\w-]+)\/canopy$/))) {
       // Tree heights (downloaded the first time a course is opened); the grid itself is canopy.bin
@@ -317,7 +326,7 @@ const httpServer = http.createServer(async (req, res) => {
       const real = JSON.parse(fs.readFileSync(rf, 'utf8'));
       const geo = geoFor(readCourseData(f), real);
       if (!geo) return json(res, { available: false });
-      return json(res, await ensureCanopy(satDir(f), geo, real.grid, (msg) => { console.log(`[canopy] ${msg}`); broadcast('imagery', { course: m[1], msg }); }));
+      return json(res, await ensureCanopy(satDir(f), geo, real.grid, reporter(m[1], 'canopy')));
     }
     if ((m = p.match(/^\/api\/courses\/([\w-]+)\/canopy\.bin$/))) {
       const f = courseFile(m[1]);

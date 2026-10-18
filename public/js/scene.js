@@ -13,7 +13,7 @@ import { LineGeometry } from 'three/addons/lines/LineGeometry.js';
 import { MapControls } from 'three/addons/controls/MapControls.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { noise, pointInPoly } from './course.js';
-import { Forest, treesFromCanopy, assignSpecies, fade } from './trees.js';
+import { Forest, treesFromCanopy, assignSpecies, fade, impostorLight } from './trees.js';
 
 const T = (x, y, z) => new THREE.Vector3(-x, y, z);
 const TEX_RES = 1.5; // meters per texel of the generated (no imagery) course texture
@@ -152,9 +152,10 @@ export class CourseScene {
   // ------------------------------------------------------------------ course
 
   // imagery: { manifest, url(file) } or null; buildings: [{ h, pts }]
-  async build(course, { imagery = null, buildings = [], canopy = null } = {}, progress = () => {}) {
+  // progress(stepId, label, done?, total?, detail?) may return a promise (to let the page repaint)
+  async build(course, { imagery = null, buildings = [], canopy = null } = {}, progress = async () => {}) {
     await this.ready;
-    progress('Loading textures…');
+    await progress('textures', 'Ground and water textures');
     await preloadTextures();
     this.course = course;
     this.courseGroup.clear();
@@ -165,7 +166,7 @@ export class CourseScene {
     this.hmin = hmin;
 
     // Terrain mesh
-    progress('Building terrain…');
+    await progress('terrain', 'Building terrain');
     const pos = new Float32Array(nx * nz * 3), uv = new Float32Array(nx * nz * 2);
     for (let j = 0; j < nz; j++) for (let i = 0; i < nx; i++) {
       const k = j * nx + i, x = minX + i * cell, z = minZ + j * cell;
@@ -192,13 +193,12 @@ export class CourseScene {
     let sat = null;
     if (imagery) {
       try {
-        progress('Loading aerial imagery…');
-        sat = await this.loadImagery(course, imagery);
+        sat = await this.loadImagery(course, imagery, (done, total) => progress('photos', 'Aerial photos into the game', done, total));
       } catch (err) {
         console.warn('Imagery failed, painting the course instead', err);
       }
     }
-    progress('Painting the course…');
+    await progress('paint', 'Painting the course');
     this.courseCanvas = sat ? this.paintFromImagery(course, sat) : this.paintCourse(course);
     this.imagery = sat;
     const tex = new THREE.CanvasTexture(this.courseCanvas);
@@ -228,15 +228,18 @@ export class CourseScene {
 
     this.addWater(course);
     this.addStakesAndMarkers(course);
-    progress('Planting trees…');
     if (canopy) this.addTreesFromCanopy(course, canopy);
     else if (sat) this.addTreesFromImagery(course, sat);
     else this.addTrees(course);
+    await this.plantForest(course, this.pendingTrees || [], progress);
     if (sat) this.addNativeGrass(course, sat);
     if (buildings.length) this.addBuildings(course, buildings);
     this.grassCenter = null;
     this.applyEnvIntensity(this.courseGroup);
     this.applyEnvIntensity(this.dynamic);
+    // Build every shader now rather than stalling on the first frames of play
+    await progress('shaders', 'Preparing graphics');
+    try { await this.renderer.compileAsync(this.scene, this.camera); } catch (err) { console.warn('Shader warm-up skipped', err); }
   }
 
   // Node materials use the scene environment at full strength and ignore envMapIntensity unless
@@ -256,17 +259,21 @@ export class CourseScene {
 
   // ---- imagery
 
-  async loadImagery(course, { manifest, url }) {
+  async loadImagery(course, { manifest, url }, onCount = () => {}) {
     const load = (file) => new Promise((resolve, reject) => {
       const img = new Image();
       img.onload = () => resolve(img);
       img.onerror = () => reject(new Error(`Could not load ${file}`));
       img.src = url(file);
     });
-    const chunks = await Promise.all(manifest.chunks.map(async (c) => ({ ...c, img: await load(c.file) })));
+    const total = manifest.chunks.length + (manifest.surround?.length || 0);
+    let done = 0;
+    const counted = (p) => p.then((v) => { onCount(++done, total); return v; });
+    onCount(0, total);
+    const chunks = await Promise.all(manifest.chunks.map(async (c) => ({ ...c, img: await counted(load(c.file)) })));
     let surround = null;
     if (manifest.surround?.length) {
-      try { surround = await Promise.all(manifest.surround.map(async (c) => ({ ...c, img: await load(c.file) }))); } catch { surround = null; }
+      try { surround = await Promise.all(manifest.surround.map(async (c) => ({ ...c, img: await counted(load(c.file)) }))); } catch { surround = null; }
     }
     // lat/lon -> course (inverse of the affine geo transform)
     const [a0, a1, a2] = manifest.geo.lat, [b0, b1, b2] = manifest.geo.lon, det = a1 * b2 - a2 * b1;
@@ -819,7 +826,7 @@ export class CourseScene {
     }));
     const photo = this.photoAt();
     assignSpecies(trees.filter((t) => !t.kind), photo);
-    this.plantForest(course, trees);
+    this.pendingTrees = trees;
   }
 
   // Colour of the aerial photo under a point, or null
@@ -843,10 +850,10 @@ export class CourseScene {
       return s === null || ok.has(s);
     });
     assignSpecies(trees, this.photoAt());
-    this.plantForest(course, trees);
+    this.pendingTrees = trees;
   }
 
-  plantForest(course, trees) {
+  async plantForest(course, trees, progress = async () => {}) {
     // Very wooded courses: keep the trees nearest the holes
     const max = Math.round(40000 * (this.quality?.trees ?? 1));
     if (trees.length > max) {
@@ -865,9 +872,13 @@ export class CourseScene {
       trees.length = max;
     }
     this.forest ||= new Forest();
-    this.forest.quality = { farShadows: this.quality?.name !== 'performance' };
+    this.forest.quality = this.quality?.name || 'balanced';
+    // Tree models and their distant pictures are made once per session
+    await this.forest.prepare(this.renderer, progress);
+    await progress('trees-place', 'Planting trees', 0, 0, `${trees.length.toLocaleString()} trees`);
     this.forest.build(trees, (x, z) => course.heightAt(x, z), (m) => this.applyEnvIntensity(m));
-    this.forest.update(this.camera.position, true);
+    this.forest.update(this.camera, true);
+    this.updateImpostorLight();
     this.courseGroup.add(this.forest.group);
     // Collision shapes for the ball
     const index = new TreeIndex(10);
@@ -1041,6 +1052,16 @@ export class CourseScene {
     this.scene.fog.density = 0.00032 * (1 + 1.5 * cloud + Math.min(3, rainMm * 1.2));
     this.terrain && (this.terrain.material.roughness = rainMm > 0.05 ? 0.7 : 0.92); // wet sheen
     this.setRain(rainMm);
+    this.updateImpostorLight();
+  }
+
+  // Distant tree pictures light themselves; keep them in step with the sun and sky (three.js lights
+  // divide by pi for diffuse surfaces, plus a little for the sky reflection)
+  updateImpostorLight() {
+    impostorLight.sunDir.value.copy(SUN_DIR).normalize();
+    impostorLight.sun.value.copy(this.sun.color).multiplyScalar(this.sun.intensity / Math.PI);
+    impostorLight.sky.value.copy(this.hemi.color).multiplyScalar(this.hemi.intensity / Math.PI + 0.12);
+    impostorLight.ground.value.copy(this.hemi.groundColor).multiplyScalar(this.hemi.intensity / Math.PI + 0.06);
   }
 
   animateFlag() {
@@ -1679,7 +1700,7 @@ export class CourseScene {
     }
     // Flag flutter and water ripples
     // Trees: detailed near the camera, light further away; see-through between camera and ball
-    this.forest?.update(this.camera.position);
+    this.forest?.update(this.camera);
     fade.focus.value.copy(this.ball.position);
     fade.look.value.copy(this.camLook);
     fade.on.value = this.mode === 'address' || this.mode === 'follow' ? 1 : 0;

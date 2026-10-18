@@ -58,7 +58,28 @@ select option { background: #1b261d; }
 .settings label { display: flex; flex-direction: column; gap: 4px; color: var(--muted); font-size: 12px; }
 .row { display: flex; gap: 10px; justify-content: flex-end; margin-top: 16px; }
 
-#loading { flex-direction: column; gap: 14px; }
+.load-card { width: min(560px, 100%); }
+.load-card h2 { margin: 0 0 14px; font-size: 20px; }
+.lstep { display: grid; grid-template-columns: 20px 1fr auto; column-gap: 8px; row-gap: 4px; align-items: center; padding: 7px 0; border-bottom: 1px solid rgba(255,255,255,0.06); }
+.lstep .llabel { font-weight: 600; font-size: 14px; }
+.lstep .ltime { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.lstep .lbar { grid-column: 2 / 4; height: 6px; border-radius: 3px; background: rgba(255,255,255,0.1); overflow: hidden; position: relative; }
+.lstep .lbar i { display: block; height: 100%; width: 0; background: var(--accent); transition: width 0.3s; }
+.lstep .lbar.indeterminate i { width: 30% !important; position: absolute; animation: lslide 1.3s ease-in-out infinite; }
+@keyframes lslide { from { left: -30%; } to { left: 100%; } }
+.lstep .ldetail { grid-column: 2 / 4; color: var(--muted); font-size: 12px; min-height: 14px; }
+.lstep .licon { width: 14px; height: 14px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.2); border-top-color: var(--accent); animation: spin 0.9s linear infinite; }
+.lstep.done .licon { animation: none; border: none; background: #3fae63; }
+.lstep.done .licon::after { content: '✓'; display: block; color: #fff; font-size: 10px; text-align: center; line-height: 14px; }
+.lstep.done .lbar { display: none; }
+.lstep.done .ldetail:empty { display: none; }
+.lstep.failed .licon { animation: none; border: none; background: #c0603a; }
+.lstep.failed .lbar { display: none; }
+.lstep.stalled .lbar i { background: #e0a030; }
+.lstep.stalled .llabel { color: #f0b84a; }
+#loading-stall { margin-top: 14px; padding: 10px 12px; border-radius: 8px; background: rgba(224, 160, 48, 0.12); border: 1px solid rgba(224, 160, 48, 0.4); font-size: 13px; display: flex; gap: 10px; align-items: center; }
+#loading-stall.hidden { display: none; }
+#loading-stall button { flex: none; }
 .spinner { width: 40px; height: 40px; border: 4px solid rgba(255,255,255,0.15); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.9s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 

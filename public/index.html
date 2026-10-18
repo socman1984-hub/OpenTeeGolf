@@ -71,7 +71,13 @@
     </div>
   </div>
 
-  <div id="loading" class="overlay hidden"><div class="spinner"></div><div id="loading-text">Building course…</div></div>
+  <div id="loading" class="overlay hidden">
+    <div class="menu-card load-card">
+      <h2 id="loading-title">Loading…</h2>
+      <div id="loading-steps"></div>
+      <div id="loading-stall" class="hidden"><span id="loading-stall-text"></span><button id="loading-back">Back to menu</button></div>
+    </div>
+  </div>
 
   <!-- HUD -->
   <div id="hud" class="hidden">

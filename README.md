@@ -211,8 +211,12 @@ Built courses look like the real place:
 * **Trees** stand where they really are: GolfSim reads a worldwide 1 m tree-height map (Meta &
   World Resources Institute) and puts a tree at every crown top, with its real height and spread.
   Where that map has no data, trees go where the aerial photo shows canopy.
-* **Tree models** are procedural oaks, ashes and pines (EZ-Tree) with bark and leaf textures and
-  leaves that sway. Trees near the camera are fully detailed; distant ones are lighter stand-ins.
+* **Tree models** are procedural oaks, ashes, aspens and pines (EZ-Tree): 14 variants, each
+  tree turned, stretched, leaned and tinted on its own, with bark and leaf textures and swaying
+  leaves. Close trees are fully detailed, further ones lighter, and distant ones are pictures of
+  the real models (taken from 24 directions when the course loads, lit by the sun). Trees on
+  the edge of a wood, the ones you actually see, stay detailed much further out than trees
+  inside it.
 * **Seeing past trees:** trees between the camera and the ball, and close ones in your line of
   sight, fade to a see-through stipple so you can see your shot and still know they are there.
 * **Buildings** are 3D outlines from OpenStreetMap. Coverage varies by area.
@@ -225,7 +229,8 @@ Built courses look like the real place:
 * **Lighting:** real-time sun shadows, sky reflections, and grass tufts around the ball (kept
   off cart paths and out of water).
 
-Imagery and buildings download the first time a course is opened. This can take a few
+Imagery, buildings, cart paths and tree heights download the first time a course is opened;
+the loading screen shows each step with its progress and warns if one stops moving. This can take a few
 minutes, because the USGS server renders the photos on request. They're then cached next to
 the course (`*.sat/`).
 

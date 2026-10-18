@@ -241,13 +241,121 @@ async function selectCourse(c) {
   $('btn-start').disabled = false;
 }
 
+// ------------------------------------------------------------------ loading screen
+
+// One row per step: label, a bar (with counts when they're known), what's happening, and how long
+// since it last moved. A step with no news for a while turns amber, so a stuck download is obvious.
+const loader = {
+  rows: new Map(),
+  open(title) {
+    $('loading').classList.remove('hidden');
+    $('loading-title').textContent = title;
+    $('loading-steps').innerHTML = '';
+    $('loading-stall').classList.add('hidden');
+    this.rows.clear();
+    this.course = null;
+    clearInterval(this.timer);
+    this.timer = setInterval(() => this.tick(), 1000);
+  },
+  close() { clearInterval(this.timer); $('loading').classList.add('hidden'); },
+  row(id, label, { stallAfter = 30 } = {}) {
+    let r = this.rows.get(id);
+    if (!r) {
+      const el = document.createElement('div');
+      el.className = 'lstep run';
+      el.innerHTML = '<span class="licon"></span><span class="llabel"></span><span class="ltime"></span><div class="lbar"><i></i></div><div class="ldetail"></div>';
+      el.querySelector('.llabel').textContent = label;
+      $('loading-steps').appendChild(el);
+      r = { el, t0: Date.now(), last: Date.now(), stallAfter, state: 'run' };
+      this.rows.set(id, r);
+    }
+    return r;
+  },
+  // Start a step, or report progress on it (done/total for a bar, msg for the detail line)
+  step(id, label, { done = null, total = null, msg = '', stallAfter } = {}) {
+    const r = this.row(id, label, { stallAfter });
+    if (r.state !== 'run') return r;
+    r.last = Date.now();
+    r.el.classList.remove('stalled');
+    const bar = r.el.querySelector('.lbar');
+    bar.classList.toggle('indeterminate', !(total > 0));
+    if (total > 0) bar.firstChild.style.width = `${Math.min(100, (done / total) * 100)}%`;
+    r.el.querySelector('.ldetail').textContent = msg || (total > 0 ? `${done} of ${total}` : '');
+    return r;
+  },
+  finish(id, msg = '') {
+    const r = this.rows.get(id);
+    if (!r || r.state !== 'run') return;
+    r.state = 'done';
+    r.el.className = 'lstep done';
+    r.el.querySelector('.lbar').firstChild.style.width = '100%';
+    r.el.querySelector('.ldetail').textContent = msg;
+    r.el.querySelector('.ltime').textContent = this.fmt(Date.now() - r.t0);
+  },
+  fail(id, msg) {
+    const r = this.rows.get(id);
+    if (!r) return;
+    r.state = 'failed';
+    r.el.className = 'lstep failed';
+    r.el.querySelector('.ldetail').textContent = msg;
+  },
+  fmt: (ms) => (ms < 60000 ? `${Math.round(ms / 1000)} s` : `${Math.floor(ms / 60000)} min ${Math.round((ms % 60000) / 1000)} s`),
+  tick() {
+    let stalled = null;
+    for (const r of this.rows.values()) {
+      if (r.state !== 'run') continue;
+      r.el.querySelector('.ltime').textContent = this.fmt(Date.now() - r.t0);
+      const quiet = Date.now() - r.last;
+      if (quiet > r.stallAfter * 1000) {
+        r.el.classList.add('stalled');
+        stalled = { r, quiet };
+      }
+    }
+    $('loading-stall').classList.toggle('hidden', !stalled);
+    if (stalled) {
+      $('loading-stall-text').textContent = `${stalled.r.el.querySelector('.llabel').textContent}: no progress for ${this.fmt(stalled.quiet)}. `
+        + 'The map and imagery servers can be slow; it may still finish. You can also go back and try again later.';
+    }
+  },
+  // Messages from the server's downloads (aerial imagery, buildings, paths, tree heights)
+  serverEvent(p) {
+    if (!this.course || p.course !== this.course) return;
+    const label = { imagery: 'Aerial imagery', buildings: 'Buildings', paths: 'Cart paths', canopy: 'Tree heights' }[p.task];
+    if (label) this.step(p.task, label, { done: p.done, total: p.total, msg: p.msg, stallAfter: 60 });
+  },
+};
+$('loading-back').onclick = () => location.reload();
+
+// Fetch with a byte counter (for the big course files)
+async function fetchProgress(url, onBytes, type = 'json') {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`${res.status}`);
+  const total = +res.headers.get('content-length') || 0;
+  if (!res.body || !total) return type === 'json' ? res.json() : res.arrayBuffer();
+  const reader = res.body.getReader(), parts = [];
+  let got = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    parts.push(value); got += value.length;
+    onBytes(got, total);
+  }
+  const buf = new Uint8Array(got);
+  let o = 0;
+  for (const p of parts) { buf.set(p, o); o += p.length; }
+  return type === 'json' ? JSON.parse(new TextDecoder().decode(buf)) : buf.buffer;
+}
+const mb = (n) => `${(n / 1048576).toFixed(1)} MB`;
+// Lets the page repaint between heavy steps
+const breathe = () => new Promise((r) => setTimeout(r, 16));
+
 $('btn-start').onclick = async () => {
   menu.played[S.selected.id] = Date.now();
   store.set('golfsim.played', menu.played);
   $('menu').classList.add('hidden');
-  $('loading').classList.remove('hidden');
-  $('loading-text').textContent = `Building ${S.selected.name}…`;
-  await new Promise((r) => setTimeout(r, 50)); // let the loading screen paint
+  loader.open(`Loading ${S.selected.name}`);
+  loader.course = S.selected.id;
+  await breathe();
   S.settings = {
     tee: $('opt-tee').value,
     pin: $('opt-pin').value,
@@ -267,49 +375,66 @@ $('btn-start').onclick = async () => {
   savePrefs();
   const key = `${S.selected.id}|${useReal}`;
   if (!S.course || S.courseId !== key) {
+    const id = S.selected.id;
     let real = null;
     if (useReal) {
-      $('loading-text').textContent = `Loading real terrain for ${S.selected.name}…`;
-      real = await fetch(`/api/courses/${S.selected.id}/real`).then((r) => (r.ok ? r.json() : null)).catch(() => null);
-      if (!real) toast('Real terrain could not be loaded — using generated terrain');
-      else {
-        $('loading-text').textContent = 'Loading cart paths…';
-        real.paths = await fetch(`/api/courses/${S.selected.id}/paths`).then((r) => (r.ok ? r.json() : [])).catch(() => []);
-      }
-      $('loading-text').textContent = `Building ${S.selected.name}…`;
-      await new Promise((r) => setTimeout(r, 30));
+      loader.step('terrain-data', 'Terrain and map data');
+      real = await fetchProgress(`/api/courses/${id}/real`, (got, total) => loader.step('terrain-data', 'Terrain and map data', { done: got, total, msg: `${mb(got)} of ${mb(total)}` })).catch(() => null);
+      if (!real) { loader.fail('terrain-data', 'Could not load; using generated terrain'); toast('Real terrain could not be loaded — using generated terrain'); }
+      else loader.finish('terrain-data');
     }
-    S.course = buildCourse(S.selectedData, real);
-    S.courseId = key;
-    S.geo = real?.geo || null;
-    // Aerial imagery and buildings (downloaded and cached by the server the first time)
+    // Aerial imagery, buildings, cart paths and tree heights (downloaded and cached by the server
+    // the first time; it reports progress over the event stream)
     let imagery = null, buildings = [], canopy = null;
     if (real) {
-      const id = S.selected.id;
-      $('loading-text').textContent = 'Loading aerial imagery (the first time can take a few minutes)…';
+      const watch = (task, label, url, fallback) => {
+        loader.step(task, label, { stallAfter: 60, msg: 'Asking the server…' });
+        return fetch(url).then((r) => (r.ok ? r.json() : fallback)).catch(() => fallback)
+          .then((v) => { loader.finish(task); return v; });
+      };
       S.imageryLoading = true;
-      const [manifest, b, cm] = await Promise.all([
-        fetch(`/api/courses/${id}/satellite`).then((r) => (r.ok ? r.json() : null)).catch(() => null),
-        fetch(`/api/courses/${id}/buildings`).then((r) => (r.ok ? r.json() : [])).catch(() => []),
-        // Tree heights (where trees really stand)
-        fetch(`/api/courses/${id}/canopy`).then((r) => (r.ok ? r.json() : null)).catch(() => null),
+      const [manifest, b, paths, cm] = await Promise.all([
+        watch('imagery', 'Aerial imagery', `/api/courses/${id}/satellite`, null),
+        watch('buildings', 'Buildings', `/api/courses/${id}/buildings`, []),
+        watch('paths', 'Cart paths', `/api/courses/${id}/paths`, []),
+        watch('canopy', 'Tree heights', `/api/courses/${id}/canopy`, null),
       ]);
+      S.imageryLoading = false;
+      real.paths = paths;
+      if (!manifest?.chunks) loader.fail('imagery', 'Not available; the course will be painted instead');
       if (cm?.available) {
-        const buf = await fetch(`/api/courses/${id}/canopy.bin`).then((r) => (r.ok ? r.arrayBuffer() : null)).catch(() => null);
+        const buf = await fetchProgress(`/api/courses/${id}/canopy.bin`, (got, total) => loader.step('canopy-file', 'Tree height map', { done: got, total, msg: `${mb(got)} of ${mb(total)}` }), 'buffer').catch(() => null);
+        loader.finish('canopy-file');
         if (buf) canopy = { ...cm, heights: new Uint8Array(buf) };
       }
-      S.imageryLoading = false;
       if (manifest?.chunks) imagery = { manifest, url: (f) => `/api/courses/${id}/satellite/${f}` };
       buildings = b;
     }
-    await scene.build(S.course, { imagery, buildings, canopy }, (msg) => { $('loading-text').textContent = msg; });
+    loader.step('course', 'Course layout');
+    await breathe();
+    S.course = buildCourse(S.selectedData, real);
+    S.courseId = key;
+    S.geo = real?.geo || null;
+    loader.finish('course');
+    // The scene reports its own steps (photos, painting, trees, graphics)
+    let current = null;
+    await scene.build(S.course, { imagery, buildings, canopy }, async (stepId, label, done = null, total = null, msg = '') => {
+      if (current && current !== stepId) loader.finish(current);
+      current = stepId;
+      loader.step(stepId, label, { done, total, msg });
+      await breathe();
+    });
+    if (current) loader.finish(current);
     // Solid things the ball can hit (Jolt): terrain, trunks, buildings, the flagstick
     S.collider?.dispose();
     S.collider = null;
+    loader.step('collisions', 'Collisions');
+    await breathe();
     try {
-      $('loading-text').textContent = 'Setting up collisions…';
       S.collider = new CollisionWorld(await loadJolt(), S.course, { trees: scene.trees?.all || [], buildings });
+      loader.finish('collisions');
     } catch (err) {
+      loader.fail('collisions', 'Using the simpler built-in checks');
       console.warn('Jolt collisions unavailable, using the built-in checks', err);
     }
     $('credits').textContent = [
@@ -320,9 +445,11 @@ $('btn-start').onclick = async () => {
     ].filter(Boolean).join(' · ');
   }
   S.windRel = S.course.holes.map(() => (S.settings.windDir === 'rand' ? Math.random() * 360 : +S.settings.windDir));
+  if (S.settings.weather === 'live') loader.step('weather', 'Weather at the course');
   await setupWeather();
+  loader.finish('weather');
   S.scores = S.course.holes.map(() => null);
-  $('loading').classList.add('hidden');
+  loader.close();
   $('hud').classList.remove('hidden');
   document.querySelectorAll('.unit').forEach((n) => (n.textContent = S.settings.units));
   startHole(+$('opt-start').value);
@@ -375,7 +502,6 @@ async function setupWeather() {
   if (mode === 'live') {
     if (loc.lat == null) { toast('This course has no location — using breezy weather'); }
     else {
-      $('loading-text').textContent = 'Getting the weather at the course…';
       try { w = await fetchLiveWeather(loc.lat, loc.lon); } catch (err) { toast(`Live weather unavailable (${err.message}) — using breezy weather`, 4000); }
     }
     w ||= { ...WEATHER.breezy, windFromMet: Math.random() * 360 };
@@ -1078,6 +1204,7 @@ function connectEvents() {
     if (S.phase === 'menu') return;
     onShot(shot);
   });
+  es.addEventListener('progress', (e) => loader.serverEvent(JSON.parse(e.data)));
   es.addEventListener('lm', (e) => {
     const lm = JSON.parse(e.data);
     const dot = $('lm-dot');
