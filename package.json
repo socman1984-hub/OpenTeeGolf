@@ -22,6 +22,8 @@
     "node": ">=18"
   },
   "dependencies": {
+    "@dgreenheck/ez-tree": "1.1.0",
+    "geotiff": "3.0.5",
     "jolt-physics": "1.1.0",
     "three": "0.186.1"
   }

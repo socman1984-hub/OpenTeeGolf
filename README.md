@@ -208,12 +208,22 @@ Built courses look like the real place:
   (about 0.3–0.6 m per pixel, public domain). Elsewhere it's Esri World Imagery (attribution
   shown in-game; personal, non-commercial use). The photos are colour-balanced automatically,
   then fairways get mowing stripes, greens are smoothed, and bunkers get clean sand.
-* **Trees** are planted where the photo shows tree canopy, so tree lines match the real course.
+* **Trees** stand where they really are: GolfSim reads a worldwide 1 m tree-height map (Meta &
+  World Resources Institute) and puts a tree at every crown top, with its real height and spread.
+  Where that map has no data, trees go where the aerial photo shows canopy.
+* **Tree models** are procedural oaks, ashes and pines (EZ-Tree) with bark and leaf textures and
+  leaves that sway. Trees near the camera are fully detailed; distant ones are lighter stand-ins.
+* **Seeing past trees:** trees between the camera and the ball, and close ones in your line of
+  sight, fade to a see-through stipple so you can see your shot and still know they are there.
 * **Buildings** are 3D outlines from OpenStreetMap. Coverage varies by area.
 * **Surroundings:** a ring of lower-resolution imagery about 1.5 km wide extends the view to
   the horizon.
-* **Lighting:** real-time sun shadows, sky reflections, animated water, and grass detail and
-  tufts around the ball.
+* **Close-up ground:** photo-scanned grass, sand and asphalt textures (CC0, from ambientCG) with
+  normal maps, blended over the aerial photo near the camera.
+* **Water:** solid, with drifting ripples and a live mirror image of the trees, sky and clouds
+  that gets stronger at low viewing angles. The Performance setting turns the mirror off.
+* **Lighting:** real-time sun shadows, sky reflections, and grass tufts around the ball (kept
+  off cart paths and out of water).
 
 Imagery and buildings download the first time a course is opened. This can take a few
 minutes, because the USGS server renders the photos on request. They're then cached next to
@@ -265,6 +275,7 @@ player, from these free public services (details and terms in [NOTICE.md](NOTICE
 
 * Course shapes and buildings: © OpenStreetMap contributors (ODbL)
 * Elevation: USGS 3DEP (public domain) and AWS Terrain Tiles
+* Tree heights: Meta & World Resources Institute canopy height maps (CC BY 4.0)
 * Aerial photos: USGS/USDA NAIP (public domain) and Esri World Imagery
 * Weather: Open-Meteo (CC BY 4.0)
 * Course pictures: Wikimedia Commons / Wikidata / Wikipedia, or the course's own website

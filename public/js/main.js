@@ -283,20 +283,26 @@ $('btn-start').onclick = async () => {
     S.courseId = key;
     S.geo = real?.geo || null;
     // Aerial imagery and buildings (downloaded and cached by the server the first time)
-    let imagery = null, buildings = [];
+    let imagery = null, buildings = [], canopy = null;
     if (real) {
       const id = S.selected.id;
       $('loading-text').textContent = 'Loading aerial imagery (the first time can take a few minutes)…';
       S.imageryLoading = true;
-      const [manifest, b] = await Promise.all([
+      const [manifest, b, cm] = await Promise.all([
         fetch(`/api/courses/${id}/satellite`).then((r) => (r.ok ? r.json() : null)).catch(() => null),
         fetch(`/api/courses/${id}/buildings`).then((r) => (r.ok ? r.json() : [])).catch(() => []),
+        // Tree heights (where trees really stand)
+        fetch(`/api/courses/${id}/canopy`).then((r) => (r.ok ? r.json() : null)).catch(() => null),
       ]);
+      if (cm?.available) {
+        const buf = await fetch(`/api/courses/${id}/canopy.bin`).then((r) => (r.ok ? r.arrayBuffer() : null)).catch(() => null);
+        if (buf) canopy = { ...cm, heights: new Uint8Array(buf) };
+      }
       S.imageryLoading = false;
       if (manifest?.chunks) imagery = { manifest, url: (f) => `/api/courses/${id}/satellite/${f}` };
       buildings = b;
     }
-    await scene.build(S.course, { imagery, buildings }, (msg) => { $('loading-text').textContent = msg; });
+    await scene.build(S.course, { imagery, buildings, canopy }, (msg) => { $('loading-text').textContent = msg; });
     // Solid things the ball can hit (Jolt): terrain, trunks, buildings, the flagstick
     S.collider?.dispose();
     S.collider = null;
@@ -310,6 +316,7 @@ $('btn-start').onclick = async () => {
       scene.imagery?.attribution,
       real ? 'Map data © OpenStreetMap contributors' : '',
       real?.source?.elevation ? `Elevation: ${real.source.elevation.split(',')[0]}` : '',
+      canopy ? 'Tree heights: Meta & WRI (CC BY 4.0)' : '',
     ].filter(Boolean).join(' · ');
   }
   S.windRel = S.course.holes.map(() => (S.settings.windDir === 'rand' ? Math.random() * 360 : +S.settings.windDir));

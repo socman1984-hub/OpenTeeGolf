@@ -36,6 +36,20 @@ New-Item -ItemType Directory -Force (Join-Path $joltOut 'dist') | Out-Null
 Copy-Item (Join-Path $jolt 'dist\jolt-physics.wasm-compat.js') (Join-Path $joltOut 'dist')
 Copy-Item (Join-Path $jolt 'package.json'), (Join-Path $jolt 'LICENSE') $joltOut
 
+# ez-tree (procedural trees): just the ES module build the browser loads
+$ez = Join-Path $root 'node_modules\@dgreenheck\ez-tree'
+$ezOut = Join-Path $stage 'node_modules\@dgreenheck\ez-tree'
+New-Item -ItemType Directory -Force (Join-Path $ezOut 'build') | Out-Null
+Copy-Item (Join-Path $ez 'build\ez-tree.es.js') (Join-Path $ezOut 'build')
+Copy-Item (Join-Path $ez 'package.json'), (Join-Path $ez 'LICENSE') $ezOut
+
+# geotiff and its dependencies (the server reads tree-height maps with it)
+foreach ($dep in 'geotiff', '@petamoriken\float16', 'lerc', 'pako', 'parse-headers', 'quick-lru', 'web-worker', 'xml-utils', 'zstddec') {
+  $dst = Join-Path $stage "node_modules\$dep"
+  New-Item -ItemType Directory -Force (Split-Path $dst) | Out-Null
+  Copy-Item -Recurse (Join-Path $root "node_modules\$dep") $dst
+}
+
 # Node.js runtime, checked against the official checksums
 $cache = Join-Path $dist 'cache'
 New-Item -ItemType Directory -Force $cache | Out-Null

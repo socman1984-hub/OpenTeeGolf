@@ -8,7 +8,21 @@ OpenTeeGolf is free software under the GNU General Public License v3 (see `LICEN
 | --- | --- |
 | [three.js](https://threejs.org) 0.186 (WebGPU rendering) | MIT |
 | [Jolt Physics](https://github.com/jrouwe/JoltPhysics) via [JoltPhysics.js](https://github.com/jrouwe/JoltPhysics.js) 1.1 (collisions) | MIT |
+| [EZ-Tree](https://github.com/dgreenheck/ez-tree) 1.1 (procedural trees, with its bark and leaf textures) | MIT |
+| [geotiff.js](https://github.com/geotiffjs/geotiff.js) 3.0 (reading tree-height maps) | MIT |
 | [Node.js](https://nodejs.org) (bundled in the Windows release zip) | MIT and others, see `node/LICENSE` in the zip |
+
+## Textures (in `public/textures/`)
+
+| File | Source | License |
+| --- | --- | --- |
+| `lawn_*.jpg` | [ambientCG Grass005](https://ambientcg.com/view?id=Grass005) | CC0 1.0 |
+| `rough_*.jpg` | [ambientCG Grass004](https://ambientcg.com/view?id=Grass004) | CC0 1.0 |
+| `sand_*.jpg` | [ambientCG Ground080](https://ambientcg.com/view?id=Ground080) | CC0 1.0 |
+| `asphalt_*.jpg` | [ambientCG Asphalt031](https://ambientcg.com/view?id=Asphalt031) | CC0 1.0 |
+| `water_normal.jpg` | [three.js](https://github.com/mrdoob/three.js/blob/r186/examples/textures/waternormals.jpg) example textures | MIT |
+
+The ambientCG textures were resized to 1K and recompressed; CC0 needs no attribution, but credit is given here anyway.
 
 ## Data downloaded at run time
 
@@ -23,6 +37,7 @@ are responsible for following these terms.
 | Elevation (elsewhere) | [AWS Terrain Tiles](https://registry.opendata.aws/terrain-tiles/) (Mapzen Terrarium) | Various open sources, see the registry page for attribution |
 | Aerial photos (US) | USGS/USDA [NAIP](https://naip-usdaonline.hub.arcgis.com/) | Public domain |
 | Aerial photos (elsewhere) | [Esri World Imagery](https://www.arcgis.com/home/item.html?id=10df2279f9684e4a9f6a7f08febac2a9) | Esri, Maxar, Earthstar Geographics and the GIS User Community. Personal, non-commercial use; attribution shown in-game. |
+| Tree heights | [Meta & World Resources Institute, High Resolution Canopy Height Maps](https://registry.opendata.aws/dataforgood-fb-forests/) | CC BY 4.0; credited in-game |
 | Weather | [Open-Meteo](https://open-meteo.com) | Data CC BY 4.0; the free API is for non-commercial use |
 | Course pictures | Wikimedia Commons, Wikidata, Wikipedia, or the course's own website | Wikimedia files carry their own licences (credited on each card). Website pictures belong to the course and are only shown locally to the player. |
 

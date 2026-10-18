@@ -21,6 +21,7 @@ import { geoFor, ensureSatellite } from './lib/imagery.js';
 import { ensureBuildings } from './lib/buildings.js';
 import { ensurePaths } from './lib/paths.js';
 import { ensurePhoto, photoMeta, savePhoto } from './lib/coursephoto.js';
+import { ensureCanopy } from './lib/canopy.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const HTTP_PORT = +(process.env.PORT || 8080);
@@ -259,6 +260,7 @@ const readBody = (req, limit = 1e5) => new Promise((resolve, reject) => {
 const PUBLIC = path.join(ROOT, 'public');
 const THREE = path.join(ROOT, 'node_modules', 'three');
 const JOLT = path.join(ROOT, 'node_modules', 'jolt-physics', 'dist');
+const EZTREE = path.join(ROOT, 'node_modules', '@dgreenheck', 'ez-tree', 'build');
 
 const httpServer = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
@@ -306,6 +308,20 @@ const httpServer = http.createServer(async (req, res) => {
       const geo = geoFor(readCourseData(f), real);
       if (!geo) return json(res, []);
       return json(res, await ensureBuildings(rf.replace(/\.real\.json$/i, '.sat'), geo, real.grid, (msg) => console.log(`[buildings] ${msg}`)));
+    }
+    if ((m = p.match(/^\/api\/courses\/([\w-]+)\/canopy$/))) {
+      // Tree heights (downloaded the first time a course is opened); the grid itself is canopy.bin
+      const f = courseFile(m[1]);
+      const rf = f && realFile(f);
+      if (!rf || !fs.existsSync(rf)) return json(res, { available: false });
+      const real = JSON.parse(fs.readFileSync(rf, 'utf8'));
+      const geo = geoFor(readCourseData(f), real);
+      if (!geo) return json(res, { available: false });
+      return json(res, await ensureCanopy(satDir(f), geo, real.grid, (msg) => { console.log(`[canopy] ${msg}`); broadcast('imagery', { course: m[1], msg }); }));
+    }
+    if ((m = p.match(/^\/api\/courses\/([\w-]+)\/canopy\.bin$/))) {
+      const f = courseFile(m[1]);
+      return f ? serveFile(res, satDir(f), 'canopy.bin') : notFound(res);
     }
     if ((m = p.match(/^\/api\/courses\/([\w-]+)\/satellite\/([\w.-]+\.jpg)$/))) {
       const f = courseFile(m[1]);
@@ -411,6 +427,7 @@ const httpServer = http.createServer(async (req, res) => {
     }
     if (p.startsWith('/vendor/three/')) return serveFile(res, THREE, p.slice('/vendor/three/'.length));
     if (p.startsWith('/vendor/jolt/')) return serveFile(res, JOLT, p.slice('/vendor/jolt/'.length));
+    if (p.startsWith('/vendor/ez-tree/')) return serveFile(res, EZTREE, p.slice('/vendor/ez-tree/'.length));
     return serveFile(res, PUBLIC, p === '/' ? 'index.html' : p.slice(1));
   } catch (err) {
     console.error(err);
