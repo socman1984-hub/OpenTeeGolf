@@ -134,7 +134,19 @@ function cardFor(c) {
     edit.className = 'edit-link';
     edit.textContent = 'Edit';
     edit.onclick = (e) => e.stopPropagation();
-    el.querySelector('.info').appendChild(edit);
+    const links = document.createElement('span');
+    links.className = 'card-links';
+    links.appendChild(edit);
+    el.querySelector('.info').appendChild(links);
+    if (c.osmId) {
+      const upd = document.createElement('a');
+      upd.href = `/builder.html?update=${encodeURIComponent(c.id)}`;
+      upd.className = 'edit-link';
+      upd.textContent = 'Update map';
+      upd.title = 'Download this course from OpenStreetMap again and rebuild it';
+      upd.onclick = (e) => e.stopPropagation();
+      links.prepend(upd);
+    }
     el.querySelector('.fav').onclick = (e) => {
       e.stopPropagation();
       if (menu.favs.has(c.id)) menu.favs.delete(c.id); else menu.favs.add(c.id);

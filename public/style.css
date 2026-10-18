@@ -163,7 +163,8 @@ table.sc td.cur { outline: 2px solid var(--accent); }
 
 .menu-actions { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
 .menu-link { color: #9fd7ff; }
-.course .edit-link { position: absolute; right: 10px; bottom: 8px; background: #0f1810; padding-left: 6px; color: #9fd7ff; font-size: 12px; text-decoration: none; }
+.course .card-links { position: absolute; right: 10px; bottom: 8px; display: flex; gap: 10px; background: #0f1810; padding-left: 6px; }
+.course .edit-link { color: #9fd7ff; font-size: 12px; text-decoration: none; white-space: nowrap; }
 .course .edit-link:hover { text-decoration: underline; }
 
 #minimap { width: 220px; height: 320px; cursor: crosshair; }

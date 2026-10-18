@@ -135,6 +135,7 @@ events.addEventListener('build', (e) => {
   if (m.error) {
     logLine(`Build failed: ${m.error}`, 'err');
     if ($('b-build')) $('b-build').disabled = false;
+    for (const b of document.querySelectorAll('#mine .update')) b.disabled = false;
   }
   if (m.done) {
     logLine(m.needsReview ? 'Done — some holes were guessed. Open the editor to check tees, pins and par.' : 'Done! The course is ready to play.', 'ok');
@@ -159,8 +160,9 @@ async function loadMine() {
     el.className = 'result';
     el.innerHTML = `<div class="info"><b>${esc(c.name)}${c.needsReview ? '<span class="badge partial">needs review</span>' : ''}</b>
       <small>${esc(c.location)} · ${c.holes} holes · par ${c.par}</small></div>
-      <div class="actions"><a class="button primary" href="${playUrl(c.id)}">Play</a><a class="button" href="${editUrl(c.id)}">Edit</a><button>Delete</button></div>`;
-    el.querySelector('button').onclick = async () => {
+      <div class="actions"><a class="button primary" href="${playUrl(c.id)}">Play</a><a class="button" href="${editUrl(c.id)}">Edit</a>${c.osmId ? '<button class="update" title="Download this course from OpenStreetMap again and rebuild it">Update from OpenStreetMap</button>' : ''}<button class="delete">Delete</button></div>`;
+    el.querySelector('.update')?.addEventListener('click', () => updateCourse(c));
+    el.querySelector('.delete').onclick = async () => {
       if (!confirm(`Delete ${c.name}? This removes the built course files.`)) return;
       await api(`/api/courses/${c.id}`, { method: 'DELETE' });
       loadMine();
@@ -168,4 +170,26 @@ async function loadMine() {
     box.appendChild(el);
   }
 }
-loadMine().catch((err) => { $('mine').innerHTML = `<div class="muted">${esc(err.message)}</div>`; });
+loadMine().then(() => {
+  // From the main menu's "Update map" link
+  const id = new URLSearchParams(location.search).get('update');
+  if (id) api('/api/courses').then(({ courses }) => { const c = courses.find((x) => x.id === id); if (c) updateCourse(c); });
+}).catch((err) => { $('mine').innerHTML = `<div class="muted">${esc(err.message)}</div>`; });
+
+// Rebuild a course from fresh OpenStreetMap data (greens, fairways, bunkers, water, rivers, trees,
+// cart paths, buildings), in place
+async function updateCourse(c) {
+  if (!confirm(`Update ${c.name} from OpenStreetMap?\n\nEverything mapped is downloaded again and the course is rebuilt. Changes you made in the course editor (tees, pins, par, shapes) will be replaced by what's in OpenStreetMap now.`)) return;
+  $('build-card').classList.remove('hidden');
+  $('build-done').classList.add('hidden');
+  $('log').innerHTML = '';
+  logLine(`Updating ${c.name} from OpenStreetMap…`);
+  $('build-card').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  for (const b of document.querySelectorAll('#mine .update')) b.disabled = true;
+  try {
+    job = (await api(`/api/courses/${c.id}/update`, { method: 'POST' })).jobId;
+  } catch (err) {
+    logLine(err.message, 'err');
+    for (const b of document.querySelectorAll('#mine .update')) b.disabled = false;
+  }
+}

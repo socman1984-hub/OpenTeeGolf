@@ -15,7 +15,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { normalizeSpin } from './public/js/physics.js';
-import { searchCourses } from './lib/realdata.js';
+import { searchCourses, withFreshOsm } from './lib/realdata.js';
 import { checkCourse, buildCourse, BUILT_DIR } from './lib/builder.js';
 import { geoFor, ensureSatellite } from './lib/imagery.js';
 import { ensureBuildings } from './lib/buildings.js';
@@ -630,6 +630,33 @@ const httpServer = http.createServer(async (req, res) => {
       const log = (msg) => { console.log(`[build] ${msg}`); broadcast('build', { jobId, msg }); };
       buildCourse({ osmType: b.osmType, osmId: b.osmId, group: b.group ?? null, name: b.name || null, location: b.location || '' }, log)
         .then((r) => { ensurePhoto(path.dirname(r.dataFile), photoInfo(r.dataFile), { log: (m) => console.log(`[photo] ${m}`) }); return r; })
+        .then((r) => broadcast('build', { jobId, done: true, courseId: path.basename(path.dirname(r.dataFile)), needsReview: r.needsReview }))
+        .catch((err) => { console.error(err); broadcast('build', { jobId, error: err.message }); });
+      return json(res, { jobId });
+    }
+    if ((m = p.match(/^\/api\/courses\/([\w-]+)\/update$/)) && req.method === 'POST') {
+      // Update a built course from OpenStreetMap: everything downloaded again (not from saved
+      // answers), the course rebuilt in place, then its cart paths and buildings fetched afresh.
+      // Imagery, elevation and tree heights aren't from OpenStreetMap and are kept.
+      const id = m[1], f = courseFile(id);
+      const cd = f && readCourseData(f);
+      const b = cd?.GolfSimBuilder;
+      if (!b?.osmType || !b?.osmId) return json(res, { error: 'This course was not made with the builder, so it has no OpenStreetMap source' }, 400);
+      const jobId = Date.now().toString(36);
+      const log = (msg) => { console.log(`[update] ${msg}`); broadcast('build', { jobId, msg }); };
+      withFreshOsm(async () => {
+        const r = await buildCourse({ osmType: b.osmType, osmId: b.osmId, group: b.group ?? null, name: cd.CourseName, location: cd.Location || '', id }, log);
+        const sat = satDir(r.dataFile);
+        for (const name of ['paths.json', 'buildings.json']) fs.rmSync(path.join(sat, name), { force: true });
+        summaries.delete(r.dataFile);
+        const real = JSON.parse(fs.readFileSync(realFile(r.dataFile), 'utf8'));
+        const nd = readCourseData(r.dataFile), geo = geoFor(nd, real);
+        if (geo && fs.existsSync(sat)) {
+          await ensurePaths(sat, geo, real.grid, (nd.pOOB?.coords || []).map((c) => [c.x, c.z]), log);
+          await ensureBuildings(sat, geo, real.grid, log);
+        }
+        return r;
+      })
         .then((r) => broadcast('build', { jobId, done: true, courseId: path.basename(path.dirname(r.dataFile)), needsReview: r.needsReview }))
         .catch((err) => { console.error(err); broadcast('build', { jobId, error: err.message }); });
       return json(res, { jobId });
