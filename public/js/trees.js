@@ -4,7 +4,7 @@
 // Every tree is one of ~14 variants (different species, presets, seeds and branching), turned,
 // stretched and tinted on its own so no two look alike. Each variant is drawn three ways:
 //   near     - the full tree (leaves, branches, bark) close to the camera
-//   mid      - a lighter build of the same tree further out
+//   mid      - a lighter build of the same tree further out (same trunk and limbs)
 //   impostor - pictures of the full tree, taken from 24 directions when the course loads, shown
 //              on a single card that always faces you, lit by the sun using baked normals
 // Trees on the edge of woods (the ones you actually see) stay detailed much further out than
@@ -154,13 +154,13 @@ function tweakOptions(o, seed, lod) {
   o.leaves.size *= 0.8;
   o.leaves.count = Math.round(o.leaves.count * 1.7 * (0.85 + 0.3 * r(37)));
   if (lod === 'mid') {
-    // About a fifth of the triangles: fewer, larger leaf cards and coarser branches
+    // About a third of the triangles: fewer, larger leaf cards and fewer sides on each branch.
+    // It must be the same tree as the near one (and the far pictures, baked from it), so nothing
+    // that draws random numbers changes: not the branch levels or sections, which would grow every
+    // limb a different way. (The leaf count only changes the very last twigs.)
     o.leaves.count = Math.max(3, Math.round(o.leaves.count * 0.3));
     o.leaves.size *= 1.75;
-    for (const l of Object.keys(o.branch.sections)) o.branch.sections[l] = Math.max(1, Math.round(o.branch.sections[l] * 0.4));
-    for (const l of Object.keys(o.branch.segments)) o.branch.segments[l] = Math.max(3, Math.round(o.branch.segments[l] * 0.5));
-    // The finest twigs aren't visible from there; their leaves move onto the branches above
-    if (o.branch.levels > 2) { o.branch.levels -= 1; o.leaves.count = Math.round(o.leaves.count * 2.5); }
+    for (const l of Object.keys(o.branch.segments)) o.branch.segments[l] = +l >= o.branch.levels ? 3 : Math.max(3, Math.round(o.branch.segments[l] * 0.5));
   }
 }
 
@@ -169,8 +169,22 @@ function buildModel(v, lod) {
   tree.loadPreset(v.preset);
   tweakOptions(tree.options, v.seed, lod);
   if (v.green) tree.options.bark.type = 'birch';
+  // For the mid build, note where the finest twigs' bark is so it can be left out afterwards
+  // (from there the leaves hide them)
+  const twigs = [], L = tree.options.branch.levels;
+  if (lod === 'mid' && L >= 3) {
+    const grow = tree.generateBranch.bind(tree);
+    tree.generateBranch = (b) => { const i0 = tree.branches.indices.length; grow(b); if (b.level >= L) twigs.push([i0, tree.branches.indices.length]); };
+  }
   tree.generate();
   const bark = tree.branchesMesh.geometry, leaves = tree.leavesMesh.geometry;
+  if (twigs.length) {
+    const idx = bark.index.array, keep = [];
+    let from = 0;
+    for (const [a, b] of twigs) { for (let i = from; i < a; i++) keep.push(idx[i]); from = b; }
+    for (let i = from; i < idx.length; i++) keep.push(idx[i]);
+    bark.setIndex(keep);
+  }
   bark.computeBoundingBox(); leaves.computeBoundingBox();
   const bb = bark.boundingBox, lb = leaves.boundingBox;
   const height = Math.max(bb.max.y, lb.max.y) - bb.min.y;
@@ -349,7 +363,7 @@ function impostorMaterial(atlas, attrs) {
 
 // ------------------------------------------------------------------ the forest
 
-const LIMITS = { high: { near: 300, mid: 2000 }, balanced: { near: 200, mid: 1200 }, performance: { near: 100, mid: 600 } };
+const LIMITS = { high: { near: 300, mid: 1400 }, balanced: { near: 200, mid: 850 }, performance: { near: 100, mid: 450 } };
 
 export class Forest {
   constructor() {
