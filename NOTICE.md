@@ -10,6 +10,7 @@ OpenTeeGolf is free software under the GNU General Public License v3 (see `LICEN
 | [Jolt Physics](https://github.com/jrouwe/JoltPhysics) via [JoltPhysics.js](https://github.com/jrouwe/JoltPhysics.js) 1.1 (collisions) | MIT |
 | [EZ-Tree](https://github.com/dgreenheck/ez-tree) 1.1 (procedural trees, with its bark and leaf textures) | MIT |
 | [geotiff.js](https://github.com/geotiffjs/geotiff.js) 3.0 (reading tree-height maps) | MIT |
+| [ironsight](https://github.com/divotmaker/ironsight) (Copyright 2026 Eric Thill): the Mevo+ protocol, ported to JavaScript in `lib/mevo.js` | MIT OR Apache-2.0 (used under MIT) |
 | [Node.js](https://nodejs.org) (bundled in the Windows release zip) | MIT and others, see `node/LICENSE` in the zip |
 
 ## Textures (in `public/textures/`)

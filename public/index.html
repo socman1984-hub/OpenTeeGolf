@@ -64,6 +64,13 @@
           <option value="real">Real (USGS lidar + OpenStreetMap)</option><option value="gen">Simplified (no terrain data)</option>
         </select></label>
       </div>
+      <div class="lm-setup">
+        <label>Launch monitor <select id="opt-lm">
+          <option value="fsgolf">Mevo+ through the FS Golf app</option>
+          <option value="direct">Mevo+ direct (no FS Golf, experimental)</option>
+        </select></label>
+        <div id="lm-help" class="muted"></div>
+      </div>
       <div class="menu-actions">
         <button id="btn-start" class="primary" disabled>Tee off</button>
         <a href="/builder.html" class="menu-link">+ Build a course from OpenStreetMap</a>

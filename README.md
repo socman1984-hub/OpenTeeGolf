@@ -99,6 +99,30 @@ are cached in `data/cache`.
 
 ## Connecting the Mevo+
 
+Choose how in the menu under **Launch monitor**.
+
+### Direct (no FS Golf, experimental)
+
+OpenTeeGolf can talk to the Mevo+ (or Mevo Gen2) itself, so FS Golf isn't needed:
+
+1. Turn on the Mevo+ and close FS Golf (only one program can use the radar at a time).
+2. Join this PC to the Mevo+ Wi-Fi network (**FS M2-xxxxxx**; the password is the device's
+   9-digit serial number).
+3. In the menu, set **Launch monitor** to *Mevo+ direct*. The status box shows *Looking for the
+   Mevo+*, *Connecting*, *Arming*, then *ready* with the battery level.
+
+OpenTeeGolf switches the radar between full-swing, chipping (under 40 yards) and putting modes
+as you play, and re-arms it after every shot. The protocol comes from the open-source
+[ironsight](https://github.com/divotmaker/ironsight) project, which worked it out from the Wi-Fi
+traffic between the Mevo+ and FS Golf; OpenTeeGolf carries a JavaScript port of it
+(`lib/mevo.js`). Like ironsight, it doesn't touch FlightScope's licensing or paid features.
+It hasn't been tried on every firmware version yet, so if it misbehaves, switch back to FS Golf
+and please report what the status box said. For development without the device,
+`node test/fake-mevo.js 5100` runs a simulated Mevo+ (set the host to `127.0.0.1` with
+`POST /api/lm {"connection":"direct","host":"127.0.0.1","port":5100}`).
+
+### Through FS Golf
+
 The Mevo+ sends shots to simulators through FlightScope's **FS Golf** PC app, using the
 **OpenConnect** protocol (JSON over TCP port 921). OpenTeeGolf listens on that port:
 

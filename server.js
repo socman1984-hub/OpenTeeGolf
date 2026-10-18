@@ -22,6 +22,7 @@ import { ensureBuildings } from './lib/buildings.js';
 import { ensurePaths } from './lib/paths.js';
 import { ensurePhoto, photoMeta, savePhoto } from './lib/coursephoto.js';
 import { ensureCanopy } from './lib/canopy.js';
+import { MevoClient } from './lib/mevo.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const HTTP_PORT = +(process.env.PORT || 8080);
@@ -223,13 +224,13 @@ const ocServer = net.createServer((sock) => {
   lmSockets.add(sock);
   const addr = `${sock.remoteAddress}:${sock.remotePort}`;
   console.log(`Launch monitor connected from ${addr}`);
-  setLm({ connected: true, address: addr });
+  if (settings.lm.connection !== 'direct') setLm({ connected: true, address: addr });
   sendPlayer(sock);
   sock.on('data', jsonSplitter((msg) => handleMessage(sock, msg)));
   const gone = () => {
     if (!lmSockets.delete(sock)) return;
     console.log(`Launch monitor disconnected (${addr})`);
-    setLm({ connected: lmSockets.size > 0, ready: lmSockets.size > 0 && lmState.ready });
+    if (settings.lm.connection !== 'direct') setLm({ connected: lmSockets.size > 0, ready: lmSockets.size > 0 && lmState.ready });
   };
   sock.on('close', gone);
   sock.on('error', gone);
@@ -240,6 +241,47 @@ ocServer.on('error', (err) => {
   } else console.error('OpenConnect server error:', err);
 });
 ocServer.listen(OC_PORT, '0.0.0.0', () => console.log(`OpenConnect listener on port ${OC_PORT} (point FS Golf here)`));
+
+// ---------------------------------------------------------------- Mevo+ direct (no FS Golf)
+
+// Saved choice of how shots arrive: 'fsgolf' (FS Golf → OpenConnect above) or 'direct' (this PC
+// joins the Mevo+ Wi-Fi and talks to the radar itself, see lib/mevo.js)
+const SETTINGS_FILE = process.env.SETTINGS_FILE || path.join(ROOT, 'data', 'settings.json');
+const settings = (() => { try { return JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8')); } catch { return {}; } })();
+settings.lm = { connection: 'fsgolf', host: '192.168.2.1', port: 5100, ...settings.lm };
+const saveSettings = () => { fs.mkdirSync(path.dirname(SETTINGS_FILE), { recursive: true }); fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 1)); };
+
+// Putter → putting mode, short shots → chipping, everything else full swing
+const mevoMode = () => (player.Club === 'PT' ? 'putting' : player.DistanceToTarget > 0 && player.DistanceToTarget < 40 ? 'chipping' : 'full');
+const DIRECT_TEXT = {
+  connecting: 'Looking for the Mevo+…', searching: 'Mevo+ not found', handshake: 'Connecting to the Mevo+…',
+  arming: 'Arming…', ready: 'ready', shot: 'Reading shot…', off: 'off',
+};
+let mevo = null;
+function startMevo() {
+  mevo?.stop();
+  mevo = null;
+  if (settings.lm.connection !== 'direct') {
+    setLm({ direct: null, connected: lmSockets.size > 0, ready: lmSockets.size > 0 && lmState.ready, battery: null });
+    return;
+  }
+  mevo = new MevoClient({ host: settings.lm.host, port: settings.lm.port, mode: mevoMode(), log: (m) => console.log(m) });
+  mevo.on('status', (s) => setLm({
+    connected: ['ready', 'shot', 'arming'].includes(s.state),
+    ready: s.state === 'ready',
+    device: s.model ? `${s.model} ${s.ssid || ''}`.trim() : 'Mevo+',
+    battery: s.battery ?? null,
+    direct: { state: s.state, text: DIRECT_TEXT[s.state] || s.state, error: s.error || null, mode: s.mode },
+  }));
+  mevo.on('shot', (ball) => {
+    const shot = toShot({ DeviceID: lmState.device || 'Mevo+', BallData: ball, ClubData: ball.ClubData }, 'mevo');
+    console.log(`Shot (direct): ${shot.speedMph.toFixed(1)} mph, VLA ${shot.vla.toFixed(1)}, HLA ${shot.hla.toFixed(1)}, spin ${Math.round(shot.totalSpin)} rpm, axis ${shot.spinAxis.toFixed(1)}`);
+    setLm({ lastShotAt: shot.at });
+    broadcast('shot', shot);
+  });
+  mevo.start();
+}
+startMevo();
 
 // ---------------------------------------------------------------- HTTP
 
@@ -380,7 +422,20 @@ const httpServer = http.createServer(async (req, res) => {
       if (b.handed) player.Handed = b.handed === 'LH' ? 'LH' : 'RH';
       if (b.distanceToTarget != null) player.DistanceToTarget = +b.distanceToTarget || 0;
       for (const s of lmSockets) sendPlayer(s);
+      mevo?.setMode(mevoMode());
       return json(res, { ok: true, player });
+    }
+    if (p === '/api/lm') {
+      // How shots arrive: FS Golf (OpenConnect) or the Mevo+ directly
+      if (req.method === 'POST') {
+        const b = await readBody(req);
+        if (b.connection === 'direct' || b.connection === 'fsgolf') settings.lm.connection = b.connection;
+        if (typeof b.host === 'string' && /^[\w.-]{1,64}$/.test(b.host)) settings.lm.host = b.host;
+        if (Number.isInteger(b.port) && b.port > 0 && b.port < 65536) settings.lm.port = b.port;
+        saveSettings();
+        startMevo();
+      }
+      return json(res, { settings: settings.lm, state: lmState });
     }
     if (p === '/api/test-shot' && req.method === 'POST') {
       // Accepts the same BallData shape a launch monitor sends.

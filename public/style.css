@@ -177,3 +177,8 @@ table.sc td.cur { outline: 2px solid var(--accent); }
 #perf.slow b { color: var(--bad); }
 .settings label.check { flex-direction: row; align-items: center; gap: 6px; }
 .settings .autoputt-opt.off { opacity: 0.4; }
+
+.lm-setup { margin: 4px 0 16px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: rgba(255,255,255,0.03); }
+.lm-setup label { display: flex; flex-direction: column; gap: 4px; color: var(--muted); font-size: 12px; max-width: 360px; }
+#lm-help { font-size: 12px; margin-top: 6px; line-height: 1.45; }
+#lm-help b { color: var(--text); }

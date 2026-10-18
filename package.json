@@ -15,7 +15,7 @@
   },
   "scripts": {
     "start": "node server.js",
-    "test": "node test/physics-test.js && node test/collision-test.js",
+    "test": "node test/physics-test.js && node test/collision-test.js && node test/mevo-test.js",
     "package": "powershell -ExecutionPolicy Bypass -File scripts/package-win.ps1"
   },
   "engines": {

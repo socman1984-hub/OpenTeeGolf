@@ -1209,15 +1209,45 @@ function connectEvents() {
     const lm = JSON.parse(e.data);
     const dot = $('lm-dot');
     dot.className = 'dot' + (lm.connected ? (lm.ready ? ' ready' : ' on') : '');
-    $('lm-text').textContent = lm.connected
-      ? `${lm.device || 'Launch monitor'}${lm.ready ? ' — ready' : ' — connected'}`
-      : 'Mevo+ not connected';
+    const battery = lm.battery != null ? ` · ${lm.battery}%` : '';
+    if (lm.direct) {
+      // Direct connection: say what it's doing (looking, connecting, arming, ready)
+      $('lm-text').textContent = lm.direct.state === 'ready' ? `${lm.device} — ready${battery}`
+        : lm.direct.state === 'shot' ? `${lm.device} — reading shot`
+          : lm.direct.text;
+      $('lm-text').title = lm.direct.error || '';
+    } else {
+      $('lm-text').textContent = lm.connected
+        ? `${lm.device || 'Launch monitor'}${lm.ready ? ' — ready' : ' — connected'}`
+        : 'Mevo+ not connected';
+      $('lm-text').title = '';
+    }
+    showLmHelp(lm);
   });
   es.onerror = () => {
     $('lm-dot').className = 'dot';
     $('lm-text').textContent = 'Server offline';
   };
 }
+
+// ---- launch monitor setting (menu)
+
+function showLmHelp(lm = null) {
+  const direct = $('opt-lm').value === 'direct';
+  let html = direct
+    ? 'Join this PC to the <b>Mevo+ Wi-Fi</b> (network <b>FS M2-…</b>; the password is the device\'s 9-digit serial), and close FS Golf. '
+      + 'OpenTeeGolf connects to the radar itself and switches between full swing, chipping and putting modes on its own.'
+    : 'Open the <b>FS Golf</b> PC app, connect it to your Mevo+, and choose its GSPro/OpenConnect connection (address 127.0.0.1, port 921).';
+  if (direct && lm?.direct) {
+    html += `<br>Status: <b>${lm.direct.state === 'ready' ? `${lm.device} ready` : lm.direct.text}</b>${lm.direct.error ? ` (${lm.direct.error})` : ''}`;
+  }
+  $('lm-help').innerHTML = html;
+}
+fetch('/api/lm').then((r) => r.json()).then((r) => { $('opt-lm').value = r.settings.connection; showLmHelp(r.state); }).catch(() => {});
+$('opt-lm').onchange = async () => {
+  showLmHelp();
+  await fetch('/api/lm', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ connection: $('opt-lm').value }) }).catch(() => {});
+};
 
 connectEvents();
 loadCourses().catch((err) => {
