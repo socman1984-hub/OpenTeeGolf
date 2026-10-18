@@ -139,19 +139,23 @@ function sendPlayer(sock) {
 // Turn an OpenConnect shot message into what the game needs.
 export function toShot(msg, source = 'launch-monitor') {
   const b = msg.BallData || {};
-  const { backSpin, sideSpin } = normalizeSpin(b);
-  const total = b.TotalSpin ?? Math.hypot(backSpin, sideSpin);
+  // Unreadable or impossible numbers (a bad reading) are clamped, never passed on: a NaN or a
+  // runaway value would leave the ball nowhere and stall the game
+  const lim = (v, lo, hi) => (Number.isFinite(+v) ? Math.min(hi, Math.max(lo, +v)) : 0);
+  const spin = normalizeSpin(b);
+  const backSpin = lim(spin.backSpin, -4000, 15000), sideSpin = lim(spin.sideSpin, -8000, 8000);
+  const total = Number.isFinite(+b.TotalSpin) && Math.abs(b.TotalSpin) <= 16000 ? +b.TotalSpin : Math.hypot(backSpin, sideSpin);
   return {
     source,
     device: msg.DeviceID || 'unknown',
     shotNumber: msg.ShotNumber ?? null,
-    speedMph: +b.Speed || 0,
-    vla: +b.VLA || 0,
-    hla: +b.HLA || 0,
+    speedMph: lim(b.Speed, 0, 240),
+    vla: lim(b.VLA, -20, 85),
+    hla: lim(b.HLA, -60, 60),
     backSpin,
     sideSpin,
     totalSpin: total,
-    spinAxis: b.SpinAxis ?? (Math.atan2(sideSpin, backSpin) * 180) / Math.PI,
+    spinAxis: Number.isFinite(+b.SpinAxis) ? lim(b.SpinAxis, -90, 90) : (Math.atan2(sideSpin, backSpin) * 180) / Math.PI,
     lmCarry: b.CarryDistance ?? null,
     units: msg.Units || 'Yards',
     club: msg.ClubData || null,

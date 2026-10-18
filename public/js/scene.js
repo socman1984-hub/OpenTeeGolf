@@ -82,7 +82,10 @@ export class CourseScene {
     this.ballShadow.rotation.x = -Math.PI / 2;
     this.dynamic.add(this.ballShadow);
 
-    this.trailMat = new THREE.Line2NodeMaterial({ color: 0xffe14d, linewidth: 3, transparent: true, opacity: 0.95, depthTest: true });
+    // (Lines are drawn solid: a see-through Line2 material samples a shared copy of the screen, which
+    // the water's reflection pass resizes every frame, and the GPU then rejects every frame - the
+    // picture freezes. Fainter lines get a darker colour instead.)
+    this.trailMat = new THREE.Line2NodeMaterial({ color: 0xffe14d, linewidth: 3, depthTest: true });
     this.trail = null;
     this.ghostTrails = [];
 
@@ -1501,7 +1504,7 @@ export class CourseScene {
     }
     const g = new LineGeometry();
     g.setPositions(pts);
-    this.puttCircle = new Line2(g, new THREE.Line2NodeMaterial({ color: 0xffffff, linewidth: 3, transparent: true, opacity: 0.85 }));
+    this.puttCircle = new Line2(g, new THREE.Line2NodeMaterial({ color: 0xe6e6e6, linewidth: 3 }));
     this.puttCircle.computeLineDistances();
     this.dynamic.add(this.puttCircle);
   }
@@ -1514,7 +1517,7 @@ export class CourseScene {
 
   keepTrailAsGhost() {
     if (!this.trail) return;
-    const ghost = new Line2(this.trail.geometry, new THREE.Line2NodeMaterial({ color: 0xffffff, linewidth: 2, transparent: true, opacity: 0.35 }));
+    const ghost = new Line2(this.trail.geometry, new THREE.Line2NodeMaterial({ color: 0x8a8f94, linewidth: 2 }));
     ghost.visible = this.ghostsVisible !== false;
     this.ghostTrails.push(ghost);
     this.dynamic.add(ghost);
