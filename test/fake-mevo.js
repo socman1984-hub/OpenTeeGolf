@@ -36,8 +36,9 @@ const ascii = (s, n) => { const b = [...Buffer.from(s, 'latin1')]; while (b.leng
 // A small grey 64x48 JPEG, sent over and over as the "camera" stream
 const JPEG = Buffer.from('/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAAwAEABAREA/8QAFQABAQAAAAAAAAAAAAAAAAAAAAj/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oACAEBAAA/AJ//2Q==', 'base64');
 
-// options: { videoPort } also serves an MJPEG stream on /stream, like the camera on port 8080
-export function fakeMevo({ videoPort = null } = {}) {
+// options: { videoPort } also serves an MJPEG stream on /stream, like the camera on port 8080;
+// { quiet(frame) } leaves the requests it picks unanswered, like firmware that skips them
+export function fakeMevo({ videoPort = null, quiet = null } = {}) {
   const seen = { modes: [], arms: 0, acks: 0 };
   const server = net.createServer((sock) => {
     const r = new FrameReader();
@@ -46,6 +47,7 @@ export function fakeMevo({ videoPort = null } = {}) {
     sock.on('data', (chunk) => {
       for (const f of r.push(chunk)) {
         const to = f.dest, p = [...f.payload];
+        if (quiet?.(f)) continue;
         switch (f.type) {
           case 0xaa: {
             if (to === BUS.DSP) { const s = new Array(129).fill(0); s[0] = 0x80; s[61] = 87; reply(to, 0xaa, s); }

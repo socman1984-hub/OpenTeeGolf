@@ -18,6 +18,7 @@ function render() {
   $('conn').querySelector('.dot').className = 'dot' + (ready ? ' ready' : state !== 'off' && state !== 'searching' ? ' on' : '');
   $('conn-text').textContent = ready ? `${info.model || 'Mevo+'} ${info.ssid || ''} connected` : STATE[state] || state;
   $('state').textContent = STATE[state] || state;
+  $('conn-error').textContent = state === 'searching' && info.error ? `Last try: ${info.error}. Trying again… (details in data\\mevo-log.txt)` : '';
   $('mode').textContent = MODE[info.mode] || '–';
 
   // Battery
@@ -149,7 +150,7 @@ const es = new EventSource('/api/events');
 es.addEventListener('mevo', (e) => {
   const s = JSON.parse(e.data);
   state = s.state;
-  info = { ...info, ...s };
+  info = { ...info, ...s, error: s.error || null };
   render();
 });
 setInterval(render, 5000); // keeps "last shot … ago" fresh

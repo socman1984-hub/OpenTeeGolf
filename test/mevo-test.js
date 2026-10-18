@@ -94,6 +94,44 @@ try {
   client.stop();
   server.close();
 }
+// ---- 3. A unit that leaves the information questions unanswered (camera board busy, different
+// firmware) still connects and arms, without waiting on every skipped question
+{
+  const quiet = (f) => (f.dest === BUS.PI && f.type !== 0xaa) || f.type === 0x48 || f.type === 0x9b || f.type === 0xd2;
+  const { server: s2 } = fakeMevo({ quiet });
+  await new Promise((r) => s2.listen(0, '127.0.0.1', r));
+  const logs = [];
+  const c2 = new MevoClient({ host: '127.0.0.1', port: s2.address().port, log: (m) => logs.push(m) });
+  const t0 = Date.now();
+  try {
+    c2.start();
+    await until(() => c2.state === 'ready', 25000, 'ready with unanswered questions');
+    check(true, `connected and armed in ${((Date.now() - t0) / 1000).toFixed(1)} s with unanswered questions skipped`);
+    check(logs.some((l) => /no answer to: .*camera info/.test(l)), 'the skipped questions are logged');
+  } catch (err) {
+    check(false, `${err.message} (${logs.join(' | ')})`);
+  } finally {
+    c2.stop();
+    s2.close();
+  }
+}
+
+// ---- 4. If the device hangs up mid-handshake, the client notices at once and says where it was
+{
+  let n = 0;
+  const { server: s3 } = fakeMevo({ quiet: (f) => f.dest === BUS.AVR && f.type === 0xaa && ++n > 0 });
+  const conns = [];
+  s3.on('connection', (sock) => { conns.push(sock); setTimeout(() => sock.destroy(), 300); });
+  await new Promise((r) => s3.listen(0, '127.0.0.1', r));
+  const c3 = new MevoClient({ host: '127.0.0.1', port: s3.address().port });
+  const err = new Promise((r) => c3.on('status', (s) => { if (s.state === 'searching') r(s.error); }));
+  const t0 = Date.now();
+  c3.start();
+  const e = await Promise.race([err, new Promise((r) => setTimeout(() => r(null), 5000))]);
+  check(e && /closed the connection/.test(e) && /reading the radar/.test(e) && Date.now() - t0 < 2000, `a hang-up is reported straight away: "${e}"`);
+  c3.stop();
+  s3.close();
+}
 console.log(`states: ${[...new Set(states)].join(' → ')}`);
 if (failed) { console.log(`${failed} check(s) failed`); process.exit(1); }
 console.log('all Mevo+ checks passed');

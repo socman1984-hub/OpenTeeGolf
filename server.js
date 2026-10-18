@@ -264,6 +264,23 @@ const DIRECT_TEXT = {
   arming: 'Arming…', ready: 'ready', shot: 'Reading shot…', off: 'off',
 };
 let mevo = null;
+// Every message to and from the Mevo+, written to data/mevo-log.txt (started fresh each run, kept
+// under ~5 MB) so a connection problem can be looked at afterwards
+const MEVO_LOG = path.join(path.dirname(SETTINGS_FILE), 'mevo-log.txt');
+let mevoLogSize = 0;
+function mevoWrite(line, always = false) {
+  if (mevoLogSize > 5e6 && !always) return;
+  mevoLogSize += line.length + 1;
+  try { fs.appendFileSync(MEVO_LOG, `${new Date().toISOString().slice(11, 23)} ${line}\n`); } catch { /* not important */ }
+}
+try { fs.mkdirSync(path.dirname(MEVO_LOG), { recursive: true }); fs.writeFileSync(MEVO_LOG, ''); } catch { /* ignore */ }
+function mevoLog(m) { console.log(m); mevoWrite(m, true); }
+function mevoTrace(dir, f) {
+  if (f.type === 0xaa && mevo?.state === 'ready') return; // the once-a-second status polls
+  const hex = Buffer.from(f.payload).toString('hex').toUpperCase().replace(/(..)(?!$)/g, '$1 ');
+  const txt = f.type === 0xe3 || f.type === 0xe5 ? `  "${Buffer.from(f.payload).toString('latin1').replace(/[^\x20-\x7e]/g, '')}"` : '';
+  mevoWrite(`${dir} ${f.src.toString(16).padStart(2, '0')}->${f.dest.toString(16).padStart(2, '0')} ${f.type.toString(16).padStart(2, '0')} [${hex}]${txt}`);
+}
 function startMevo() {
   mevo?.stop();
   mevo = null;
@@ -271,7 +288,7 @@ function startMevo() {
     setLm({ direct: null, connected: lmSockets.size > 0, ready: lmSockets.size > 0 && lmState.ready, battery: null });
     return;
   }
-  mevo = new MevoClient({ host: settings.lm.host, port: settings.lm.port, mode: mevoMode(), log: (m) => console.log(m) });
+  mevo = new MevoClient({ host: settings.lm.host, port: settings.lm.port, mode: mevoMode(), log: mevoLog, trace: mevoTrace });
   if (settings.lm.setup) mevo.setup = { ...DEFAULT_SETUP, ...settings.lm.setup };
   // Everything the setup page shows, about once a second
   mevo.on('status', (s) => broadcast('mevo', s));

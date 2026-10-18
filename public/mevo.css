@@ -1,6 +1,8 @@
 /* Mevo+ setup page */
 .mevo-page { max-width: 1000px; margin: 0 auto; padding: 20px 16px 40px; display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 16px; align-items: start; }
-.mevo-page > #not-direct, .mevo-page > .video-card { grid-column: 1 / -1; }
+.mevo-page > #not-direct, .mevo-page > .video-card, .mevo-page > .conn-error { grid-column: 1 / -1; }
+.conn-error { margin: 0; padding: 8px 12px; border-radius: 8px; background: rgba(232,115,90,0.12); border: 1px solid rgba(232,115,90,0.45); color: #f3b3a3; font-size: 13px; }
+.conn-error:empty { display: none; }
 @media (max-width: 760px) { .mevo-page { grid-template-columns: 1fr; } }
 .small { font-size: 12px; }
 .conn { display: inline-flex; align-items: center; gap: 8px; margin-left: auto; font-size: 13px; }
