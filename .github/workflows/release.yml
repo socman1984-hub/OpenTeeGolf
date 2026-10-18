@@ -1,0 +1,26 @@
+# Builds the portable Windows zip and attaches it to a GitHub release when a version tag is pushed:
+#   git tag v0.2.0 && git push origin v0.2.0
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  windows-zip:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm ci
+      - run: npm test
+      - run: powershell -ExecutionPolicy Bypass -File scripts/package-win.ps1
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/OpenTeeGolf-*-win-x64.zip
+          generate_release_notes: true

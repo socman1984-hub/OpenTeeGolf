@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Course Editor · OpenTeeGolf</title>
+  <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/tools.css">
+  <link rel="stylesheet" href="/editor.css">
+</head>
+<body>
+  <div class="editor">
+    <aside class="side">
+      <div class="side-head">
+        <a href="/builder.html" class="back">← Builder</a>
+        <span id="dirty" class="muted"></span>
+      </div>
+
+      <details open>
+        <summary>Course</summary>
+        <label>Name <input id="c-name"></label>
+        <label>Location <input id="c-location"></label>
+        <label>Green speed (stimp) <input id="c-stimp" type="number" min="6" max="14" step="0.5"></label>
+      </details>
+
+      <details open>
+        <summary>Hole</summary>
+        <div id="hole-buttons" class="hole-buttons"></div>
+        <div class="btn-row"><button id="h-add">+ Add hole</button><button id="h-del">Delete hole</button></div>
+        <div id="hole-panel"></div>
+      </details>
+
+      <details open>
+        <summary>Shapes</summary>
+        <div class="muted small">Draw a new shape, then click points on the map. Double-click or Enter to finish.</div>
+        <div class="draw-buttons" id="draw-buttons"></div>
+        <div id="shape-panel" class="muted small">Click a shape on the map to select it.</div>
+      </details>
+
+      <details>
+        <summary>Help</summary>
+        <ul class="help">
+          <li>Drag the map to pan, scroll to zoom.</li>
+          <li>Drag tees, pins, aim points and the green center of the selected hole.</li>
+          <li>Click a shape to select it. Drag its corners; drag a small circle to add a corner; Alt+click a corner to remove it.</li>
+          <li><b>Delete</b> removes the selected shape · <b>Ctrl+Z</b> undo · <b>Ctrl+S</b> save · <b>Esc</b> cancel.</li>
+        </ul>
+      </details>
+
+      <div class="side-foot">
+        <button class="primary" id="save">Save</button>
+        <a class="button" id="play" href="#">Play</a>
+        <span id="status" class="muted small"></span>
+      </div>
+    </aside>
+    <div class="map-wrap">
+      <canvas id="map" tabindex="0"></canvas>
+      <div id="mode-hint" class="mode-hint hidden"></div>
+      <div class="map-tools">
+        <button id="fit-hole" title="Zoom to the selected hole">Hole</button>
+        <button id="fit-all" title="Zoom to the whole course">Course</button>
+        <button id="toggle-photo" class="hidden" title="Show the aerial photo or the terrain shading">Photo</button>
+      </div>
+    </div>
+  </div>
+  <script type="module" src="/js/editor.js"></script>
+</body>
+</html>

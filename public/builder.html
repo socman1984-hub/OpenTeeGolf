@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Course Builder · OpenTeeGolf</title>
+  <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/tools.css">
+</head>
+<body class="page">
+  <header class="topbar">
+    <a href="/" class="back">← OpenTeeGolf</a>
+    <h1>Course builder</h1>
+    <span class="muted">Build any course mapped in OpenStreetMap</span>
+  </header>
+
+  <main class="builder">
+    <section class="card">
+      <h2>1. Find a course</h2>
+      <form id="search-form" class="search">
+        <input id="q" type="search" placeholder="Course name, e.g. Pebble Beach Golf Links" autocomplete="off" required minlength="3">
+        <button class="primary" id="search-btn">Search</button>
+      </form>
+      <div id="results" class="results"></div>
+    </section>
+
+    <section class="card hidden" id="check-card">
+      <h2>2. Check what's mapped</h2>
+      <div id="check"></div>
+    </section>
+
+    <section class="card hidden" id="build-card">
+      <h2>3. Build</h2>
+      <div id="log" class="log"></div>
+      <div id="build-done" class="row left hidden">
+        <a class="button primary" id="play-link" href="#">Play it</a>
+        <a class="button" id="edit-link" href="#">Open in editor</a>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Your courses</h2>
+      <div id="mine" class="results"><div class="muted">Loading…</div></div>
+    </section>
+
+    <p class="credit muted">Course data © OpenStreetMap contributors (ODbL). Elevation: USGS 3DEP (US) or Terrarium tiles from AWS Open Data (elsewhere).</p>
+  </main>
+
+  <script type="module" src="/js/builder.js"></script>
+</body>
+</html>

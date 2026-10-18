@@ -1,0 +1,306 @@
+# OpenTeeGolf
+
+A free, open-source golf simulator for the **FlightScope Mevo+**. It runs in your web browser
+and plays **any golf course mapped in OpenStreetMap**: search for a course, build it in about a
+minute, and play it on real lidar terrain under real aerial photos.
+
+It renders with **three.js on WebGPU** and uses **Jolt Physics** for collisions, on top of its own
+ball-flight model calibrated to launch monitor data.
+
+OpenTeeGolf is licensed under the **GNU GPL v3** (see [LICENSE](LICENSE)). You can use, study,
+change and share it, and any version you share must stay open source under the same license.
+
+## Download and play (Windows)
+
+1. Download the latest `OpenTeeGolf-<version>-win-x64.zip` from the [Releases page](https://github.com/socman1984-hub/OpenTeeGolf/releases).
+2. Unzip it anywhere, for example to your Desktop.
+3. Double-click **Start OpenTeeGolf.bat**. Your browser opens at http://localhost:8080.
+
+Nothing else needs to be installed: the zip includes Node.js. The first time, Windows may show
+**"Windows protected your PC"**: click *More info → Run anyway*. When the Windows Firewall asks
+about Node.js, allow it on private networks so the Mevo+ app can send shots.
+
+## Browser
+
+Use a current Chrome or Edge (WebGPU is on by default). Browsers without WebGPU fall back to
+WebGL 2 automatically, and adding `?webgl` to the address forces that fallback. The FPS overlay
+(**P**) shows which one is in use.
+
+## Running from source
+
+Requires [Node.js](https://nodejs.org) 18 or newer.
+
+```bash
+npm install
+npm start
+```
+
+Then open http://localhost:8080. On Windows, if PowerShell blocks `npm`, use `npm.cmd start` or
+double-click `Start OpenTeeGolf.bat`.
+
+## Your courses
+
+The main menu shows every course you've built. With a lot of courses:
+
+* **Search** by name or place (state names match abbreviations, so "ohio" finds "Batavia, OH").
+* **Sort** by recently played, name, newest built or location.
+* Tap **☆** to make a course a favorite, then use **★ Favorites** to show only those.
+
+Each course gets a picture automatically. OpenTeeGolf looks for a freely licensed photo on
+Wikimedia Commons / Wikidata / Wikipedia (credited on the card), then for the share picture on
+the course's own website. If neither has one, the card shows the course's aerial view. Hover a
+card and click **📷** to choose your own picture or to look online again.
+
+Your courses are saved in the `courses/` folder. To move them to another computer, copy that
+folder.
+
+## Building courses
+
+From the main menu choose **+ Build a course from OpenStreetMap**, or open
+http://localhost:8080/builder.html.
+
+1. **Search** by name. OpenTeeGolf checks that the course exists in OpenStreetMap. If the name only
+   matches something like a clubhouse or a town, it lists the golf courses around that place.
+2. **Check** shows what's mapped: hole lines, greens, fairways, bunkers, tee boxes and water. It
+   rates the mapping as well mapped, partly mapped or barely mapped. Facilities with several
+   courses (for example a 27-hole club) let you pick which one to build.
+3. **Build** makes a playable course in `courses/<name>/`:
+   * Holes come from OpenStreetMap's numbered hole lines (tee → green, with par and handicap
+     when they're mapped). Bends in the line become aim points.
+   * Tee boxes along each hole's first leg become Black/Blue/White/Green/Red tees, ordered from
+     the back.
+   * Four pins (Thu–Sun) are spread over each mapped green.
+   * Water becomes penalty areas, and the course boundary becomes out of bounds.
+   * Terrain is USGS 1 m lidar in the US. Elsewhere it uses global elevation tiles (~4 m) from
+     AWS Open Data.
+   * If hole lines aren't mapped, holes are guessed by following each green's fairway back to
+     the tee boxes behind it. Those courses are marked **needs review**.
+
+If a course is missing or badly mapped, you can improve it for everyone by editing
+[OpenStreetMap](https://www.openstreetmap.org) and rebuilding it.
+
+### Course editor
+
+Open a built course from the builder or the **Edit** link in the main menu
+(`/editor.html?course=…`). It shows a top-down map over the terrain.
+
+* **Holes:** pick a hole, set its number, par and handicap. Drag tees, aim points, the green
+  center and the four pins, or use **Place** to put one anywhere (including tee types that
+  don't exist yet). Add or delete holes. **Spread pins across green** re-seeds the pins.
+* **Shapes:** draw greens, fairways, bunkers, tee boxes, water, penalty areas or the
+  out-of-bounds line. Click points, then double-click or press Enter to finish. Click a shape to
+  select it, drag its corners, drag the small circles to add a corner, or Alt+click to remove
+  one. You can also change its type or delete it.
+* Ctrl+Z undoes, Ctrl+S saves, and **Play** opens the course in the simulator. Heights for
+  everything you place come from the terrain automatically.
+
+The first search or check can be slow when the public OpenStreetMap servers are busy. Results
+are cached in `data/cache`.
+
+## Connecting the Mevo+
+
+The Mevo+ sends shots to simulators through FlightScope's **FS Golf** PC app, using the
+**OpenConnect** protocol (JSON over TCP port 921). OpenTeeGolf listens on that port:
+
+1. Close any other simulator software. Only one program can use port 921.
+2. Start OpenTeeGolf. The console shows `OpenConnect listener on port 921`.
+3. In FS Golf, choose its OpenConnect simulator connection (FS Golf names it after the
+   simulator it was made for). The address is `127.0.0.1`, port `921`. If FS Golf runs on a
+   different PC, use this PC's IP address instead and allow Node through the Windows Firewall.
+4. The status box at the top right turns green ("ready") when the Mevo+ is connected.
+
+OpenTeeGolf sends the selected club and the distance to the pin back to FS Golf. Clubs are
+auto-selected (putter on the green), and you can change them in the Club dropdown.
+
+To test without a launch monitor, press **T** for the test-shot panel, or send a fake Mevo+
+shot through the real network path:
+
+```bash
+node test/send-shot.js 150 12 0 2700 0
+```
+
+(arguments: ball speed in mph, launch angle, direction (+ = right), total spin in rpm, spin axis (+ = right))
+
+## Controls
+
+| Key | Action |
+| --- | --- |
+| Click the ground | Aim at that spot. A yellow ring and label show the target distance |
+| Click / drag the minimap | Aim at that spot |
+| ← / → | Fine-tune the aim (hold Shift for finer) |
+| F | Free view: fly anywhere on the course (also the **Free view** button) |
+| R | Re-aim at the pin |
+| V | Toggle overhead view |
+| Space | Skip the ball-flight animation |
+| M | Mulligan |
+| T | Test-shot panel |
+| P | FPS / performance overlay |
+| H | Previous shot traces on/off (also a menu checkbox) |
+| G | Green slope grid on/off |
+| C | Scorecard |
+| N | Next hole (or pick up) |
+| Esc | Menu |
+
+**Free view:**
+* Drag to move, right-drag to turn, and scroll to zoom.
+* WASD flies around, Q/E moves down/up, and Shift goes faster.
+* Clicking the ground still aims your shot. Clicking the minimap flies the camera there.
+* F or Esc returns to the ball. A shot from the launch monitor also brings you back
+  automatically.
+
+## Graphics quality
+
+The menu's **Graphics** option trades looks for speed. It's remembered between visits.
+
+| Setting | Resolution | Shadows | Trees / heather / close grass |
+| --- | --- | --- | --- |
+| High | up to 2× | 4096 | all |
+| Balanced (default) | up to 1.25× | 2048 | ~85% / 70% / 20k tufts |
+| Performance | 1× | 1024 | ~60% / 40% / 9k tufts |
+
+Press **P** (or tick **Show FPS**) for FPS, the slowest recent frame, draw calls and triangle
+count. If free view stutters, try Balanced or Performance.
+
+## Weather
+
+Choose the weather in the menu:
+* **Live:** the real current conditions at the course, from Open-Meteo (free, no account
+  needed).
+* **Presets:** Calm, Breezy, Windy or Rain.
+* **Custom:** set the wind speed and direction yourself (into you, behind you, across, or
+  random per hole).
+
+How it affects play:
+* **Wind:** it's measured 10 m up, so it's weaker near the ground and stronger at a high ball's
+  apex. Every shot gets its own gust between the steady wind and the gust speed, with a little
+  change in direction. A 10 mph headwind costs a 150 mph drive about 12 yd of carry, and a
+  10 mph crosswind moves it about 17 yd.
+* **Air density:** temperature, humidity and air pressure change it, as does altitude. Cold,
+  dry or heavy air means shorter shots: a drive at 5 °C carries about 4 yd less than at 20 °C.
+* **Rain:** wet ground gives softer landings and slower greens, and roll-out drops by about a
+  third.
+* **What you see:** the flag streams downwind, lifting and snapping harder as the wind builds.
+  Rain falls with the wind, and cloud cover dims the sun and hazes the sky. The HUD shows the
+  wind (helping, into you or cross), gusts, temperature and wet ground.
+
+## Putting
+
+* **Auto-putt mode** (menu → Putting): once the ball stops on the green, the hole is finished.
+  It counts 1 putt inside the circle drawn around the hole (6/10/15/20 ft, your choice) and 2
+  putts outside. Missing the green means you play on until you're on it.
+* **Gimme** is off by default. When a gimme, auto-putt or pick-up ends a hole, the banner says
+  so and the ball is shown rolling into the cup.
+* On or near the green, a **slope grid** is draped over the surface. Lines are coloured by
+  steepness: white is under ~1%, then yellow, orange and red (3%+). Dots slide downhill, faster
+  where it's steeper. **G** toggles the grid.
+* The label at the hole shows the putt length and how much it rises or falls, for example
+  "15 ft · 3.1 in downhill".
+* **The cup:** a ball drops if it's slow enough to fall before reaching the far edge. That's
+  about 1.6 m/s for a centred putt, as in real cup studies. Faster or off-centre putts catch the
+  lip and spin out, and balls brushing the rim curl around it. A ball that stops over the hole
+  falls in, chip-ins drop, and holed balls visibly sink into the cup.
+
+## Graphics
+
+Built courses look like the real place:
+
+* **Aerial imagery** is draped over the terrain. In the US it's USGS/USDA NAIP orthophotos
+  (about 0.3–0.6 m per pixel, public domain). Elsewhere it's Esri World Imagery (attribution
+  shown in-game; personal, non-commercial use). The photos are colour-balanced automatically,
+  then fairways get mowing stripes, greens are smoothed, and bunkers get clean sand.
+* **Trees** are planted where the photo shows tree canopy, so tree lines match the real course.
+* **Buildings** are 3D outlines from OpenStreetMap. Coverage varies by area.
+* **Surroundings:** a ring of lower-resolution imagery about 1.5 km wide extends the view to
+  the horizon.
+* **Lighting:** real-time sun shadows, sky reflections, animated water, and grass detail and
+  tufts around the ball.
+
+Imagery and buildings download the first time a course is opened. This can take a few
+minutes, because the USGS server renders the photos on request. They're then cached next to
+the course (`*.sat/`).
+
+## Rules and physics
+
+* Ball flight uses drag and Magnus lift calibrated to TrackMan PGA Tour averages, with air
+  density for the course altitude. Run `npm test` to check it.
+* Landing uses an impact model where backspin checks the ball, then rolling friction and slope.
+  Green speed is set by the stimp value.
+* **Surfaces play differently:** each one has its own bounce, grip and roll, and changes your
+  next strike.
+
+  | Surface | Driver roll-out | Next shot |
+  | --- | --- | --- |
+  | Fairway / tee | ~18 yd | full speed and spin |
+  | First cut (2 m collar around fairways) | ~14 yd | −3% speed, −12% spin |
+  | Rough | ~8 yd | −10% speed, −38% spin |
+  | Deep rough (under trees) | ~5 yd | −22% speed, −55% spin |
+  | Bunker | ~2 yd | −15% speed, −20% spin |
+  | Green | fast, set by the stimp | putting |
+
+* **Where the surfaces come from:** OpenStreetMap supplies the greens, fairways, tees, bunkers
+  and water. Where a hole's fairway isn't mapped, OpenTeeGolf reads it from the aerial photo
+  (mown grass is smooth and bright, and the rules are learned from that course's mapped
+  fairways). Tree cover in the photo plays as deep rough.
+* **Cart paths** come from OpenStreetMap (golf cart paths and paths inside the course). They're
+  also detected in the aerial photo as long, thin, pale strips when the map has few. They look
+  like pavement, and the ball bounces high and runs a long way on them. A ball that stops on a
+  path gets free relief at the nearest point off it, no nearer the hole.
+* **Solid objects** (Jolt Physics): the ground, tree trunks, buildings and the flagstick are
+  bodies in a Jolt collision world, and every step of the ball's flight and roll is checked
+  against them. The ground in Jolt is a height field that matches the rendered terrain to within
+  a couple of centimetres. A ball that hits the flagstick bounces off it; a gentle putt that
+  rolls into it drops. How the ball flies, bounces and rolls is still the calibrated model above.
+* **Trees:** trunks are solid, and the ball bounces off. Leaves slow it and nudge it off line.
+  Deeper in the crown it can hit a branch and get knocked down. After the shot a message says
+  "Off the trunk!", "Hit a branch!" or "Clipped the leaves."
+* **Feedback:** the lie badge shows your current surface. After each shot a message says where
+  the ball landed and where it finished. The aim label shows the surface at your target.
+* Water: 1 stroke penalty, drop at the point of entry. OOB: stroke and distance.
+* Optional gimmes, and a maximum score of par + 5 per hole.
+
+## Data sources
+
+OpenTeeGolf contains no map, photo or course data. Each copy downloads what it needs, for its own
+player, from these free public services (details and terms in [NOTICE.md](NOTICE.md)):
+
+* Course shapes and buildings: © OpenStreetMap contributors (ODbL)
+* Elevation: USGS 3DEP (public domain) and AWS Terrain Tiles
+* Aerial photos: USGS/USDA NAIP (public domain) and Esri World Imagery
+* Weather: Open-Meteo (CC BY 4.0)
+* Course pictures: Wikimedia Commons / Wikidata / Wikipedia, or the course's own website
+
+Please don't commit built courses (`courses/`), downloaded imagery or caches to the repository.
+They contain third-party data with their own licences; anyone can rebuild a course in a minute.
+
+## Contributing
+
+Bug reports and pull requests are welcome. Before sending a change:
+
+```bash
+npm test                                    # ball-flight calibration + Jolt collision checks
+node test/collision-test.js courses/<name>/<name>.course.json   # also check a real course
+node test/course-map.js courses/<name>/<name>.course.json map.png courses/<name>/<name>.real.json
+```
+
+To release a new version, update `version` in `package.json` and push a tag such as `v0.2.0`.
+The GitHub workflow builds the Windows zip and attaches it to a release. You can also build it
+locally with `npm run package` (Windows; output in `dist/`).
+
+## Files
+
+* `server.js`: web server, course list, OpenConnect listener (port 921), and live events to
+  the browser
+* `lib/builder.js`: builds a playable course from OpenStreetMap
+* `lib/realdata.js`: OpenStreetMap search/download, elevation (USGS 3DEP or global tiles), terrain grid
+* `lib/imagery.js`, `lib/buildings.js`, `lib/paths.js`: aerial imagery (NAIP / Esri), buildings
+  and cart paths, cached per course
+* `lib/coursephoto.js`: finds a picture for each course
+* `public/js/course.js`: course file + real data → terrain, surfaces and hazards
+* `public/js/physics.js`: flight, bounce and roll
+* `public/js/collision.js`: the Jolt Physics collision world (terrain, trunks, buildings, flagstick)
+* `public/js/scene.js`: three.js WebGPU rendering (terrain shading in TSL)
+* `public/js/main.js`: menu, game flow, rules and HUD
+* `public/builder.html`, `public/editor.html` (+ `js/builder.js`, `js/editor.js`, `js/coursefile.js`):
+  the builder and editor pages
+* `test/`: physics calibration, a course-map renderer and a fake launch monitor
+* `scripts/package-win.ps1`: builds the portable Windows zip

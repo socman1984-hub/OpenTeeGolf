@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OpenTeeGolf</title>
+  <link rel="stylesheet" href="/style.css">
+  <script type="importmap">
+    { "imports": { "three": "/vendor/three/build/three.webgpu.js", "three/webgpu": "/vendor/three/build/three.webgpu.js", "three/tsl": "/vendor/three/build/three.tsl.js", "three/addons/": "/vendor/three/examples/jsm/", "jolt-physics": "/vendor/jolt/jolt-physics.wasm-compat.js" } }
+  </script>
+</head>
+<body>
+  <div id="view"></div>
+
+  <!-- Course / round setup -->
+  <div id="menu" class="overlay">
+    <div class="menu-card">
+      <h1>OpenTeeGolf</h1>
+      <p class="sub" id="courses-dir">Free, open-source golf simulator for the Mevo+</p>
+      <div id="course-tools" class="course-tools hidden">
+        <input id="course-search" type="search" placeholder="Search your courses by name or place…" autocomplete="off">
+        <select id="course-sort" title="Sort">
+          <option value="played">Recently played</option><option value="name">Name A–Z</option>
+          <option value="built">Newest built</option><option value="location">Location</option>
+        </select>
+        <button id="fav-filter" class="chip" title="Show favorites only">★ Favorites</button>
+        <span id="course-count" class="muted"></span>
+      </div>
+      <div id="course-list" class="course-list"><div class="muted">Loading courses…</div></div>
+      <h2 class="round-title">Round at <span id="selected-name">…</span></h2>
+      <div class="settings">
+        <label>Tees <select id="opt-tee"></select></label>
+        <label>Pins <select id="opt-pin">
+          <option>Thursday</option><option>Friday</option><option selected>Saturday</option><option>Sunday</option>
+        </select></label>
+        <label>Units <select id="opt-units"><option value="yd">Yards</option><option value="m">Meters</option></select></label>
+        <label>Green speed (stimp) <input id="opt-stimp" type="number" min="6" max="14" step="0.5" value="10"></label>
+        <label>Weather <select id="opt-weather">
+          <option value="live">Live (real weather at the course)</option>
+          <option value="calm">Calm and sunny</option><option value="breezy" selected>Breezy</option>
+          <option value="windy">Windy</option><option value="rain">Rain</option><option value="custom">Custom</option>
+        </select></label>
+        <label class="custom-wx">Wind (mph) <input id="opt-wind" type="number" min="0" max="40" value="8"></label>
+        <label class="custom-wx">Wind from <select id="opt-winddir">
+          <option value="0">Into you</option><option value="180">Behind you</option>
+          <option value="90">Right → left</option><option value="270">Left → right</option><option value="rand">Random</option>
+        </select></label>
+        <label>Gimme <select id="opt-gimme">
+          <option value="0" selected>Off</option><option value="0.9144">3 ft</option><option value="1.8288">6 ft</option><option value="3.048">10 ft</option>
+        </select></label>
+        <label>Putting <select id="opt-putting">
+          <option value="normal">Normal (putt everything)</option><option value="auto">Auto-putt (hole ends on the green)</option>
+        </select></label>
+        <label class="autoputt-opt">Auto-putt 1-putt circle <select id="opt-autoputt-r">
+          <option value="1.8288">6 ft</option><option value="3.048" selected>10 ft</option><option value="4.572">15 ft</option><option value="6.096">20 ft</option>
+        </select></label>
+        <label>Start hole <select id="opt-start"></select></label>
+        <label>Graphics <select id="opt-quality">
+          <option value="high">High</option><option value="balanced" selected>Balanced</option><option value="performance">Performance</option>
+        </select></label>
+        <label class="check"><input id="opt-fps" type="checkbox"> Show FPS (P)</label>
+        <label class="check"><input id="opt-traces" type="checkbox" checked> Previous shot traces (H)</label>
+        <label id="opt-terrain-wrap" class="hidden">Terrain <select id="opt-terrain">
+          <option value="real">Real (USGS lidar + OpenStreetMap)</option><option value="gen">Simplified (no terrain data)</option>
+        </select></label>
+      </div>
+      <div class="menu-actions">
+        <button id="btn-start" class="primary" disabled>Tee off</button>
+        <a href="/builder.html" class="menu-link">+ Build a course from OpenStreetMap</a>
+      </div>
+    </div>
+  </div>
+
+  <div id="loading" class="overlay hidden"><div class="spinner"></div><div id="loading-text">Building course…</div></div>
+
+  <!-- HUD -->
+  <div id="hud" class="hidden">
+    <div id="hole-card" class="panel">
+      <div class="hole-num">Hole <span id="h-num">1</span></div>
+      <div class="hole-meta"><span>Par <b id="h-par">4</b></span><span id="h-len"></span><span>HCP <b id="h-hcp"></b></span></div>
+      <div class="hole-play"><div><small>Shot</small><b id="h-stroke">1</b></div><div><small>To pin</small><b id="h-topin">—</b></div><div><small>Lie</small><b id="h-lie">Tee</b></div></div>
+      <div class="hole-total">Round: <b id="h-total">E</b></div>
+    </div>
+
+    <div id="status" class="panel">
+      <div class="lm"><span id="lm-dot" class="dot"></span><span id="lm-text">Mevo+ not connected</span></div>
+      <label>Club <select id="club"></select></label>
+      <div id="wind" class="wind"><span id="wind-arrow">➤</span> <span id="wind-text">Calm</span></div>
+      <div id="weather-text" class="wx muted"></div>
+    </div>
+
+    <canvas id="minimap" width="440" height="640"></canvas>
+    <button id="free-btn" class="free-btn">Free view (F)</button>
+    <div id="free-help" class="free-help panel hidden"><b>Free view</b> · drag to move · right-drag to turn · scroll to zoom · WASD fly, Q/E down/up, Shift faster · click the ground to aim · click the minimap to fly there · F or Esc to return</div>
+    <div id="credits"></div>
+    <div id="perf" class="panel hidden"></div>
+
+    <div id="shot-data" class="panel">
+      <div class="tile"><small>Ball speed</small><b id="d-speed">—</b><i>mph</i></div>
+      <div class="tile"><small>Launch</small><b id="d-vla">—</b><i>deg</i></div>
+      <div class="tile"><small>Direction</small><b id="d-hla">—</b><i>deg</i></div>
+      <div class="tile"><small>Spin</small><b id="d-spin">—</b><i>rpm</i></div>
+      <div class="tile"><small>Spin axis</small><b id="d-axis">—</b><i>deg</i></div>
+      <div class="tile hi"><small>Carry</small><b id="d-carry">—</b><i class="unit">yd</i></div>
+      <div class="tile hi"><small>Total</small><b id="d-total">—</b><i class="unit">yd</i></div>
+      <div class="tile"><small>Offline</small><b id="d-off">—</b><i class="unit">yd</i></div>
+      <div class="tile"><small>Apex</small><b id="d-apex">—</b><i class="unit">yd</i></div>
+    </div>
+
+    <div id="banner" class="hidden"></div>
+    <div id="toast" class="hidden"></div>
+
+    <div id="keys">Click ground or minimap to aim · ←/→ fine aim · F free view · G green grid · P FPS · H traces · R reset aim · V overview · Space skip · M mulligan · T test shot · C scorecard · N next hole · Esc menu</div>
+  </div>
+
+  <!-- Test shot panel -->
+  <div id="test-panel" class="panel hidden">
+    <h3>Test shot <small>(no launch monitor needed)</small></h3>
+    <div class="presets">
+      <button data-p="driver">Driver</button><button data-p="7i">7 iron</button><button data-p="pw">Wedge</button>
+      <button data-p="chip">Chip</button><button data-p="putt">Putt</button>
+    </div>
+    <div class="grid">
+      <label>Ball speed (mph)<input id="t-speed" type="number" step="0.1" value="150"></label>
+      <label>Launch (deg)<input id="t-vla" type="number" step="0.1" value="12"></label>
+      <label>Direction (deg, +R)<input id="t-hla" type="number" step="0.1" value="0"></label>
+      <label>Total spin (rpm)<input id="t-spin" type="number" step="10" value="2700"></label>
+      <label>Spin axis (deg, +R)<input id="t-axis" type="number" step="0.1" value="0"></label>
+    </div>
+    <button id="t-hit" class="primary">Hit</button>
+    <p class="muted">Putt preset uses the distance to the hole.</p>
+  </div>
+
+  <!-- Scorecard -->
+  <div id="scorecard" class="overlay hidden">
+    <div class="menu-card wide">
+      <h2 id="sc-title">Scorecard</h2>
+      <div id="sc-table"></div>
+      <div class="row"><button id="sc-close">Close</button><button id="sc-next" class="primary hidden">Next hole</button></div>
+    </div>
+  </div>
+
+  <script type="module" src="/js/main.js"></script>
+</body>
+</html>

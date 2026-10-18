@@ -1,0 +1,28 @@
+{
+  "name": "openteegolf",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "description": "Free, open-source golf simulator for the FlightScope Mevo+ (three.js WebGPU + Jolt Physics) that plays any course mapped in OpenStreetMap",
+  "license": "GPL-3.0-or-later",
+  "homepage": "https://github.com/socman1984-hub/OpenTeeGolf",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/socman1984-hub/OpenTeeGolf.git"
+  },
+  "bugs": {
+    "url": "https://github.com/socman1984-hub/OpenTeeGolf/issues"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "test": "node test/physics-test.js && node test/collision-test.js",
+    "package": "powershell -ExecutionPolicy Bypass -File scripts/package-win.ps1"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "jolt-physics": "1.1.0",
+    "three": "0.186.1"
+  }
+}

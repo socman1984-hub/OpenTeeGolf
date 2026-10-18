@@ -1,0 +1,20 @@
+# Dependencies and build output
+node_modules/
+dist/
+
+# Built courses, downloaded imagery and caches (third-party data; each player builds their own)
+courses/
+data/
+*.sat/
+*.real.json
+*.course.json
+*.GKD
+*.gkd
+*.gspcrse
+
+# Local-only files
+local/
+.claude/
+*.log
+.DS_Store
+Thumbs.db
