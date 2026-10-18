@@ -13,7 +13,7 @@ import { LineGeometry } from 'three/addons/lines/LineGeometry.js';
 import { MapControls } from 'three/addons/controls/MapControls.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { noise, pointInPoly } from './course.js';
-import { Forest, treesFromCanopy, assignSpecies, fade, impostorLight } from './trees.js';
+import { Forest, treesFromCanopy, assignSpecies, addMappedTrees, fade, impostorLight } from './trees.js';
 
 const T = (x, y, z) => new THREE.Vector3(-x, y, z);
 const TEX_RES = 1.5; // meters per texel of the generated (no imagery) course texture
@@ -244,6 +244,7 @@ export class CourseScene {
     if (canopy) this.addTreesFromCanopy(course, canopy);
     else if (sat) this.addTreesFromImagery(course, sat);
     else this.addTrees(course);
+    this.addOsmTrees(course, canopy);
     await this.plantForest(course, this.pendingTrees || [], progress);
     if (sat) this.addNativeGrass(course, sat);
     if (buildings.length) this.addBuildings(course, buildings);
@@ -880,6 +881,27 @@ export class CourseScene {
     this.pendingTrees = trees;
   }
 
+  // Trees mapped in OpenStreetMap (single trees and tree rows), merged with the ones found above
+  addOsmTrees(course, canopy) {
+    if (!course.trees?.length && !course.treeRows?.length) return;
+    const trees = (this.pendingTrees ||= []);
+    // Canopy height near a point: the tallest reading within 2 m
+    const heightAt = canopy ? (x, z) => {
+      let top = 0;
+      for (let dj = -2; dj <= 2; dj++) for (let di = -2; di <= 2; di++) {
+        const i = Math.floor((x - canopy.minX) / canopy.res) + di, j = Math.floor((canopy.maxZ - z) / canopy.res) + dj;
+        if (i >= 0 && j >= 0 && i < canopy.w && j < canopy.h) top = Math.max(top, canopy.heights[j * canopy.w + i]);
+      }
+      return top;
+    } : null;
+    // Not on greens, tees, bunkers, water or cart paths (or off the terrain)
+    const NO = new Set(['green', 'fringe', 'tee', 'sand', 'water', 'path']);
+    const allowed = (x, z) => course.heightAt(x, z) !== null && !NO.has(this.fastSurface(x, z)) && !NO.has(course.surfaceAt(x, z));
+    const { added, matched } = addMappedTrees(trees, course.trees, course.treeRows, { heightAt: heightAt || undefined, allowed });
+    if (added) assignSpecies(trees, this.photoAt());
+    this.osmTrees = { added, matched };
+  }
+
   async plantForest(course, trees, progress = async () => {}) {
     // Very wooded courses: keep the trees nearest the holes
     const max = Math.round(40000 * (this.quality?.trees ?? 1));
@@ -902,7 +924,8 @@ export class CourseScene {
     this.forest.quality = this.quality?.name || 'balanced';
     // Tree models and their distant pictures are made once per session
     await this.forest.prepare(this.renderer, progress);
-    await progress('trees-place', 'Planting trees', 0, 0, `${trees.length.toLocaleString()} trees`);
+    const osm = this.osmTrees?.added ? ` (${this.osmTrees.added.toLocaleString()} from OpenStreetMap)` : '';
+    await progress('trees-place', 'Planting trees', 0, 0, `${trees.length.toLocaleString()} trees${osm}`);
     this.forest.build(trees, (x, z) => course.heightAt(x, z), (m) => this.applyEnvIntensity(m));
     this.forest.update(this.camera, true);
     this.updateImpostorLight();

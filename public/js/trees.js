@@ -88,6 +88,52 @@ export function treesFromCanopy(cm, allowed) {
   return out;
 }
 
+// Trees people have mapped in OpenStreetMap (single trees, and tree rows sampled every 7 m) added
+// to the ones already found (canopy map or imagery). A mapped tree with a found tree within a few
+// metres is that tree (OSM positions are often a few metres off), so nothing is added - though a
+// needle-leaved tag still makes it a conifer. Otherwise a tree goes in at the mapped spot: as tall
+// as the canopy map says there, else the mapped height, else a typical one.
+// heightAt(x, z) -> canopy height in m (or 0/null); allowed(x, z) rules out greens, bunkers, etc.
+export function addMappedTrees(trees, mapped, rows, { heightAt = () => 0, allowed = () => true } = {}) {
+  const cell = 6, grid = new Map(), key = (a, b) => a * 73856093 ^ b * 19349663;
+  const put = (t) => { const k = key(Math.floor(t.x / cell), Math.floor(t.z / cell)); if (!grid.has(k)) grid.set(k, []); grid.get(k).push(t); };
+  const nearest = (x, z) => {
+    let best = null, bd = Infinity;
+    const gx = Math.floor(x / cell), gz = Math.floor(z / cell);
+    for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) {
+      for (const t of grid.get(key(gx + a, gz + b)) || []) { const d = Math.hypot(t.x - x, t.z - z); if (d < bd) { bd = d; best = t; } }
+    }
+    return [best, bd];
+  };
+  for (const t of trees) put(t);
+  const spots = [];
+  for (const m of mapped || []) spots.push({ x: m[0], z: m[1], h: m[2] ?? null, c: m[3] ?? null, leaf: m[4] ?? null });
+  for (const row of rows || []) {
+    for (let i = 1; i < row.length; i++) {
+      const [ax, az] = row[i - 1], [bx, bz] = row[i], len = Math.hypot(bx - ax, bz - az), n = Math.max(1, Math.round(len / 7));
+      for (let k = i === 1 ? 0 : 1; k <= n; k++) spots.push({ x: ax + ((bx - ax) * k) / n, z: az + ((bz - az) * k) / n, row: true });
+    }
+  }
+  let added = 0, matched = 0;
+  for (const s of spots) {
+    const [near, d] = nearest(s.x, s.z);
+    if (near && d < Math.max(s.row ? 4 : 3, near.r * 0.7)) {
+      matched++;
+      if (s.leaf === 'n' && !near.mapped) near.kind = 'pine';
+      continue;
+    }
+    if (!allowed(s.x, s.z)) continue;
+    const n = hash(s.x, s.z, 11.3), canopy = heightAt(s.x, s.z) || 0;
+    const h = canopy >= 3 ? canopy : s.h || (s.leaf === 'n' ? 12 : 10) + n * 6;
+    const r = s.c ? Math.min(8, Math.max(1.2, s.c / 2)) : Math.min(6, Math.max(1.8, h * (s.leaf === 'n' ? 0.2 : 0.33)));
+    const t = { x: s.x, z: s.z, h, r, kind: s.leaf === 'n' ? 'pine' : null, mapped: true };
+    trees.push(t);
+    put(t);
+    added++;
+  }
+  return { added, matched };
+}
+
 // Species: narrow crowns or dark blue-green canopy in the photo read as conifers; the rest is a
 // deterministic mix of broadleaf trees. photo(x, z) -> [r, g, b] or null.
 export function assignSpecies(trees, photo) {
@@ -236,7 +282,8 @@ function leafMaterial(src, v) {
   });
   m.color.setRGB(0.6, 0.68, 0.5); // shaded inside the crown, and a richer summer green
   m.envMapIntensity = 0.45;
-  if (v.green && src.map) m.colorNode = greenLeaves(texture(src.map, uv()).rgb).mul(vec3(0.6, 0.68, 0.5));
+  // (keep the picture's alpha: a vec3 colour alone would make every leaf card a solid square)
+  if (v.green && src.map) { const tx = texture(src.map, uv()); m.colorNode = vec4(greenLeaves(tx.rgb).mul(vec3(0.6, 0.68, 0.5)), tx.a); }
   // Leaves sway a little, the tops most, each tree in its own rhythm
   const phase = float(instanceIndex).mul(1.618).fract().mul(6.283);
   const sway = positionLocal.y.mul(0.0035);
@@ -275,7 +322,7 @@ async function bakeImpostors(renderer, models, onProgress) {
       new THREE.MeshBasicNodeMaterial({ map: leafMap, alphaTest: 0.5, side: THREE.DoubleSide }),
     ];
     albedoMats[1].color.setRGB(0.6, 0.68, 0.5);
-    if (v.green && leafMap) albedoMats[1].colorNode = greenLeaves(texture(leafMap, uv()).rgb).mul(vec3(0.6, 0.68, 0.5));
+    if (v.green && leafMap) { const tx = texture(leafMap, uv()); albedoMats[1].colorNode = vec4(greenLeaves(tx.rgb).mul(vec3(0.6, 0.68, 0.5)), tx.a); }
     const normalMat = (map, side) => {
       const n = new THREE.MeshBasicNodeMaterial({ side, alphaTest: map ? 0.5 : 0 });
       n.colorNode = normalView.mul(side === THREE.DoubleSide ? faceDirection : 1).mul(0.5).add(0.5);

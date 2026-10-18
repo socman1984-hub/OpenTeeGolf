@@ -482,7 +482,9 @@ export function buildCourse(courseData, real = null) {
     waterBodies: real && feats.some((f) => f.surface === 'water' && f.level != null)
       ? feats.filter((f) => f.surface === 'water' && !f.inner && f.level != null).map((f) => ({ poly: f.poly, level: f.level }))
       : hazards.filter((h) => !h.innerOOB).map((h) => ({ poly: h.poly, level: h.level })),
+    // Trees mapped in OpenStreetMap: single trees ([x, z, height?, crown?, leaf?]) and tree rows (lines)
     trees: real?.trees || [],
+    treeRows: real?.treeRows || [],
     // Mapped surface polygons ({ surface, poly, inner }) for painting the terrain
     features: feats,
     paths: real?.paths || [],
