@@ -772,6 +772,8 @@ export class CourseScene {
       // World-space UVs so the ripples have a consistent scale
       const p = g.attributes.position, uv = g.attributes.uv;
       for (let i = 0; i < p.count; i++) uv.setXY(i, p.getX(i) / 14, p.getZ(i) / 14);
+      // Rivers slope: each point of the surface at the level there
+      if (wb.levelAt) for (let i = 0; i < p.count; i++) p.setY(i, wb.levelAt(-p.getX(i), p.getZ(i)) - wb.level);
       const m = new THREE.Mesh(g, this.waterMat);
       m.position.y = wb.level;
       m.receiveShadow = true;

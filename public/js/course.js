@@ -199,7 +199,9 @@ export function buildCourse(courseData, real = null) {
         // Mapped outlines are often a few straight segments; real turf edges are curved
         const poly = smoothPoly(f.pts);
         const xs = poly.map((p) => p[0]), zs = poly.map((p) => p[1]);
-        feats.push({ surface, poly, raw: f.pts, inner: !!f.hole, bbox: [Math.min(...xs), Math.min(...zs), Math.max(...xs), Math.max(...zs)] });
+        // (river pieces are already smooth ribbons; smoothing would pull their ends apart)
+        if (f.flow) poly.splice(0, poly.length, ...f.pts);
+        feats.push({ surface, poly, raw: f.pts, inner: !!f.hole, flow: !!f.flow, bbox: [Math.min(...xs), Math.min(...zs), Math.max(...xs), Math.max(...zs)] });
       }
     }
     feats.forEach((f, idx) => addBox(f.bbox[0] - 2, f.bbox[1] - 2, f.bbox[2] + 2, f.bbox[3] + 2, 'feats', idx));
@@ -368,9 +370,25 @@ export function buildCourse(courseData, real = null) {
   // ---- heightfield
   const heights = real ? decodeF32(real.grid.heights) : new Float32Array(nx * nz);
   if (real) {
-    // Sit mapped water below its banks so the water surface covers it
+    // Sit mapped water below its banks so the water surface covers it. Ponds and lakes lie flat;
+    // rivers and streams slope: their level at any point comes from the banks within 40 m.
+    const flowing = feats.filter((f) => f.surface === 'water' && !f.inner && f.flow);
+    const bankPts = flowing.flatMap((f) => f.poly.map(([x, z]) => [x, z, sampleGrid(x, z)]).filter((p) => p[2] !== null));
+    const bankLevel = (x, z) => {
+      let hs = bankPts.filter((p) => Math.abs(p[0] - x) < 40 && Math.abs(p[1] - z) < 40 && Math.hypot(p[0] - x, p[1] - z) < 40).map((p) => p[2]);
+      if (hs.length < 3) hs = bankPts.map((p) => [Math.hypot(p[0] - x, p[1] - z), p[2]]).sort((a, b) => a[0] - b[0]).slice(0, 6).map((p) => p[1]);
+      hs.sort((a, b) => a - b);
+      return hs.length ? hs[Math.floor(hs.length * 0.2)] - 0.1 : 0;
+    };
     for (const f of feats) {
       if (f.surface !== 'water' || f.inner) continue;
+      if (f.flow && bankPts.length) {
+        f.levelAt = coarseLevels(f.bbox, bankLevel);
+        const ls = f.poly.map(([x, z]) => f.levelAt(x, z));
+        f.level = ls.reduce((a, b) => a + b, 0) / ls.length;
+        carveShore(f.poly, f.bbox, f.levelAt);
+        continue;
+      }
       const bank = f.poly.map(([x, z]) => sampleGrid(x, z)).filter((v) => v !== null).sort((a, b) => a - b);
       if (!bank.length) continue;
       f.level = bank[Math.floor(bank.length * 0.2)] - 0.1;
@@ -381,8 +399,24 @@ export function buildCourse(courseData, real = null) {
   // Shape the ground around a pond into a bank that meets the water exactly on its outline:
   // sloping down into the water inside, rising gently outside. An abrupt step at the edge would
   // cut the water surface in a saw-tooth along the terrain mesh instead of a smooth shoreline.
+  // A level function over a box from a coarse 8 m grid of samples (bilinear between them)
+  function coarseLevels(bbox, fn) {
+    const S = 8, x0 = bbox[0] - 8, z0 = bbox[1] - 8;
+    const w = Math.ceil((bbox[2] + 8 - x0) / S) + 1, h = Math.ceil((bbox[3] + 8 - z0) / S) + 1;
+    const g = new Float32Array(w * h);
+    for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) g[j * w + i] = fn(x0 + i * S, z0 + j * S);
+    return (x, z) => {
+      const fx = Math.min(w - 1.001, Math.max(0, (x - x0) / S)), fz = Math.min(h - 1.001, Math.max(0, (z - z0) / S));
+      const i = Math.floor(fx), j = Math.floor(fz), u = fx - i, v = fz - j;
+      const a = g[j * w + i], b = g[j * w + i + 1], c = g[(j + 1) * w + i], d = g[(j + 1) * w + i + 1];
+      return (a * (1 - u) + b * u) * (1 - v) + (c * (1 - u) + d * u) * v;
+    };
+  }
+
+  // (level: a number, or a function of position for sloping water)
   function carveShore(poly, bbox, level) {
     const pad = 7;
+    const levelAt = typeof level === 'function' ? level : () => level;
     const i0 = Math.max(0, Math.floor((bbox[0] - pad - minX) / cell)), i1 = Math.min(nx - 1, Math.ceil((bbox[2] + pad - minX) / cell));
     const j0 = Math.max(0, Math.floor((bbox[1] - pad - minZ) / cell)), j1 = Math.min(nz - 1, Math.ceil((bbox[3] + pad - minZ) / cell));
     for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
@@ -391,7 +425,8 @@ export function buildCourse(courseData, real = null) {
       const inside = pointInPoly(poly, x, z);
       if (!inside && e > pad) continue;
       const k = j * nx + i;
-      const target = inside ? level - Math.min(1.8, 0.12 + 0.35 * e) : level + 0.3 * e;
+      const L = levelAt(x, z);
+      const target = inside ? L - Math.min(1.8, 0.12 + 0.35 * e) : L + 0.3 * e;
       heights[k] = Math.min(heights[k], target);
     }
   }
@@ -480,7 +515,7 @@ export function buildCourse(courseData, real = null) {
     sources: real?.source || null,
     // Water drawn on screen: mapped ponds when available, otherwise the penalty areas
     waterBodies: real && feats.some((f) => f.surface === 'water' && f.level != null)
-      ? feats.filter((f) => f.surface === 'water' && !f.inner && f.level != null).map((f) => ({ poly: f.poly, level: f.level }))
+      ? feats.filter((f) => f.surface === 'water' && !f.inner && f.level != null).map((f) => ({ poly: f.poly, level: f.level, levelAt: f.levelAt || null }))
       : hazards.filter((h) => !h.innerOOB).map((h) => ({ poly: h.poly, level: h.level })),
     // Trees mapped in OpenStreetMap: single trees ([x, z, height?, crown?, leaf?]) and tree rows (lines)
     trees: real?.trees || [],
