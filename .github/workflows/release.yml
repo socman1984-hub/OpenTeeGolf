@@ -14,13 +14,26 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # the whole history, for the release notes
       - uses: actions/setup-node@v4
         with:
           node-version: 24
       - run: npm ci
       - run: npm test
       - run: powershell -ExecutionPolicy Bypass -File scripts/package-win.ps1
+      # What's new: the commit titles since the previous version (shown in the game's update banner)
+      - name: Release notes
+        shell: bash
+        run: |
+          prev=$(git describe --tags --abbrev=0 "${GITHUB_REF_NAME}^" 2>/dev/null || true)
+          {
+            echo "## What's new"
+            git log ${prev:+$prev..}${GITHUB_REF_NAME} --no-merges --pretty='- %s' | grep -v '^- Version ' || true
+          } > release-notes.md
+          cat release-notes.md
       - uses: softprops/action-gh-release@v2
         with:
           files: dist/OpenTeeGolf-*-win-x64.zip
+          body_path: release-notes.md
           generate_release_notes: true

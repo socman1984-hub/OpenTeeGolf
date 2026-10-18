@@ -24,7 +24,23 @@ select option { background: #1b261d; }
 .menu-card { background: #142017; border: 1px solid var(--line); border-radius: 14px; padding: 24px 28px; width: min(720px, 100%); max-height: 100%; overflow: auto; box-shadow: 0 20px 60px rgba(0,0,0,0.5); }
 .menu-card.wide { width: min(980px, 100%); }
 .menu-card h1 { margin: 0; font-size: 30px; letter-spacing: 0.5px; }
+.menu-title { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.discord-link { margin-left: auto; display: inline-flex; align-items: center; gap: 7px; padding: 6px 12px; border-radius: 8px; background: #5865f2; color: #fff; font-size: 13px; font-weight: 600; text-decoration: none; }
+.discord-link:hover { filter: brightness(1.1); }
+.discord-link svg { width: 16px; height: 16px; }
 .menu-card .sub { margin: 4px 0 18px; color: var(--muted); }
+/* New version available */
+.update-bar { margin: -6px 0 16px; padding: 12px 14px; border-radius: 10px; background: rgba(63,174,99,0.14); border: 1px solid rgba(63,174,99,0.55); }
+.update-head { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; }
+.update-head .muted { font-size: 13px; }
+.update-notes { margin-top: 6px; font-size: 13px; }
+.update-notes summary { cursor: pointer; color: #9fd7ff; }
+.update-notes pre { white-space: pre-wrap; font: 12px/1.5 system-ui, sans-serif; color: var(--muted); max-height: 180px; overflow: auto; margin: 6px 0 0; }
+.update-progress { height: 6px; border-radius: 3px; background: rgba(255,255,255,0.1); margin-top: 10px; overflow: hidden; }
+.update-progress div { height: 100%; width: 0; background: #3fae63; transition: width 0.25s; }
+.update-actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+.menu-foot { margin-top: 16px; font-size: 12px; text-align: center; }
+.menu-foot a { color: #9fd7ff; }
 .course-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 10px; }
 .course-tools #course-search { flex: 1 1 240px; min-width: 0; padding: 8px 10px; }
 .chip { padding: 6px 12px; border-radius: 999px; font-size: 13px; }

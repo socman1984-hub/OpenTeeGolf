@@ -16,6 +16,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { normalizeSpin } from './public/js/physics.js';
 import { searchCourses, withFreshOsm } from './lib/realdata.js';
+import { VERSION, checkForUpdate, installUpdate, canInstall, cleanUpAfterUpdate } from './lib/updater.js';
 import { checkCourse, buildCourse, BUILT_DIR } from './lib/builder.js';
 import { geoFor, ensureSatellite } from './lib/imagery.js';
 import { ensureBuildings } from './lib/buildings.js';
@@ -585,6 +586,26 @@ const httpServer = http.createServer(async (req, res) => {
       } catch (err) { return json(res, { error: err.message }, 502); }
       return json(res, { ok: true, state: mevo?.state || 'off' });
     }
+    if (p === '/api/version') {
+      // This version, and the newest release if it's newer (checked on GitHub every few hours)
+      let update = null;
+      try { update = await checkForUpdate({ force: url.searchParams.get('check') === '1' }); } catch (err) { update = { error: err.message }; }
+      return json(res, { version: VERSION, update, canInstall: canInstall() });
+    }
+    if (p === '/api/update/install' && req.method === 'POST') {
+      // Download and install the newest release, then restart (progress as 'update' events)
+      try {
+        const r = await installUpdate((p2) => broadcast('update', p2));
+        broadcast('update', { stage: 'restart', msg: `Restarting with ${r.version}…` });
+        json(res, { ok: true, version: r.version });
+        console.log(`Updating to ${r.version}: the game restarts in a moment.`);
+        setTimeout(() => process.exit(0), 800);
+      } catch (err) {
+        broadcast('update', { stage: 'error', msg: err.message });
+        json(res, { error: err.message }, 400);
+      }
+      return;
+    }
     if (p === '/api/mevo/log') {
       res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8', 'Content-Disposition': 'attachment; filename="mevo-log.txt"' });
       return fs.createReadStream(MEVO_LOG).on('error', () => res.end('(no log yet)')).pipe(res);
@@ -717,7 +738,9 @@ httpServer.on('error', (err) => {
   process.exit(1);
 });
 httpServer.listen(HTTP_PORT, () => {
-  console.log(`OpenTeeGolf running at http://localhost:${HTTP_PORT}`);
+  console.log(`OpenTeeGolf ${VERSION} running at http://localhost:${HTTP_PORT}`);
+  cleanUpAfterUpdate();
+  checkForUpdate().then((u) => { if (u.available) console.log(`A new version is available: ${u.latest} (you have ${VERSION}). Update from the game's menu.`); }).catch(() => {});
   console.log(`Courses folder: ${BUILT_DIR} (${findCourses().length} course(s) found)`);
 });
 

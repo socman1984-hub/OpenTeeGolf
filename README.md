@@ -10,6 +10,8 @@ ball-flight model calibrated to launch monitor data.
 OpenTeeGolf is licensed under the **GNU GPL v3** (see [LICENSE](LICENSE)). You can use, study,
 change and share it, and any version you share must stay open source under the same license.
 
+**Website:** https://socman1984-hub.github.io/OpenTeeGolf/ · **Discord:** https://discord.gg/YNsyWkCayd
+
 ## Download and play (Windows)
 
 1. Download the latest `OpenTeeGolf-<version>-win-x64.zip` from the [Releases page](https://github.com/socman1984-hub/OpenTeeGolf/releases).
@@ -19,6 +21,14 @@ change and share it, and any version you share must stay open source under the s
 Nothing else needs to be installed: the zip includes Node.js. The first time, Windows may show
 **"Windows protected your PC"**: click *More info → Run anyway*. When the Windows Firewall asks
 about Node.js, allow it on private networks so the Mevo+ app can send shots.
+
+### Updates
+
+When a new version is released, the game's menu says so. Click **Update now**: the game downloads
+the new zip from GitHub, checks it against the fingerprint (SHA-256) GitHub publishes, swaps in the
+new files and restarts. Your built courses (`courses/`) and settings (`data/`) are kept. The bottom
+of the menu shows your version and has **Check for updates**. (A copy run from source, such as a
+git checkout, only shows that an update exists; update it with `git pull`.)
 
 ## Browser
 
@@ -322,7 +332,8 @@ They contain third-party data with their own licences; anyone can rebuild a cour
 
 ## Contributing
 
-Bug reports and pull requests are welcome. Before sending a change:
+Bug reports and pull requests are welcome, and the [Discord](https://discord.gg/YNsyWkCayd) is the
+place for questions and ideas. Before sending a change:
 
 ```bash
 npm test                                    # ball-flight calibration + Jolt collision checks

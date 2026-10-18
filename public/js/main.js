@@ -38,6 +38,79 @@ const scene = new CourseScene($('view'));
 scene.onFrame = (dt) => tick(dt);
 scene.onDeviceLost = () => toast('The graphics card reset. Reload the page (F5) to keep playing.', 600000);
 
+// ------------------------------------------------------------------ updates
+
+// A newer release on GitHub: offered at the top of the menu (until "Later" for that version).
+// Release copies install it themselves and restart; others link to the download.
+const updates = { info: null, busy: false };
+async function checkUpdates(force = false) {
+  const r = await fetch(`/api/version${force ? '?check=1' : ''}`).then((x) => x.json()).catch(() => null);
+  if (!r) return null;
+  $('app-version').textContent = `OpenTeeGolf ${r.version}`;
+  updates.info = r;
+  const u = r.update;
+  if (u?.available && (force || store.get('golfsim.skipVersion') !== u.latest)) showUpdate(r);
+  return r;
+}
+function showUpdate(r) {
+  const u = r.update;
+  $('update-title').textContent = `OpenTeeGolf ${u.latest} is available`;
+  $('update-sub').textContent = `You have ${r.version}${u.published ? ` · released ${new Date(u.published).toLocaleDateString()}` : ''}`;
+  // Release notes, as plain text (commit titles)
+  const notes = (u.notes || '').replace(/\*\*/g, '').replace(/^#+\s*/gm, '').trim();
+  $('update-notes-text').textContent = notes;
+  $('update-notes').classList.toggle('hidden', !notes);
+  $('update-now').classList.toggle('hidden', !r.canInstall || !u.asset);
+  $('update-download').classList.toggle('hidden', r.canInstall && !!u.asset);
+  $('update-download').href = u.url;
+  $('update-bar').classList.remove('hidden');
+}
+$('update-later').onclick = () => {
+  if (updates.info?.update?.latest) store.set('golfsim.skipVersion', updates.info.update.latest);
+  $('update-bar').classList.add('hidden');
+};
+$('check-updates').onclick = async (e) => {
+  e.preventDefault();
+  $('check-updates').textContent = 'Checking…';
+  const r = await checkUpdates(true);
+  $('check-updates').textContent = !r ? 'Couldn’t check' : r.update?.error ? 'Couldn’t reach GitHub' : r.update?.available ? 'Update available ↑' : 'You have the newest version';
+};
+$('update-now').onclick = async () => {
+  const u = updates.info?.update;
+  if (!u || updates.busy) return;
+  if (!confirm(`Update OpenTeeGolf to ${u.latest}?\n\nIt downloads about ${Math.round((u.asset?.size || 0) / 1e6)} MB, then the game restarts. Your courses and settings are kept.`)) return;
+  updates.busy = true;
+  $('update-now').disabled = $('update-later').disabled = true;
+  $('update-progress').classList.remove('hidden');
+  $('update-sub').textContent = 'Starting…';
+  const r = await fetch('/api/update/install', { method: 'POST' }).then((x) => x.json()).catch(() => ({ restarting: true }));
+  if (r.error) {
+    $('update-sub').textContent = r.error;
+    $('update-now').disabled = $('update-later').disabled = false;
+    updates.busy = false;
+    return;
+  }
+  // The game restarts: wait for the new version to answer, then reload the page
+  $('update-sub').textContent = `Restarting with ${u.latest}… this page reloads by itself`;
+  $('update-fill').style.width = '100%';
+  const t0 = Date.now();
+  const poll = async () => {
+    const v = await fetch('/api/version').then((x) => x.json()).catch(() => null);
+    if (v?.version === u.latest) return location.reload();
+    if (Date.now() - t0 > 180000) { $('update-sub').textContent = 'Taking longer than expected. If the game window closed, start it again with "Start OpenTeeGolf".'; return; }
+    setTimeout(poll, 1500);
+  };
+  setTimeout(poll, 3000);
+};
+function updateEvent(m) {
+  if (!updates.busy) return;
+  if (m.stage === 'download' && m.total) {
+    $('update-fill').style.width = `${Math.round((m.done / m.total) * 90)}%`;
+    $('update-sub').textContent = `Downloading… ${Math.round(m.done / 1e6)} of ${Math.round(m.total / 1e6)} MB`;
+  } else if (m.msg) $('update-sub').textContent = m.msg;
+}
+checkUpdates();
+
 // ------------------------------------------------------------------ menu
 
 // Per-viewer lists kept in the browser: favourite courses and when each was last played
@@ -1278,6 +1351,7 @@ setInterval(renderRadar, 500);
 function connectEvents() {
   const es = new EventSource('/api/events?game=1');
   es.addEventListener('mevo', (e) => radarEvent(JSON.parse(e.data)));
+  es.addEventListener('update', (e) => updateEvent(JSON.parse(e.data)));
   es.addEventListener('shot', (e) => {
     const shot = JSON.parse(e.data);
     if (S.phase === 'menu') return;

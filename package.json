@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Free, open-source golf simulator for the FlightScope Mevo+ (three.js WebGPU + Jolt Physics) that plays any course mapped in OpenStreetMap",
   "license": "GPL-3.0-or-later",
-  "homepage": "https://github.com/socman1984-hub/OpenTeeGolf",
+  "homepage": "https://socman1984-hub.github.io/OpenTeeGolf/",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/socman1984-hub/OpenTeeGolf.git"
