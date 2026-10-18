@@ -520,6 +520,9 @@ export function buildCourse(courseData, real = null) {
     // Trees mapped in OpenStreetMap: single trees ([x, z, height?, crown?, leaf?]) and tree rows (lines)
     trees: real?.trees || [],
     treeRows: real?.treeRows || [],
+    // Trees added in the course editor: single trees ({ x, z, size }) and tree areas ({ pts, density })
+    userTrees: real?.userTrees || [],
+    treeAreas: real?.treeAreas || [],
     // Mapped surface polygons ({ surface, poly, inner }) for painting the terrain
     features: feats,
     paths: real?.paths || [],

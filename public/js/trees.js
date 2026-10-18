@@ -17,122 +17,13 @@ import {
   time, instanceIndex, instancedBufferAttribute, normalView, faceDirection, select,
 } from 'three/tsl';
 import { Tree } from 'ez-tree';
+import { hash, fract1 } from './treeplace.js';
+// Where trees stand (shared with the course editor, which has no 3D)
+export { treesFromCanopy, addMappedTrees, treesInArea, addTreeAreas } from './treeplace.js';
 
 const T = (x, y, z) => new THREE.Vector3(-x, y, z);
-const fract1 = (v) => v - Math.floor(v);
-const hash = (x, z, k = 1) => fract1(Math.sin(x * 12.9898 * k + z * 78.233) * 43758.5453);
 
 // ------------------------------------------------------------------ where trees stand
-
-// Tree tops from a 1 m canopy height grid ({ w, h, minX, maxZ, res, heights: Uint8Array }).
-// Each local high point at least 4 m tall is a tree; its crown reaches out until the canopy
-// drops well below the top (or rises into a neighbour). allowed(x, z) rules out playing surfaces.
-// Trees with open ground beside them are marked edge (the ones a golfer sees).
-export function treesFromCanopy(cm, allowed) {
-  const { w, h, heights: H } = cm;
-  const at = (i, j) => (i < 0 || j < 0 || i >= w || j >= h ? 0 : H[j * w + i]);
-  // Light smoothing so one tree has one top
-  const S = new Float32Array(w * h);
-  for (let j = 1; j < h - 1; j++) for (let i = 1; i < w - 1; i++) {
-    const k = j * w + i;
-    if (H[k] < 3) continue;
-    S[k] = (4 * H[k] + 2 * (H[k - 1] + H[k + 1] + H[k - w] + H[k + w]) + H[k - w - 1] + H[k - w + 1] + H[k + w - 1] + H[k + w + 1]) / 16;
-  }
-  const cand = [];
-  for (let j = 1; j < h - 1; j++) for (let i = 1; i < w - 1; i++) {
-    const k = j * w + i, v = S[k];
-    if (v < 4) continue;
-    if (v < S[k - 1] || v < S[k + 1] || v < S[k - w] || v < S[k + w] || v < S[k - w - 1] || v < S[k - w + 1] || v < S[k + w - 1] || v < S[k + w + 1]) continue;
-    cand.push(k);
-  }
-  cand.sort((a, b) => S[b] - S[a]);
-  // Tallest first; a top too close to a taller tree belongs to it
-  const cell = 4, grid = new Map(), out = [];
-  const key = (gx, gz) => gx * 73856093 ^ gz * 19349663;
-  const dirs = Array.from({ length: 8 }, (_, n) => [Math.cos((n * Math.PI) / 4), Math.sin((n * Math.PI) / 4)]);
-  for (const k of cand) {
-    const i = k % w, j = (k - i) / w;
-    const x = cm.minX + (i + 0.5) * cm.res, z = cm.maxZ - (j + 0.5) * cm.res;
-    let top = 0;
-    for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) top = Math.max(top, at(i + di, j + dj));
-    const minD = Math.max(2.2, top * 0.2);
-    const gx = Math.floor(x / cell), gz = Math.floor(z / cell);
-    let clash = false;
-    for (let a = -2; a <= 2 && !clash; a++) for (let b = -2; b <= 2 && !clash; b++) {
-      for (const t of grid.get(key(gx + a, gz + b)) || []) if (Math.hypot(t.x - x, t.z - z) < minD) { clash = true; break; }
-    }
-    if (clash || !allowed(x, z)) continue;
-    // Crown radius: walk out in 8 directions until the canopy falls away or climbs into another tree
-    let sum = 0;
-    for (const [dx, dz] of dirs) {
-      let r = 1, prev = top;
-      for (; r < 9; r++) {
-        const v = at(Math.round(i + dx * r), Math.round(j - dz * r));
-        if (v < top * 0.55 || v > prev + 1) break;
-        prev = Math.min(prev, v);
-      }
-      sum += r;
-    }
-    const r = Math.min(8, Math.max(1.4, sum / 8));
-    // Edge of a wood: open ground (no canopy) a little beyond the crown in some direction
-    let edge = false;
-    for (const [dx, dz] of dirs) {
-      if (at(Math.round(i + dx * (r + 6)), Math.round(j - dz * (r + 6))) < 2 && at(Math.round(i + dx * (r + 12)), Math.round(j - dz * (r + 12))) < 2) { edge = true; break; }
-    }
-    const t = { x, z, h: top, r, kind: null, edge };
-    out.push(t);
-    const g = key(gx, gz);
-    if (!grid.has(g)) grid.set(g, []);
-    grid.get(g).push(t);
-  }
-  return out;
-}
-
-// Trees people have mapped in OpenStreetMap (single trees, and tree rows sampled every 7 m) added
-// to the ones already found (canopy map or imagery). A mapped tree with a found tree within a few
-// metres is that tree (OSM positions are often a few metres off), so nothing is added - though a
-// needle-leaved tag still makes it a conifer. Otherwise a tree goes in at the mapped spot: as tall
-// as the canopy map says there, else the mapped height, else a typical one.
-// heightAt(x, z) -> canopy height in m (or 0/null); allowed(x, z) rules out greens, bunkers, etc.
-export function addMappedTrees(trees, mapped, rows, { heightAt = () => 0, allowed = () => true } = {}) {
-  const cell = 6, grid = new Map(), key = (a, b) => a * 73856093 ^ b * 19349663;
-  const put = (t) => { const k = key(Math.floor(t.x / cell), Math.floor(t.z / cell)); if (!grid.has(k)) grid.set(k, []); grid.get(k).push(t); };
-  const nearest = (x, z) => {
-    let best = null, bd = Infinity;
-    const gx = Math.floor(x / cell), gz = Math.floor(z / cell);
-    for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) {
-      for (const t of grid.get(key(gx + a, gz + b)) || []) { const d = Math.hypot(t.x - x, t.z - z); if (d < bd) { bd = d; best = t; } }
-    }
-    return [best, bd];
-  };
-  for (const t of trees) put(t);
-  const spots = [];
-  for (const m of mapped || []) spots.push({ x: m[0], z: m[1], h: m[2] ?? null, c: m[3] ?? null, leaf: m[4] ?? null });
-  for (const row of rows || []) {
-    for (let i = 1; i < row.length; i++) {
-      const [ax, az] = row[i - 1], [bx, bz] = row[i], len = Math.hypot(bx - ax, bz - az), n = Math.max(1, Math.round(len / 7));
-      for (let k = i === 1 ? 0 : 1; k <= n; k++) spots.push({ x: ax + ((bx - ax) * k) / n, z: az + ((bz - az) * k) / n, row: true });
-    }
-  }
-  let added = 0, matched = 0;
-  for (const s of spots) {
-    const [near, d] = nearest(s.x, s.z);
-    if (near && d < Math.max(s.row ? 4 : 3, near.r * 0.7)) {
-      matched++;
-      if (s.leaf === 'n' && !near.mapped) near.kind = 'pine';
-      continue;
-    }
-    if (!allowed(s.x, s.z)) continue;
-    const n = hash(s.x, s.z, 11.3), canopy = heightAt(s.x, s.z) || 0;
-    const h = canopy >= 3 ? canopy : s.h || (s.leaf === 'n' ? 12 : 10) + n * 6;
-    const r = s.c ? Math.min(8, Math.max(1.2, s.c / 2)) : Math.min(6, Math.max(1.8, h * (s.leaf === 'n' ? 0.2 : 0.33)));
-    const t = { x: s.x, z: s.z, h, r, kind: s.leaf === 'n' ? 'pine' : null, mapped: true };
-    trees.push(t);
-    put(t);
-    added++;
-  }
-  return { added, matched };
-}
 
 // Species: narrow crowns or dark blue-green canopy in the photo read as conifers; the rest is a
 // deterministic mix of broadleaf trees. photo(x, z) -> [r, g, b] or null.

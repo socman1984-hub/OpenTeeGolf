@@ -37,13 +37,37 @@
         <div id="shape-panel" class="muted small">Click a shape on the map to select it.</div>
       </details>
 
+      <details open>
+        <summary>Trees</summary>
+        <label class="check"><input id="t-show" type="checkbox" checked> Show trees on the map</label>
+        <div id="tree-info" class="muted small"></div>
+        <div class="tree-tool">
+          <button id="t-add">Add trees</button>
+          <select id="t-size" title="Size of the trees you add">
+            <option value="small">Small (about 8 m)</option>
+            <option value="medium" selected>Medium (about 13 m)</option>
+            <option value="large">Large (about 20 m)</option>
+          </select>
+        </div>
+        <div class="tree-tool">
+          <button id="t-area">Draw tree area</button>
+          <select id="t-density" title="How closely trees stand in the area">
+            <option value="sparse">Sparse</option>
+            <option value="medium" selected>Medium</option>
+            <option value="dense">Dense</option>
+          </select>
+        </div>
+        <div class="muted small">Add trees: click the map once per tree. Tree area: click its outline, double-click or Enter to finish; it fills with trees (not on fairways, greens, tees, bunkers or water). Your trees are the bright ones: drag to move, Delete to remove.</div>
+      </details>
+
       <details>
         <summary>Help</summary>
         <ul class="help">
           <li>Drag the map to pan, scroll to zoom.</li>
           <li>Drag tees, pins, aim points and the green center of the selected hole.</li>
           <li>Click a shape to select it. Drag its corners; drag a small circle to add a corner; Alt+click a corner to remove it.</li>
-          <li><b>Delete</b> removes the selected shape · <b>Ctrl+Z</b> undo · <b>Ctrl+S</b> save · <b>Esc</b> cancel.</li>
+          <li>Trees: dark circles are found from tree heights and OpenStreetMap; bright ones are yours. Drag yours to move them.</li>
+          <li><b>Delete</b> removes the selected shape or tree · <b>Ctrl+Z</b> undo · <b>Ctrl+S</b> save · <b>Esc</b> cancel.</li>
         </ul>
       </details>
 

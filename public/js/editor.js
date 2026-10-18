@@ -2,6 +2,7 @@
 // pins) and shapes (greens, fairways, bunkers, tee boxes, water, penalty areas, OOB) can be edited.
 import { makeCourseData, TEE_ORDER, PIN_DAYS } from './coursefile.js';
 import { smoothPoly } from './course.js';
+import { treesFromCanopy, addMappedTrees, addTreeAreas, TREE_SIZES } from './treeplace.js';
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
@@ -17,14 +18,21 @@ const SHAPES = {
   water: { label: 'Water', fill: 'rgba(55,120,175,0.92)', stroke: '#8fd0ff' },
   penalty: { label: 'Penalty area', fill: 'rgba(220,50,40,0.14)', stroke: '#ff5a48' },
   oob: { label: 'Out of bounds', fill: null, stroke: '#ffffff' },
+  trees: { label: 'Tree area', fill: 'rgba(40,120,40,0.25)', stroke: '#8fe37f' },
 };
-const DRAW_ORDER = ['oob', 'fairway', 'tee', 'green', 'bunker', 'water', 'penalty'];
+const DRAW_ORDER = ['oob', 'trees', 'fairway', 'tee', 'green', 'bunker', 'water', 'penalty'];
 const FEATURE_KINDS = ['green', 'fairway', 'bunker', 'tee', 'water'];
 
 let courseData = null, real = null, grid = null, hill = null, photo = null, showPhoto = true;
 let holes = [], shapes = [], passthrough = {};
+// Trees: the ones the game finds (canopy heights, OpenStreetMap) and the player's own
+let userTrees = [];          // [{ x, z, size }]
+let baseTrees = [];          // found trees, for showing
+let shownTrees = [], shownKey = '';
+let showTrees = true;
+const treeOpts = { size: 'medium', density: 'medium' };
 const course = { name: '', location: '', stimp: 10 };
-const sel = { hole: 0, shape: -1 };
+const sel = { hole: 0, shape: -1, tree: -1 };
 const view = { cx: 0, cz: 0, scale: 1 };
 let mode = null;   // { type: 'place', kind, key } | { type: 'draw', kind, pts }
 let drag = null;
@@ -122,6 +130,8 @@ async function load() {
       else passthrough[kind] = list2;
     }
   }
+  for (const a of r?.treeAreas || []) shapes.push({ kind: 'trees', pts: a.pts.map((p) => [...p]), density: a.density || 'medium' });
+  userTrees = (r?.userTrees || []).map((t) => ({ x: t.x, z: t.z, size: t.size || 'medium' }));
   for (const hz of g.Hazards || []) shapes.push({ kind: 'penalty', pts: hz.coords.map((c) => [c.x, c.z]), innerOOB: !!hz.innerOOB });
   if (g.pOOB?.coords?.length > 2) shapes.push({ kind: 'oob', pts: g.pOOB.coords.map((c) => [c.x, c.z]) });
   if (r?.grid) {
@@ -139,7 +149,54 @@ async function load() {
   resize();
   fitHole();
   if (grid) loadPhoto();
+  loadTrees();
 }
+
+// The trees the game will plant: from the canopy height map (if the course has one) and
+// OpenStreetMap, kept off greens, fairways, tees, bunkers and water as in the game
+async function loadTrees() {
+  const NO_CANOPY = new Set(['green', 'fairway', 'tee', 'bunker', 'water']), NO_MAPPED = new Set(['green', 'tee', 'bunker', 'water']);
+  const inShape = (kinds) => (x, z) => shapes.some((s) => kinds.has(s.kind) && !s.inner && pointInPoly(s.pts, x, z));
+  const onCanopyBad = inShape(NO_CANOPY), onMappedBad = inShape(NO_MAPPED);
+  let canopy = null;
+  try {
+    setTreeInfo('Loading tree heights…');
+    const cm = await fetch(`/api/courses/${courseId}/canopy`).then((x) => (x.ok ? x.json() : null));
+    if (cm?.available) {
+      const buf = await fetch(`/api/courses/${courseId}/canopy.bin`).then((x) => (x.ok ? x.arrayBuffer() : null));
+      if (buf) canopy = { ...cm, heights: new Uint8Array(buf) };
+    }
+  } catch { /* shown without */ }
+  const found = canopy ? treesFromCanopy(canopy, (x, z) => !onCanopyBad(x, z)) : [];
+  const heightAt = canopy ? (x, z) => {
+    const i = Math.floor((x - canopy.minX) / canopy.res), j = Math.floor((canopy.maxZ - z) / canopy.res);
+    return i >= 0 && j >= 0 && i < canopy.w && j < canopy.h ? canopy.heights[j * canopy.w + i] : 0;
+  } : undefined;
+  addMappedTrees(found, real?.trees || [], real?.treeRows || [], { heightAt, allowed: (x, z) => !onMappedBad(x, z) });
+  baseTrees = found;
+  treeEnv.heightAt = heightAt;
+  const onFairway = inShape(new Set(['fairway']));
+  treeEnv.allowed = (x, z) => !onMappedBad(x, z) && !onFairway(x, z); // (for tree areas)
+  treeEnv.note = canopy ? '' : ' (this course has no tree-height map; the game also adds trees it sees in the aerial photo)';
+  shownKey = '';
+  draw();
+}
+const treeEnv = { heightAt: undefined, allowed: () => true, note: '' };
+
+// Found trees plus the player's, recomputed only when the player's trees or areas change
+function plannedTrees() {
+  const areas = shapes.filter((s) => s.kind === 'trees').map((s) => ({ pts: s.pts, density: s.density || 'medium' }));
+  const key = JSON.stringify([userTrees, areas, baseTrees.length]);
+  if (key !== shownKey) {
+    shownTrees = baseTrees.slice();
+    const before = shownTrees.length;
+    addTreeAreas(shownTrees, userTrees, areas, { heightAt: treeEnv.heightAt, allowed: treeEnv.allowed });
+    shownKey = key;
+    setTreeInfo(`${shownTrees.length.toLocaleString()} trees · ${(shownTrees.length - before).toLocaleString()} added by you${treeEnv.note}`);
+  }
+  return shownTrees;
+}
+function setTreeInfo(t) { const el = $('tree-info'); if (el) el.textContent = t; }
 
 // Aerial photo background (same imagery as the game), drawn in course space
 async function loadPhoto() {
@@ -217,9 +274,10 @@ async function save() {
   });
   const features = { ...passthrough };
   for (const k of FEATURE_KINDS) features[k] = shapes.filter((s) => s.kind === k).map((s) => ({ hole: !!s.inner, pts: s.pts.map(([x, z]) => [r2(x), r2(z)]) }));
+  const treeAreas = shapes.filter((s) => s.kind === 'trees').map((s) => ({ pts: s.pts.map(([x, z]) => [r2(x), r2(z)]), density: s.density || 'medium' }));
   setStatus('Saving…');
   const res = await fetch(`/api/courses/${courseId}`, {
-    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ course: out, features }),
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ course: out, features, userTrees, treeAreas }),
   });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) return setStatus(`Save failed: ${body.error || res.status}`);
@@ -233,7 +291,7 @@ function setDirty(d) { dirty = d; $('dirty').textContent = d ? '● unsaved chan
 
 // ------------------------------------------------------------------ undo
 
-const snapshot = () => JSON.stringify({ holes, shapes, course });
+const snapshot = () => JSON.stringify({ holes, shapes, course, userTrees });
 function change() {
   undoStack.push(snapshot());
   if (undoStack.length > 100) undoStack.shift();
@@ -243,8 +301,8 @@ function undo() {
   const s = undoStack.pop();
   if (!s) return;
   const o = JSON.parse(s);
-  holes = o.holes; shapes = o.shapes; Object.assign(course, o.course);
-  sel.hole = Math.min(sel.hole, holes.length - 1); sel.shape = -1;
+  holes = o.holes; shapes = o.shapes; Object.assign(course, o.course); userTrees = o.userTrees || [];
+  sel.hole = Math.min(sel.hole, holes.length - 1); sel.shape = -1; sel.tree = -1;
   setDirty(true);
   renderHoles(); renderShapePanel(); draw();
 }
@@ -294,6 +352,7 @@ function draw() {
     });
   }
   ctx.globalAlpha = 1;
+  if (showTrees) drawTrees();
   // Holes: others faint, the selected one with handles
   holes.forEach((h, i) => { if (i !== sel.hole) drawHole(h, false); });
   if (holes[sel.hole]) drawHole(holes[sel.hole], true);
@@ -322,6 +381,36 @@ function draw() {
   const m = [10, 25, 50, 100, 200, 500].find((v) => v * view.scale > 70) || 1000;
   ctx.fillStyle = '#fff'; ctx.fillRect(16, H() - 22, m * view.scale, 3);
   ctx.font = '12px system-ui'; ctx.fillText(`${m} m`, 16, H() - 28);
+}
+
+// Trees as crowns seen from above: found ones dark, the player's brighter, the selected one ringed
+function drawTrees() {
+  const list = plannedTrees();
+  const w = W(), h = H();
+  // (all crowns of a kind in one path: far quicker than a path per tree)
+  const found = new Path2D(), mine = new Path2D(), foundDots = [], mineDots = [];
+  for (const t of list) {
+    const [sx, sy] = toScreen(t.x, t.z), r = t.r * view.scale;
+    if (sx < -r || sy < -r || sx > w + r || sy > h + r) continue;
+    if (r < 2) { (t.user ? mineDots : foundDots).push(sx, sy); continue; }
+    const path = t.user ? mine : found;
+    path.moveTo(sx + r, sy); path.arc(sx, sy, r, 0, 6.2832);
+  }
+  ctx.lineWidth = 1;
+  ctx.fillStyle = 'rgba(22,72,24,0.55)'; ctx.fill(found);
+  ctx.strokeStyle = 'rgba(150,220,130,0.55)'; ctx.stroke(found);
+  ctx.fillStyle = 'rgba(80,175,70,0.7)'; ctx.fill(mine);
+  ctx.strokeStyle = '#d9ffbf'; ctx.stroke(mine);
+  ctx.fillStyle = 'rgba(30,90,30,0.85)';
+  for (let i = 0; i < foundDots.length; i += 2) ctx.fillRect(foundDots[i] - 1.5, foundDots[i + 1] - 1.5, 3, 3);
+  ctx.fillStyle = '#b9f59a';
+  for (let i = 0; i < mineDots.length; i += 2) ctx.fillRect(mineDots[i] - 1.5, mineDots[i + 1] - 1.5, 3, 3);
+  const s = userTrees[sel.tree];
+  if (s) {
+    const [sx, sy] = toScreen(s.x, s.z), r = Math.max(8, (TREE_SIZES[s.size] || 13) * 0.33 * view.scale + 4);
+    ctx.lineWidth = 2.5; ctx.strokeStyle = '#ffd84a';
+    ctx.beginPath(); ctx.arc(sx, sy, r, 0, 7); ctx.stroke();
+  }
 }
 
 function holeHandles(h) {
@@ -397,6 +486,16 @@ function hitVertex(sx, sy) {
   }
   return null;
 }
+// The nearest of the player's trees under the cursor (within its crown, or 10 px when small)
+function hitUserTree(sx, sy) {
+  let best = -1, bd = Infinity;
+  userTrees.forEach((t, i) => {
+    const [x, y] = toScreen(t.x, t.z), d = Math.hypot(x - sx, y - sy);
+    if (d <= Math.max(10, (TREE_SIZES[t.size] || 13) * 0.33 * view.scale) && d < bd) { best = i; bd = d; }
+  });
+  return best;
+}
+
 function hitShape(sx, sy) {
   const [x, z] = toWorld(sx, sy);
   let best = -1, bestArea = Infinity;
@@ -422,12 +521,27 @@ canvas.addEventListener('mousedown', (e) => {
   const [x, z] = toWorld(sx, sy);
   if (e.button !== 0) { drag = { type: 'pan', sx, sy, cx: view.cx, cz: view.cz }; return; }
   if (mode?.type === 'place') { placePoint(x, z); return; }
+  if (mode?.type === 'tree') {
+    change();
+    userTrees.push({ x, z, size: treeOpts.size });
+    sel.tree = userTrees.length - 1; sel.shape = -1;
+    renderShapePanel(); draw(); return;
+  }
   if (mode?.type === 'draw') {
     if (e.detail > 1) return finishDraw(); // double-click
     mode.pts.push([x, z]); draw(); return;
   }
   const hd = hitHandle(sx, sy);
   if (hd) { change(); drag = { type: 'handle', hd }; return; }
+  if (showTrees) {
+    const ti = hitUserTree(sx, sy);
+    if (ti >= 0) {
+      change();
+      sel.tree = ti; sel.shape = -1;
+      drag = { type: 'tree', i: ti };
+      renderShapePanel(); draw(); return;
+    }
+  }
   const v = hitVertex(sx, sy);
   if (v) {
     const s = shapes[sel.shape];
@@ -455,6 +569,8 @@ window.addEventListener('mousemove', (e) => {
     renderHolePanelValues();
   } else if (drag.type === 'vertex') {
     shapes[sel.shape].pts[drag.i] = [x, z];
+  } else if (drag.type === 'tree') {
+    userTrees[drag.i].x = x; userTrees[drag.i].z = z;
   }
   draw();
 });
@@ -462,6 +578,7 @@ window.addEventListener('mouseup', (e) => {
   if (drag?.type === 'pan' && drag.click) {
     // A click (not a drag) selects whatever shape is under the cursor
     sel.shape = hitShape(drag.sx, drag.sy);
+    sel.tree = -1;
     renderShapePanel();
     draw();
   }
@@ -486,6 +603,7 @@ window.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') { setMode(null); return; }
   if (e.key === 'Enter' && mode?.type === 'draw') { finishDraw(); return; }
   if (e.key === 'Backspace' && mode?.type === 'draw') { mode.pts.pop(); draw(); return; }
+  if ((e.key === 'Delete' || e.key === 'Backspace') && sel.tree >= 0) { deleteTree(); return; }
   if ((e.key === 'Delete' || e.key === 'Backspace') && sel.shape >= 0) deleteShape();
 });
 window.addEventListener('beforeunload', (e) => { if (dirty) { e.preventDefault(); e.returnValue = ''; } });
@@ -500,10 +618,13 @@ function setMode(m) {
     hint.classList.remove('hidden');
     hint.textContent = m.type === 'place'
       ? `Click the map to place: ${m.label}  (Esc to cancel)`
+      : m.type === 'tree' ? `Click the map to add ${treeOpts.size} trees, one per click · Esc when done`
       : `Drawing ${SHAPES[m.kind].label.toLowerCase()}: click to add points · double-click or Enter to finish · Esc to cancel`;
   }
   canvas.style.cursor = m ? 'crosshair' : 'grab';
   document.querySelectorAll('.draw-buttons button').forEach((b) => b.classList.toggle('active', m?.type === 'draw' && b.dataset.kind === m.kind));
+  $('t-add').classList.toggle('active', m?.type === 'tree');
+  $('t-area').classList.toggle('active', m?.type === 'draw' && m.kind === 'trees');
   renderHolePanel();
   draw();
 }
@@ -526,10 +647,20 @@ function finishDraw() {
   if (pts.length < 3) { setStatus('A shape needs at least 3 points'); return; }
   change();
   if (kind === 'oob') shapes = shapes.filter((s) => s.kind !== 'oob'); // only one boundary
-  shapes.push({ kind, pts });
+  shapes.push(kind === 'trees' ? { kind, pts, density: treeOpts.density } : { kind, pts });
   sel.shape = shapes.length - 1;
+  sel.tree = -1;
   setMode(null);
   renderShapePanel();
+}
+
+function deleteTree() {
+  if (sel.tree < 0) return;
+  change();
+  userTrees.splice(sel.tree, 1);
+  sel.tree = -1;
+  renderShapePanel();
+  draw();
 }
 
 function deleteShape() {
@@ -558,20 +689,34 @@ function renderDrawButtons() {
 function renderShapePanel() {
   const box = $('shape-panel');
   const s = shapes[sel.shape];
+  const t = userTrees[sel.tree];
+  if (t) {
+    box.className = 'small';
+    box.innerHTML = `
+      <label>Selected tree <select id="t-sel-size">${Object.keys(TREE_SIZES).map((k) => `<option value="${k}" ${k === t.size ? 'selected' : ''}>${k[0].toUpperCase() + k.slice(1)} (about ${TREE_SIZES[k]} m)</option>`).join('')}</select></label>
+      <div class="muted">Drag it to move it.</div>
+      <div class="btn-row"><button id="t-del">Delete tree</button></div>`;
+    $('t-sel-size').onchange = () => { change(); t.size = $('t-sel-size').value; draw(); };
+    $('t-del').onclick = deleteTree;
+    return;
+  }
   if (!s) { box.innerHTML = 'Click a shape on the map to select it.'; box.className = 'muted small'; return; }
   box.className = 'small';
   const area = polyArea(s.pts);
   box.innerHTML = `
     <label>Selected shape <select id="s-kind">${Object.entries(SHAPES).map(([k, v]) => `<option value="${k}" ${k === s.kind ? 'selected' : ''}>${v.label}</option>`).join('')}</select></label>
+    ${s.kind === 'trees' ? `<label>Tree density <select id="s-density">${['sparse', 'medium', 'dense'].map((d) => `<option value="${d}" ${d === (s.density || 'medium') ? 'selected' : ''}>${d[0].toUpperCase() + d.slice(1)}</option>`).join('')}</select></label>` : ''}
     <div class="muted">${s.pts.length} points · ${Math.round(area).toLocaleString()} m²${s.inner ? ' · cut-out' : ''}</div>
     <div class="btn-row"><button id="s-del">Delete shape</button></div>`;
   $('s-kind').onchange = () => {
     change();
     if ($('s-kind').value === 'oob') shapes = shapes.filter((x, i) => x.kind !== 'oob' || i === sel.shape);
     shapes[sel.shape = shapes.indexOf(s)].kind = $('s-kind').value;
+    if (s.kind === 'trees') s.density ||= treeOpts.density;
     renderShapePanel(); draw();
   };
   $('s-del').onclick = deleteShape;
+  if ($('s-density')) $('s-density').onchange = () => { change(); s.density = $('s-density').value; draw(); };
 }
 
 function renderHoles() {
@@ -702,6 +847,12 @@ $('h-del').onclick = () => {
   sel.hole = Math.max(0, sel.hole - 1);
   renderHoles(); draw();
 };
+// Trees panel
+$('t-add').onclick = () => setMode(mode?.type === 'tree' ? null : { type: 'tree' });
+$('t-area').onclick = () => setMode(mode?.type === 'draw' && mode.kind === 'trees' ? null : { type: 'draw', kind: 'trees', pts: [] });
+$('t-size').onchange = () => { treeOpts.size = $('t-size').value; if (mode?.type === 'tree') setMode(mode); };
+$('t-density').onchange = () => { treeOpts.density = $('t-density').value; };
+$('t-show').onchange = () => { showTrees = $('t-show').checked; if (!showTrees && sel.tree >= 0) { sel.tree = -1; renderShapePanel(); } draw(); };
 $('save').onclick = save;
 $('play').onclick = async (e) => {
   if (!dirty) return;

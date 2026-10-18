@@ -644,8 +644,17 @@ const httpServer = http.createServer(async (req, res) => {
       if (!b?.osmType || !b?.osmId) return json(res, { error: 'This course was not made with the builder, so it has no OpenStreetMap source' }, 400);
       const jobId = Date.now().toString(36);
       const log = (msg) => { console.log(`[update] ${msg}`); broadcast('build', { jobId, msg }); };
+      // (trees added in the editor are the player's own: they carry over)
+      let keep = {};
+      try { const old = JSON.parse(fs.readFileSync(realFile(f), 'utf8')); keep = { userTrees: old.userTrees, treeAreas: old.treeAreas }; } catch { /* none */ }
       withFreshOsm(async () => {
         const r = await buildCourse({ osmType: b.osmType, osmId: b.osmId, group: b.group ?? null, name: cd.CourseName, location: cd.Location || '', id }, log);
+        if (keep.userTrees?.length || keep.treeAreas?.length) {
+          const rfNew = realFile(r.dataFile), nr = JSON.parse(fs.readFileSync(rfNew, 'utf8'));
+          Object.assign(nr, { userTrees: keep.userTrees || [], treeAreas: keep.treeAreas || [] });
+          fs.writeFileSync(rfNew, JSON.stringify(nr));
+          log('Kept the trees added in the editor.');
+        }
         const sat = satDir(r.dataFile);
         for (const name of ['paths.json', 'buildings.json']) fs.rmSync(path.join(sat, name), { force: true });
         summaries.delete(r.dataFile);
@@ -672,6 +681,17 @@ const httpServer = http.createServer(async (req, res) => {
       if (b.features && fs.existsSync(rf)) {
         const real = JSON.parse(fs.readFileSync(rf, 'utf8'));
         real.features = b.features;
+        // (only well-formed entries: positions in metres, a known size or density)
+        const fin = (v) => Number.isFinite(+v) && Math.abs(+v) < 1e5;
+        const r2 = (v) => Math.round(+v * 100) / 100;
+        if (Array.isArray(b.userTrees)) {
+          real.userTrees = b.userTrees.filter((t) => fin(t?.x) && fin(t?.z)).slice(0, 20000)
+            .map((t) => ({ x: r2(t.x), z: r2(t.z), size: ['small', 'medium', 'large'].includes(t.size) ? t.size : 'medium' }));
+        }
+        if (Array.isArray(b.treeAreas)) {
+          real.treeAreas = b.treeAreas.filter((a) => Array.isArray(a?.pts) && a.pts.length >= 3 && a.pts.every((p) => fin(p?.[0]) && fin(p?.[1]))).slice(0, 2000)
+            .map((a) => ({ pts: a.pts.map((p) => [r2(p[0]), r2(p[1])]), density: ['sparse', 'medium', 'dense'].includes(a.density) ? a.density : 'medium' }));
+        }
         real.edited = new Date().toISOString();
         fs.writeFileSync(rf, JSON.stringify(real));
       }

@@ -36,3 +36,11 @@
   .side { width: auto; height: 45%; border-right: 0; border-top: 1px solid var(--line); }
 }
 #map:focus { outline: none; }
+/* Trees panel */
+.side label.check { flex-direction: row; align-items: center; gap: 6px; color: var(--text); font-size: 13px; }
+.side label.check input { width: auto; }
+.tree-tool { display: grid; grid-template-columns: auto 1fr; gap: 6px; margin: 6px 0; }
+.tree-tool button { padding: 4px 9px; font-size: 12px; white-space: nowrap; }
+.tree-tool button.active { outline: 2px solid var(--accent); }
+.tree-tool select { font-size: 12px; }
+#tree-info { margin-bottom: 6px; }
