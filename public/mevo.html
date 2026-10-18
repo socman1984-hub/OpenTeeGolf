@@ -62,7 +62,11 @@
     </section>
 
     <section class="card">
-      <h2>Device</h2>
+      <div class="card-head">
+        <h2>Device</h2>
+        <button id="arm-btn" type="button" class="hidden" title="Stay connected but stop (or start) detecting shots">Disarm</button>
+        <button id="power-btn" type="button" class="hidden" title="Disarm and disconnect when you're done">Disconnect</button>
+      </div>
       <div class="stats">
         <div class="stat"><b id="battery">–</b><small id="battery-sub">Battery</small></div>
         <div class="stat"><b id="temp">–</b><small>Temperature</small></div>

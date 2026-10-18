@@ -83,6 +83,19 @@ try {
   await new Promise((r) => setTimeout(r, 2300));
   check(client.state === 'ready', 'still ready after keepalives');
 
+  // Disarm when done, stay connected, arm again
+  await client.setArmed(false);
+  check(client.state === 'idle' && !seen.armed, 'disarmed on request (device no longer armed)');
+  await new Promise((r) => setTimeout(r, 1500));
+  check(client.state === 'idle', 'stays connected while disarmed');
+  await client.setArmed(true);
+  check(client.state === 'ready' && seen.armed, 'armed again on request');
+
+  // Disconnect: disarms first, then hangs up and stays off
+  await client.disconnect();
+  await new Promise((r) => setTimeout(r, 100));
+  check(!seen.armed && client.state === 'off' && !client.running, 'disconnect disarms the device and hangs up');
+
   // First-shot case: spin missing from 0xD4, taken from 0xEF instead
   const f = decodeFlight(Buffer.from(flightPayload()));
   f.backspin = 0; f.sidespin = 0;

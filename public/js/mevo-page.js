@@ -5,9 +5,10 @@ const FT = 0.3048;
 let info = {}, state = 'off', camOn = false;
 
 const STATE = {
-  off: 'Off', connecting: 'Looking for it…', searching: 'Not found', handshake: 'Connecting…', arming: 'Arming…',
-  ready: 'Ready', shot: 'Reading shot…',
+  off: 'Disconnected', connecting: 'Looking for it…', searching: 'Not found', handshake: 'Connecting…', arming: 'Arming…',
+  ready: 'Ready (armed)', shot: 'Reading shot…', idle: 'Disarmed',
 };
+let direct = false, busy = false;
 const MODE = { full: 'Full swing', chipping: 'Chipping', putting: 'Putting', outdoor: 'Outdoor' };
 
 // Level: green within 1°, amber to 2.5°, red beyond
@@ -18,6 +19,12 @@ function render() {
   $('conn').querySelector('.dot').className = 'dot' + (ready ? ' ready' : state !== 'off' && state !== 'searching' ? ' on' : '');
   $('conn-text').textContent = ready ? `${info.model || 'Mevo+'} ${info.ssid || ''} connected` : STATE[state] || state;
   $('state').textContent = STATE[state] || state;
+  // Arm / disarm while connected; disconnect when done (or connect again)
+  $('arm-btn').classList.toggle('hidden', !direct || !['ready', 'idle'].includes(state));
+  $('arm-btn').textContent = state === 'idle' ? 'Arm' : 'Disarm';
+  $('power-btn').classList.toggle('hidden', !direct);
+  $('power-btn').textContent = state === 'off' ? 'Connect' : 'Disconnect';
+  for (const id of ['arm-btn', 'power-btn']) $(id).disabled = busy;
   $('conn-error').textContent = state === 'searching' && info.error ? `Last try: ${info.error}. Trying again… (details in data\\mevo-log.txt)` : '';
   $('mode').textContent = MODE[info.mode] || '–';
 
@@ -136,9 +143,21 @@ $('enable-direct').onclick = async () => {
   load();
 };
 
+async function power(body) {
+  busy = true; render();
+  const r = await fetch('/api/mevo/power', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+    .then((x) => x.json()).catch((err) => ({ error: err.message }));
+  busy = false;
+  if (r.error) $('save-msg').textContent = r.error;
+  load();
+}
+$('arm-btn').onclick = () => power({ armed: state === 'idle' });
+$('power-btn').onclick = () => power({ connect: state === 'off' });
+
 async function load() {
   const r = await fetch('/api/mevo').then((x) => x.json());
   $('not-direct').classList.toggle('hidden', r.connection === 'direct');
+  direct = r.connection === 'direct';
   state = r.state;
   info = { ...r.info, mode: r.mode };
   fillSetup(r.setup);

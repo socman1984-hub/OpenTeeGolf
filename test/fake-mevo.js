@@ -42,7 +42,8 @@ export function fakeMevo({ videoPort = null, quiet = null } = {}) {
   const seen = { modes: [], arms: 0, acks: 0 };
   const server = net.createServer((sock) => {
     const r = new FrameReader();
-    const reply = (src, type, payload) => sock.write(encodeFrame(BUS.APP, type, payload, src));
+    const reply = (src, type, payload) => { if (!sock.destroyed) sock.write(encodeFrame(BUS.APP, type, payload, src)); };
+    sock.on('error', () => {}); // the client hanging up mid-reply is fine
     const text = (src, s) => reply(src, 0xe3, ascii(s, s.length + 1));
     sock.on('data', (chunk) => {
       for (const f of r.push(chunk)) {

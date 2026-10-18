@@ -186,3 +186,4 @@ table.sc td.cur { outline: 2px solid var(--accent); }
 .lm-setup .menu-link { display: inline-block; margin-top: 8px; font-size: 13px; }
 .lm-setup-link { margin-left: 8px; font-size: 11px; color: #9fd7ff; text-decoration: none; opacity: 0.8; }
 .lm-setup-link:hover { opacity: 1; text-decoration: underline; }
+.lm-arm { background: none; border: 0; padding: 0; cursor: pointer; font: inherit; font-size: 11px; }

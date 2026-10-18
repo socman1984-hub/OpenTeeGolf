@@ -261,9 +261,10 @@ const mevoMode = () => {
 };
 const DIRECT_TEXT = {
   connecting: 'Looking for the Mevo+…', searching: 'Mevo+ not found', handshake: 'Connecting to the Mevo+…',
-  arming: 'Arming…', ready: 'ready', shot: 'Reading shot…', off: 'off',
+  arming: 'Arming…', ready: 'ready', shot: 'Reading shot…', idle: 'disarmed', off: 'disconnected',
 };
 let mevo = null;
+let mevoOff = false; // the player disconnected it (until they connect again or restart the game)
 // Every message to and from the Mevo+, written to data/mevo-log.txt (started fresh each run, kept
 // under ~5 MB) so a connection problem can be looked at afterwards
 const MEVO_LOG = path.join(path.dirname(SETTINGS_FILE), 'mevo-log.txt');
@@ -282,10 +283,12 @@ function mevoTrace(dir, f) {
   mevoWrite(`${dir} ${f.src.toString(16).padStart(2, '0')}->${f.dest.toString(16).padStart(2, '0')} ${f.type.toString(16).padStart(2, '0')} [${hex}]${txt}`);
 }
 function startMevo() {
-  mevo?.stop();
+  mevo?.removeAllListeners(); // (its last "off" mustn't overwrite the new one's status)
+  mevo?.disconnect(); // disarms it if it was armed
   mevo = null;
-  if (settings.lm.connection !== 'direct') {
-    setLm({ direct: null, connected: lmSockets.size > 0, ready: lmSockets.size > 0 && lmState.ready, battery: null });
+  if (settings.lm.connection !== 'direct' || mevoOff) {
+    if (mevoOff) setLm({ connected: false, ready: false, battery: null, direct: { state: 'off', text: DIRECT_TEXT.off, error: null, mode: null } });
+    else setLm({ direct: null, connected: lmSockets.size > 0, ready: lmSockets.size > 0 && lmState.ready, battery: null });
     return;
   }
   mevo = new MevoClient({ host: settings.lm.host, port: settings.lm.port, mode: mevoMode(), log: mevoLog, trace: mevoTrace });
@@ -293,7 +296,7 @@ function startMevo() {
   // Everything the setup page shows, about once a second
   mevo.on('status', (s) => broadcast('mevo', s));
   mevo.on('status', (s) => setLm({
-    connected: ['ready', 'shot', 'arming'].includes(s.state),
+    connected: ['ready', 'shot', 'arming', 'idle'].includes(s.state),
     ready: s.state === 'ready',
     device: s.model ? `${s.model} ${s.ssid || ''}`.trim() : 'Mevo+',
     battery: s.battery ?? null,
@@ -487,7 +490,7 @@ const httpServer = http.createServer(async (req, res) => {
       // Mevo+ setup page: connection, live device status and the saved setup
       return json(res, {
         connection: settings.lm.connection, host: settings.lm.host,
-        state: mevo?.state || 'off', info: mevo?.info || {}, mode: mevo?.mode || null,
+        state: mevo?.state || 'off', info: mevo?.info || {}, mode: mevo?.mode || null, off: mevoOff,
         setup: { ...DEFAULT_SETUP, ...settings.lm.setup }, custom: !!settings.lm.setup,
       });
     }
@@ -515,6 +518,29 @@ const httpServer = http.createServer(async (req, res) => {
       try { await mevo.camera(!!b.on); } catch (err) { return json(res, { error: err.message }, 502); }
       return json(res, { ok: true, info: mevo.info });
     }
+    if (p === '/api/mevo/power' && req.method === 'POST') {
+      // { connect: false } disarms and hangs up; { connect: true } connects again;
+      // { armed: false | true } stays connected but stops / starts detecting shots
+      const b = await readBody(req);
+      if (settings.lm.connection !== 'direct') return json(res, { error: 'The Mevo+ is not connected directly' }, 409);
+      try {
+        if (b.connect === false) {
+          mevoOff = true;
+          const m = mevo;
+          mevo = null;
+          await m?.disconnect();
+          broadcast('mevo', { state: 'off', mode: null });
+          startMevo();
+        } else if (b.connect === true) {
+          mevoOff = false;
+          if (!mevo) startMevo();
+        } else if (typeof b.armed === 'boolean') {
+          if (!mevo) return json(res, { error: 'The Mevo+ is disconnected' }, 409);
+          await mevo.setArmed(b.armed);
+        }
+      } catch (err) { return json(res, { error: err.message }, 502); }
+      return json(res, { ok: true, state: mevo?.state || 'off' });
+    }
     if (p === '/api/mevo/video') return proxyMevoVideo(req, res);
     if (p === '/api/lm') {
       // How shots arrive: FS Golf (OpenConnect) or the Mevo+ directly
@@ -525,6 +551,7 @@ const httpServer = http.createServer(async (req, res) => {
         if (Number.isInteger(b.port) && b.port > 0 && b.port < 65536) settings.lm.port = b.port;
         if (Number.isInteger(b.videoPort) && b.videoPort > 0 && b.videoPort < 65536) settings.lm.videoPort = b.videoPort;
         saveSettings();
+        mevoOff = false;
         startMevo();
       }
       return json(res, { settings: settings.lm, state: lmState });
@@ -598,3 +625,18 @@ httpServer.listen(HTTP_PORT, () => {
   console.log(`OpenTeeGolf running at http://localhost:${HTTP_PORT}`);
   console.log(`Courses folder: ${BUILT_DIR} (${findCourses().length} course(s) found)`);
 });
+
+// Closing the game (Ctrl+C or closing its window) disarms the Mevo+ first, so it isn't left
+// watching for shots
+let quitting = false;
+for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGBREAK']) {
+  process.on(sig, async () => {
+    if (quitting) process.exit(0);
+    quitting = true;
+    if (mevo) {
+      console.log('Disarming the Mevo+…');
+      await Promise.race([mevo.disconnect(), new Promise((r) => setTimeout(r, 3500))]);
+    }
+    process.exit(0);
+  });
+}

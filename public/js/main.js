@@ -1215,9 +1215,16 @@ function connectEvents() {
       // Direct connection: say what it's doing (looking, connecting, arming, ready)
       $('lm-text').textContent = lm.direct.state === 'ready' ? `${lm.device} — ready${battery}`
         : lm.direct.state === 'shot' ? `${lm.device} — reading shot`
+          : lm.direct.state === 'idle' ? `${lm.device} — disarmed${battery}`
+            : lm.direct.state === 'off' ? 'Mevo+ disconnected'
           : lm.direct.text;
       $('lm-text').title = lm.direct.error || '';
+      const st = lm.direct.state;
+      $('lm-arm').classList.toggle('hidden', !['ready', 'idle', 'off'].includes(st));
+      $('lm-arm').textContent = st === 'ready' ? 'disarm' : st === 'idle' ? 'arm' : 'connect';
+      $('lm-arm').dataset.state = st;
     } else {
+      $('lm-arm').classList.add('hidden');
       $('lm-text').textContent = lm.connected
         ? `${lm.device || 'Launch monitor'}${lm.ready ? ' — ready' : ' — connected'}`
         : 'Mevo+ not connected';
@@ -1225,6 +1232,16 @@ function connectEvents() {
     }
     showLmHelp(lm);
   });
+  // Disarm when you're done (or arm / reconnect); the setup page also has Disconnect
+  $('lm-arm').onclick = async () => {
+    const st = $('lm-arm').dataset.state;
+    const body = st === 'ready' ? { armed: false } : st === 'idle' ? { armed: true } : { connect: true };
+    $('lm-arm').disabled = true;
+    const r = await fetch('/api/mevo/power', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+      .then((x) => x.json()).catch((err) => ({ error: err.message }));
+    $('lm-arm').disabled = false;
+    if (r.error) toast(r.error);
+  };
   es.onerror = () => {
     $('lm-dot').className = 'dot';
     $('lm-text').textContent = 'Server offline';
