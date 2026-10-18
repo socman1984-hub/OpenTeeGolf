@@ -36,6 +36,7 @@ const S = {
 
 const scene = new CourseScene($('view'));
 scene.onFrame = (dt) => tick(dt);
+scene.onDeviceLost = () => toast('The graphics card reset. Reload the page (F5) to keep playing.', 600000);
 
 // ------------------------------------------------------------------ menu
 

@@ -63,6 +63,22 @@ try {
   await until(() => seen.modes.at(-1) === MODES.putting && client.armed && client.state === 'ready', 5000, 'putting mode');
   check(true, 'switched to putting mode and re-armed');
 
+  // Device readings for the setup page
+  await until(() => client.info?.tilt != null, 3000, 'tilt');
+  check(client.info.tilt === 0.6 && client.info.roll === -1.8 && client.info.tempC === 31.5, `level and temperature read (tilt ${client.info.tilt}°, roll ${client.info.roll}°, ${client.info.tempC} °C)`);
+
+  // Player setup: settings and radar calibration sent, then re-armed
+  await client.applySetup({ distanceM: 2.44, surfaceIn: 1, teeHeightIn: 2, ballType: 1 });
+  const cal = seen.cal || [];
+  check(seen.params?.join(',') === '6,15,38' && ((cal[1] << 8) | cal[2]) === 2440 && cal[4] === 25, `setup sent: settings ${seen.params?.join('/')}, distance ${(cal[1] << 8) | cal[2]} mm, surface ${cal[4]} mm`);
+  check(client.armed && client.state === 'ready', 're-armed with the new setup');
+
+  // Live camera: the Pi says "not ready" first, then streams
+  await client.camera(true);
+  check(seen.streaming && client.info.streaming, `camera streaming after ${seen.camTries} start requests`);
+  await client.camera(false);
+  check(!seen.streaming, 'camera back to normal mode');
+
   // Keepalive runs every second without upsetting anything
   await new Promise((r) => setTimeout(r, 2300));
   check(client.state === 'ready', 'still ready after keepalives');

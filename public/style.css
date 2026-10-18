@@ -182,3 +182,7 @@ table.sc td.cur { outline: 2px solid var(--accent); }
 .lm-setup label { display: flex; flex-direction: column; gap: 4px; color: var(--muted); font-size: 12px; max-width: 360px; }
 #lm-help { font-size: 12px; margin-top: 6px; line-height: 1.45; }
 #lm-help b { color: var(--text); }
+
+.lm-setup .menu-link { display: inline-block; margin-top: 8px; font-size: 13px; }
+.lm-setup-link { margin-left: 8px; font-size: 11px; color: #9fd7ff; text-decoration: none; opacity: 0.8; }
+.lm-setup-link:hover { opacity: 1; text-decoration: underline; }

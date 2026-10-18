@@ -111,6 +111,11 @@ export class CourseScene {
     window.addEventListener('resize', () => this.resize());
     this.resize();
     // WebGPU starts asynchronously: build() and the render loop wait for it
+    // If the graphics card resets (driver crash, sleep), the picture can't recover by itself
+    this.renderer.onDeviceLost = (info) => {
+      console.error('GPU device lost', info);
+      this.onDeviceLost?.(info);
+    };
     this.ready = this.renderer.init().then(() => {
       this.backend = this.renderer.backend.isWebGPUBackend ? 'WebGPU' : 'WebGL 2';
       const skyScene = new THREE.Scene();
@@ -139,14 +144,19 @@ export class CourseScene {
       this.sun.shadow.map = null;
     }
     if (this.grass) { this.dynamic.remove(this.grass); this.grass = null; this.grassCenter = null; }
+    this.lastSize = null; // water reflection detail follows the setting too
     this.resize?.();
   }
 
   resize() {
     const w = this.container.clientWidth, h = this.container.clientHeight;
+    const pr = this.renderer.getPixelRatio();
+    const changed = w !== this.lastSize?.w || h !== this.lastSize?.h || pr !== this.lastSize?.pr;
+    this.lastSize = { w, h, pr };
     this.renderer.setSize(w, h);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
+    if (changed && this.waterMeshes?.length) this.makeWaterMaterial();
   }
 
   // ------------------------------------------------------------------ course
@@ -723,16 +733,29 @@ export class CourseScene {
 
   // ---- water, stakes, tee markers
 
-  addWater(course) {
-    // One mirror for the water, moved to the level of the pond nearest the camera each frame
-    // (off on the Performance setting, where ponds reflect only the sky)
-    if (this.reflection) { this.scene.remove(this.reflection.target); this.reflection = null; }
-    if (course.waterBodies.length && this.quality?.name !== 'performance') {
+  // One mirror for the water, moved to the level of the pond nearest the camera each frame
+  // (off on the Performance setting, where ponds reflect only the sky). Rebuilt whenever the view
+  // changes size: three.js resizes the mirror's picture then, and the water would keep pointing at
+  // the discarded one, which makes every frame fail (the picture freezes).
+  makeWaterMaterial() {
+    const old = this.reflection, oldMat = this.waterMat;
+    if (old) { this.scene.remove(old.target); this.reflection = null; }
+    if (this.hasWater && this.quality?.name !== 'performance') {
       this.reflection = reflector({ resolutionScale: this.quality?.name === 'high' ? 0.5 : 0.33, bounces: false });
       this.reflection.target.rotateX(-Math.PI / 2);
+      if (old) this.reflection.target.position.copy(old.target.position);
       this.scene.add(this.reflection.target);
     }
     this.waterMat = waterMaterial(this.scene.environment, this.reflection);
+    for (const m of this.waterMeshes || []) m.material = this.waterMat;
+    // Let go of the old ones after the next frame has stopped using them
+    if (old || oldMat) setTimeout(() => { oldMat?.dispose(); old?.dispose?.(); }, 500);
+  }
+
+  addWater(course) {
+    this.hasWater = course.waterBodies.length > 0;
+    this.waterMeshes = [];
+    this.makeWaterMaterial();
     this.waterCentres = course.waterBodies.map((wb) => {
       let x = 0, z = 0;
       for (const [px, pz] of wb.poly) { x += px; z += pz; }
@@ -748,6 +771,7 @@ export class CourseScene {
       const m = new THREE.Mesh(g, this.waterMat);
       m.position.y = wb.level;
       m.receiveShadow = true;
+      this.waterMeshes.push(m);
       this.courseGroup.add(m);
     }
   }

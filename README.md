@@ -121,6 +121,14 @@ and please report what the status box said. For development without the device,
 `node test/fake-mevo.js 5100` runs a simulated Mevo+ (set the host to `127.0.0.1` with
 `POST /api/lm {"connection":"direct","host":"127.0.0.1","port":5100}`).
 
+**Mevo+ setup page** (menu link, or *setup* next to the status box in a round): with the direct
+connection it shows the Mevo+ camera live with alignment guides, a level for tilt and roll,
+battery, temperature, status and the last shot. It also holds the setup sent to the radar:
+distance from the Mevo+ to the ball, hitting-surface and tee height, standard or RCT balls, how
+much of the flight must be tracked, and the detection mode (automatic by club, or always full
+swing / outdoor). The live view relays the camera's own video stream; it can take 10-30 s to
+start while the camera warms up.
+
 ### Through FS Golf
 
 The Mevo+ sends shots to simulators through FlightScope's **FS Golf** PC app, using the

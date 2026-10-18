@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mevo+ Setup · OpenTeeGolf</title>
+  <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/tools.css">
+  <link rel="stylesheet" href="/mevo.css">
+</head>
+<body class="page">
+  <header class="topbar">
+    <a href="/" class="back">← OpenTeeGolf</a>
+    <h1>Mevo+ setup</h1>
+    <span id="conn" class="conn"><span class="dot"></span><span id="conn-text">Checking…</span></span>
+  </header>
+
+  <main class="mevo-page">
+    <div id="not-direct" class="card hidden">
+      <h2>Direct connection is off</h2>
+      <p class="muted">This page talks to the Mevo+ directly. In the main menu set <b>Launch monitor</b> to
+        <i>Mevo+ direct</i>, join this PC to the Mevo+ Wi-Fi (<b>FS M2-…</b>, password = the 9-digit serial),
+        and close FS Golf.</p>
+      <button id="enable-direct" class="primary">Switch to direct connection</button>
+    </div>
+
+    <section class="card video-card">
+      <div class="card-head">
+        <h2>Camera</h2>
+        <label class="check"><input id="guides" type="checkbox" checked> Alignment guides</label>
+        <button id="cam-btn">Start live view</button>
+      </div>
+      <div class="video-wrap">
+        <img id="video" alt="">
+        <svg id="guide" class="guide" viewBox="0 0 1024 768" preserveAspectRatio="none">
+          <line x1="512" y1="0" x2="512" y2="768" />
+          <line x1="0" y1="384" x2="1024" y2="384" class="faint" />
+          <rect x="432" y="470" width="160" height="160" rx="10" />
+          <text x="512" y="660">ball here</text>
+        </svg>
+        <div id="video-msg" class="video-msg">Live view is off.</div>
+      </div>
+      <p class="muted small">Place the ball inside the box, on the centre line, and aim the Mevo+ straight down your target line.
+        The box is a guide only; FS Golf's own alignment screen is the reference. The live view uses the camera's
+        standard 1024×768 mode and may take 10–30 s to start.</p>
+    </section>
+
+    <section class="card">
+      <h2>Level</h2>
+      <div class="level-row">
+        <div class="bubble-box" title="The bubble sits in the middle ring when the Mevo+ is level">
+          <div class="ring"></div><div class="ring inner"></div>
+          <div id="bubble" class="bubble"></div>
+        </div>
+        <div class="stats level-stats">
+          <div class="stat"><b id="tilt">–</b><small>Tilt (front/back)</small></div>
+          <div class="stat"><b id="roll">–</b><small>Roll (side to side)</small></div>
+        </div>
+      </div>
+      <p id="level-hint" class="muted small"></p>
+    </section>
+
+    <section class="card">
+      <h2>Device</h2>
+      <div class="stats">
+        <div class="stat"><b id="battery">–</b><small id="battery-sub">Battery</small></div>
+        <div class="stat"><b id="temp">–</b><small>Temperature</small></div>
+        <div class="stat"><b id="state">–</b><small>Status</small></div>
+        <div class="stat"><b id="mode">–</b><small>Detection mode</small></div>
+        <div class="stat"><b id="shots">–</b><small>Shots this session</small></div>
+      </div>
+      <div id="last-shot" class="last-shot muted">No shot yet.</div>
+      <details class="fw"><summary>Firmware and network</summary><pre id="fw"></pre></details>
+    </section>
+
+    <section class="card">
+      <h2>Setup</h2>
+      <form id="setup" class="setup-form">
+        <label>Distance from Mevo+ to the ball
+          <span class="unit-row"><input id="s-dist" type="number" step="0.1" min="5" max="19.5"> ft</span>
+          <small>FlightScope recommends about 7–9 ft indoors (8 ft+ outdoors), with at least 8 ft of ball flight to the net.</small></label>
+        <label>Hitting surface height
+          <span class="unit-row"><input id="s-surface" type="number" step="0.25" min="0" max="10"> in</span>
+          <small>How far the ball sits above the floor the Mevo+ stands on (mat thickness).</small></label>
+        <label>Driver tee height
+          <span class="unit-row"><input id="s-tee" type="number" step="0.25" min="0" max="4"> in</span></label>
+        <label>Balls
+          <select id="s-ball"><option value="0">Standard golf balls</option><option value="1">RCT (radar capture) balls</option></select>
+          <small>RCT balls give the most reliable spin indoors.</small></label>
+        <label>Ball tracking needed
+          <span class="unit-row"><input id="s-track" type="number" step="0.05" min="0.6" max="1"></span>
+          <small>Share of the flight the radar must track before a shot counts (0.6–1.0).</small></label>
+        <label>Detection mode
+          <select id="s-mode">
+            <option value="auto">Automatic (putting / chipping / full by club)</option>
+            <option value="full">Always full swing (indoor)</option>
+            <option value="outdoor">Always outdoor</option>
+          </select></label>
+        <div class="form-actions">
+          <button class="primary" id="save">Save and apply</button>
+          <span id="save-msg" class="muted small"></span>
+        </div>
+      </form>
+    </section>
+  </main>
+  <script type="module" src="/js/mevo-page.js"></script>
+</body>
+</html>

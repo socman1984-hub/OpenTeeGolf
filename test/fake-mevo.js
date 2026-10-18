@@ -4,8 +4,9 @@
 //
 // Standalone: node test/fake-mevo.js [port=5100] [seconds between shots=15]
 import net from 'node:net';
+import http from 'node:http';
 import { pathToFileURL } from 'node:url';
-import { BUS, encodeFrame, FrameReader } from '../lib/mevo.js';
+import { BUS, encodeFrame, FrameReader, writeFloat40 } from '../lib/mevo.js';
 
 const int24 = (v) => { const u = v & 0xffffff; return [u >> 16, (u >> 8) & 255, u & 255]; };
 const int16 = (v) => { const u = v & 0xffff; return [u >> 8, u & 255]; };
@@ -32,7 +33,11 @@ function spinPayload() {
 }
 const ascii = (s, n) => { const b = [...Buffer.from(s, 'latin1')]; while (b.length < n) b.push(0); return b; };
 
-export function fakeMevo() {
+// A small grey 64x48 JPEG, sent over and over as the "camera" stream
+const JPEG = Buffer.from('/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAAwAEABAREA/8QAFQABAQAAAAAAAAAAAAAAAAAAAAj/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oACAEBAAA/AJ//2Q==', 'base64');
+
+// options: { videoPort } also serves an MJPEG stream on /stream, like the camera on port 8080
+export function fakeMevo({ videoPort = null } = {}) {
   const seen = { modes: [], arms: 0, acks: 0 };
   const server = net.createServer((sock) => {
     const r = new FrameReader();
@@ -44,7 +49,11 @@ export function fakeMevo() {
         switch (f.type) {
           case 0xaa: {
             if (to === BUS.DSP) { const s = new Array(129).fill(0); s[0] = 0x80; s[61] = 87; reply(to, 0xaa, s); }
-            else if (to === BUS.AVR) { const s = new Array(25).fill(0); s[0] = 0x18; s[1] = seen.armed ? 1 : 0; reply(to, 0xaa, s); }
+            else if (to === BUS.AVR) {
+              const s = new Array(25).fill(0); s[0] = 0x18; s[1] = seen.armed ? 1 : 0;
+              s.splice(10, 5, ...writeFloat40(31.5)); s.splice(15, 5, ...writeFloat40(0.6)); s.splice(20, 5, ...writeFloat40(1.8)); // 31.5 °C, tilt 0.6°, roll -1.8°
+              reply(to, 0xaa, s);
+            }
             else reply(to, 0xaa, new Array(17).fill(0));
             break;
           }
@@ -60,6 +69,13 @@ export function fakeMevo() {
           case 0x83: reply(to, 0x82, [0x33, ...new Array(51).fill(0)]); break;
           case 0xde: reply(to, 0xde, [53, ...ascii(p[1] === 8 ? 'FS M2-123456\u0000123456789' : 'FS M2-123456', 53)]); break;
           case 0xa5: seen.modes.push(p[2]); reply(to, 0xa5, p); break;
+          case 0xa4: seen.cal = p; reply(to, 0xa4, p); break;
+          case 0xbf: (seen.params ||= []).push(p[3]); reply(to, 0x95, [2, 0x30, 0x3f]); break;
+          case 0x82: reply(BUS.PI, 0x95, [2, 0x12, 0x02]); break;
+          case 0x81:
+            if (p[1] === 3) { seen.camTries = (seen.camTries || 0) + 1; reply(BUS.PI, 0x81, [1, seen.camTries >= 2 ? 1 : 0]); seen.streaming = seen.camTries >= 2; }
+            else { reply(BUS.PI, 0x95, [2, 0x12, 0x01]); seen.streaming = false; }
+            break;
           case 0xb0:
             if (p[1] === 1) {
               seen.arms++;
@@ -89,13 +105,23 @@ export function fakeMevo() {
       }, 50);
     };
   });
+  if (videoPort) {
+    seen.video = http.createServer((req, res) => {
+      if (req.url !== '/stream') { res.writeHead(404); return res.end(); }
+      res.writeHead(200, { 'Content-Type': 'multipart/x-mixed-replace; boundary=frame' });
+      const send = () => res.write(Buffer.concat([Buffer.from(`--frame\r\nContent-Type: image/jpeg\r\nContent-Length: ${JPEG.length}\r\n\r\n`), JPEG, Buffer.from('\r\n')]));
+      send();
+      const t = setInterval(send, 200);
+      req.on('close', () => clearInterval(t));
+    }).listen(videoPort);
+  }
   return { server, seen };
 }
 
 
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   const port = +(process.argv[2] || 5100), every = +(process.argv[3] || 15) * 1000;
-  const { server, seen } = fakeMevo();
-  server.listen(port, () => console.log(`Fake Mevo+ on port ${port}; a shot every ${every / 1000} s once armed`));
+  const { server, seen } = fakeMevo({ videoPort: port + 1 });
+  server.listen(port, () => console.log(`Fake Mevo+ on port ${port} (camera stream on ${port + 1}); a shot every ${every / 1000} s once armed`));
   setInterval(() => { if (seen.armed && seen.fireShot) { console.log('shot!'); seen.fireShot(); } }, every);
 }

@@ -22,7 +22,7 @@ import { ensureBuildings } from './lib/buildings.js';
 import { ensurePaths } from './lib/paths.js';
 import { ensurePhoto, photoMeta, savePhoto } from './lib/coursephoto.js';
 import { ensureCanopy } from './lib/canopy.js';
-import { MevoClient } from './lib/mevo.js';
+import { MevoClient, DEFAULT_SETUP } from './lib/mevo.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const HTTP_PORT = +(process.env.PORT || 8080);
@@ -248,11 +248,17 @@ ocServer.listen(OC_PORT, '0.0.0.0', () => console.log(`OpenConnect listener on p
 // joins the Mevo+ Wi-Fi and talks to the radar itself, see lib/mevo.js)
 const SETTINGS_FILE = process.env.SETTINGS_FILE || path.join(ROOT, 'data', 'settings.json');
 const settings = (() => { try { return JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8')); } catch { return {}; } })();
-settings.lm = { connection: 'fsgolf', host: '192.168.2.1', port: 5100, ...settings.lm };
+settings.lm = { connection: 'fsgolf', host: '192.168.2.1', port: 5100, videoPort: 8080, ...settings.lm };
 const saveSettings = () => { fs.mkdirSync(path.dirname(SETTINGS_FILE), { recursive: true }); fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 1)); };
 
 // Putter → putting mode, short shots → chipping, everything else full swing
-const mevoMode = () => (player.Club === 'PT' ? 'putting' : player.DistanceToTarget > 0 && player.DistanceToTarget < 40 ? 'chipping' : 'full');
+// (the setup page can force full swing or outdoor mode for everything but putts)
+const mevoMode = () => {
+  if (player.Club === 'PT') return 'putting';
+  const forced = settings.lm.setup?.mode;
+  if (forced === 'full' || forced === 'outdoor') return forced;
+  return player.DistanceToTarget > 0 && player.DistanceToTarget < 40 ? 'chipping' : 'full';
+};
 const DIRECT_TEXT = {
   connecting: 'Looking for the Mevo+…', searching: 'Mevo+ not found', handshake: 'Connecting to the Mevo+…',
   arming: 'Arming…', ready: 'ready', shot: 'Reading shot…', off: 'off',
@@ -266,6 +272,9 @@ function startMevo() {
     return;
   }
   mevo = new MevoClient({ host: settings.lm.host, port: settings.lm.port, mode: mevoMode(), log: (m) => console.log(m) });
+  if (settings.lm.setup) mevo.setup = { ...DEFAULT_SETUP, ...settings.lm.setup };
+  // Everything the setup page shows, about once a second
+  mevo.on('status', (s) => broadcast('mevo', s));
   mevo.on('status', (s) => setLm({
     connected: ['ready', 'shot', 'arming'].includes(s.state),
     ready: s.state === 'ready',
@@ -282,6 +291,38 @@ function startMevo() {
   mevo.start();
 }
 startMevo();
+
+// The Mevo+ camera's live MJPEG stream (port 8080 on the Mevo+), passed through to the setup page
+// so the browser never has to reach the device itself. The stream's path isn't documented, so the
+// usual ones are tried and the first that answers with video is remembered.
+const VIDEO_PATHS = ['/', '/stream', '/?action=stream', '/stream.mjpg', '/video', '/mjpeg', '/video.mjpg', '/cam.mjpg'];
+let videoPath = null;
+function proxyMevoVideo(req, res) {
+  if (!mevo) { res.writeHead(409); return res.end('Not connected directly'); }
+  const tryPath = (i) => {
+    const pathTry = videoPath || VIDEO_PATHS[i];
+    if (!pathTry) { res.writeHead(502); return res.end('No video stream found on the Mevo+'); }
+    const up = http.get({ host: settings.lm.host, port: settings.lm.videoPort, path: pathTry, timeout: 4000 }, (r) => {
+      const type = r.headers['content-type'] || '';
+      if (r.statusCode !== 200 || !/multipart|image\/jpeg/i.test(type)) {
+        r.resume();
+        if (videoPath) { videoPath = null; return tryPath(0); }
+        return tryPath(i + 1);
+      }
+      videoPath = pathTry;
+      res.writeHead(200, { 'Content-Type': type, 'Cache-Control': 'no-cache, no-store', Connection: 'close' });
+      r.pipe(res);
+      req.on('close', () => up.destroy());
+    });
+    up.on('timeout', () => up.destroy(new Error('timeout')));
+    up.on('error', () => {
+      if (res.headersSent) return res.end();
+      if (videoPath) { videoPath = null; return tryPath(0); }
+      tryPath(i + 1);
+    });
+  };
+  tryPath(0);
+}
 
 // ---------------------------------------------------------------- HTTP
 
@@ -425,6 +466,39 @@ const httpServer = http.createServer(async (req, res) => {
       mevo?.setMode(mevoMode());
       return json(res, { ok: true, player });
     }
+    if (p === '/api/mevo') {
+      // Mevo+ setup page: connection, live device status and the saved setup
+      return json(res, {
+        connection: settings.lm.connection, host: settings.lm.host,
+        state: mevo?.state || 'off', info: mevo?.info || {}, mode: mevo?.mode || null,
+        setup: { ...DEFAULT_SETUP, ...settings.lm.setup }, custom: !!settings.lm.setup,
+      });
+    }
+    if (p === '/api/mevo/setup' && req.method === 'POST') {
+      const b = await readBody(req);
+      const num = (v, lo, hi, d) => (Number.isFinite(+v) ? Math.min(hi, Math.max(lo, +v)) : d);
+      const d = DEFAULT_SETUP;
+      settings.lm.setup = {
+        distanceM: num(b.distanceM, 1.5, 6, d.distanceM), surfaceIn: num(b.surfaceIn, 0, 10, d.surfaceIn),
+        teeHeightIn: num(b.teeHeightIn, 0, 4, d.teeHeightIn), ballType: b.ballType ? 1 : 0,
+        trackPct: num(b.trackPct, 0.6, 1, d.trackPct), mode: ['auto', 'full', 'outdoor'].includes(b.mode) ? b.mode : 'auto',
+      };
+      saveSettings();
+      if (mevo) {
+        try {
+          await mevo.applySetup(settings.lm.setup);
+          mevo.setMode(mevoMode());
+        } catch (err) { return json(res, { error: err.message }, 502); }
+      }
+      return json(res, { ok: true, setup: settings.lm.setup });
+    }
+    if (p === '/api/mevo/camera' && req.method === 'POST') {
+      const b = await readBody(req);
+      if (!mevo || !mevo.armed) return json(res, { error: 'The Mevo+ is not connected directly' }, 409);
+      try { await mevo.camera(!!b.on); } catch (err) { return json(res, { error: err.message }, 502); }
+      return json(res, { ok: true, info: mevo.info });
+    }
+    if (p === '/api/mevo/video') return proxyMevoVideo(req, res);
     if (p === '/api/lm') {
       // How shots arrive: FS Golf (OpenConnect) or the Mevo+ directly
       if (req.method === 'POST') {
@@ -432,6 +506,7 @@ const httpServer = http.createServer(async (req, res) => {
         if (b.connection === 'direct' || b.connection === 'fsgolf') settings.lm.connection = b.connection;
         if (typeof b.host === 'string' && /^[\w.-]{1,64}$/.test(b.host)) settings.lm.host = b.host;
         if (Number.isInteger(b.port) && b.port > 0 && b.port < 65536) settings.lm.port = b.port;
+        if (Number.isInteger(b.videoPort) && b.videoPort > 0 && b.videoPort < 65536) settings.lm.videoPort = b.videoPort;
         saveSettings();
         startMevo();
       }
