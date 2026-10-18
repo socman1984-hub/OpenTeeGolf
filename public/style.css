@@ -107,6 +107,20 @@ select option { background: #1b261d; }
 
 #minimap { top: 170px; right: 16px; border-radius: 12px; border: 1px solid var(--line); background: rgba(0,0,0,0.4); }
 
+/* Mevo+ radar status, just above the shot numbers: armed (green), busy (amber), reading (blue),
+   read (bright green flash), missed (red flash), off (grey) */
+#radar { left: 50%; bottom: 112px; transform: translateX(-50%); display: flex; align-items: center; gap: 8px; padding: 6px 14px; font-size: 14px; font-weight: 600; white-space: nowrap; transition: background 0.2s, border-color 0.2s; }
+#radar .dot { width: 10px; height: 10px; border-radius: 50%; background: #7d8a80; flex: none; }
+#radar.armed { border-color: rgba(80, 200, 120, 0.7); }
+#radar.armed .dot { background: #4fd27a; box-shadow: 0 0 8px #4fd27a; animation: radar-pulse 1.6s ease-in-out infinite; }
+#radar.busy .dot { background: #f0b84a; }
+#radar.reading { border-color: rgba(110, 180, 255, 0.8); }
+#radar.reading .dot { background: #6eb4ff; box-shadow: 0 0 8px #6eb4ff; }
+#radar.read { background: rgba(40, 120, 70, 0.85); border-color: #4fd27a; }
+#radar.read .dot { background: #b8ffcf; }
+#radar.missed { background: rgba(140, 50, 40, 0.85); border-color: #e8735a; }
+#radar.missed .dot { background: #ffb4a3; }
+@keyframes radar-pulse { 50% { opacity: 0.45; } }
 #shot-data { left: 50%; bottom: 34px; transform: translateX(-50%); display: flex; padding: 8px 6px; max-width: calc(100vw - 32px); overflow-x: auto; }
 .tile { display: flex; flex-direction: column; align-items: center; padding: 2px 12px; border-right: 1px solid var(--line); min-width: 82px; }
 .tile:last-child { border-right: 0; }

@@ -39,6 +39,7 @@
 .setup-form { display: flex; flex-direction: column; gap: 12px; }
 .setup-form label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--text); }
 .setup-form small { color: var(--muted); font-size: 11px; line-height: 1.4; }
+.check-row span { display: flex; align-items: center; gap: 6px; }
 .unit-row { display: flex; align-items: center; gap: 6px; color: var(--muted); }
 .unit-row input { width: 90px; }
 .form-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }

@@ -674,8 +674,16 @@ function setClub(club) {
 // ------------------------------------------------------------------ shots
 
 function onShot(shot) {
+  // A swing while the last ball is still moving: finish that one at once and play this one
+  // from where it stops (rather than losing it)
+  if (S.phase === 'flying') {
+    S.pendingShot = shot;
+    skipAnimation();
+    toast('New shot — skipping to where the last ball stopped');
+    return;
+  }
   if (S.phase !== 'ready') {
-    toast(S.phase === 'flying' ? 'Ball still in motion — shot ignored' : 'Not ready for a shot');
+    toast('Not ready for a shot');
     return;
   }
   showShotData(shot, null);
@@ -802,14 +810,19 @@ function finishShot(res) {
   if (S.strokes >= h.par + 5) {
     return holeOut(true, 'Maximum strokes reached — picked up');
   }
-  setTimeout(() => {
+  const next = () => {
     S.phase = 'ready';
     // Old tracers just get in the way when putting
     if (S.lie === 'green') scene.clearTrails(); else scene.keepTrailAsGhost();
     scene.setGhostsVisible(S.showTraces !== false);
     resetAimToPin();
     addressView();
-  }, msg ? 1200 : 900);
+    const pending = S.pendingShot;
+    S.pendingShot = null;
+    if (pending) onShot(pending);
+  };
+  // (straight on if another shot is already waiting)
+  if (S.pendingShot) next(); else setTimeout(next, msg ? 1200 : 900);
   updateHud();
 }
 
@@ -869,6 +882,7 @@ function waterDrop(res) {
 function holeOut(pickedUp = false, note = '') {
   const h = hole();
   S.phase = 'holed';
+  if (S.pendingShot) { S.pendingShot = null; toast('Hole finished — the next swing was not played'); }
   S.scores[S.hole] = pickedUp ? h.par + 5 : S.strokes;
   scene.hidePuttGrid(); S.gridKey = null;
   if (note && !pickedUp) {
@@ -1198,8 +1212,60 @@ window.addEventListener('keydown', (e) => {
 
 // ------------------------------------------------------------------ launch monitor events
 
+// Whose turn it is, for the Mevo+ (it's armed only when it's time to hit, in the mode for the club)
+let turnSent = null;
+setInterval(() => {
+  const ready = S.phase === 'ready';
+  if (ready === turnSent) return;
+  turnSent = ready;
+  const body = { ready };
+  if (ready && S.ball && S.course) Object.assign(body, { club: $('club').value, distanceToTarget: Math.round(dist(S.ball, pin()) * M_TO_YD) });
+  fetch('/api/turn', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).catch(() => { turnSent = null; });
+}, 250);
+
+// The Mevo+ badge above the shot numbers: is it armed, did it see the swing, did it read the shot
+const radar = { direct: false, state: 'off', mode: null, flash: null, flashUntil: 0, seenShot: undefined, seenMiss: undefined };
+function renderRadar() {
+  const el = $('radar');
+  el.classList.toggle('hidden', !radar.direct || S.phase === 'menu');
+  if (!radar.direct) return;
+  const MODE = { chipping: ' · chipping mode', putting: ' · putting mode', outdoor: ' · outdoor mode' };
+  let cls, txt;
+  if (radar.flash && Date.now() < radar.flashUntil) [cls, txt] = radar.flash;
+  else {
+    switch (radar.state) {
+      case 'ready': cls = 'armed'; txt = `Armed — swing away${MODE[radar.mode] || ''}`; break;
+      case 'arming': cls = 'busy'; txt = 'Arming…'; break;
+      case 'shot': cls = 'reading'; txt = 'Ball seen — reading shot…'; break;
+      case 'idle': cls = 'busy'; txt = S.phase === 'ready' ? 'Arming…' : S.phase === 'flying' ? 'Disarmed until your next shot' : 'Disarmed'; break;
+      case 'searching': cls = ''; txt = 'Mevo+ not found — retrying'; break;
+      case 'connecting': case 'handshake': cls = 'busy'; txt = 'Connecting to the Mevo+…'; break;
+      default: cls = ''; txt = 'Mevo+ disconnected';
+    }
+  }
+  el.className = `panel ${cls}${el.classList.contains('hidden') ? ' hidden' : ''}`;
+  $('radar-text').textContent = txt;
+}
+function radarEvent(s) {
+  radar.state = s.state;
+  if (s.mode !== undefined) radar.mode = s.mode;
+  // (the first event only records what was already there; later changes flash)
+  const shotAt = s.lastShot?.at ?? null, missAt = s.lastMiss ?? null;
+  if (radar.seenShot !== undefined && shotAt && shotAt !== radar.seenShot) {
+    radar.flash = ['read', `Shot read — ${s.lastShot.Speed.toFixed(1)} mph`]; radar.flashUntil = Date.now() + 4000;
+  }
+  if (radar.seenMiss !== undefined && missAt && missAt !== radar.seenMiss) {
+    radar.flash = ['missed', 'Swing seen, but no ball flight read — try again']; radar.flashUntil = Date.now() + 5000;
+  }
+  if (s.state === 'shot') radar.flash = null;
+  radar.seenShot = shotAt; radar.seenMiss = missAt;
+  renderRadar();
+}
+setInterval(renderRadar, 500);
+
 function connectEvents() {
-  const es = new EventSource('/api/events');
+  const es = new EventSource('/api/events?game=1');
+  es.addEventListener('mevo', (e) => radarEvent(JSON.parse(e.data)));
   es.addEventListener('shot', (e) => {
     const shot = JSON.parse(e.data);
     if (S.phase === 'menu') return;
@@ -1213,7 +1279,9 @@ function connectEvents() {
     const battery = lm.battery != null ? ` · ${lm.battery}%` : '';
     if (lm.direct) {
       // Direct connection: say what it's doing (looking, connecting, arming, ready)
-      $('lm-text').textContent = lm.direct.state === 'ready' ? `${lm.device} — ready${battery}`
+      // (the detection mode follows the club: say when it isn't full swing)
+      const mode = { chipping: ' · chipping mode', putting: ' · putting mode', outdoor: ' · outdoor mode' }[lm.direct.mode] || '';
+      $('lm-text').textContent = lm.direct.state === 'ready' ? `${lm.device} — ready${mode}${battery}`
         : lm.direct.state === 'shot' ? `${lm.device} — reading shot`
           : lm.direct.state === 'idle' ? `${lm.device} — disarmed${battery}`
             : lm.direct.state === 'off' ? 'Mevo+ disconnected'
@@ -1231,6 +1299,9 @@ function connectEvents() {
       $('lm-text').title = '';
     }
     showLmHelp(lm);
+    radar.direct = !!lm.direct;
+    if (lm.direct?.state) radar.state = lm.direct.state;
+    renderRadar();
   });
   // Disarm when you're done (or arm / reconnect); the setup page also has Disconnect
   $('lm-arm').onclick = async () => {

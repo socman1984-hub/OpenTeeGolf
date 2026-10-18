@@ -100,10 +100,12 @@
           <small>Share of the flight the radar must track before a shot counts (0.6–1.0).</small></label>
         <label>Detection mode
           <select id="s-mode">
-            <option value="auto">Automatic (putting / chipping / full by club)</option>
+            <option value="auto">Automatic: putter → putting, wedge inside 50 yd (or anything inside 25 yd) → chipping, else full swing</option>
             <option value="full">Always full swing (indoor)</option>
             <option value="outdoor">Always outdoor</option>
           </select></label>
+        <label class="check-row"><span><input id="s-turn" type="checkbox" checked> Arm only when it's my turn</span>
+          <small>After a shot is read the Mevo+ stays disarmed; the game arms it again (in the mode for your club) once the ball has stopped. Disarmed between holes, in the menu and when the game is closed.</small></label>
         <div class="form-actions">
           <button class="primary" id="save">Save and apply</button>
           <span id="save-msg" class="muted small"></span>

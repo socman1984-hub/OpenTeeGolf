@@ -91,7 +91,7 @@ export function fakeMevo({ videoPort = null, quiet = null } = {}) {
               if (seen.armed) { seen.armed = false; setTimeout(() => { text(BUS.AVR, 'ARMED CANCELLED'); reply(BUS.AVR, 0xb1, [2, 0, 0]); text(BUS.DSP, 'System State 5'); }, 10); }
             }
             break;
-          case 0x69: seen.acks++; if (seen.acks % 2 === 0) setTimeout(() => { reply(BUS.AVR, 0xb1, [2, 0, 0]); reply(BUS.AVR, 0xe5, ascii('\u0005IDLE', 6)); }, 30); break;
+          case 0x69: seen.acks++; if (seen.acks % 2 === 0) setTimeout(() => { reply(BUS.AVR, 0xb1, [2, 0, 0]); reply(BUS.AVR, 0xe5, ascii('\u0005IDLE', 6)); }, 1500); break; // (the real one takes ~1.6 s)
           case 0x6d: reply(BUS.AVR, 0xed, clubPayload()); break;
           default: break;
         }

@@ -51,9 +51,11 @@ try {
   check(seen.modes.at(-1) === MODES.full, 'full-swing detection mode set');
 
   const shot = new Promise((r) => client.once('shot', r));
+  const fired = Date.now();
   seen.fireShot();
   const b = await Promise.race([shot, new Promise((_, rej) => setTimeout(() => rej(new Error('no shot')), 8000))]);
   check(Math.abs(b.Speed - 150.3) < 0.2 && b.VLA === 12 && b.HLA === 1.3, `ball: ${b.Speed.toFixed(1)} mph, VLA ${b.VLA}, HLA ${b.HLA} (right)`);
+  check(Date.now() - fired < 800, `shot reported ${Date.now() - fired} ms after the trigger, without waiting for IDLE`);
   check(b.BackSpin === 2700 && b.SideSpin === 450 && Math.abs(b.SpinAxis - 9.46) < 0.05, `spin: ${b.BackSpin} back, ${b.SideSpin} side, axis ${b.SpinAxis.toFixed(1)}`);
   check(b.ClubData && Math.abs(b.ClubData.Speed - 100.7) < 0.2 && b.ClubData.Path === 2.1, `club: ${b.ClubData?.Speed.toFixed(1)} mph, path ${b.ClubData?.Path}`);
   await until(() => client.state === 'ready' && client.armed, 5000, 're-arm');
@@ -101,6 +103,20 @@ try {
   check(client.state === 'idle', 'stays connected while disarmed');
   await client.setArmed(true);
   check(client.state === 'ready' && seen.armed, 'armed again on request');
+
+  // Arm on the player's turn: after a read shot it stays disarmed until asked again
+  client.holdAfterShot = true;
+  const held = new Promise((r) => client.once('shot', r));
+  seen.fireShot();
+  await held;
+  await until(() => client.state === 'idle', 6000, 'idle after the shot');
+  check(!seen.armed && !client.armed, 'stays disarmed after a shot when the game arms it');
+  await new Promise((r) => setTimeout(r, 1200));
+  check(client.state === 'idle' && !seen.armed, 'still disarmed (and connected) a moment later');
+  await client.setArmed(true);
+  await until(() => client.state === 'ready' && seen.armed, 4000, 'armed for the next turn');
+  check(true, 'armed again for the next turn');
+  client.holdAfterShot = false;
 
   // Disconnect: disarms first, then hangs up and stays off
   await client.disconnect();

@@ -251,19 +251,37 @@ const settings = (() => { try { return JSON.parse(fs.readFileSync(SETTINGS_FILE,
 settings.lm = { connection: 'fsgolf', host: '192.168.2.1', port: 5100, videoPort: 8080, ...settings.lm };
 const saveSettings = () => { fs.mkdirSync(path.dirname(SETTINGS_FILE), { recursive: true }); fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 1)); };
 
-// Putter → putting mode, short shots → chipping, everything else full swing
-// (the setup page can force full swing or outdoor mode for everything but putts)
+// The Mevo+ detection mode follows the club: putter → putting; a wedge for a short shot (or any
+// club inside 25 yd) → chipping, since full-swing mode can miss slow, low chips; everything else
+// full swing. (The setup page can force full swing or outdoor mode for everything but putts.)
+const WEDGES = ['PW', 'GW', 'SW', 'LW'];
 const mevoMode = () => {
   if (player.Club === 'PT') return 'putting';
   const forced = settings.lm.setup?.mode;
   if (forced === 'full' || forced === 'outdoor') return forced;
-  return player.DistanceToTarget > 0 && player.DistanceToTarget < 40 ? 'chipping' : 'full';
+  const d = player.DistanceToTarget;
+  if (d > 0 && (d < 25 || (d < 50 && WEDGES.includes(player.Club)))) return 'chipping';
+  return 'full';
 };
 const DIRECT_TEXT = {
   connecting: 'Looking for the Mevo+…', searching: 'Mevo+ not found', handshake: 'Connecting to the Mevo+…',
   arming: 'Arming…', ready: 'ready', shot: 'Reading shot…', idle: 'disarmed', off: 'disconnected',
 };
 let mevo = null;
+// Arming on the player's turn: after a shot is read the Mevo+ stays disarmed, and it's armed again
+// (in the mode for the club) when the game says it's time for the next shot. Disarmed in the menu,
+// between holes, after the round and while no game window is open. (settings.lm.armOnTurn: false
+// turns this off: armed all the time, re-armed straight after each shot.)
+const gameClients = new Set();
+let gameTurn = false;
+const armOnTurn = () => settings.lm.armOnTurn !== false;
+function applyTurn() {
+  if (!mevo) return;
+  mevo.holdAfterShot = armOnTurn();
+  if (!armOnTurn()) return;
+  if (gameTurn) mevo.setMode(mevoMode());
+  mevo.setArmed(gameTurn).catch((err) => mevoLog(`Mevo+: ${gameTurn ? 'arming' : 'disarming'} failed (${err.message})`));
+}
 let mevoOff = false; // the player disconnected it (until they connect again or restart the game)
 // Every message to and from the Mevo+, written to data/mevo-log.txt (started fresh each run, kept
 // under ~5 MB) so a connection problem can be looked at afterwards
@@ -277,7 +295,7 @@ function mevoWrite(line, always = false) {
 try { fs.mkdirSync(path.dirname(MEVO_LOG), { recursive: true }); fs.writeFileSync(MEVO_LOG, ''); } catch { /* ignore */ }
 function mevoLog(m) { console.log(m); mevoWrite(m, true); }
 function mevoTrace(dir, f) {
-  if (f.type === 0xaa && mevo?.state === 'ready') return; // the once-a-second status polls
+  if (f.type === 0xaa && ['ready', 'idle'].includes(mevo?.state)) return; // the once-a-second status polls
   const hex = Buffer.from(f.payload).toString('hex').toUpperCase().replace(/(..)(?!$)/g, '$1 ');
   const txt = f.type === 0xe3 || f.type === 0xe5 ? `  "${Buffer.from(f.payload).toString('latin1').replace(/[^\x20-\x7e]/g, '')}"` : '';
   mevoWrite(`${dir} ${f.src.toString(16).padStart(2, '0')}->${f.dest.toString(16).padStart(2, '0')} ${f.type.toString(16).padStart(2, '0')} [${hex}]${txt}`);
@@ -293,6 +311,8 @@ function startMevo() {
   }
   mevo = new MevoClient({ host: settings.lm.host, port: settings.lm.port, mode: mevoMode(), log: mevoLog, trace: mevoTrace });
   if (settings.lm.setup) mevo.setup = { ...DEFAULT_SETUP, ...settings.lm.setup };
+  mevo.holdAfterShot = armOnTurn();
+  mevo.wantDisarmed = armOnTurn() && !gameTurn;
   // Everything the setup page shows, about once a second
   mevo.on('status', (s) => broadcast('mevo', s));
   mevo.on('status', (s) => setLm({
@@ -472,10 +492,27 @@ const httpServer = http.createServer(async (req, res) => {
     if (p === '/api/events') {
       res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
       res.write(`event: lm\ndata: ${JSON.stringify(lmState)}\n\n`);
+      if (mevo) res.write(`event: mevo\ndata: ${JSON.stringify({ state: mevo.state, mode: mevo.mode, ...mevo.info })}\n\n`);
       sseClients.add(res);
+      // (the game itself, as opposed to the setup page: while none is open the Mevo+ is disarmed)
+      const isGame = url.searchParams.get('game') === '1';
+      if (isGame) gameClients.add(res);
       const ping = setInterval(() => res.write(': ping\n\n'), 20000);
-      req.on('close', () => { clearInterval(ping); sseClients.delete(res); });
+      req.on('close', () => {
+        clearInterval(ping); sseClients.delete(res);
+        if (isGame && gameClients.delete(res) && !gameClients.size) { gameTurn = false; applyTurn(); }
+      });
       return;
+    }
+    if (p === '/api/turn' && req.method === 'POST') {
+      // The game says whether it's the player's turn to hit (with the club and distance, so the
+      // Mevo+ arms in the right mode)
+      const b = await readBody(req);
+      if (b.club) player.Club = String(b.club);
+      if (b.distanceToTarget != null) player.DistanceToTarget = +b.distanceToTarget || 0;
+      gameTurn = !!b.ready;
+      applyTurn();
+      return json(res, { ok: true, state: mevo?.state || 'off' });
     }
     if (p === '/api/player' && req.method === 'POST') {
       const b = await readBody(req);
@@ -491,7 +528,7 @@ const httpServer = http.createServer(async (req, res) => {
       return json(res, {
         connection: settings.lm.connection, host: settings.lm.host,
         state: mevo?.state || 'off', info: mevo?.info || {}, mode: mevo?.mode || null, off: mevoOff,
-        setup: { ...DEFAULT_SETUP, ...settings.lm.setup }, custom: !!settings.lm.setup,
+        setup: { ...DEFAULT_SETUP, ...settings.lm.setup, armOnTurn: armOnTurn() }, custom: !!settings.lm.setup,
       });
     }
     if (p === '/api/mevo/setup' && req.method === 'POST') {
@@ -503,7 +540,10 @@ const httpServer = http.createServer(async (req, res) => {
         teeHeightIn: num(b.teeHeightIn, 0, 4, d.teeHeightIn), ballType: b.ballType ? 1 : 0,
         trackPct: num(b.trackPct, 0.6, 1, d.trackPct), mode: ['auto', 'full', 'outdoor'].includes(b.mode) ? b.mode : 'auto',
       };
+      if (typeof b.armOnTurn === 'boolean') settings.lm.armOnTurn = b.armOnTurn;
       saveSettings();
+      applyTurn();
+      if (mevo && !armOnTurn() && mevo.state === 'idle') mevo.setArmed(true).catch(() => {});
       if (mevo) {
         try {
           await mevo.applySetup(settings.lm.setup);
