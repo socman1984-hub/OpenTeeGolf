@@ -7,6 +7,8 @@
 //   - water (penalty areas) and OOB
 // These drive both the physics (heightAt / normalAt / surfaceAt) and the rendering.
 
+import { courseMowing } from './mowing.js';
+
 export const TEE_TYPES = ['Black', 'Blue', 'White', 'Green', 'Yellow', 'Red', 'Junior', 'Par3'];
 export const PIN_DAYS = ['Thursday', 'Friday', 'Saturday', 'Sunday'];
 
@@ -56,6 +58,39 @@ export function smoothPoly(pts) {
     P = out;
   }
   return P;
+}
+
+// Bunkers are shaped with flowing, rounded edges, but mapped outlines are often a few points or a
+// wobbly trace. Resample the outline every half metre, smooth out bumps smaller than a few metres
+// (repeated neighbour averaging, i.e. a Gaussian blur along the edge), then scale it back up
+// about its centre to the original area so the bunker doesn't shrink.
+export function roundOutline(pts, sigma = 1.6) {
+  let P = pts.slice();
+  if (P.length > 1 && Math.abs(P[0][0] - P[P.length - 1][0]) < 1e-6 && Math.abs(P[0][1] - P[P.length - 1][1]) < 1e-6) P.pop();
+  if (P.length < 3) return pts;
+  const area = (Q) => { let a = 0; for (let i = 0; i < Q.length; i++) { const p = Q[i], q = Q[(i + 1) % Q.length]; a += p[0] * q[1] - q[0] * p[1]; } return a / 2; };
+  const a0 = area(P);
+  const step = 0.5, R = [];
+  for (let i = 0; i < P.length; i++) {
+    const p = P[i], q = P[(i + 1) % P.length], n = Math.max(1, Math.round(Math.hypot(q[0] - p[0], q[1] - p[1]) / step));
+    for (let k = 0; k < n; k++) R.push([p[0] + ((q[0] - p[0]) * k) / n, p[1] + ((q[1] - p[1]) * k) / n]);
+  }
+  if (R.length < 8) return P;
+  // Each [1/4, 1/2, 1/4] pass adds half a sample² of variance
+  const passes = Math.min(80, Math.round(2 * (sigma / step) ** 2));
+  let S = R;
+  for (let k = 0; k < passes; k++) {
+    S = S.map((p, i) => {
+      const a = S[(i - 1 + S.length) % S.length], b = S[(i + 1) % S.length];
+      return [p[0] * 0.5 + (a[0] + b[0]) * 0.25, p[1] * 0.5 + (a[1] + b[1]) * 0.25];
+    });
+  }
+  const a1 = area(S);
+  if (!a1 || Math.sign(a1) !== Math.sign(a0)) return P;
+  const f = Math.sqrt(Math.abs(a0 / a1));
+  const cx = S.reduce((s, p) => s + p[0], 0) / S.length, cz = S.reduce((s, p) => s + p[1], 0) / S.length;
+  // (every second point is plenty once smooth)
+  return S.filter((_, i) => i % 2 === 0).map(([x, z]) => [cx + (x - cx) * f, cz + (z - cz) * f]);
 }
 
 function decodeF32(b64) {
@@ -197,7 +232,7 @@ export function buildCourse(courseData, real = null) {
       if (!surface) continue;
       for (const f of list) {
         // Mapped outlines are often a few straight segments; real turf edges are curved
-        const poly = smoothPoly(f.pts);
+        const poly = surface === 'sand' ? roundOutline(f.pts) : smoothPoly(f.pts);
         const xs = poly.map((p) => p[0]), zs = poly.map((p) => p[1]);
         // (river pieces are already smooth ribbons; smoothing would pull their ends apart)
         if (f.flow) poly.splice(0, poly.length, ...f.pts);
@@ -508,6 +543,7 @@ export function buildCourse(courseData, real = null) {
     designer: courseData.Designer,
     altitudeM: (courseData.altitudeV2 || courseData.altitude || 0) * (courseData.altitudeV2 ? 0.3048 : 1),
     defaultStimp: courseData.DefaultStimp || 10,
+    mowing: courseMowing(courseData),
     holes,
     hazards,
     oob,

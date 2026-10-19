@@ -33,9 +33,12 @@ export function assignSpecies(trees, photo) {
     const c = photo?.(t.x, t.z);
     const lum = c ? (c[0] + c[1] + c[2]) / 3 : 100;
     const bluish = c ? c[2] > c[0] * 0.95 && lum < 80 : false;
-    const n = hash(t.x, t.z);
-    if (t.r / t.h < 0.16 || bluish || n < 0.07) t.kind = 'pine';
-    else t.kind = n < 0.5 ? 'oak' : n < 0.82 ? 'ash' : 'aspen';
+    const n = hash(t.x, t.z), m = hash(t.x, t.z, 2.9);
+    // Conifers: pine, with spruce in places (patches, as they'd be planted)
+    if (t.r / t.h < 0.16 || bluish || n < 0.07) t.kind = hash(Math.floor(t.x / 40), Math.floor(t.z / 40), 5.5) < 0.35 ? 'spruce' : 'pine';
+    // Broadleaf: mostly oak, maple and ash, some birch and aspen, the odd poplar (willows only
+    // where the course editor plants them)
+    else t.kind = n < 0.36 ? 'oak' : n < 0.56 ? 'maple' : n < 0.76 ? 'ash' : n < 0.86 ? 'birch' : m < 0.85 ? 'aspen' : 'poplar';
   }
   return trees;
 }
@@ -67,6 +70,50 @@ function markEdges(trees) {
 
 // ------------------------------------------------------------------ the variants
 
+// The species beyond ez-tree's own presets, shaped from the nearest one (applied after the per-seed
+// variation, the same for the near and mid builds so both are the same tree). tint: the variant's
+// leaf colour relative to the others.
+const SHAPES = {
+  // Maple: a dense, rounded crown on a shorter trunk; more, slightly larger leaves
+  maple(o) {
+    o.branch.length[0] *= 0.8;
+    for (const l of [1, 2]) o.branch.angle[l] *= 0.85;
+    o.branch.children[1] += 1;
+    o.leaves.count = Math.round(o.leaves.count * 1.35); o.leaves.size *= 1.1;
+  },
+  // Birch: slender, white-barked, light airy crown with slightly hanging twigs
+  birch(o) {
+    o.bark.type = 'birch';
+    for (const l of Object.keys(o.branch.radius)) o.branch.radius[l] *= 0.6;
+    o.branch.force = { direction: { x: 0, y: -1, z: 0 }, strength: 0.012 };
+    o.leaves.type = 'aspen'; o.leaves.size *= 0.75; o.leaves.count = Math.round(o.leaves.count * 1.2);
+  },
+  // Weeping willow: long limbs whose twigs pour down towards the ground
+  willow(o) {
+    o.bark.type = 'willow';
+    o.branch.force = { direction: { x: 0, y: -1, z: 0 }, strength: 0.09 };
+    o.branch.length[2] *= 1.6; if (o.branch.length[3] != null) o.branch.length[3] *= 2.2;
+    for (const l of Object.keys(o.branch.gnarliness)) o.branch.gnarliness[l] *= 0.5;
+    o.leaves.type = 'ash'; o.leaves.count = Math.round(o.leaves.count * 2.4); o.leaves.size *= 0.85; o.leaves.angle = 5; o.leaves.start = 0;
+  },
+  // Lombardy poplar: a tall, narrow column, branches swept up along the trunk
+  poplar(o) {
+    o.bark.type = 'oak'; // (dark, furrowed - not the aspen preset's white)
+    o.branch.force = { direction: { x: 0, y: 1, z: 0 }, strength: 0.08 };
+    for (const l of Object.keys(o.branch.angle)) o.branch.angle[l] = Math.min(o.branch.angle[l], 28);
+    for (const l of [1, 2]) if (o.branch.length[l]) o.branch.length[l] *= 0.55;
+    o.branch.start[1] = 0.15;
+    o.leaves.count = Math.round(o.leaves.count * 1.3);
+  },
+  // Spruce: a full, dark cone of needles from near the ground, shorter side branches
+  spruce(o) {
+    o.branch.start[1] = 0.12;
+    o.branch.children[0] = Math.round(o.branch.children[0] * 1.35);
+    if (o.branch.length[1]) o.branch.length[1] *= 0.75;
+    o.leaves.count = Math.round(o.leaves.count * 1.8); o.leaves.size *= 1.1;
+  },
+};
+
 // kind, preset, seed, and how much to vary branching/leaves from the preset
 const VARIANTS = [
   { kind: 'oak', preset: 'Oak Medium', seed: 101 }, { kind: 'oak', preset: 'Oak Medium', seed: 202 },
@@ -77,6 +124,11 @@ const VARIANTS = [
   { kind: 'aspen', preset: 'Aspen Medium', seed: 909, green: true }, { kind: 'aspen', preset: 'Aspen Large', seed: 1010, green: true, big: true },
   { kind: 'pine', preset: 'Pine Medium', seed: 1111 }, { kind: 'pine', preset: 'Pine Medium', seed: 1212 },
   { kind: 'pine', preset: 'Pine Large', seed: 1313, big: true }, { kind: 'pine', preset: 'Pine Large', seed: 1414, big: true },
+  { kind: 'maple', preset: 'Oak Medium', seed: 1515, tint: [0.95, 1.02, 0.85] }, { kind: 'maple', preset: 'Oak Large', seed: 1616, big: true, tint: [0.95, 1.02, 0.85] },
+  { kind: 'birch', preset: 'Ash Medium', seed: 1717, green: true, tint: [1.08, 1.06, 0.95] }, { kind: 'birch', preset: 'Ash Medium', seed: 1818, green: true, tint: [1.08, 1.06, 0.95] },
+  { kind: 'willow', preset: 'Ash Medium', seed: 1919, tint: [1.05, 1.08, 0.8] }, { kind: 'willow', preset: 'Ash Large', seed: 2020, big: true, tint: [1.05, 1.08, 0.8] },
+  { kind: 'poplar', preset: 'Aspen Medium', seed: 2121, green: true }, { kind: 'poplar', preset: 'Aspen Large', seed: 2222, green: true, big: true },
+  { kind: 'spruce', preset: 'Pine Medium', seed: 2323, tint: [0.72, 0.85, 0.92] }, { kind: 'spruce', preset: 'Pine Large', seed: 2424, big: true, tint: [0.72, 0.85, 0.92] },
 ];
 
 function tweakOptions(o, seed, lod) {
@@ -106,6 +158,7 @@ function buildModel(v, lod) {
   tree.loadPreset(v.preset);
   tweakOptions(tree.options, v.seed, lod);
   if (v.green) tree.options.bark.type = 'birch';
+  SHAPES[v.kind]?.(tree.options);
   // For the mid build, note where the finest twigs' bark is so it can be left out afterwards
   // (from there the leaves hide them)
   const twigs = [], L = tree.options.branch.levels;
@@ -175,6 +228,11 @@ function leafMaterial(src, v) {
   m.envMapIntensity = 0.45;
   // (keep the picture's alpha: a vec3 colour alone would make every leaf card a solid square)
   if (v.green && src.map) { const tx = texture(src.map, uv()); m.colorNode = vec4(greenLeaves(tx.rgb).mul(vec3(0.6, 0.68, 0.5)), tx.a); }
+  // Further off, the leaf picture is read from its smaller, blurred copies, where the see-through
+  // gaps average the alpha down below the cut-off, so whole leaves dropped out and trees looked
+  // bare between ~50 and 130 m (before the distant tree pictures take over). Boosting the alpha
+  // with distance keeps each leaf about as full as it is up close.
+  m.opacityNode = mix(float(1), float(2.6), smoothstep(12, 110, length(positionWorld.sub(cameraPosition))));
   // Leaves sway a little, the tops most, each tree in its own rhythm
   const phase = float(instanceIndex).mul(1.618).fract().mul(6.283);
   const sway = positionLocal.y.mul(0.0035);
@@ -362,8 +420,10 @@ export class Forest {
         m.compose(T(t.x, y - 0.15, t.z), q, s.set(sx, sy, sz));
         m.toArray(mats, i * 16);
         const n1 = hash(t.x, t.z, 6.1), n2 = hash(t.x, t.z, 8.3);
-        // Each tree a slightly different green (the leaf texture carries the colour)
-        tints[i * 3] = 0.82 + 0.3 * n1; tints[i * 3 + 1] = 0.9 + 0.18 * n2; tints[i * 3 + 2] = 0.78 + 0.2 * n2;
+        // Each tree a slightly different green (the leaf texture carries the colour), and each
+        // species its own shade (darker blue-green spruces, yellower willows)
+        const vt = v.tint || [1, 1, 1];
+        tints[i * 3] = (0.82 + 0.3 * n1) * vt[0]; tints[i * 3 + 1] = (0.9 + 0.18 * n2) * vt[1]; tints[i * 3 + 2] = (0.78 + 0.2 * n2) * vt[2];
         t.y = y;
         t.rot = rot;
         t.k = i;
@@ -373,7 +433,7 @@ export class Forest {
         // Collision shape for the ball, matching what's drawn
         t.trunkR = Math.max(0.12, near.trunk * sxz);
         const crownBase = y + near.crownBase * t.h;
-        if (v.kind === 'pine') Object.assign(t, { trunkTop: crownBase + 0.6, coneBase: crownBase, coneH: t.h - near.crownBase * t.h, coneR: near.crown * sxz });
+        if (v.kind === 'pine' || v.kind === 'spruce') Object.assign(t, { trunkTop: crownBase + 0.6, coneBase: crownBase, coneH: t.h - near.crownBase * t.h, coneR: near.crown * sxz });
         else Object.assign(t, { trunkTop: crownBase + 0.3, cy: (crownBase + y + t.h) / 2, rh: near.crown * sxz, rv: (y + t.h - crownBase) / 2 });
       });
       const barkM = barkMaterial(near.barkMat), leafM = leafMaterial(near.leafMat, v);

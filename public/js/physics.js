@@ -167,7 +167,8 @@ export function simulateShot(course, origin, shot, opts) {
   const pin = opts.pin;
   let sampleAcc = 0;
 
-  const push = () => points.push({ t, x: p[0], y: p[1], z: p[2] });
+  // (w: spin rate in rad/s and air: in flight, for drawing the ball turning)
+  const push = () => points.push({ t, x: p[0], y: p[1], z: p[2], w: spin, air: phase === 'air' });
   const cupState = { over: false };
   // Trees (optional): { near(x, z) -> [tree] } from the renderer
   const trees = opts.trees || null;
@@ -347,6 +348,7 @@ export function simulateShot(course, origin, shot, opts) {
     flightTime: carryPoint ? carryPoint.t : t,
     duration: t,
     treeHits: treeState.hits,
+    spinTilt: tilt, // spin axis tilt (rad, from side spin)
   };
 }
 
@@ -377,7 +379,7 @@ function treeInteract(trees, p, v, dt, st, trunks = true) {
     }
     // How deep inside the crown the ball is (0 at the edge, 1 at the core)
     let depth = -1;
-    if (t.kind === 'pine') {
+    if (t.coneBase != null) { // conifers: a cone of needles
       const f = (p[1] - t.coneBase) / t.coneH;
       if (f >= 0 && f <= 1) { const R = t.coneR * (1 - f); if (dh < R) depth = 1 - dh / R; }
     } else {
@@ -387,7 +389,7 @@ function treeInteract(trees, p, v, dt, st, trunks = true) {
     if (depth < 0) continue;
     const speed = Math.hypot(v[0], v[1], v[2]);
     if (speed < 1e-3) continue;
-    const step = speed * dt, dense = t.kind === 'pine' ? 1.5 : 1;
+    const step = speed * dt, dense = t.kind === 'spruce' ? 1.7 : t.coneBase != null ? 1.5 : 1;
     if (!st.inCrown.has(t)) { st.inCrown.add(t); if (!event) event = 'leaves'; }
     // Leaves: drag (exponential speed loss per metre) and a small random knock off line
     const keep = Math.exp(-(0.008 + 0.12 * depth) * dense * step);

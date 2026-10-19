@@ -707,6 +707,7 @@ function refreshAim() {
   const len = onGreen() ? d + 1 : S.aimDist;
   scene.setAim(S.ball, S.heading, len, onGreen());
   scene.setBall(S.ball);
+  scene.settleBall(S.ball, S.lie);
   scene.placeGrass(S.ball);
   if (onGreen()) {
     // Putt read at the hole: distance and how much it climbs or falls
@@ -798,6 +799,7 @@ function onShot(shot) {
   S.phase = 'flying';
   S.lastShot = { shot, res };
   S.anim = { res, t: 0 };
+  scene.spinTilt = res.spinTilt || 0;
   scene.hideAim();
   scene.hidePuttGrid();
   S.gridKey = null;
@@ -1124,12 +1126,65 @@ function drawMinimap() {
     ctx.beginPath(); ctx.moveTo(0, -dotR * 3); ctx.lineTo(dotR * 1.8, dotR * 1.6); ctx.lineTo(-dotR * 1.8, dotR * 1.6); ctx.closePath(); ctx.fill(); ctx.stroke();
     ctx.restore();
   }
+  // Hovered spot: lines from the ball and on to the pin (in free view too, where a click flies there)
+  const hov = S.mmHover;
+  if (hov) {
+    const [hx, hy] = px(hov);
+    ctx.lineWidth = 1.5 / s;
+    ctx.strokeStyle = 'rgba(127,212,255,0.95)';
+    ctx.beginPath(); ctx.moveTo(bx, by); ctx.lineTo(hx, hy); ctx.stroke();
+    ctx.setLineDash([4 / s, 4 / s]);
+    ctx.beginPath(); ctx.moveTo(hx, hy); ctx.lineTo(gx, gy); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.lineWidth = 2 / s;
+    ctx.beginPath(); ctx.arc(hx, hy, dotR * 1.4, 0, 7); ctx.stroke();
+  } else if (!onGreen()) {
+    // The aim point leaves this much to the pin
+    ctx.strokeStyle = 'rgba(255,255,255,0.45)';
+    ctx.lineWidth = 1 / s;
+    ctx.setLineDash([3 / s, 4 / s]);
+    ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(gx, gy); ctx.stroke();
+    ctx.setLineDash([]);
+  }
   ctx.restore();
+  // Yardages, drawn upright in screen space
+  const fmt = onGreen() ? fmtPutt : fmtLen;
+  const scr = (p) => { const [x, y] = px(p); const q = S.minimap.matrix.transformPoint(new DOMPoint(x, y)); return [q.x, q.y]; };
+  const mid = (a, b) => ({ x: (a.x + b.x) / 2, z: (a.z + b.z) / 2 });
+  if (hov) {
+    const surf = S.course.surfaceAt(hov.x, hov.z);
+    const [hx, hy] = scr(hov);
+    mapLabel(ctx, `${fmt(dist(S.ball, hov))}${surf ? ` · ${SURFACE_NAMES[surf] || surf}` : ''}`, hx, hy - 30, '#7fd4ff');
+    if (dist(hov, g) > 1) {
+      // On the line to the pin, or under the cursor when that's too close to the first tag
+      let [lx, ly] = scr(mid(hov, g));
+      if (Math.abs(ly - (hy - 30)) < 36 && Math.abs(lx - hx) < 160) [lx, ly] = [hx, hy + 30];
+      mapLabel(ctx, `${fmt(dist(hov, g))} to pin`, lx, ly, '#fff');
+    }
+  } else if (!onGreen()) {
+    const t = aimPoint();
+    mapLabel(ctx, fmtLen(S.aimDist), ...scr(mid(S.ball, t)), '#ffe14d');
+    if (dist(t, g) > 5) mapLabel(ctx, `${fmtLen(dist(t, g))} left`, ...scr(mid(t, g)), '#fff');
+  }
   ctx.fillStyle = 'rgba(0,0,0,0.55)';
-  ctx.fillRect(0, H - 22, W, 22);
+  ctx.fillRect(0, H - 40, W, 40);
   ctx.fillStyle = '#fff';
-  ctx.font = '12px system-ui';
-  ctx.fillText(scene.mode === 'free' ? 'Click to fly there' : `To pin ${onGreen() ? fmtPutt(dist(S.ball, g)) : fmtLen(dist(S.ball, g))} · click to aim`, 8, H - 7);
+  ctx.font = '22px system-ui';
+  ctx.fillText(scene.mode === 'free' ? 'Click to fly there' : `To pin ${fmt(dist(S.ball, g))} · click to aim`, 12, H - 13);
+}
+
+// A small dark tag with text, centred on (x, y) and kept inside the minimap
+function mapLabel(ctx, text, x, y, color) {
+  ctx.font = 'bold 22px system-ui';
+  const w = ctx.measureText(text).width + 16, h = 32;
+  const cx = Math.min(Math.max(x, w / 2 + 4), ctx.canvas.width - w / 2 - 4);
+  const cy = Math.min(Math.max(y, h / 2 + 4), ctx.canvas.height - 44 - h / 2);
+  ctx.fillStyle = 'rgba(0,0,0,0.72)';
+  ctx.beginPath(); ctx.roundRect(cx - w / 2, cy - h / 2, w, h, 8); ctx.fill();
+  ctx.fillStyle = color;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(text, cx, cy + 1);
+  ctx.textAlign = 'start'; ctx.textBaseline = 'alphabetic';
 }
 
 // Minimap: click/drag to aim (or to fly the free camera there)
@@ -1146,7 +1201,13 @@ function minimapInput(e) {
   else aimAt(p);
 }
 $('minimap').addEventListener('pointerdown', (e) => { e.target.setPointerCapture(e.pointerId); minimapInput(e); });
-$('minimap').addEventListener('pointermove', (e) => { if (e.buttons & 1) minimapInput(e); });
+$('minimap').addEventListener('pointermove', (e) => {
+  if (e.buttons & 1) { minimapInput(e); return; }
+  // Hovering shows the distance to that spot and on to the pin
+  S.mmHover = minimapPoint(e);
+  if (!S.mmFrame) S.mmFrame = requestAnimationFrame(() => { S.mmFrame = null; if (S.course) drawMinimap(); });
+});
+$('minimap').addEventListener('pointerleave', () => { S.mmHover = null; if (S.course) drawMinimap(); });
 
 // 3D view: a click (not a drag) on the ground aims there
 let downAt = null;
@@ -1173,7 +1234,8 @@ function setFreeView(on) {
   if (on) freeTimer = setInterval(drawMinimap, 150);
   drawMinimap();
 }
-$('free-btn').onclick = () => setFreeView(scene.mode !== 'free');
+// (drop the focus, or Space - which flies up in free view - would press the button again)
+$('free-btn').onclick = (e) => { e.currentTarget.blur(); setFreeView(scene.mode !== 'free'); };
 
 function showScorecard(afterHole = false, final = false) {
   const holes = S.course.holes;
@@ -1246,7 +1308,7 @@ $('t-hit').onclick = () => {
 
 // ------------------------------------------------------------------ keyboard
 
-const FREE_KEYS = { w: 'w', a: 'a', s: 's', d: 'd', q: 'q', e: 'e', shift: 'shift' };
+const FREE_KEYS = { w: 'w', a: 'a', s: 's', d: 'd', q: 'q', e: 'e', ' ': 'space', shift: 'shift' };
 window.addEventListener('keyup', (e) => {
   const k = FREE_KEYS[e.key.toLowerCase()];
   if (k) scene.freeKeys.delete(k);
@@ -1255,8 +1317,8 @@ window.addEventListener('blur', () => scene.freeKeys.clear());
 window.addEventListener('keydown', (e) => {
   if (e.target.matches('input, select')) return;
   if (S.phase === 'menu') return;
-  // Free view: WASD to move, Q/E down/up, Shift faster
-  if (scene.mode === 'free' && FREE_KEYS[e.key.toLowerCase()]) { scene.freeKeys.add(FREE_KEYS[e.key.toLowerCase()]); return; }
+  // Free view: WASD to move, Q/E down/up (Space up too), Shift faster
+  if (scene.mode === 'free' && FREE_KEYS[e.key.toLowerCase()]) { scene.freeKeys.add(FREE_KEYS[e.key.toLowerCase()]); e.preventDefault(); return; }
   const step = (e.shiftKey ? 0.2 : 1) * (onGreen() ? 0.5 : 1) * (Math.PI / 180);
   switch (e.key) {
     case 'f': case 'F': setFreeView(scene.mode !== 'free'); break;

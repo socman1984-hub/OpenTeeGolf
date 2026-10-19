@@ -6,14 +6,20 @@ import * as THREE from 'three/webgpu';
 import {
   Fn, texture, uv, vec2, vec3, float, mix, clamp, smoothstep, dot, distance, normalize, sin, cos, abs, atan,
   positionWorld, cameraPosition, instancedBufferAttribute, PI, normalMap, time, reflector, normalView, positionViewDirection, pow,
+  uniform, select, fwidth,
 } from 'three/tsl';
 import { SkyMesh } from 'three/addons/objects/SkyMesh.js';
 import { Line2 } from 'three/addons/lines/webgpu/Line2.js';
 import { LineGeometry } from 'three/addons/lines/LineGeometry.js';
 import { MapControls } from 'three/addons/controls/MapControls.js';
-import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 import { noise, pointInPoly } from './course.js';
 import { Forest, treesFromCanopy, assignSpecies, addMappedTrees, addTreeAreas, fade, impostorLight } from './trees.js';
+import { tuftGeometry, reedGeometry, grassMaterial, grassMesh, grassWind, addBend } from './grass.js';
+import { MOW_WIDTH, mowIndex } from './mowing.js';
+
+// The course's mowing patterns (pattern numbers from mowing.js), read by the terrain shader
+const mowPattern = { fairway: uniform(1), green: uniform(3) };
 
 const T = (x, y, z) => new THREE.Vector3(-x, y, z);
 const TEX_RES = 1.5; // meters per texel of the generated (no imagery) course texture
@@ -23,13 +29,17 @@ const SURFACE_RGB = {
   fringe: [84, 150, 56],
   fairway: [102, 156, 58],
   tee: [104, 160, 60],
-  rough: [62, 108, 40],
+  rough: [68, 92, 40],
   firstcut: [84, 138, 50],
-  deeprough: [50, 88, 34],
+  deeprough: [56, 74, 32],
   water: [60, 70, 50],
-  oob: [56, 96, 36],
+  oob: [62, 82, 36],
   sand: [214, 196, 150],
 };
+// Surfaces that grow rough grass (tufts, the patch around a ball at rest)
+const ROUGH = new Set(['rough', 'deeprough', 'native', 'oob']);
+// A steady 0..1 value for a spot on the course
+const hash01 = (x, z) => { const s = Math.sin(x * 12.9898 + z * 78.233) * 43758.5453; return s - Math.floor(s); };
 const TEE_COLORS = { Black: 0x222222, Blue: 0x2255dd, White: 0xffffff, Green: 0x22aa33, Yellow: 0xeecc22, Red: 0xdd2222, Junior: 0xff8800, Par3: 0x999999 };
 const SUN_DIR = new THREE.Vector3().setFromSphericalCoords(1, THREE.MathUtils.degToRad(48), THREE.MathUtils.degToRad(215));
 
@@ -76,7 +86,8 @@ export class CourseScene {
     this.scene.add(this.dynamic);
 
     // Ball (drawn larger than life so it stays visible) and its soft contact shadow
-    this.ball = new THREE.Mesh(new THREE.SphereGeometry(0.12, 24, 16), new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.3, emissive: 0x222222 }));
+    this.ball = new THREE.Mesh(new THREE.SphereGeometry(0.12, 64, 40), golfBallMaterial());
+    this.spinTilt = 0;
     this.dynamic.add(this.ball);
     this.ballShadow = new THREE.Mesh(new THREE.CircleGeometry(0.16, 24), new THREE.MeshBasicMaterial({ map: radialTexture(), transparent: true, depthWrite: false, opacity: 0.55 }));
     this.ballShadow.rotation.x = -Math.PI / 2;
@@ -134,9 +145,10 @@ export class CourseScene {
   // 'high' | 'balanced' | 'performance': resolution, shadow detail and vegetation density
   setQuality(q) {
     const Q = {
-      high: { dpr: 2, shadow: 4096, trees: 1, grass: 32000, native: 1 },
-      balanced: { dpr: 1.25, shadow: 2048, trees: 0.85, grass: 20000, native: 0.7 },
-      performance: { dpr: 1, shadow: 1024, trees: 0.6, grass: 9000, native: 0.4 },
+      // grass: rough tufts around the ball / free camera, blades per tuft; lie: tufts in the patch the ball sits in
+      high: { dpr: 2, shadow: 4096, trees: 1, grass: 32000, blades: 11, lie: 9000, native: 1 },
+      balanced: { dpr: 1.25, shadow: 2048, trees: 0.85, grass: 20000, blades: 8, lie: 6000, native: 0.7 },
+      performance: { dpr: 1, shadow: 1024, trees: 0.6, grass: 9000, blades: 5, lie: 2500, native: 0.4 },
     }[q] || null;
     if (!Q) return;
     this.quality = { name: q, ...Q };
@@ -147,6 +159,7 @@ export class CourseScene {
       this.sun.shadow.map = null;
     }
     if (this.grass) { this.dynamic.remove(this.grass); this.grass = null; this.grassCenter = null; }
+    if (this.lieGrass) { this.dynamic.remove(this.lieGrass); this.lieGrass = null; this.lieKey = null; }
     this.lastSize = null; // water reflection detail follows the setting too
     this.resize?.();
   }
@@ -218,7 +231,9 @@ export class CourseScene {
     tex.colorSpace = THREE.SRGBColorSpace;
     tex.anisotropy = this.renderer.getMaxAnisotropy();
     const mask = this.buildSurfaceMask(course);
-    const mat = terrainMaterial(tex, softTexture(this.courseCanvas), mask, this.buildMowDirections(course), sat ? 0.8 : 0.9);
+    this.setMowing(course.mowing);
+    const shore = this.buildShore(course);
+    const mat = terrainMaterial(tex, softTexture(this.courseCanvas), mask, this.buildMowDirections(course), sat ? 0.8 : 0.9, shore.canvas, shore.hasSand);
     this.makeSurfaceLookup(course, mask);
     // Small copy of the course picture for the minimap (redrawing from the full one is slow)
     const ms = Math.min(1, 2048 / Math.max(this.courseCanvas.width, this.courseCanvas.height));
@@ -240,6 +255,8 @@ export class CourseScene {
     }
 
     this.addWater(course);
+    this.addBankGrass(course, shore);
+    this.addReedsAndRocks(course, shore);
     this.addStakesAndMarkers(course);
     if (canopy) this.addTreesFromCanopy(course, canopy);
     else if (sat) this.addTreesFromImagery(course, sat);
@@ -249,11 +266,19 @@ export class CourseScene {
     if (sat) this.addNativeGrass(course, sat);
     if (buildings.length) this.addBuildings(course, buildings);
     this.grassCenter = null;
+    if (this.lieGrass) this.lieGrass.count = 0;
+    this.lieKey = null;
     this.applyEnvIntensity(this.courseGroup);
     this.applyEnvIntensity(this.dynamic);
     // Build every shader now rather than stalling on the first frames of play
     await progress('shaders', 'Preparing graphics');
     try { await this.renderer.compileAsync(this.scene, this.camera); } catch (err) { console.warn('Shader warm-up skipped', err); }
+  }
+
+  // Mowing patterns on fairways and greens: { fairway, green } pattern ids (mowing.js)
+  setMowing(m) {
+    if (m?.fairway) mowPattern.fairway.value = mowIndex(m.fairway);
+    if (m?.green) mowPattern.green.value = mowIndex(m.green);
   }
 
   // Node materials use the scene environment at full strength and ignore envMapIntensity unless
@@ -658,6 +683,15 @@ export class CourseScene {
       // Spread each shape's direction ~10 m beyond its outline first, then fill the shapes on top
       for (const f of shapes) { const [ax, az] = principalAxis(f.poly); x2.strokeStyle = color(ax, az); x2.lineWidth = 10; x2.lineJoin = 'round'; trace(f); x2.stroke(); }
       for (const f of shapes) { const [ax, az] = principalAxis(f.poly); x2.fillStyle = color(ax, az); trace(f); x2.fill(); }
+      // Blue (unused by the directions): how muddy each pond's bank is, out to 6 m from the water
+      // ('lighten' keeps the larger value per channel, so red and green are untouched)
+      x2.globalCompositeOperation = 'lighten'; x2.lineJoin = 'round'; x2.lineWidth = 6;
+      for (const wb of course.waterBodies || []) {
+        const b = Math.round(255 * ({ natural: 1, reedy: 0.8, rocky: 0.45, manicured: 0.05 }[wb.style] ?? 1));
+        x2.fillStyle = x2.strokeStyle = `rgb(0,0,${b})`;
+        trace({ poly: wb.poly }); x2.fill(); x2.stroke();
+      }
+      x2.globalCompositeOperation = 'source-over';
       return c2;
     };
     return { fairway: layer(['fairway', 'tee']), green: layer(['green']) };
@@ -780,6 +814,214 @@ export class CourseScene {
       this.waterMeshes.push(m);
       this.courseGroup.add(m);
     }
+  }
+
+  // ---- water edges: a muddy bank at the waterline and taller grass along the shore. Ponds differ:
+  //   natural    - muddy bank, tall grass, reed beds in places, the odd rock
+  //   manicured  - mown right down to a thin wet edge; no mud strip, tall grass or reeds
+  //   reedy      - reed beds round most of the shore
+  //   rocky      - lined with rocks, little mud
+
+  // Red: how close each spot is to water, over the course area: 1 in the water, 0.5 at the
+  // shoreline, falling to ~0 two metres out (a blurred copy of the water shapes). The terrain
+  // shader draws the muddy bank from it; `inside` (unblurred) says what is water when placing
+  // the bank grass. Green: the greens plus a 2 m ring around them, where the collar is mown
+  // plain (no fairway stripes running into it).
+  buildShore(course) {
+    // Each pond gets its own kind of bank, the same every time (from where it is)
+    for (const wb of course.waterBodies || []) {
+      if (wb.style) continue;
+      let cx = 0, cz = 0;
+      for (const [x, z] of wb.poly) { cx += x; cz += z; }
+      const n = hash01(cx / wb.poly.length + 0.37, cz / wb.poly.length - 0.71);
+      wb.style = n < 0.35 ? 'natural' : n < 0.65 ? 'manicured' : n < 0.82 ? 'reedy' : 'rocky';
+    }
+    const { minX, maxX, minZ, maxZ } = course.bounds;
+    const res = Math.max(0.4, Math.max(maxX - minX, maxZ - minZ) / 4096);
+    const w = Math.ceil((maxX - minX) / res), h = Math.ceil((maxZ - minZ) / res);
+    const sharp = document.createElement('canvas'); sharp.width = w; sharp.height = h;
+    const sx = sharp.getContext('2d', { willReadFrequently: true });
+    sx.fillStyle = '#000'; sx.fillRect(0, 0, w, h);
+    const trace = (poly) => {
+      sx.beginPath();
+      poly.forEach(([x, z], i) => (i ? sx.lineTo((x - minX) / res, (maxZ - z) / res) : sx.moveTo((x - minX) / res, (maxZ - z) / res)));
+      sx.closePath();
+    };
+    sx.globalCompositeOperation = 'lighter';
+    sx.fillStyle = '#f00';
+    for (const wb of course.waterBodies || []) { trace(wb.poly); sx.fill(); }
+    // Blue: bunkers. Blurred like the rest, their edge is wherever the blue crosses one half: a
+    // smooth curve at any distance (the surface mask's half-metre squares showed as little bumps)
+    const bunkers = (course.features || []).filter((f) => f.surface === 'sand' && !f.inner);
+    sx.fillStyle = '#00f';
+    for (const f of bunkers) { trace(f.poly); sx.fill(); }
+    sx.fillStyle = sx.strokeStyle = '#0f0'; sx.lineWidth = 4 / res; sx.lineJoin = 'round';
+    const greens = (course.features || []).filter((f) => f.surface === 'green' && !f.inner);
+    for (const f of greens) { trace(f.poly); sx.fill(); sx.stroke(); }
+    // (generated greens have no outline: mark their green and fringe around each green centre)
+    if (!greens.length) for (const hole of course.holes) for (let dz = -40; dz <= 40; dz++) for (let dx = -40; dx <= 40; dx++) {
+      const x = hole.greenCenter.x + dx, z = hole.greenCenter.z + dz, s = course.surfaceAt(x, z);
+      if (s === 'green' || s === 'fringe') sx.fillRect((x - 0.5 - minX) / res, (maxZ - z - 0.5) / res, 1 / res, 1 / res);
+    }
+    sx.globalCompositeOperation = 'source-over';
+    const canvas = document.createElement('canvas'); canvas.width = w; canvas.height = h;
+    const cx = canvas.getContext('2d');
+    cx.filter = `blur(${(1.4 / res).toFixed(2)}px)`;
+    cx.drawImage(sharp, 0, 0);
+    return { canvas, inside: sx.getImageData(0, 0, w, h).data, w, h, res, minX, maxZ, hasSand: bunkers.length > 0 };
+  }
+
+  // Taller, unmown grass along the shore (as on most golf course ponds): clumps from the waterline
+  // out to ~2.5 m, patchy along the bank, and never on fairways, greens, tees, sand or paths
+  // The shorelines, for placing things along them: shoreSpot() picks a random point on one, with
+  // the direction pointing away from the water, its water body and that water's level there
+  shoreTools(course, shore) {
+    const isWater = (x, z) => {
+      const i = Math.floor((x - shore.minX) / shore.res), j = Math.floor((shore.maxZ - z) / shore.res);
+      return i >= 0 && j >= 0 && i < shore.w && j < shore.h && shore.inside[(j * shore.w + i) * 4] > 127;
+    };
+    const edges = [];
+    let perimeter = 0;
+    for (const wb of course.waterBodies || []) for (let k = 0; k < wb.poly.length; k++) {
+      const a = wb.poly[k], b = wb.poly[(k + 1) % wb.poly.length], len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+      if (len > 0.01) { edges.push({ a, b, len, at: perimeter, wb }); perimeter += len; }
+    }
+    const shoreSpot = () => {
+      const s = Math.random() * perimeter;
+      let lo = 0, hi = edges.length - 1;
+      while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (edges[mid].at <= s) lo = mid; else hi = mid - 1; }
+      const { a, b, len, at, wb } = edges[lo], t = (s - at) / len;
+      const x = a[0] + (b[0] - a[0]) * t, z = a[1] + (b[1] - a[1]) * t;
+      let nx = -(b[1] - a[1]) / len, nz = (b[0] - a[0]) / len;
+      if (isWater(x + nx * 0.8, z + nz * 0.8)) { nx = -nx; nz = -nz; }
+      return { x, z, nx, nz, tx: (b[0] - a[0]) / len, tz: (b[1] - a[1]) / len, wb, level: wb.levelAt ? wb.levelAt(x, z) : wb.level };
+    };
+    return { isWater, perimeter, shoreSpot };
+  }
+
+  addBankGrass(course, shore) {
+    const { isWater, perimeter, shoreSpot } = this.shoreTools(course, shore);
+    if (!perimeter) return;
+    const want = Math.min(Math.round(perimeter / 0.15), 60000) * (this.quality?.native ?? 1) | 0;
+    if (want < 1) return;
+    const geo = tuftGeometry({ blades: 9, spread: 0.3, lean: [0.1, 0.4], height: [0.6, 1.05], width: [0.035, 0.06], dry: 0.35 });
+    const mat = grassMaterial({ sway: 0.03 });
+    this.applyEnvIntensity(mat);
+    const mesh = grassMesh(geo, mat, want);
+    const m = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3(), p = new THREE.Vector3(), c = new THREE.Color();
+    const up = new THREE.Vector3(0, 1, 0);
+    const MOWN = new Set(['fairway', 'firstcut', 'fringe', 'green', 'tee', 'sand', 'path']);
+    let n = 0;
+    for (let tries = 0; tries < want * 3 && n < want; tries++) {
+      // A random spot along the shoreline: thick in some stretches, sparse or bare in others
+      const { x: x0, z: z0, nx, nz, tx, tz, wb } = shoreSpot();
+      // (none on mown-to-the-edge ponds, less where rocks line the bank)
+      if (wb.style === 'manicured' || (wb.style === 'rocky' && Math.random() < 0.6)) continue;
+      if (noise(x0 * 0.06 + 31, z0 * 0.06) < -0.35) continue;
+      // Step out from the water
+      const d = 0.15 + Math.random() ** 1.6 * 2.4, along = (Math.random() - 0.5) * 0.3;
+      const x = x0 + nx * d + tx * along, z = z0 + nz * d + tz * along;
+      if (isWater(x, z) || MOWN.has(this.fastSurface(x, z, true)) || this.nearSand(x, z)) continue;
+      const y = course.heightAt(x, z);
+      if (y === null) continue;
+      // Tallest a little back from the water, shorter right at the edge and towards the grass
+      const hgt = (0.28 + Math.random() * 0.3) * (d < 0.5 ? 0.7 : d > 1.8 ? 0.75 : 1);
+      q.setFromAxisAngle(up, Math.random() * 6.28);
+      m.compose(p.copy(T(x, y - 0.02, z)), q, sc.set(hgt * (1 + Math.random() * 0.6), hgt, hgt * (1 + Math.random() * 0.6)));
+      mesh.setMatrixAt(n, m);
+      // Summer green with some straw-coloured clumps
+      const dry = Math.random() ** 2, v = 0.85 + Math.random() * 0.3;
+      mesh.setColorAt(n, c.setRGB((0.3 + 0.3 * dry) * v, (0.4 + 0.15 * dry) * v, (0.15 + 0.12 * dry) * v, THREE.SRGBColorSpace));
+      n++;
+    }
+    mesh.count = n;
+    mesh.instanceMatrix.needsUpdate = true;
+    mesh.instanceColor.needsUpdate = true;
+    this.courseGroup.add(mesh);
+    this.bankClumps = n;
+  }
+
+  // Reeds and cattails in the shallows, and rocks along the waterline, each in their own stretches
+  // of bank. Reeds stay off shores beside fairways, greens and tees (they'd sit in the line of play).
+  addReedsAndRocks(course, shore) {
+    const { isWater, perimeter, shoreSpot } = this.shoreTools(course, shore);
+    if (!perimeter) return;
+    const q = new THREE.Quaternion(), e = new THREE.Euler(), sc = new THREE.Vector3(), p = new THREE.Vector3(), m = new THREE.Matrix4(), c = new THREE.Color();
+    const up = new THREE.Vector3(0, 1, 0);
+    const amount = this.quality?.native ?? 1;
+    const MOWN = new Set(['fairway', 'green', 'fringe', 'tee', 'path']);
+    const nearPlay = (x, z, nx, nz) => [1.5, 3.5, 6].some((d) => MOWN.has(this.fastSurface(x + nx * d, z + nz * d, true)));
+    // Where the ground meets the plant or rock: on the bank, or on the bed in the shallows (but
+    // never more than half a metre down, wherever the terrain under the water lies)
+    const baseY = (x, z, level) => Math.max(course.heightAt(x, z) ?? level, level - 0.5);
+
+    // ---- reeds: two kinds of clump, plain and with cattails
+    const want = Math.min(Math.round(perimeter * 1.4), 12000) * amount | 0;
+    const kinds = [reedGeometry({ blades: 12 }), reedGeometry({ blades: 10, cattails: 3 })].map((geo) => {
+      const mat = grassMaterial({ sway: 0.035 });
+      this.applyEnvIntensity(mat);
+      return { mesh: grassMesh(geo, mat, Math.ceil(want / 2)), n: 0 };
+    });
+    for (let tries = 0; tries < want * 4 && kinds.some((k) => k.n < k.mesh.instanceMatrix.count); tries++) {
+      const s = shoreSpot();
+      // Reed beds, not a continuous ring: in patches on natural ponds, round most of a reedy one,
+      // rarely among rocks, never on a mown one
+      const reedLimit = { natural: 0.2, reedy: -0.45, rocky: 0.55 }[s.wb.style];
+      if (reedLimit === undefined || noise(s.x * 0.035 + 7, s.z * 0.035 - 3) < reedLimit) continue;
+      if (nearPlay(s.x, s.z, s.nx, s.nz)) continue;
+      // Mostly just inside the water, some right at the edge
+      const d = -0.1 - Math.random() ** 1.3 * 1.6, along = (Math.random() - 0.5) * 0.6;
+      const x = s.x + s.nx * d + s.tx * along, z = s.z + s.nz * d + s.tz * along;
+      const k = kinds[Math.random() < 0.35 ? 1 : 0];
+      if (k.n >= k.mesh.instanceMatrix.count) continue;
+      const y = baseY(x, z, s.level);
+      // Standing 0.9-1.6 m clear of the water (plus whatever is below the surface)
+      const hgt = 0.9 + Math.random() * 0.7 + Math.max(0, s.level - y);
+      q.setFromAxisAngle(up, Math.random() * 6.28);
+      m.compose(p.copy(T(x, y - 0.05, z)), q, sc.set(0.9 + Math.random() * 0.5, hgt, 0.9 + Math.random() * 0.5));
+      k.mesh.setMatrixAt(k.n, m);
+      const v = 0.8 + Math.random() * 0.35;
+      k.mesh.setColorAt(k.n++, c.setRGB(v, v, v * (0.9 + Math.random() * 0.15)));
+    }
+    for (const k of kinds) {
+      k.mesh.count = k.n;
+      k.mesh.instanceMatrix.needsUpdate = true; k.mesh.instanceColor.needsUpdate = true;
+      if (k.n) this.courseGroup.add(k.mesh);
+    }
+    this.reedClumps = kinds[0].n + kinds[1].n;
+
+    // ---- rocks: lumpy, part-buried stones along the waterline in rocky stretches, and the odd
+    // stone elsewhere on the bank
+    const rocks = Math.min(Math.round(perimeter * 0.5), 6000) * amount | 0;
+    const mesh = new THREE.InstancedMesh(rockGeometry(), rockMaterial(), rocks);
+    mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(rocks * 3), 3);
+    mesh.castShadow = mesh.receiveShadow = true;
+    this.applyEnvIntensity(mesh.material);
+    let n = 0;
+    for (let tries = 0; tries < rocks * 4 && n < rocks; tries++) {
+      const s = shoreSpot();
+      // Rock-lined ponds all the way round; on natural ones in rocky stretches; elsewhere the odd one
+      const rocky = s.wb.style === 'rocky' || (s.wb.style === 'natural' && noise(s.x * 0.03 - 11, s.z * 0.03 + 5) > 0.3);
+      if (!rocky && Math.random() > (s.wb.style === 'manicured' ? 0.01 : 0.04)) continue;
+      const d = (Math.random() - 0.55) * 1.4, along = (Math.random() - 0.5) * 0.8;
+      const x = s.x + s.nx * d + s.tx * along, z = s.z + s.nz * d + s.tz * along;
+      if (!isWater(x, z) && ['sand', 'path', 'green'].includes(this.fastSurface(x, z, true))) continue;
+      const size = 0.25 + Math.random() ** 1.5 * (rocky ? 0.65 : 0.35);
+      // On the bank: sunk about a third into the ground. In the water: breaking the surface.
+      const ground = course.heightAt(x, z) ?? s.level;
+      const y = isWater(x, z) ? Math.max(ground - size * 0.35, s.level - size * 0.3) : ground - size * 0.35;
+      e.set((Math.random() - 0.5) * 0.6, Math.random() * 6.28, (Math.random() - 0.5) * 0.6);
+      q.setFromEuler(e);
+      m.compose(p.copy(T(x, y, z)), q, sc.set(size * (0.9 + Math.random() * 0.6), size * (0.55 + Math.random() * 0.35), size * (0.9 + Math.random() * 0.6)));
+      mesh.setMatrixAt(n, m);
+      // Grey to brownish grey; darker where wet at the waterline
+      const v = (0.8 + Math.random() * 0.35) * (isWater(x, z) ? 0.85 : 1), warm = Math.random() * 0.1;
+      mesh.setColorAt(n++, c.setRGB((0.7 + warm) * v, (0.67 + warm * 0.5) * v, 0.62 * v, THREE.SRGBColorSpace));
+    }
+    mesh.count = n;
+    mesh.instanceMatrix.needsUpdate = true; mesh.instanceColor.needsUpdate = true;
+    if (n) this.courseGroup.add(mesh);
+    this.shoreRocks = n;
   }
 
   addStakesAndMarkers(course) {
@@ -1066,19 +1308,29 @@ export class CourseScene {
     return false;
   }
 
+  // Grass stays out of bunkers: the 1 m surface lookup is coarser than the drawn sand edge, so
+  // keep a margin (otherwise stray tufts poke up just inside the sand)
+  nearSand(x, z, r = 1.2) {
+    for (const [dx, dz] of [[0, 0], [r, 0], [-r, 0], [0, r], [0, -r], [r * 0.7, r * 0.7], [-r * 0.7, r * 0.7], [r * 0.7, -r * 0.7], [-r * 0.7, -r * 0.7]]) {
+      if (this.fastSurface(x + dx, z + dz, true) === 'sand') return true;
+    }
+    return false;
+  }
+
   // Decoration (grass tufts, heather) stays off cart paths with a margin either side
   nearPath(x, z, r = 1.2) {
     for (const [dx, dz] of [[0, 0], [r, 0], [-r, 0], [0, r], [0, -r]]) if (this.fastSurface(x + dx, z + dz) === 'path') return true;
     return false;
   }
 
-  fastSurface(x, z) {
+  // dry: what's there apart from water and its 1 m margin (for things that grow on the bank)
+  fastSurface(x, z, dry = false) {
     const L = this.lookup;
     if (!L) return this.course.surfaceAt(x, z);
     const i = Math.floor(x - L.minX), j = Math.floor(L.maxZ - z);
     if (i < 0 || j < 0 || i >= L.w || j >= L.h) return null;
     const o = (j * L.w + i) * 4, r = L.data[o], g = L.data[o + 1], b = L.data[o + 2];
-    if (L.water[o] > 100) return 'water';
+    if (!dry && L.water[o] > 100) return 'water';
     if (b > 128) return 'sand';
     if (b > 50 && g > 20 && g < 70) return 'path';
     if (g > 200) return 'green';
@@ -1109,6 +1361,7 @@ export class CourseScene {
     this.renderer.toneMappingExposure = 0.75 - 0.08 * cloud;
     this.scene.fog.density = 0.00032 * (1 + 1.5 * cloud + Math.min(3, rainMm * 1.2));
     this.terrain && (this.terrain.material.roughness = rainMm > 0.05 ? 0.7 : 0.92); // wet sheen
+    grassWind.value = windMps;
     this.setRain(rainMm);
     this.updateImpostorLight();
   }
@@ -1294,9 +1547,10 @@ export class CourseScene {
       g.setAttribute('color', new THREE.Float32BufferAttribute([0.45, 0.47, 0.36, 0.45, 0.47, 0.36, 1.18, 1.12, 0.92], 3));
       blades.push(g);
     }
-    const geo = mergeGeometries(blades);
+    const geo = addBend(mergeGeometries(blades));
     geo.computeVertexNormals();
-    const mat = new THREE.MeshStandardMaterial({ vertexColors: true, side: THREE.DoubleSide, roughness: 1, envMapIntensity: 0.5 });
+    const mat = grassMaterial({ sway: 0.035 }); // (tall clumps sway in the wind)
+    mat.envMapIntensity = 0.5;
     const mesh = new THREE.InstancedMesh(geo, mat, want);
     mesh.receiveShadow = true;
     const m = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3(), p = new THREE.Vector3(), c = new THREE.Color();
@@ -1335,61 +1589,114 @@ export class CourseScene {
     if (this.grassCenter && Math.hypot(center.x - this.grassCenter.x, center.z - this.grassCenter.z) < minMove) return;
     this.grassCenter = { x: center.x, z: center.z };
     if (!this.grass) {
-      const blades = [];
-      for (let i = 0; i < 7; i++) {
-        const a = (i / 7) * Math.PI * 2 + Math.random() * 0.5, lean = 0.25 + Math.random() * 0.35, hgt = 0.7 + Math.random() * 0.5;
-        const g = new THREE.BufferGeometry();
-        const bx = Math.cos(a) * 0.03, bz = Math.sin(a) * 0.03;
-        g.setAttribute('position', new THREE.Float32BufferAttribute([
-          bx - 0.012, 0, bz, bx + 0.012, 0, bz, bx + Math.cos(a) * lean * 0.3, hgt, bz + Math.sin(a) * lean * 0.3,
-        ], 3));
-        g.setAttribute('color', new THREE.Float32BufferAttribute([0.55, 0.6, 0.5, 0.55, 0.6, 0.5, 1.1, 1.15, 0.95], 3));
-        blades.push(g);
-      }
-      const geo = mergeGeometries(blades);
-      geo.computeVertexNormals();
-      const mat = new THREE.MeshStandardMaterial({ vertexColors: true, side: THREE.DoubleSide, roughness: 1, envMapIntensity: 0.6 });
+      const mat = grassMaterial();
       this.applyEnvIntensity(mat);
-      this.grass = new THREE.InstancedMesh(geo, mat, this.quality?.grass ?? 20000);
-      this.grass.receiveShadow = true;
+      this.grass = grassMesh(tuftGeometry({ blades: this.quality?.blades ?? 8 }), mat, this.quality?.grass ?? 20000);
       this.grass.frustumCulled = false;
       this.dynamic.add(this.grass);
     }
     const m = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3(), p = new THREE.Vector3(), c = new THREE.Color();
     const up = new THREE.Vector3(0, 1, 0);
     let n = 0;
-    const S = this.imagery?.sample;
     const maxGrass = this.grass.instanceMatrix.count;
     for (let k = 0; k < maxGrass * 2.5 && n < maxGrass; k++) {
-      const r = Math.sqrt(Math.random()) * 42, a = Math.random() * Math.PI * 2;
+      // Densest near the centre, thinning out smoothly to 42 m (no density step, which would
+      // show as a ring), and none right on the ball: the patch around it has its own, shorter grass
+      const r = Math.random() ** 0.8 * 42, a = Math.random() * Math.PI * 2;
+      if (r < 0.3) continue;
       const x = center.x + Math.cos(a) * r, z = center.z + Math.sin(a) * r;
       const s = this.fastSurface(x, z);
       // Tufts only in the rough, never on mown grass (fairway, first cut, fringe, green, tee)
-      if (s !== 'rough' && s !== 'deeprough' && s !== 'native' && s !== 'oob') continue;
-      if (this.nearPath(x, z) || this.nearMown(x, z)) continue;
+      if (!ROUGH.has(s)) continue;
+      if (this.nearPath(x, z) || this.nearMown(x, z) || this.nearSand(x, z)) continue;
       const y = this.course.heightAt(x, z);
       if (y === null) continue;
       // Rough stands clearly taller than the cut grass around the fairways and greens
-      const height = (s === 'deeprough' || s === 'native' ? 0.13 : 0.09) + Math.random() * 0.08;
+      // (shrinking into the ground over the last 12 m, so the edge of the area fades out)
+      const fadeOut = Math.min(1, (42 - r) / 12);
+      const h = ((s === 'deeprough' || s === 'native' ? 0.08 : 0.055) + Math.random() * (s === 'rough' || s === 'oob' ? 0.04 : 0.06)) * fadeOut;
       q.setFromAxisAngle(up, Math.random() * 6.28);
-      m.compose(p.copy(T(x, y, z)), q, sc.set(0.6 + Math.random() * 0.4, height, 0.6 + Math.random() * 0.4));
+      m.compose(p.copy(T(x, y - 0.004, z)), q, sc.set(h * (1.2 + Math.random() * 0.8), h, h * (1.2 + Math.random() * 0.8)));
       this.grass.setMatrixAt(n, m);
-      // Match the ground colour underneath
-      let col = [0.27, 0.42, 0.18];
-      if (S) {
-        const i = Math.floor((x - S.minX) / S.res), j = Math.floor((S.maxZ - z) / S.res), o = (j * S.w + i) * 4;
-        if (o >= 0 && o < S.data.length) col = [S.data[o] / 255, S.data[o + 1] / 255, S.data[o + 2] / 255];
-      }
-      // Rough reads as deeper green; blend the photo colour with it
-      const rough = s === 'rough' || s === 'deeprough' || s === 'oob';
-      const tgt = rough ? [0.24, 0.42, 0.14] : [0.4, 0.62, 0.24];
-      const v = 0.85 + Math.random() * 0.3;
-      this.grass.setColorAt(n, c.setRGB((col[0] * 0.4 + tgt[0] * 0.6) * v, (col[1] * 0.4 + tgt[1] * 0.6) * v, (col[2] * 0.4 + tgt[2] * 0.6) * v, THREE.SRGBColorSpace));
+      this.grass.setColorAt(n, this.grassColor(x, z, s, c));
       n++;
     }
     this.grass.count = n;
     this.grass.instanceMatrix.needsUpdate = true;
     if (this.grass.instanceColor) this.grass.instanceColor.needsUpdate = true;
+  }
+
+  // Grass colour: the olive of the rough on the ground, lighter or darker with the light and shade
+  // in the photo underneath. (Only the photo's brightness: its colour runs blue-grey, which made
+  // the tufts read as a teal patch against the ground.)
+  grassColor(x, z, s, c) {
+    const S = this.imagery?.sample;
+    let shade = 1;
+    if (S) {
+      const i = Math.floor((x - S.minX) / S.res), j = Math.floor((S.maxZ - z) / S.res), o = (j * S.w + i) * 4;
+      if (o >= 0 && o < S.data.length) shade = Math.max(0.75, Math.min(1.2, (0.2126 * S.data[o] + 0.7152 * S.data[o + 1] + 0.0722 * S.data[o + 2]) / 255 / 0.3));
+    }
+    const tgt = s === 'native' ? [0.4, 0.62, 0.24] : [0.27, 0.33, 0.11];
+    const v = (0.85 + Math.random() * 0.3) * shade;
+    return c.setRGB(tgt[0] * v, tgt[1] * v, tgt[2] * v, THREE.SRGBColorSpace);
+  }
+
+  // ---- the ball at rest: in the rough it sits down in the grass, with blades all around it
+
+  settleBall(ball, lie) {
+    let s = lie;
+    if (s === 'rough') { const f = this.fastSurface(ball.x, ball.z); if (f === 'deeprough' || f === 'native') s = f; }
+    // How far it sits down (m) depends on the grass, and from spot to spot: some lies sit up, some are buried
+    const luck = hash01(ball.x, ball.z);
+    const depth = { rough: 0.007, oob: 0.007, deeprough: 0.011, native: 0.013 }[s] || 0;
+    this.ballSink = depth * (0.45 + luck * 1.1);
+    this.placeLieGrass(ball, s, luck);
+  }
+
+  // A dense patch of short tufts out to a few metres from the ball, thickest right next to it, and a
+  // ring of blades pressed up against it
+  placeLieGrass(ball, s, luck) {
+    const key = `${ball.x.toFixed(2)}|${ball.z.toFixed(2)}|${s}`;
+    if (this.lieKey === key) return;
+    this.lieKey = key;
+    if (!this.lieGrass) {
+      const mat = grassMaterial({ sway: 0.004 });
+      this.applyEnvIntensity(mat);
+      const geo = tuftGeometry({ blades: 6, spread: 0.35, lean: [0.2, 0.6], width: [0.06, 0.1] });
+      this.lieGrass = grassMesh(geo, mat, this.quality?.lie ?? 6000);
+      this.lieGrass.frustumCulled = false;
+      this.dynamic.add(this.lieGrass);
+    }
+    const mesh = this.lieGrass;
+    if (!ROUGH.has(s) || !this.course) { mesh.count = 0; return; }
+    const m = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3(), p = new THREE.Vector3(), c = new THREE.Color();
+    const up = new THREE.Vector3(0, 1, 0);
+    const tall = (s === 'deeprough' || s === 'native' ? 0.065 : 0.045) * (0.9 + luck * 0.3);
+    const max = mesh.instanceMatrix.count, nest = Math.min(30, max);
+    let n = 0;
+    for (let k = 0; k < max * 2 && n < max; k++) {
+      const ring = n < nest;
+      // The ring: short blades just outside the ball (radius 2.1 cm), so it still shows; the patch:
+      // denser the closer to the ball
+      const r = ring ? 0.03 + Math.random() * 0.05 : 0.08 + Math.random() ** 1.6 * 3;
+      const a = Math.random() * Math.PI * 2;
+      const x = ball.x + Math.cos(a) * r, z = ball.z + Math.sin(a) * r;
+      if (!ring) {
+        if (!ROUGH.has(this.fastSurface(x, z)) || this.nearPath(x, z, 0.6) || this.nearMown(x, z, 0.3) || this.nearSand(x, z, 0.9)) continue;
+      }
+      const y = this.course.heightAt(x, z);
+      if (y === null) continue;
+      // Fade the patch out towards its edge into the wider tufts around it
+      const h = tall * (ring ? 0.45 + Math.random() * 0.4 : 0.65 + Math.random() * 0.6) * (r > 2 ? 1.6 - r * 0.3 : 1);
+      q.setFromAxisAngle(up, Math.random() * 6.28);
+      m.compose(p.copy(T(x, y - 0.003, z)), q, sc.set(h * (0.8 + Math.random() * 0.6), h, h * (0.8 + Math.random() * 0.6)));
+      mesh.setMatrixAt(n, m);
+      mesh.setColorAt(n, this.grassColor(x, z, s, c));
+      n++;
+    }
+    mesh.count = n;
+    mesh.instanceMatrix.needsUpdate = true;
+    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
   }
 
   // ------------------------------------------------------------------ flag, aim marker
@@ -1419,7 +1726,7 @@ export class CourseScene {
     x.fillStyle = '#e8282b'; x.beginPath(); x.arc(32, 30, 9, 0, Math.PI * 2); x.fill();
     const markerTex = new THREE.CanvasTexture(c);
     markerTex.colorSpace = THREE.SRGBColorSpace;
-    const marker = new THREE.Sprite(new THREE.SpriteMaterial({ map: markerTex, sizeAttenuation: false, depthTest: false, transparent: true }));
+    const marker = new THREE.Sprite(new THREE.SpriteMaterial({ map: markerTex, sizeAttenuation: false, depthTest: false, transparent: true, fog: false }));
     marker.center.set(0.5, 0);           // anchor the tip, so it points straight down at the hole
     marker.scale.set(0.028, 0.042, 1);
     marker.position.y = 2.6;
@@ -1437,12 +1744,17 @@ export class CourseScene {
     const dot = new THREE.Mesh(new THREE.CircleGeometry(0.18, 24), new THREE.MeshBasicMaterial({ color: 0xffe14d, depthTest: false }));
     dot.rotation.x = -Math.PI / 2;
     dot.renderOrder = 5;
+    // The tag is drawn in the top of a taller, otherwise clear picture centred 2.6 m up,
+    // so it sits above the hole locator pin (also 2.6 m up, and the same size on screen at any
+    // distance) instead of the pin covering the numbers when aiming at the flag. No fog on it:
+    // far off, the haze washed it out to a pale blue box.
     this.aimLabelCanvas = document.createElement('canvas');
-    this.aimLabelCanvas.width = 512; this.aimLabelCanvas.height = 96;
+    this.aimLabelCanvas.width = 512; this.aimLabelCanvas.height = 320;
     this.aimLabelTex = new THREE.CanvasTexture(this.aimLabelCanvas);
-    const label = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.aimLabelTex, sizeAttenuation: false, depthTest: false, transparent: true }));
-    label.scale.set(0.3, 0.056, 1);
-    label.position.y = 2;
+    this.aimLabelTex.colorSpace = THREE.SRGBColorSpace; // (a dark tag, not a washed-out grey one)
+    const label = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.aimLabelTex, sizeAttenuation: false, depthTest: false, transparent: true, fog: false }));
+    label.scale.set(0.3, 0.1867, 1);
+    label.position.y = 2.6;
     label.renderOrder = 6;
     g.add(ring, dot, label);
     g.visible = false;
@@ -1460,8 +1772,8 @@ export class CourseScene {
     this.aimMarker.children[0].scale.setScalar(Math.max(1.2, d * 0.03));
     this.aimMarker.children[1].scale.setScalar(Math.max(1.2, d * 0.03));
     const ctx = this.aimLabelCanvas.getContext('2d');
-    ctx.clearRect(0, 0, 512, 96);
-    ctx.fillStyle = 'rgba(10,16,12,0.78)';
+    ctx.clearRect(0, 0, 512, 320);
+    ctx.fillStyle = 'rgba(10,16,12,0.85)';
     ctx.font = 'bold 34px system-ui, sans-serif';
     const tw = Math.min(480, ctx.measureText(text).width + 44);
     ctx.beginPath(); ctx.roundRect(256 - tw / 2, 18, tw, 60, 14); ctx.fill();
@@ -1479,7 +1791,10 @@ export class CourseScene {
 
   setBall(p) {
     // p is the ball's contact point; its centre is set each frame from the drawn size
+    // (and how far it sits down in the grass, see settleBall)
     this.ballBaseY = p.y;
+    this.ballSink = 0;
+    this.ballSpin = { w: p.w || 0, air: !!p.air }; // (from the shot simulation, see spinBall)
     this.ball.position.copy(T(p.x, p.y + 0.12 * this.ball.scale.x, p.z));
     const g = this.course?.heightAt(p.x, p.z);
     this.ballShadow.visible = g != null;
@@ -1488,6 +1803,32 @@ export class CourseScene {
       const above = Math.max(0, p.y - g);
       this.ballShadow.material.opacity = 0.55 / (1 + above * 0.4);
     }
+  }
+
+  // Turn the ball as it really spins. In the air: backspin about the axis across its flight,
+  // tilted by the side spin, at the simulated rate slowed down 10x (real backspin is 30-160 turns a
+  // second, which a 60 Hz screen can only show as a flicker, often appearing to turn backwards);
+  // faster spin still turns visibly faster. On the ground: rolling without slipping, from how far
+  // it moved and its drawn size.
+  spinBall(dt) {
+    const b = this.ball.position, prev = this._ballPrev;
+    this._ballPrev = b.clone();
+    if (!prev || !this.ballSpin) return;
+    const d = b.clone().sub(prev).setY(0), dist = d.length();
+    const up = new THREE.Vector3(0, 1, 0);
+    if (dist > 1e-5) this._ballDir = d.clone().divideScalar(dist);
+    let axis = null, angle = 0;
+    if (this.ballSpin.air && this.ballSpin.w > 0 && this._ballDir) {
+      // (up x forward is the axis of rolling forward; backspin turns the other way)
+      axis = up.clone().cross(this._ballDir).negate().applyAxisAngle(this._ballDir, -this.spinTilt);
+      // (at most 70° a frame, so a slow frame can't make it look like it turns backwards)
+      angle = Math.min(this.ballSpin.w * 0.1 * dt, 1.2);
+    } else if (dist > 1e-5 && dist < 5) {
+      axis = up.clone().cross(this._ballDir);
+      angle = dist / (0.12 * this.ball.scale.x);
+    }
+    if (!axis || !angle) return;
+    this.ball.quaternion.premultiply(new THREE.Quaternion().setFromAxisAngle(axis.normalize(), angle));
   }
 
   setAim(origin, heading, length, onGreen) {
@@ -1661,7 +2002,7 @@ export class CourseScene {
     // Game time follows the wall clock even if frames are slow, so shots play in real time.
     if (this.onFrame) this.onFrame(Math.min(raw, 0.5));
     if (this.mode === 'free') {
-      // WASD / arrows move across the ground, Q/E down/up; Shift is faster
+      // WASD / arrows move across the ground, Q/E down/up (Space up); Shift is faster
       if (this.freeKeys.size) {
         const fwd = new THREE.Vector3(); this.camera.getWorldDirection(fwd); fwd.y = 0; fwd.normalize();
         const right = new THREE.Vector3().crossVectors(fwd, new THREE.Vector3(0, 1, 0));
@@ -1673,7 +2014,7 @@ export class CourseScene {
         if (this.freeKeys.has('d')) mv.add(right);
         if (this.freeKeys.has('a')) mv.sub(right);
         mv.multiplyScalar(speed);
-        if (this.freeKeys.has('e')) mv.y += speed * 0.6;
+        if (this.freeKeys.has('e') || this.freeKeys.has('space')) mv.y += speed * 0.6;
         if (this.freeKeys.has('q')) mv.y -= speed * 0.6;
         this.camera.position.add(mv);
         this.controls.target.add(mv);
@@ -1742,8 +2083,9 @@ export class CourseScene {
     const camDist = this.camera.position.distanceTo(this.ball.position);
     const ballScale = Math.min(5, Math.max(0.0213, camDist * 0.004)) / 0.12;
     this.ball.scale.setScalar(ballScale);
-    if (this.ballBaseY != null) this.ball.position.y = this.ballBaseY + 0.12 * ballScale;
+    if (this.ballBaseY != null) this.ball.position.y = this.ballBaseY + 0.12 * ballScale - (this.ballSink || 0);
     this.ballShadow.scale.setScalar(ballScale);
+    this.spinBall(dt);
     // Keep the water mirror at the level of the nearest pond
     if (this.reflection && this.waterCentres?.length) {
       const cx = -this.camera.position.x, cz = this.camera.position.z;
@@ -1865,9 +2207,20 @@ function makeSky() {
 // Surface mask: R = fairway/tee/collar, G = green, B = sand (high) or cart path (low).
 // soft: a heavily blurred copy of the map. Fairways and greens take only its broad light and shade,
 // so small things in the photo (trees, shadows, carts, bare patches) never show on them.
-function terrainMaterial(map, soft, mask, mowDirs, strength) {
+// shore: how close to water each spot is (red) and the greens with their collars (green), see
+// buildShore: for the muddy bank at the waterline and plain-mown collars.
+function terrainMaterial(map, soft, mask, mowDirs, strength, shore, hasSand = false) {
   const maskTex = new THREE.CanvasTexture(mask);
   maskTex.colorSpace = THREE.NoColorSpace;
+  const shoreTex = new THREE.CanvasTexture(shore);
+  shoreTex.colorSpace = THREE.NoColorSpace;
+  // Bunkers: where the smooth blurred bunker field crosses one half, softened over about a screen
+  // pixel (crisp and smooth at any distance). Courses without mapped bunkers use the surface mask.
+  const sandWeight = (sm, vUv) => {
+    if (!hasSand) return smoothstep(0.66, 0.76, sm.b);
+    const sb = texture(shoreTex, vUv).b, aa = fwidth(sb).max(0.004);
+    return smoothstep(float(0.5).sub(aa), float(0.5).add(aa), sb);
+  };
   const dirTex = new THREE.CanvasTexture(mowDirs.fairway), dirTexG = new THREE.CanvasTexture(mowDirs.green);
   dirTex.colorSpace = dirTexG.colorSpace = THREE.NoColorSpace;
   const material = new THREE.MeshStandardNodeMaterial({ roughness: 0.92, metalness: 0 });
@@ -1876,8 +2229,9 @@ function terrainMaterial(map, soft, mask, mowDirs, strength) {
     const vUv = uv();
     const base = texture(map, vUv).rgb;
     const sm = texture(maskTex, vUv).rgb;
-    // Crisp edges: tighten the (slightly soft) mask so each surface has a clear outline
-    const wf = smoothstep(0.32, 0.68, sm.r), wg = smoothstep(0.3, 0.7, sm.g), ws = smoothstep(0.6, 0.85, sm.b);
+    // Crisp edges: tighten the (slightly soft) mask so each surface has a clear outline (bunkers
+    // the crispest: a groomed bunker has a clean-cut edge)
+    const wf = smoothstep(0.32, 0.68, sm.r), wg = smoothstep(0.3, 0.7, sm.g), ws = sandWeight(sm, vUv);
     const wp = pathWeight(sm, ws);
     const wr = clamp(float(1).sub(wf).sub(wg).sub(ws).sub(wp), 0, 1);
     // Give each surface its own colour while keeping the photo's light and shade:
@@ -1885,14 +2239,18 @@ function terrainMaterial(map, soft, mask, mowDirs, strength) {
     const lum = dot(base, vec3(0.2126, 0.7152, 0.0722));
     const shade = clamp(lum.div(0.3), 0.65, 1.35);
     const shadeSoft = clamp(dot(texture(soft, vUv).rgb, vec3(0.2126, 0.7152, 0.0722)).div(0.3), 0.85, 1.15);
-    const graded = vec3(0.15, 0.4, 0.05).mul(mix(1, shadeSoft, 0.35)).mul(wf)
-      .add(vec3(0.055, 0.155, 0.02).mul(shade).mul(wr))
-      .add(vec3(0.125, 0.43, 0.06).mul(mix(1, shadeSoft, 0.12)).mul(wg))
-      .add(vec3(0.5, 0.39, 0.23).mul(mix(1, shade, 0.4)).mul(ws))
+    // (deep, warm greens: real turf reads darker and less blue than a bright lime; sand evenly
+    // pale, as freshly raked)
+    const graded = vec3(0.075, 0.155, 0.01).mul(mix(1, shadeSoft, 0.35)).mul(wf)
+      .add(vec3(0.06, 0.08, 0.014).mul(shade.min(1.1)).mul(wr))
+      .add(vec3(0.098, 0.19, 0.016).mul(mix(1, shadeSoft, 0.12)).mul(wg))
+      .add(vec3(0.52, 0.41, 0.25).mul(mix(1, shadeSoft, 0.2)).mul(ws))
       .add(vec3(lum.mul(1.05)).mul(wp));                                    // pavement: the photo, greyed
-    // Fairways and greens are fully graded (no photo detail); elsewhere strong enough that a photo
-    // slightly out of line with the mapped shapes doesn't show through
-    const col = mix(base, graded, wf.add(wr.mul(0.5)).add(wg).add(ws.mul(0.8)).add(wp.mul(0.7))).toVar();
+    // Fairways, greens and sand are fully graded (no photo detail); the rough mostly, and fully
+    // where the photo is pale (sand or bare ground in the picture that the map puts in the rough
+    // would otherwise show as a grey halo, e.g. round a bunker drawn a little off)
+    const roughW = wr.mul(mix(0.85, 1, smoothstep(0.25, 0.45, lum)));
+    const col = mix(base, graded, wf.add(roughW).add(wg).add(ws).add(wp.mul(0.7))).toVar();
 
     const q = positionWorld.xz;
     const camD = distance(cameraPosition, positionWorld);
@@ -1912,32 +2270,75 @@ function terrainMaterial(map, soft, mask, mowDirs, strength) {
     const dS = mix(ratio('sand', 0.35), ratio('sand', 0.09, 0.2), 0.3);
     const dP = ratio('asphalt', 0.6);
     const blend = dF.mul(wf).add(dR.mul(wr)).add(dG.mul(wg)).add(dS.mul(ws)).add(dP.mul(wp));
-    // Rough reads clumpier, greens the most even
-    const amount = near.mul(strength).mul(float(1).add(wr.mul(0.2)).sub(wg.mul(0.4)));
+    // Rough reads clumpier, greens the most even, and raked sand smoother than its wind-rippled photo
+    const amount = near.mul(strength).mul(float(1).add(wr.mul(0.2)).sub(wg.mul(0.4)).sub(ws.mul(0.55)));
     col.mulAssign(mix(vec3(1), blend, amount));
     // Broad patchiness in the rough, visible from far away too
     const patchy = dot(texture(groundTexture('rough'), q.mul(0.011)).rgb, LUMA).div(dot(vec3(...GROUND_MEAN.rough), LUMA));
     col.mulAssign(mix(1, patchy, wr.mul(0.14)));
 
-    // Mowing stripes: bands along the hole, lighter or darker depending on which way the
-    // grass was laid relative to where you look from (like a real freshly cut fairway)
+    // Mowing patterns (chosen per course, see mowing.js): each pass of the mower lays the grass one
+    // way, so it reads lighter or darker depending on where you look from. Each fairway and green
+    // is mown along its own direction (dirTex). Passes are a mower's width, with crisp, slightly
+    // wobbly edges; the edges soften with distance so far-off stripes don't shimmer. Like real
+    // turf, the pattern is faint right at your feet, clearest at mid distance, and fades far off.
     const dcF = texture(dirTex, vUv).rg.mul(2).sub(1), dcG = texture(dirTexG, vUv).rg.mul(2).sub(1);
     const angF = atan(dcF.y, dcF.x).mul(0.5), angG = atan(dcG.y, dcG.x).mul(0.5);
-    const alongF = vec2(cos(angF), sin(angF)), acrossF = vec2(alongF.y.negate(), alongF.x);
-    const alongG = vec2(cos(angG), sin(angG)), acrossG = vec2(alongG.y.negate(), alongG.x);
+    const alongF = vec2(cos(angF), sin(angF)), alongG = vec2(cos(angG), sin(angG));
     const view = normalize(positionWorld.xz.sub(cameraPosition.xz).add(1e-4));
+    const edge = camD.mul(0.006).max(0.15);
+    const pattern = (along, width, id) => {
+      const across = vec2(along.y.negate(), along.x);
+      const d1 = normalize(along.add(across)), d2 = normalize(along.sub(across));
+      const a = dot(q, along);
+      const wobble = sin(a.mul(0.23)).mul(0.06).add(sin(a.mul(0.061).add(1.7)).mul(0.12));
+      const pass = (dir) => clamp(sin(dot(q, dir).add(wobble).div(width).mul(PI)).mul(float((2 * width) / Math.PI).div(edge)), -1, 1);
+      const options = [float(0), pass(across), pass(d1), pass(across).mul(pass(along)), pass(d1).mul(pass(d2))];
+      return options.reduce((acc, v, i) => (i === 0 ? v : select(id.greaterThan(i - 0.5), v, acc)));
+    };
     const facingF = abs(dot(view, alongF)).mul(0.55).add(0.45), facingG = abs(dot(view, alongG)).mul(0.55).add(0.45);
-    const band = (dir, width, sharp) => clamp(sin(dot(q, dir).div(width).mul(PI)).mul(sharp), -1, 1);
-    const bandF = band(acrossF, 7.5, 5), bandG = band(acrossG, 3, 4), bandG2 = band(alongG, 3, 4);
-    const greenFade = smoothstep(60, 180, camD).oneMinus();
-    const mow = wf.mul(bandF).mul(0.085).mul(facingF)
-      .add(wg.mul(bandG.mul(0.04).add(bandG2.mul(0.022))).mul(facingG).mul(greenFade));
-    return col.mul(mow.add(1));
+    const fairwayFade = smoothstep(2, 14, camD).mul(smoothstep(250, 600, camD).oneMinus());
+    const greenFade = smoothstep(1, 6, camD).mul(smoothstep(60, 180, camD).oneMinus());
+    // (the collar round each green is mown plain, so the fairway stripes stop at it)
+    const collar = smoothstep(0.42, 0.52, texture(shoreTex, vUv).g);
+    const mow = wf.mul(pattern(alongF, MOW_WIDTH.fairway, mowPattern.fairway)).mul(0.085).mul(facingF).mul(fairwayFade).mul(collar.oneMinus())
+      .add(wg.mul(pattern(alongG, MOW_WIDTH.green, mowPattern.green)).mul(0.05).mul(facingG).mul(greenFade));
+
+    // Muddy bank at the waterline: bare earth from the water's edge out to about a metre (wider
+    // and narrower along the bank), dark and wet at the water, drier further up, and continuing
+    // a little way under the surface so the shallows look muddy too. Not on sand or paths, and
+    // only a thin edge beside greens.
+    const sh = texture(shoreTex, vUv).r;
+    const wid = clamp(dot(texture(groundTexture('rough'), q.mul(0.045).add(0.71)).rgb, LUMA).div(dot(vec3(...GROUND_MEAN.rough), LUMA)), 0.5, 1.5);
+    const e0 = clamp(wid.sub(0.5).mul(0.14), 0.02, 0.14);
+    // (how muddy this pond's banks are: its style, see buildMowDirections - mown-to-the-edge ponds
+    // have almost none)
+    const mudAmt = texture(dirTex, vUv).b;
+    const mud = smoothstep(e0, e0.add(0.12), sh).mul(smoothstep(0.82, 0.97, sh).oneMinus())
+      .mul(ws.oneMinus()).mul(wp.oneMinus()).mul(wg.mul(0.7).oneMinus()).mul(mudAmt);
+    // Where there's little mud, the grass right at the water is darker and wet instead
+    const wetLine = smoothstep(0.36, 0.5, sh).mul(smoothstep(0.5, 0.75, sh).oneMinus()).mul(mudAmt.oneMinus()).mul(0.4);
+    const wet = smoothstep(0.25, 0.6, sh);
+    const mudCol = mix(vec3(0.28, 0.155, 0.07), vec3(0.13, 0.075, 0.038), wet).mul(mix(vec3(1), dS, 0.7));
+    // Raked bunkers: fine grooves about 5 cm apart running along the hole, gently wavy as a rake
+    // is pulled by hand. They show up close and fade out by ~25 m (finer than the screen can show
+    // further off). Round the sand, the grass at the edge drops into a shadowed lip.
+    const acrossR = vec2(alongF.y.negate(), alongF.x);
+    const rakeWave = sin(dot(q, alongF).mul(0.9)).mul(0.05).add(sin(dot(q, alongF).mul(0.23).add(2.1)).mul(0.12));
+    const groove = smoothstep(-0.3, 0.9, sin(dot(q, acrossR).add(rakeWave).div(0.05).mul(PI))).mul(2).sub(1);
+    const rake = ws.mul(groove).mul(0.07).mul(smoothstep(4, 25, camD).oneMinus());
+    // Lip: the grass edge darkens as it turns down into the bunker, and the sand face just inside
+    // sits in its shade (less raked there too)
+    const sb = hasSand ? texture(shoreTex, vUv).b : sm.b;
+    const lip = (hasSand ? smoothstep(0.28, 0.5, sb) : smoothstep(0.12, 0.62, sb)).mul(ws.oneMinus()).mul(wp.oneMinus()).mul(0.3);
+    const face = ws.mul((hasSand ? smoothstep(0.5, 0.64, sb) : smoothstep(0.8, 0.97, sb)).oneMinus()).mul(0.16);
+    const ground = col.mul(mow.add(1)).mul(rake.mul(face.mul(4).oneMinus().max(0)).add(1)).mul(lip.oneMinus()).mul(face.oneMinus());
+    return mix(ground.mul(wetLine.oneMinus()), mudCol, mud);
   })();
   material.normalNode = Fn(() => {
     const vUv = uv();
     const sm = texture(maskTex, vUv).rgb;
-    const wf = smoothstep(0.32, 0.68, sm.r), wg = smoothstep(0.3, 0.7, sm.g), ws = smoothstep(0.6, 0.85, sm.b);
+    const wf = smoothstep(0.32, 0.68, sm.r), wg = smoothstep(0.3, 0.7, sm.g), ws = sandWeight(sm, vUv);
     const wp = pathWeight(sm, ws);
     const wr = clamp(float(1).sub(wf).sub(wg).sub(ws).sub(wp), 0, 1);
     const q = positionWorld.xz;
@@ -1945,9 +2346,97 @@ function terrainMaterial(map, soft, mask, mowDirs, strength) {
     // (Cart paths go without: WebGPU allows 16 textures per shader and asphalt is smooth enough)
     const nb = nt('lawn', 0.8).mul(wf.add(wg)).add(nt('rough', 0.6).mul(wr)).add(nt('sand', 0.35).mul(ws)).add(vec3(0.5, 0.5, 1).mul(wp));
     const near = smoothstep(15, 160, distance(cameraPosition, positionWorld)).oneMinus();
-    return normalMap(mix(vec3(0.5, 0.5, 1), nb, near.mul(float(0.9).sub(wg.mul(0.4)))), vec2(0.7));
+    // (the muddy bank by the water is smoother than turf, and raked sand than wind-rippled sand)
+    const sh = texture(shoreTex, vUv).r;
+    const bank = smoothstep(0.08, 0.25, sh).mul(smoothstep(0.82, 0.97, sh).oneMinus());
+    return normalMap(mix(vec3(0.5, 0.5, 1), nb, near.mul(float(0.9).sub(wg.mul(0.4)).sub(ws.mul(0.5))).mul(bank.mul(0.6).oneMinus())), vec2(0.7));
   })();
   return material;
+}
+
+// A golf ball: glossy white with a clear coat, ~330 dimples (as a normal map) and printed marks -
+// an alignment line round the middle and a logo - so you can see it turn. Both maps are drawn
+// here, laid out for three.js's sphere UVs (u round the equator, v pole to pole).
+function golfBallMaterial() {
+  // Dimple centres spread evenly over the sphere (a Fibonacci spiral)
+  const N = 332, R = 0.088; // dimple angular radius (rad): neighbours almost touch, as on a real ball
+  const centres = [];
+  for (let i = 0; i < N; i++) {
+    const y = 1 - (2 * (i + 0.5)) / N, r = Math.sqrt(1 - y * y), a = i * Math.PI * (3 - Math.sqrt(5));
+    centres.push([Math.cos(a) * r, y, Math.sin(a) * r]);
+  }
+  // Normal map: start flat, then press in each dimple over the pixels it covers
+  const W = 1024, H = 512;
+  const nc = document.createElement('canvas'); nc.width = W; nc.height = H;
+  const nx = nc.getContext('2d'), img = nx.createImageData(W, H), px = img.data;
+  for (let o = 0; o < px.length; o += 4) { px[o] = 128; px[o + 1] = 128; px[o + 2] = 255; px[o + 3] = 255; }
+  // Direction for a pixel: three.js SphereGeometry has x = -cos(phi) sin(theta), y = cos(theta),
+  // z = sin(phi) sin(theta), with phi = 2 pi u and theta = pi v (v = 0 at the top row of the canvas)
+  for (const [cx, cy, cz] of centres) {
+    const theta0 = Math.acos(cy), phi0 = Math.atan2(cz, -cx);
+    const jr = Math.ceil(((R * 1.05) / Math.PI) * H), j0 = Math.round((theta0 / Math.PI) * H);
+    for (let j = Math.max(0, j0 - jr); j <= Math.min(H - 1, j0 + jr); j++) {
+      const theta = ((j + 0.5) / H) * Math.PI, st = Math.sin(theta), ct = Math.cos(theta);
+      const ir = Math.min(W / 2, Math.ceil(((R * 1.05) / Math.max(0.05, st) / (2 * Math.PI)) * W)), i0 = Math.round(((phi0 / (2 * Math.PI)) * W + W) % W);
+      for (let ii = i0 - ir; ii <= i0 + ir; ii++) {
+        const i = ((ii % W) + W) % W, phi = ((i + 0.5) / W) * 2 * Math.PI, sp = Math.sin(phi), cp = Math.cos(phi);
+        const dx = -cp * st, dy = ct, dz = sp * st;
+        const dot = dx * cx + dy * cy + dz * cz, a = Math.acos(Math.min(1, dot));
+        if (a >= R) continue;
+        // Bowl-shaped pit: the surface leans towards the centre, most part-way out, flat at the bottom
+        const t = a / R, slope = 1.6 * t * (1 - t * t * 0.35);
+        let gx = cx - dot * dx, gy = cy - dot * dy, gz = cz - dot * dz;
+        const gl = Math.hypot(gx, gy, gz) || 1; gx /= gl; gy /= gl; gz /= gl;
+        // Tangent-space axes for this UV layout: along u and along uv.y
+        const tu = gx * sp + gz * cp, tv = gx * cp * ct + gy * st - gz * sp * ct;
+        const n = [tu * slope, tv * slope, 1], l = Math.hypot(...n);
+        const o = (j * W + i) * 4;
+        px[o] = (n[0] / l) * 127 + 128; px[o + 1] = (n[1] / l) * 127 + 128; px[o + 2] = (n[2] / l) * 127 + 128;
+      }
+    }
+  }
+  nx.putImageData(img, 0, 0);
+  // Colour: white, an alignment line round the equator and a logo on each side of it
+  const cc = document.createElement('canvas'); cc.width = W; cc.height = H;
+  const c = cc.getContext('2d');
+  c.fillStyle = '#ffffff'; c.fillRect(0, 0, W, H);
+  c.fillStyle = '#1a1a1a'; c.fillRect(0, H / 2 - 3, W, 6);
+  c.font = 'bold 30px system-ui, sans-serif'; c.textAlign = 'center';
+  c.fillStyle = '#c8202a'; c.fillText('OpenTee', W * 0.25, H / 2 - 12);
+  c.fillStyle = '#1a1a1a'; c.fillText('1', W * 0.75, H / 2 - 12);
+  const map = new THREE.CanvasTexture(cc); map.colorSpace = THREE.SRGBColorSpace; map.anisotropy = 4;
+  const normalMap = new THREE.CanvasTexture(nc); normalMap.colorSpace = THREE.NoColorSpace;
+  return new THREE.MeshPhysicalMaterial({
+    map, normalMap, normalScale: new THREE.Vector2(1, 1),
+    roughness: 0.35, clearcoat: 0.8, clearcoatRoughness: 0.12, emissive: 0x1c1c1c,
+  });
+}
+
+// A lumpy stone about 1 m across (scaled and turned per rock): a sphere pushed in and out by noise
+function rockGeometry() {
+  let g = new THREE.IcosahedronGeometry(0.5, 2);
+  g.deleteAttribute('uv'); g.deleteAttribute('normal');
+  g = mergeVertices(g);
+  const p = g.attributes.position, v = new THREE.Vector3();
+  for (let i = 0; i < p.count; i++) {
+    v.fromBufferAttribute(p, i);
+    const n = noise(v.x * 2.1 + v.y * 1.3 + 5, v.z * 2.1 - v.y * 0.7) * 0.22 + noise(v.x * 6 + 1, v.z * 6 + v.y * 4) * 0.06;
+    v.multiplyScalar(1 + n);
+    if (v.y < -0.1) v.y *= 0.6; // flatter underneath, where it sits in the ground
+    p.setXYZ(i, v.x, v.y, v.z);
+  }
+  g.computeVertexNormals();
+  return g;
+}
+
+// Stone: the per-rock colour with a fine grain (the asphalt photo's speckle, which reads as rock)
+function rockMaterial() {
+  const m = new THREE.MeshStandardNodeMaterial({ roughness: 0.9, metalness: 0 });
+  m.envMapIntensity = 0.5;
+  const LUMA = vec3(0.2126, 0.7152, 0.0722);
+  const grain = dot(texture(groundTexture('asphalt'), positionWorld.xz.mul(0.8).add(positionWorld.y.mul(0.6))).rgb, LUMA).div(dot(vec3(...GROUND_MEAN.asphalt), LUMA));
+  m.colorNode = vec3(mix(float(1), clamp(grain, 0.4, 1.8), 0.8));
+  return m;
 }
 
 function closestOnPath(hole, x, z) {
