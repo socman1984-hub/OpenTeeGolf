@@ -33,6 +33,10 @@
     header.top .wrap { display: flex; align-items: center; gap: 18px; height: 60px; }
     .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 19px; color: var(--text); text-decoration: none; letter-spacing: 0.3px; }
     .brand svg { width: 26px; height: 26px; }
+    .beta { padding: 2px 8px; border-radius: 6px; background: #f2c832; color: #1a1a1a; font-size: 11px; font-weight: 800; letter-spacing: 0.8px; text-transform: uppercase; white-space: nowrap; }
+    @media (max-width: 440px) { .brand .beta { display: none; } } /* (the note in the hero still says so) */
+    .beta-note { margin: 0 0 20px; padding: 10px 14px; border: 1px solid color-mix(in srgb, #f2c832 55%, transparent); border-left-width: 4px; border-radius: 8px; background: color-mix(in srgb, #f2c832 10%, transparent); font-size: 15px; color: var(--muted); }
+    .beta-note b { color: var(--text); }
     nav { margin-left: auto; display: flex; gap: 18px; align-items: center; }
     nav a { color: var(--muted); text-decoration: none; font-size: 15px; }
     nav a:hover { color: var(--text); }
@@ -101,6 +105,7 @@
       <a class="brand" href="#">
         <svg viewBox="0 0 64 64" aria-hidden="true"><circle cx="32" cy="52" r="9" fill="#fff"/><rect x="30" y="4" width="4" height="40" fill="#cfd8cf"/><path d="M34 5l20 8-20 8z" fill="#e8282b"/></svg>
         OpenTeeGolf
+        <span class="beta">Early beta</span>
       </a>
       <nav>
         <a class="opt" href="#features">Features</a>
@@ -118,6 +123,7 @@
     <section class="hero">
       <div class="wrap">
         <div>
+          <p class="beta-note"><b>Early beta.</b> OpenTeeGolf is new and still changing fast: expect bugs and rough edges. Please report anything that goes wrong on the <a href="https://discord.gg/YNsyWkCayd">Discord</a> or <a href="https://github.com/socman1984-hub/OpenTeeGolf/issues">GitHub</a>.</p>
           <h1>Play any course in the world, free.</h1>
           <p class="lead">OpenTeeGolf is an open-source golf simulator for the FlightScope Mevo+. It builds playable 3D courses from OpenStreetMap, with real terrain, aerial imagery, trees and water, and it will always be free.</p>
           <div class="ctas">

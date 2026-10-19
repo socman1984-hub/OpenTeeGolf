@@ -1,5 +1,9 @@
 # OpenTeeGolf
 
+> **⚠️ EARLY BETA:** OpenTeeGolf is new and still changing fast. Expect bugs and rough edges, and
+> please report problems on the [Discord](https://discord.gg/YNsyWkCayd) or as a
+> [GitHub issue](https://github.com/socman1984-hub/OpenTeeGolf/issues).
+
 A free, open-source golf simulator for the **FlightScope Mevo+**. It runs in your web browser
 and plays **any golf course mapped in OpenStreetMap**: search for a course, build it in about a
 minute, and play it on real lidar terrain under real aerial photos.
@@ -100,7 +104,12 @@ Open a built course from the builder or the **Edit** link in the main menu
 * **Shapes:** draw greens, fairways, bunkers, tee boxes, water, penalty areas or the
   out-of-bounds line. Click points, then double-click or press Enter to finish. Click a shape to
   select it, drag its corners, drag the small circles to add a corner, or Alt+click to remove
-  one. You can also change its type or delete it.
+  one. Drag inside a selected shape to move the whole thing (handy for lining it up with the
+  aerial photo), or nudge it with the arrow keys (25 cm, Shift for 1 m). You can also change its
+  type or delete it.
+* **Mowing:** under **Course**, choose the mowing pattern for the fairways and for the greens:
+  straight stripes, diagonal stripes, checkerboard, diamonds or none. A small preview shows each
+  one. New courses start with straight stripes on fairways and a checkerboard on greens.
 * Ctrl+Z undoes, Ctrl+S saves, and **Play** opens the course in the simulator. Heights for
   everything you place come from the terrain automatically.
 
@@ -185,7 +194,7 @@ node test/send-shot.js 150 12 0 2700 0
 
 **Free view:**
 * Drag to move, right-drag to turn, and scroll to zoom.
-* WASD flies around, Q/E moves down/up, and Shift goes faster.
+* WASD flies around, Q/E moves down/up (Space also goes up), and Shift goes faster.
 * Clicking the ground still aims your shot. Clicking the minimap flies the camera there.
 * F or Esc returns to the ball. A shot from the launch monitor also brings you back
   automatically.
