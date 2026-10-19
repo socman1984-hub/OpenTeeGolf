@@ -129,6 +129,37 @@ export const AREA_SPACING = { sparse: 15, medium: 10, dense: 6.5 };
 // Player-placed single trees: size -> height (m)
 export const TREE_SIZES = { small: 8, medium: 13, large: 20 };
 
+// The tree species the game can grow (trees.js has their 3D shapes). Players pick one for single
+// trees and tree areas in the editor, or a mix; otherwise the game chooses from the photo.
+export const TREE_SPECIES = [
+  { id: 'oak', label: 'Oak', group: 'broadleaf', about: 'broad, spreading crown' },
+  { id: 'maple', label: 'Maple', group: 'broadleaf', about: 'dense, rounded crown' },
+  { id: 'ash', label: 'Ash', group: 'broadleaf', about: 'open, airy crown' },
+  { id: 'birch', label: 'Birch', group: 'broadleaf', about: 'slender, white bark' },
+  { id: 'aspen', label: 'Aspen', group: 'broadleaf', about: 'pale bark, light leaves' },
+  { id: 'poplar', label: 'Lombardy poplar', group: 'broadleaf', about: 'tall and narrow (windbreaks)' },
+  { id: 'willow', label: 'Weeping willow', group: 'broadleaf', about: 'drooping branches, by water' },
+  { id: 'pine', label: 'Pine', group: 'conifer', about: 'tall trunk, crown up top' },
+  { id: 'spruce', label: 'Spruce', group: 'conifer', about: 'dense, dark cone' },
+];
+// Choices for a tree area or a tree: a mix, or one species
+export const TREE_MIXES = [
+  { id: 'auto', label: 'Automatic (from the photo)' },
+  { id: 'broadleaf', label: 'Mixed broadleaf' },
+  { id: 'conifer', label: 'Mixed conifers' },
+];
+// Species for a planted tree from a choice (null = the game decides from the photo)
+const BROADLEAF = ['oak', 'oak', 'maple', 'maple', 'ash', 'birch', 'aspen'], CONIFER = ['pine', 'spruce'];
+export function pickSpecies(choice, x, z) {
+  if (!choice || choice === 'auto') return null;
+  const n = hash(x, z, 7.7);
+  if (choice === 'broadleaf') return BROADLEAF[Math.floor(n * BROADLEAF.length)];
+  if (choice === 'conifer') return CONIFER[Math.floor(n * CONIFER.length)];
+  return TREE_SPECIES.some((s) => s.id === choice) ? choice : null;
+}
+// New tree areas: heights between these (m)
+export const AREA_HEIGHTS = { min: 10, max: 18 };
+
 // Spots for trees inside an area: a jittered grid (the same every time for the same area)
 export function treesInArea(poly, density = 'medium') {
   const step = AREA_SPACING[density] || AREA_SPACING.medium;
@@ -144,8 +175,10 @@ export function treesInArea(poly, density = 'medium') {
   return out;
 }
 
-// Add the player's trees: single trees ({ x, z, size }) always go in (unless one is already right
-// there); tree areas ({ pts, density }) fill with trees except where one already stands close by.
+// Add the player's trees: single trees ({ x, z, size, kind? }) always go in (unless one is already
+// right there); tree areas ({ pts, density, kind?, hMin?, hMax? }) fill with trees except where one
+// already stands close by. An area's trees are a species or a mix (pickSpecies) and range in
+// height from hMin to hMax (areas from before that setting take the canopy map's height).
 // heightAt(x, z) -> canopy height or 0; allowed(x, z) keeps area trees off greens, bunkers, etc.
 export function addTreeAreas(trees, single, areas, { heightAt = () => 0, allowed = () => true } = {}) {
   const cell = 8, grid = new Map(), key = (a, b) => a * 73856093 ^ b * 19349663;
@@ -161,20 +194,25 @@ export function addTreeAreas(trees, single, areas, { heightAt = () => 0, allowed
   let added = 0;
   const plant = (x, z, h, extra = {}) => {
     const n = hash(x, z, 9.1);
-    const t = { x, z, h, r: Math.min(6, Math.max(1.8, h * 0.33)) * (0.85 + 0.3 * n), kind: null, mapped: true, ...extra };
+    // (crown width: narrow for poplars and conifers, wide for willows)
+    const shape = { poplar: 0.14, pine: 0.2, spruce: 0.22, willow: 0.45 }[extra.kind] ?? 0.33;
+    const t = { x, z, h, r: Math.min(7, Math.max(1.2, h * shape)) * (0.85 + 0.3 * n), kind: null, mapped: true, ...extra };
     trees.push(t); put(t); added++;
   };
   for (const s of single || []) {
     if (near(s.x, s.z, 1.5)) continue;
     const h = (TREE_SIZES[s.size] || TREE_SIZES.medium) * (0.9 + 0.2 * hash(s.x, s.z, 4.3));
-    plant(s.x, s.z, h, { kind: s.kind || null, user: true });
+    plant(s.x, s.z, h, { kind: pickSpecies(s.kind, s.x, s.z), user: true });
   }
   for (const a of areas || []) {
     const gap = (AREA_SPACING[a.density] || AREA_SPACING.medium) * 0.6;
+    const ranged = Number.isFinite(a.hMin) && Number.isFinite(a.hMax);
+    const lo = ranged ? Math.min(a.hMin, a.hMax) : 0, hi = ranged ? Math.max(a.hMin, a.hMax) : 0;
     for (const [x, z] of treesInArea(a.pts, a.density)) {
       if (near(x, z, gap) || !allowed(x, z)) continue;
       const canopy = heightAt(x, z) || 0;
-      plant(x, z, canopy >= 4 ? canopy : 10 + hash(x, z, 6.2) * 8, { user: true });
+      const h = ranged ? lo + (hi - lo) * hash(x, z, 6.2) : canopy >= 4 ? canopy : 10 + hash(x, z, 6.2) * 8;
+      plant(x, z, h, { kind: pickSpecies(a.kind, x, z), user: true });
     }
   }
   return added;

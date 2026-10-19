@@ -15,6 +15,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { normalizeSpin } from './public/js/physics.js';
+import { TREE_SPECIES, TREE_MIXES } from './public/js/treeplace.js';
 import { searchCourses, withFreshOsm } from './lib/realdata.js';
 import { VERSION, checkForUpdate, installUpdate, canInstall, cleanUpAfterUpdate } from './lib/updater.js';
 import { checkCourse, buildCourse, BUILT_DIR } from './lib/builder.js';
@@ -705,13 +706,20 @@ const httpServer = http.createServer(async (req, res) => {
         // (only well-formed entries: positions in metres, a known size or density)
         const fin = (v) => Number.isFinite(+v) && Math.abs(+v) < 1e5;
         const r2 = (v) => Math.round(+v * 100) / 100;
+        // (species: one of the game's tree species or mixes; area heights 2-40 m)
+        const kindOk = (k) => (TREE_SPECIES.some((s) => s.id === k) || TREE_MIXES.some((m) => m.id === k)) && k !== 'auto';
+        const ht = (v) => (fin(v) ? Math.min(40, Math.max(2, Math.round(+v * 10) / 10)) : undefined);
         if (Array.isArray(b.userTrees)) {
           real.userTrees = b.userTrees.filter((t) => fin(t?.x) && fin(t?.z)).slice(0, 20000)
-            .map((t) => ({ x: r2(t.x), z: r2(t.z), size: ['small', 'medium', 'large'].includes(t.size) ? t.size : 'medium' }));
+            .map((t) => ({ x: r2(t.x), z: r2(t.z), size: ['small', 'medium', 'large'].includes(t.size) ? t.size : 'medium', ...(kindOk(t.kind) ? { kind: t.kind } : {}) }));
         }
         if (Array.isArray(b.treeAreas)) {
           real.treeAreas = b.treeAreas.filter((a) => Array.isArray(a?.pts) && a.pts.length >= 3 && a.pts.every((p) => fin(p?.[0]) && fin(p?.[1]))).slice(0, 2000)
-            .map((a) => ({ pts: a.pts.map((p) => [r2(p[0]), r2(p[1])]), density: ['sparse', 'medium', 'dense'].includes(a.density) ? a.density : 'medium' }));
+            .map((a) => ({
+              pts: a.pts.map((p) => [r2(p[0]), r2(p[1])]), density: ['sparse', 'medium', 'dense'].includes(a.density) ? a.density : 'medium',
+              ...(kindOk(a.kind) ? { kind: a.kind } : {}),
+              ...(ht(a.hMin) !== undefined && ht(a.hMax) !== undefined ? { hMin: ht(a.hMin), hMax: ht(a.hMax) } : {}),
+            }));
         }
         real.edited = new Date().toISOString();
         fs.writeFileSync(rf, JSON.stringify(real));

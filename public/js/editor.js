@@ -2,7 +2,8 @@
 // pins) and shapes (greens, fairways, bunkers, tee boxes, water, penalty areas, OOB) can be edited.
 import { makeCourseData, TEE_ORDER, PIN_DAYS } from './coursefile.js';
 import { smoothPoly } from './course.js';
-import { treesFromCanopy, addMappedTrees, addTreeAreas, TREE_SIZES } from './treeplace.js';
+import { treesFromCanopy, addMappedTrees, addTreeAreas, TREE_SIZES, TREE_SPECIES, TREE_MIXES, AREA_HEIGHTS } from './treeplace.js';
+import { MOW_PATTERNS, MOW_WIDTH, courseMowing, mowShade } from './mowing.js';
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
@@ -30,8 +31,11 @@ let userTrees = [];          // [{ x, z, size }]
 let baseTrees = [];          // found trees, for showing
 let shownTrees = [], shownKey = '';
 let showTrees = true;
-const treeOpts = { size: 'medium', density: 'medium' };
-const course = { name: '', location: '', stimp: 10 };
+const treeOpts = { size: 'medium', density: 'medium', kind: 'auto', areaKind: 'auto', hMin: AREA_HEIGHTS.min, hMax: AREA_HEIGHTS.max };
+// Map colours for each species (planted trees are drawn in them; 'auto' ones in the usual green)
+const SPECIES_COLOR = { oak: '#5f9e3c', maple: '#c86b2d', ash: '#9fcf5a', birch: '#f2f0dc', aspen: '#e8d74a', poplar: '#3fb5a3', willow: '#a7e07a', pine: '#2f6b4a', spruce: '#3d6f9e' };
+const speciesOptions = (sel) => [...TREE_MIXES, ...TREE_SPECIES].map((o) => `<option value="${o.id}" ${o.id === (sel || 'auto') ? 'selected' : ''}>${esc(o.label)}</option>`).join('');
+const course = { name: '', location: '', stimp: 10, mowing: courseMowing(null) };
 const sel = { hole: 0, shape: -1, tree: -1 };
 const view = { cx: 0, cz: 0, scale: 1 };
 let mode = null;   // { type: 'place', kind, key } | { type: 'draw', kind, pts }
@@ -107,6 +111,7 @@ async function load() {
   courseData = g; real = r;
   editable = !!list.courses.find((c) => c.id === courseId)?.editable;
   course.name = g.CourseName || ''; course.location = g.Location || ''; course.stimp = g.DefaultStimp || 10;
+  course.mowing = courseMowing(g);
   holes = g.Holes.map((h) => {
     const tees = {}, aims = [];
     let green = null;
@@ -130,8 +135,8 @@ async function load() {
       else passthrough[kind] = list2;
     }
   }
-  for (const a of r?.treeAreas || []) shapes.push({ kind: 'trees', pts: a.pts.map((p) => [...p]), density: a.density || 'medium' });
-  userTrees = (r?.userTrees || []).map((t) => ({ x: t.x, z: t.z, size: t.size || 'medium' }));
+  for (const a of r?.treeAreas || []) shapes.push({ kind: 'trees', pts: a.pts.map((p) => [...p]), density: a.density || 'medium', species: a.kind || 'auto', hMin: a.hMin, hMax: a.hMax });
+  userTrees = (r?.userTrees || []).map((t) => ({ x: t.x, z: t.z, size: t.size || 'medium', kind: t.kind || 'auto' }));
   for (const hz of g.Hazards || []) shapes.push({ kind: 'penalty', pts: hz.coords.map((c) => [c.x, c.z]), innerOOB: !!hz.innerOOB });
   if (g.pOOB?.coords?.length > 2) shapes.push({ kind: 'oob', pts: g.pOOB.coords.map((c) => [c.x, c.z]) });
   if (r?.grid) {
@@ -141,6 +146,7 @@ async function load() {
   }
   document.title = `${course.name} · Course Editor`;
   $('c-name').value = course.name; $('c-location').value = course.location; $('c-stimp').value = course.stimp;
+  showMowing();
   $('play').href = `/?course=${encodeURIComponent(courseId)}`;
   if (!editable) setStatus('Course not found — it may have been deleted.');
   else if (g.GolfSimBuilder?.needsReview) setStatus('Some parts were guessed — check tees, pins and par on each hole.');
@@ -182,10 +188,17 @@ async function loadTrees() {
   draw();
 }
 const treeEnv = { heightAt: undefined, allowed: () => true, note: '' };
+// A tree area as saved and planted: its outline, density, species (or mix) and height range
+// (the shape's own kind is 'trees', so its species is kept as species)
+const areaData = (s) => ({
+  pts: s.pts, density: s.density || 'medium',
+  ...(s.species && s.species !== 'auto' ? { kind: s.species } : {}),
+  ...(Number.isFinite(s.hMin) && Number.isFinite(s.hMax) ? { hMin: s.hMin, hMax: s.hMax } : {}),
+});
 
 // Found trees plus the player's, recomputed only when the player's trees or areas change
 function plannedTrees() {
-  const areas = shapes.filter((s) => s.kind === 'trees').map((s) => ({ pts: s.pts, density: s.density || 'medium' }));
+  const areas = shapes.filter((s) => s.kind === 'trees').map(areaData);
   const key = JSON.stringify([userTrees, areas, baseTrees.length]);
   if (key !== shownKey) {
     shownTrees = baseTrees.slice();
@@ -259,7 +272,7 @@ async function save() {
   const P = (p) => ({ x: r2(p.x), y: Math.round(heightAt(p.x, p.z) * 1000) / 1000, z: r2(p.z) });
   const sorted = [...holes].sort((a, b) => a.number - b.number);
   const out = makeCourseData({
-    name: course.name, location: course.location, stimp: course.stimp,
+    name: course.name, location: course.location, stimp: course.stimp, mowing: { ...course.mowing },
     lat: courseData.CourseLat, lon: courseData.CourseLong, altitudeM: (courseData.altitudeV2 || 0) * 0.3048,
     designer: courseData.Designer || 'OpenTeeGolf course builder',
     holes: sorted.map((h) => ({
@@ -274,7 +287,7 @@ async function save() {
   });
   const features = { ...passthrough };
   for (const k of FEATURE_KINDS) features[k] = shapes.filter((s) => s.kind === k).map((s) => ({ hole: !!s.inner, pts: s.pts.map(([x, z]) => [r2(x), r2(z)]) }));
-  const treeAreas = shapes.filter((s) => s.kind === 'trees').map((s) => ({ pts: s.pts.map(([x, z]) => [r2(x), r2(z)]), density: s.density || 'medium' }));
+  const treeAreas = shapes.filter((s) => s.kind === 'trees').map((s) => ({ ...areaData(s), pts: s.pts.map(([x, z]) => [r2(x), r2(z)]) }));
   setStatus('Saving…');
   const res = await fetch(`/api/courses/${courseId}`, {
     method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ course: out, features, userTrees, treeAreas }),
@@ -304,7 +317,7 @@ function undo() {
   holes = o.holes; shapes = o.shapes; Object.assign(course, o.course); userTrees = o.userTrees || [];
   sel.hole = Math.min(sel.hole, holes.length - 1); sel.shape = -1; sel.tree = -1;
   setDirty(true);
-  renderHoles(); renderShapePanel(); draw();
+  renderHoles(); renderShapePanel(); showMowing(); draw();
 }
 
 // ------------------------------------------------------------------ drawing
@@ -388,12 +401,13 @@ function drawTrees() {
   const list = plannedTrees();
   const w = W(), h = H();
   // (all crowns of a kind in one path: far quicker than a path per tree)
-  const found = new Path2D(), mine = new Path2D(), foundDots = [], mineDots = [];
+  // (planted trees of a chosen species in that species' colour)
+  const found = new Path2D(), mine = new Path2D(), foundDots = [], mineDots = [], bySpecies = {};
   for (const t of list) {
     const [sx, sy] = toScreen(t.x, t.z), r = t.r * view.scale;
     if (sx < -r || sy < -r || sx > w + r || sy > h + r) continue;
     if (r < 2) { (t.user ? mineDots : foundDots).push(sx, sy); continue; }
-    const path = t.user ? mine : found;
+    const path = !t.user ? found : t.kind && SPECIES_COLOR[t.kind] ? (bySpecies[t.kind] ||= new Path2D()) : mine;
     path.moveTo(sx + r, sy); path.arc(sx, sy, r, 0, 6.2832);
   }
   ctx.lineWidth = 1;
@@ -401,6 +415,11 @@ function drawTrees() {
   ctx.strokeStyle = 'rgba(150,220,130,0.55)'; ctx.stroke(found);
   ctx.fillStyle = 'rgba(80,175,70,0.7)'; ctx.fill(mine);
   ctx.strokeStyle = '#d9ffbf'; ctx.stroke(mine);
+  ctx.globalAlpha = 0.75;
+  for (const [k, path] of Object.entries(bySpecies)) { ctx.fillStyle = SPECIES_COLOR[k]; ctx.fill(path); }
+  ctx.globalAlpha = 1;
+  ctx.strokeStyle = '#ffffff';
+  for (const path of Object.values(bySpecies)) ctx.stroke(path);
   ctx.fillStyle = 'rgba(30,90,30,0.85)';
   for (let i = 0; i < foundDots.length; i += 2) ctx.fillRect(foundDots[i] - 1.5, foundDots[i + 1] - 1.5, 3, 3);
   ctx.fillStyle = '#b9f59a';
@@ -523,7 +542,7 @@ canvas.addEventListener('mousedown', (e) => {
   if (mode?.type === 'place') { placePoint(x, z); return; }
   if (mode?.type === 'tree') {
     change();
-    userTrees.push({ x, z, size: treeOpts.size });
+    userTrees.push({ x, z, size: treeOpts.size, kind: treeOpts.kind });
     sel.tree = userTrees.length - 1; sel.shape = -1;
     renderShapePanel(); draw(); return;
   }
@@ -551,13 +570,33 @@ canvas.addEventListener('mousedown', (e) => {
     else drag = { type: 'vertex', i: v.i };
     return;
   }
+  // Grabbing the selected shape anywhere inside moves the whole shape (e.g. to line it up with
+  // the photo); a click without moving still selects, as below
+  if (sel.shape >= 0 && insideShape(shapes[sel.shape], sx, sy)) {
+    drag = { type: 'move', sx, sy, from: [x, z], orig: shapes[sel.shape].pts.map((p) => [...p]), moved: false };
+    return;
+  }
   drag = { type: 'pan', sx, sy, cx: view.cx, cz: view.cz, click: true };
 });
+// Inside a shape (the out-of-bounds line: near it)
+function insideShape(s, sx, sy) {
+  if (s.kind === 'oob') return s.pts.some((p, k) => segDistPx([sx, sy], toScreen(...p), toScreen(...s.pts[(k + 1) % s.pts.length])) < 6);
+  return pointInPoly(s.pts, ...toWorld(sx, sy));
+}
+// Shift the selected shape by (dx, dz) metres from the corners it had (orig)
+function moveShape(orig, dx, dz) {
+  shapes[sel.shape].pts = orig.map(([x, z]) => [x + dx, z + dz]);
+}
 window.addEventListener('mousemove', (e) => {
   const r = canvas.getBoundingClientRect();
   const sx = e.clientX - r.left, sy = e.clientY - r.top;
   hover = [sx, sy];
-  if (!drag) { if (mode?.type === 'draw') draw(); return; }
+  if (!drag) {
+    if (mode?.type === 'draw') draw();
+    // (a move cursor over the selected shape: it can be dragged as a whole)
+    else if (!mode && e.target === canvas) canvas.style.cursor = sel.shape >= 0 && insideShape(shapes[sel.shape], sx, sy) ? 'move' : 'grab';
+    return;
+  }
   const [x, z] = toWorld(sx, sy);
   if (drag.type === 'pan') {
     if (Math.hypot(sx - drag.sx, sy - drag.sy) > 3) drag.click = false;
@@ -567,6 +606,11 @@ window.addEventListener('mousemove', (e) => {
   } else if (drag.type === 'handle') {
     drag.hd.p.x = x; drag.hd.p.z = z;
     renderHolePanelValues();
+  } else if (drag.type === 'move') {
+    if (!drag.moved && Math.hypot(sx - drag.sx, sy - drag.sy) <= 3) return;
+    if (!drag.moved) { change(); drag.moved = true; } // (one undo step for the whole move)
+    moveShape(drag.orig, x - drag.from[0], z - drag.from[1]);
+    canvas.style.cursor = 'grabbing';
   } else if (drag.type === 'vertex') {
     shapes[sel.shape].pts[drag.i] = [x, z];
   } else if (drag.type === 'tree') {
@@ -575,7 +619,7 @@ window.addEventListener('mousemove', (e) => {
   draw();
 });
 window.addEventListener('mouseup', (e) => {
-  if (drag?.type === 'pan' && drag.click) {
+  if ((drag?.type === 'pan' && drag.click) || (drag?.type === 'move' && !drag.moved)) {
     // A click (not a drag) selects whatever shape is under the cursor
     sel.shape = hitShape(drag.sx, drag.sy);
     sel.tree = -1;
@@ -605,6 +649,15 @@ window.addEventListener('keydown', (e) => {
   if (e.key === 'Backspace' && mode?.type === 'draw') { mode.pts.pop(); draw(); return; }
   if ((e.key === 'Delete' || e.key === 'Backspace') && sel.tree >= 0) { deleteTree(); return; }
   if ((e.key === 'Delete' || e.key === 'Backspace') && sel.shape >= 0) deleteShape();
+  // Arrow keys nudge the selected shape: 25 cm, or 1 m with Shift (up = north on the map)
+  const nudge = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, 1], ArrowDown: [0, -1] }[e.key];
+  if (nudge && sel.shape >= 0 && !mode) {
+    e.preventDefault();
+    const step = e.shiftKey ? 1 : 0.25;
+    change();
+    moveShape(shapes[sel.shape].pts.map((p) => [...p]), nudge[0] * step, nudge[1] * step);
+    draw();
+  }
 });
 window.addEventListener('beforeunload', (e) => { if (dirty) { e.preventDefault(); e.returnValue = ''; } });
 
@@ -647,7 +700,7 @@ function finishDraw() {
   if (pts.length < 3) { setStatus('A shape needs at least 3 points'); return; }
   change();
   if (kind === 'oob') shapes = shapes.filter((s) => s.kind !== 'oob'); // only one boundary
-  shapes.push(kind === 'trees' ? { kind, pts, density: treeOpts.density } : { kind, pts });
+  shapes.push(kind === 'trees' ? { kind, pts, density: treeOpts.density, species: treeOpts.areaKind, hMin: treeOpts.hMin, hMax: treeOpts.hMax } : { kind, pts });
   sel.shape = shapes.length - 1;
   sel.tree = -1;
   setMode(null);
@@ -694,9 +747,11 @@ function renderShapePanel() {
     box.className = 'small';
     box.innerHTML = `
       <label>Selected tree <select id="t-sel-size">${Object.keys(TREE_SIZES).map((k) => `<option value="${k}" ${k === t.size ? 'selected' : ''}>${k[0].toUpperCase() + k.slice(1)} (about ${TREE_SIZES[k]} m)</option>`).join('')}</select></label>
+      <label>Species <select id="t-sel-kind">${speciesOptions(t.kind)}</select></label>
       <div class="muted">Drag it to move it.</div>
       <div class="btn-row"><button id="t-del">Delete tree</button></div>`;
     $('t-sel-size').onchange = () => { change(); t.size = $('t-sel-size').value; draw(); };
+    $('t-sel-kind').onchange = () => { change(); t.kind = $('t-sel-kind').value; draw(); };
     $('t-del').onclick = deleteTree;
     return;
   }
@@ -705,7 +760,13 @@ function renderShapePanel() {
   const area = polyArea(s.pts);
   box.innerHTML = `
     <label>Selected shape <select id="s-kind">${Object.entries(SHAPES).map(([k, v]) => `<option value="${k}" ${k === s.kind ? 'selected' : ''}>${v.label}</option>`).join('')}</select></label>
-    ${s.kind === 'trees' ? `<label>Tree density <select id="s-density">${['sparse', 'medium', 'dense'].map((d) => `<option value="${d}" ${d === (s.density || 'medium') ? 'selected' : ''}>${d[0].toUpperCase() + d.slice(1)}</option>`).join('')}</select></label>` : ''}
+    ${s.kind === 'trees' ? `<label>Tree density <select id="s-density">${['sparse', 'medium', 'dense'].map((d) => `<option value="${d}" ${d === (s.density || 'medium') ? 'selected' : ''}>${d[0].toUpperCase() + d.slice(1)}</option>`).join('')}</select></label>
+      <label>Species <select id="s-species">${speciesOptions(s.species)}</select></label>
+      <div class="height-row">
+        <label>Shortest (m) <input id="s-hmin" type="number" min="2" max="40" step="1" value="${Number.isFinite(s.hMin) ? s.hMin : ''}" placeholder="map"></label>
+        <label>Tallest (m) <input id="s-hmax" type="number" min="2" max="40" step="1" value="${Number.isFinite(s.hMax) ? s.hMax : ''}" placeholder="map"></label>
+      </div>
+      <div class="muted">Each tree gets a height between these. Leave both empty to use the measured heights where the course has them.</div>` : ''}
     <div class="muted">${s.pts.length} points · ${Math.round(area).toLocaleString()} m²${s.inner ? ' · cut-out' : ''}</div>
     <div class="btn-row"><button id="s-del">Delete shape</button></div>`;
   $('s-kind').onchange = () => {
@@ -717,6 +778,17 @@ function renderShapePanel() {
   };
   $('s-del').onclick = deleteShape;
   if ($('s-density')) $('s-density').onchange = () => { change(); s.density = $('s-density').value; draw(); };
+  if ($('s-species')) $('s-species').onchange = () => { change(); s.species = $('s-species').value; draw(); };
+  if ($('s-hmin')) {
+    const heights = () => {
+      change();
+      const lo = parseFloat($('s-hmin').value), hi = parseFloat($('s-hmax').value);
+      if (Number.isFinite(lo) && Number.isFinite(hi)) { s.hMin = Math.min(40, Math.max(2, lo)); s.hMax = Math.min(40, Math.max(2, hi)); }
+      else { delete s.hMin; delete s.hMax; }
+      draw();
+    };
+    $('s-hmin').onchange = heights; $('s-hmax').onchange = heights;
+  }
 }
 
 function renderHoles() {
@@ -828,6 +900,28 @@ function autoPins(h) {
 $('c-name').oninput = () => { course.name = $('c-name').value; setDirty(true); };
 $('c-location').oninput = () => { course.location = $('c-location').value; setDirty(true); };
 $('c-stimp').onchange = () => { course.stimp = +$('c-stimp').value || 10; setDirty(true); };
+
+// Mowing patterns: a picker and a small top-down preview for fairways and for greens
+for (const kind of ['fairway', 'green']) {
+  const s = $(`c-mow-${kind}`);
+  s.innerHTML = MOW_PATTERNS.map((p) => `<option value="${p.id}">${esc(p.label)}</option>`).join('');
+  s.onchange = () => { change(); course.mowing[kind] = s.value; drawMowPreview(kind); setDirty(true); };
+}
+function showMowing() {
+  for (const kind of ['fairway', 'green']) { $(`c-mow-${kind}`).value = course.mowing[kind]; drawMowPreview(kind); }
+}
+function drawMowPreview(kind) {
+  const cv = $(`mow-prev-${kind}`), c = cv.getContext('2d');
+  const W = cv.width, H = cv.height, img = c.createImageData(W, H);
+  const width = MOW_WIDTH[kind], span = width * 5; // five passes across
+  const [r, g, b] = kind === 'green' ? [84, 132, 44] : [66, 116, 36];
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const k = 1 + 0.2 * mowShade(course.mowing[kind], ((x + 0.5) / W) * span, ((H - y - 0.5) / W) * span, width);
+    const o = (y * W + x) * 4;
+    img.data[o] = r * k; img.data[o + 1] = g * k; img.data[o + 2] = b * k; img.data[o + 3] = 255;
+  }
+  c.putImageData(img, 0, 0);
+}
 $('h-add').onclick = () => {
   change();
   const n = holes.reduce((m, h) => Math.max(m, h.number), 0) + 1;
@@ -852,6 +946,16 @@ $('t-add').onclick = () => setMode(mode?.type === 'tree' ? null : { type: 'tree'
 $('t-area').onclick = () => setMode(mode?.type === 'draw' && mode.kind === 'trees' ? null : { type: 'draw', kind: 'trees', pts: [] });
 $('t-size').onchange = () => { treeOpts.size = $('t-size').value; if (mode?.type === 'tree') setMode(mode); };
 $('t-density').onchange = () => { treeOpts.density = $('t-density').value; };
+// Species pickers, area heights, and the list of species (with their map colours)
+$('t-kind').innerHTML = speciesOptions(treeOpts.kind);
+$('t-area-kind').innerHTML = speciesOptions(treeOpts.areaKind);
+$('t-kind').onchange = () => { treeOpts.kind = $('t-kind').value; };
+$('t-area-kind').onchange = () => { treeOpts.areaKind = $('t-area-kind').value; };
+$('t-hmin').value = treeOpts.hMin; $('t-hmax').value = treeOpts.hMax;
+$('t-hmin').onchange = () => { treeOpts.hMin = Math.min(40, Math.max(2, +$('t-hmin').value || AREA_HEIGHTS.min)); };
+$('t-hmax').onchange = () => { treeOpts.hMax = Math.min(40, Math.max(2, +$('t-hmax').value || AREA_HEIGHTS.max)); };
+$('species-list').innerHTML = TREE_SPECIES.map((sp) => `<li><i style="background:${SPECIES_COLOR[sp.id]}"></i><b>${esc(sp.label)}</b><span>${esc(sp.about)}</span></li>`).join('')
+  + `<li><i style="background:rgba(80,175,70,0.9)"></i><b>Automatic</b><span>chosen from the aerial photo</span></li>`;
 $('t-show').onchange = () => { showTrees = $('t-show').checked; if (!showTrees && sel.tree >= 0) { sel.tree = -1; renderShapePanel(); } draw(); };
 $('save').onclick = save;
 $('play').onclick = async (e) => {

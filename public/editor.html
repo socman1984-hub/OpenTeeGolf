@@ -21,6 +21,14 @@
         <label>Name <input id="c-name"></label>
         <label>Location <input id="c-location"></label>
         <label>Green speed (stimp) <input id="c-stimp" type="number" min="6" max="14" step="0.5"></label>
+        <div class="mow-row">
+          <label>Fairway mowing <select id="c-mow-fairway"></select></label>
+          <canvas id="mow-prev-fairway" class="mow-preview" width="128" height="72" title="Preview: the pattern from above, mown towards the top"></canvas>
+        </div>
+        <div class="mow-row">
+          <label>Green mowing <select id="c-mow-green"></select></label>
+          <canvas id="mow-prev-green" class="mow-preview" width="128" height="72" title="Preview: the pattern from above, mown towards the top"></canvas>
+        </div>
       </details>
 
       <details open>
@@ -49,6 +57,7 @@
             <option value="large">Large (about 20 m)</option>
           </select>
         </div>
+        <label>Species for trees you add <select id="t-kind" class="species-select"></select></label>
         <div class="tree-tool">
           <button id="t-area">Draw tree area</button>
           <select id="t-density" title="How closely trees stand in the area">
@@ -57,6 +66,15 @@
             <option value="dense">Dense</option>
           </select>
         </div>
+        <label>Species in new areas <select id="t-area-kind" class="species-select"></select></label>
+        <div class="height-row">
+          <label>Shortest (m) <input id="t-hmin" type="number" min="2" max="40" step="1"></label>
+          <label>Tallest (m) <input id="t-hmax" type="number" min="2" max="40" step="1"></label>
+        </div>
+        <details class="species-list">
+          <summary>Tree species</summary>
+          <ul id="species-list"></ul>
+        </details>
         <div class="muted small">Add trees: click the map once per tree. Tree area: click its outline, double-click or Enter to finish; it fills with trees (not on fairways, greens, tees, bunkers or water). Your trees are the bright ones: drag to move, Delete to remove.</div>
       </details>
 
@@ -66,6 +84,7 @@
           <li>Drag the map to pan, scroll to zoom.</li>
           <li>Drag tees, pins, aim points and the green center of the selected hole.</li>
           <li>Click a shape to select it. Drag its corners; drag a small circle to add a corner; Alt+click a corner to remove it.</li>
+          <li>Drag inside a selected shape to move the whole shape (to line it up with the photo); arrow keys nudge it 25 cm, Shift+arrow 1 m.</li>
           <li>Trees: dark circles are found from tree heights and OpenStreetMap; bright ones are yours. Drag yours to move them.</li>
           <li><b>Delete</b> removes the selected shape or tree · <b>Ctrl+Z</b> undo · <b>Ctrl+S</b> save · <b>Esc</b> cancel.</li>
         </ul>
