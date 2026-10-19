@@ -6,7 +6,7 @@ import * as THREE from 'three/webgpu';
 import {
   Fn, texture, uv, vec2, vec3, float, mix, clamp, smoothstep, dot, distance, normalize, sin, cos, abs, atan,
   positionWorld, cameraPosition, instancedBufferAttribute, PI, normalMap, time, reflector, normalView, positionViewDirection, pow,
-  uniform, select, fwidth,
+  uniform, select, fwidth, normalWorld, attribute, fract,
 } from 'three/tsl';
 import { SkyMesh } from 'three/addons/objects/SkyMesh.js';
 import { Line2 } from 'three/addons/lines/webgpu/Line2.js';
@@ -15,8 +15,11 @@ import { MapControls } from 'three/addons/controls/MapControls.js';
 import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 import { noise, pointInPoly } from './course.js';
 import { Forest, treesFromCanopy, assignSpecies, addMappedTrees, addTreeAreas, fade, impostorLight } from './trees.js';
+import { treesFromPhoto, removeTrees } from './treeplace.js';
 import { tuftGeometry, reedGeometry, grassMaterial, grassMesh, grassWind, addBend } from './grass.js';
 import { MOW_WIDTH, mowIndex } from './mowing.js';
+import { layoutParking, bayCorners, carColour } from './parking.js';
+import { roadLines, roadSamples, stripTriangles, onRoad } from './roads.js';
 
 // The course's mowing patterns (pattern numbers from mowing.js), read by the terrain shader
 const mowPattern = { fairway: uniform(1), green: uniform(3) };
@@ -258,13 +261,25 @@ export class CourseScene {
     this.addBankGrass(course, shore);
     this.addReedsAndRocks(course, shore);
     this.addStakesAndMarkers(course);
+    // Trees: the canopy height map's, then OpenStreetMap's and the player's, then the ones the
+    // aerial photo shows where none stand yet; less any taken out in the course editor
+    this.pendingTrees = []; this.photoTrees = 0; this.photoTreeList = null;
     if (canopy) this.addTreesFromCanopy(course, canopy);
-    else if (sat) this.addTreesFromImagery(course, sat);
-    else this.addTrees(course);
+    else if (!sat) this.addTrees(course);
     this.addOsmTrees(course, canopy);
-    await this.plantForest(course, this.pendingTrees || [], progress);
+    if (this.photoRaster) this.addPhotoTrees(course, canopy);
+    this.photoRaster = null;
+    this.pendingTrees = removeTrees(this.pendingTrees, course.removedTrees);
+    // (no trunks in the road: crowns from the height map can hang over one)
+    if (course.roads?.roads?.length) {
+      const road = onRoad(course.roads.roads, 0.8);
+      this.pendingTrees = this.pendingTrees.filter((t) => t.user || !road(t.x, t.z));
+    }
+    await this.plantForest(course, this.pendingTrees, progress);
     if (sat) this.addNativeGrass(course, sat);
     if (buildings.length) this.addBuildings(course, buildings);
+    this.addCars(course);
+    this.addRoadMarkings(course);
     this.grassCenter = null;
     if (this.lieGrass) this.lieGrass.count = 0;
     this.lieKey = null;
@@ -353,6 +368,13 @@ export class CourseScene {
     sample.width = Math.ceil((maxX - minX) / s); sample.height = Math.ceil((maxZ - minZ) / s);
     sample.getContext('2d').drawImage(canvas, 0, 0, sample.width, sample.height);
     sat.sample = { data: sample.getContext('2d').getImageData(0, 0, sample.width, sample.height).data, w: sample.width, h: sample.height, res: s, minX, maxZ };
+    // A 1 m copy for finding tree crowns (see addPhotoTrees)
+    const tr = document.createElement('canvas');
+    tr.width = Math.ceil(maxX - minX); tr.height = Math.ceil(maxZ - minZ);
+    tr.getContext('2d').drawImage(canvas, 0, 0, tr.width, tr.height);
+    this.photoRaster = { data: tr.getContext('2d').getImageData(0, 0, tr.width, tr.height).data, w: tr.width, h: tr.height, res: 1, minX, maxZ };
+    // Car parks: which bays have a car in the photo (read before anything is painted over it)
+    this.parking = this.findCars(course, ctx, res);
 
     const path = (poly) => {
       ctx.beginPath();
@@ -416,7 +438,224 @@ export class CourseScene {
       line(); ctx.strokeStyle = paved ? 'rgba(120,118,112,0.75)' : 'rgba(150,130,100,0.7)'; ctx.lineWidth = (pth.width + 0.4) / res; ctx.stroke();
       line(); ctx.strokeStyle = paved ? 'rgba(178,175,166,0.92)' : 'rgba(190,170,135,0.9)'; ctx.lineWidth = pth.width / res; ctx.stroke();
     }
+    this.paintRoads(ctx, course, res, minX, maxZ);
+    this.paintParking(ctx, res, minX, maxZ);
     return canvas;
+  }
+
+  // ---- public roads (OpenStreetMap)
+
+  // The road surface: dark asphalt over the photo (all at once, so junctions join cleanly)
+  paintRoads(ctx, course, res, minX, maxZ) {
+    const roads = course.roads?.roads || [];
+    if (!roads.length) return;
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    for (const [pad, colour] of [[0.5, 'rgba(92,90,84,0.55)'], [0, 'rgba(57,57,56,0.97)']]) {
+      ctx.strokeStyle = colour;
+      for (const r of roads) {
+        ctx.beginPath();
+        r.pts.forEach(([x, z], i) => { const px = (x - minX) / res, py = (maxZ - z) / res; if (i) ctx.lineTo(px, py); else ctx.moveTo(px, py); });
+        ctx.lineWidth = (r.width + pad) / res; ctx.stroke();
+      }
+    }
+  }
+
+  // The lines painted on main roads (see roadLines), as thin strips just above the ground
+  addRoadMarkings(course) {
+    const roads = course.roads?.roads || [];
+    const flat = { white: [], yellow: [] };
+    for (const r of roads) {
+      const lines = roadLines(r, course.roads.yellowCentre);
+      if (!lines.length) continue;
+      const sm = roadSamples(r.pts);
+      for (const l of lines) stripTriangles(sm, l.offset, l.width, l.dash, flat[l.yellow ? 'yellow' : 'white']);
+    }
+    for (const [colour, xz] of Object.entries(flat)) {
+      if (!xz.length) continue;
+      const pos = new Float32Array((xz.length / 2) * 3);
+      let n = 0;
+      for (let i = 0; i < xz.length; i += 6) {
+        // (whole triangles only, and none past the edge of the terrain)
+        const y0 = course.heightAt(xz[i], xz[i + 1]), y1 = course.heightAt(xz[i + 2], xz[i + 3]), y2 = course.heightAt(xz[i + 4], xz[i + 5]);
+        if (y0 === null || y1 === null || y2 === null) continue;
+        pos.set([-xz[i], y0 + 0.04, xz[i + 1], -xz[i + 2], y1 + 0.04, xz[i + 3], -xz[i + 4], y2 + 0.04, xz[i + 5]], n);
+        n += 9;
+      }
+      if (!n) continue;
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.BufferAttribute(pos.slice(0, n), 3));
+      const up = new Float32Array(n);
+      for (let i = 1; i < n; i += 3) up[i] = 1;
+      geo.setAttribute('normal', new THREE.BufferAttribute(up, 3));
+      const mat = new THREE.MeshStandardMaterial({
+        color: colour === 'yellow' ? 0xd8a51e : 0xe4e4dc, roughness: 0.7, side: THREE.DoubleSide,
+        polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4,
+      });
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.receiveShadow = true;
+      this.courseGroup.add(mesh);
+    }
+  }
+
+  // ---- car parks (OpenStreetMap) and the cars parked in them
+
+  // Lay out the bays and decide which have a car. With the aerial photo (ctx, res m per pixel):
+  // a bay holds a car where the photo there differs clearly from the car park's own surface,
+  // and the car takes that colour. Without one, about half the bays are taken, in common colours.
+  // A car park that is mostly green in the photo is grass (overflow parking), so it isn't painted.
+  findCars(course, ctx = null, res = 1) {
+    const out = { lots: [], cars: [] };
+    if (!course.parking?.lots?.length) return out;
+    const { minX, maxX, minZ, maxZ } = course.bounds;
+    const bays = layoutParking(course.parking).filter((b) => b.x > minX && b.x < maxX && b.z > minZ && b.z < maxZ);
+    out.lots = course.parking.lots.map((lot) => ({ ...lot, bays: [], paved: /asphalt|paved|concrete/.test(lot.surface || 'asphalt') }));
+    for (const b of bays) out.lots[b.lot].bays.push(b);
+    const MAX_CARS = 2500;
+    for (const lot of out.lots) {
+      if (!lot.bays.length) continue;
+      let pixel = null;
+      if (ctx) {
+        // The photo under the car park, read once
+        const xs = lot.pts.map((p) => p[0]), zs = lot.pts.map((p) => p[1]);
+        const px0 = Math.max(0, Math.floor((Math.min(...xs) - minX) / res)), py0 = Math.max(0, Math.floor((maxZ - Math.max(...zs)) / res));
+        const pw = Math.min(ctx.canvas.width - px0, Math.ceil((Math.max(...xs) - Math.min(...xs)) / res) + 2);
+        const ph = Math.min(ctx.canvas.height - py0, Math.ceil((Math.max(...zs) - Math.min(...zs)) / res) + 2);
+        if (pw < 2 || ph < 2) continue;
+        const d = ctx.getImageData(px0, py0, pw, ph).data;
+        pixel = (x, z) => {
+          const i = Math.floor((x - minX) / res) - px0, j = Math.floor((maxZ - z) / res) - py0;
+          if (i < 0 || j < 0 || i >= pw || j >= ph) return null;
+          const o = (j * pw + i) * 4;
+          return [d[o], d[o + 1], d[o + 2]];
+        };
+        // The car park's own surface: the median colour over its bays, and how green it is
+        const samples = [];
+        for (const b of lot.bays) for (const [x, z] of bayCorners({ ...b, w: b.w * 0.95, d: b.d * 1.05 })) { const c = pixel(x, z); if (c) samples.push(c); }
+        if (samples.length < 4) { pixel = null; } else {
+          const med = [0, 1, 2].map((k) => samples.map((c) => c[k]).sort((a, b) => a - b)[samples.length >> 1]);
+          const green = samples.filter(([r, g, b]) => g > r * 1.08 && g > b * 1.05).length / samples.length;
+          if (green > 0.45) lot.paved = false;
+          lot.ground = med;
+        }
+      }
+      const lotCars = [];
+      for (const b of lot.bays) {
+        if (out.cars.length + lotCars.length >= MAX_CARS) break;
+        const n = hash01(b.x * 1.7, b.z * 2.3);
+        let col = null;
+        if (pixel && lot.ground) {
+          // A car stands out both from the car park as a whole and from the aisle right in front
+          // of its bay. (Comparing with the aisle too keeps tree shadows, worn tracks and patchy
+          // ground - which cover the aisle as well - from passing as cars.)
+          const vx = -b.uz, vz = b.ux, at = (s, t) => pixel(b.x + vx * s + b.ux * t, b.z + vz * s + b.uz * t);
+          const patch = (t0, t1) => {
+            const px = [];
+            for (let s = -0.75; s <= 0.75; s += 0.375) for (let t = t0; t <= t1; t += 0.5) { const c = at(s, t); if (c) px.push(c); }
+            return px;
+          };
+          const med = (px) => [0, 1, 2].map((k) => px.map((c) => c[k]).sort((a, b2) => a - b2)[px.length >> 1]);
+          const dist = (c, m) => Math.hypot(c[0] - m[0], c[1] - m[1], c[2] - m[2]);
+          const car = patch(-2, 2);
+          // (the aisle is at -u; bays mapped one by one could face either way: the end more
+          // like the car park's surface)
+          let aisle = patch(-b.d / 2 - 2.5, -b.d / 2 - 0.8);
+          if (b.aisle === false) {
+            const other = patch(b.d / 2 + 0.8, b.d / 2 + 2.5);
+            if (other.length && (!aisle.length || dist(med(other), lot.ground) < dist(med(aisle), lot.ground))) aisle = other;
+          }
+          if (car.length < 10) continue;
+          const am = aisle.length >= 4 ? med(aisle) : lot.ground;
+          // Green isn't a car: tree crowns over the bay, their shadows, grass and mown stripes. (A
+          // bay that is mostly green is under a tree.) Green measured against the car park's own
+          // surface, as the photo may have a green cast that tints every car a little.
+          const exg = (c) => 2 * c[1] - c[0] - c[2], groundExg = exg(lot.ground);
+          const green = (c) => c[1] > c[0] && exg(c) > Math.max(25, groundExg + 22);
+          if (car.filter(green).length > car.length * 0.35) continue;
+          const hits = car.filter((c) => dist(c, lot.ground) > 30 && dist(c, am) > 30 && !green(c));
+          const dGround = car.reduce((sum, c) => sum + dist(c, lot.ground), 0) / car.length;
+          const dAisle = car.reduce((sum, c) => sum + dist(c, am), 0) / car.length;
+          const need = lot.paved ? 1 : 1.35; // (stricter on unpaved ground, usually empty)
+          if (dGround < 26 * need || dAisle < 26 * need || hits.length < car.length * 0.35 * need) continue; // an empty bay
+          // Most cars are white, black, grey or silver, and the photo has a colour cast (often
+          // green): a car is a neutral shade of its brightness unless it's clearly coloured (red,
+          // blue...), when that colour is strengthened a little
+          col = [0, 1, 2].map((k) => hits.reduce((sum, c) => sum + c[k], 0) / hits.length / 255);
+          const grey = (col[0] + col[1] + col[2]) / 3, chroma = Math.max(...col) - Math.min(...col);
+          const greenish = col[1] >= col[0] * 0.95 && col[1] >= col[2]; // (green and olive: the cast)
+          const shade = Math.min(0.95, Math.max(0.06, (grey - 0.2) * 1.5 + 0.2));
+          col = chroma < 0.12 || greenish ? [shade, shade, shade * 1.02] : col.map((v) => Math.min(1, Math.max(0, grey + (v - grey) * 1.6)));
+        } else {
+          if (n > 0.55) continue;
+          col = carColour(hash01(b.z * 3.1, b.x * 0.7));
+        }
+        // Some cars are reversed in
+        const rev = hash01(b.x, b.z * 5.3) < 0.25 ? -1 : 1;
+        lotCars.push({ x: b.x, z: b.z, ux: b.ux * rev, uz: b.uz * rev, col, suv: hash01(b.x * 0.3, b.z * 0.9) < 0.35 });
+      }
+      // A grass or dirt (overflow) car park in use is full of cars; a few scattered "cars" there
+      // are bare patches, tracks and tree shadows, so it stays empty
+      if (pixel && lot.ground && !lot.paved && lotCars.length < lot.bays.length * 0.45) continue;
+      out.cars.push(...lotCars);
+    }
+    return out;
+  }
+
+  // Paved car parks on the ground picture: fresh asphalt with white bay lines (painted over the
+  // photo, whose cars become the 3D ones)
+  paintParking(ctx, res, minX, maxZ) {
+    const lots = this.parking?.lots?.filter((l) => l.paved && l.bays.length) || [];
+    if (!lots.length) return;
+    const P = (x, z) => [(x - minX) / res, (maxZ - z) / res];
+    for (const lot of lots) {
+      ctx.beginPath();
+      lot.pts.forEach(([x, z], i) => (i ? ctx.lineTo(...P(x, z)) : ctx.moveTo(...P(x, z))));
+      ctx.closePath();
+      ctx.fillStyle = 'rgba(74,74,72,0.96)'; ctx.fill();
+      ctx.strokeStyle = 'rgba(105,104,100,0.9)'; ctx.lineWidth = 0.4 / res; ctx.stroke(); // (kerb)
+    }
+    if (res > 0.6) return; // (lines too fine for the picture)
+    // (12 cm lines; finer than a pixel of the picture they're drawn fainter instead)
+    const lw = 0.12 / res;
+    ctx.strokeStyle = `rgba(236,236,230,${Math.min(0.85, 0.85 * Math.max(0.55, lw))})`; ctx.lineWidth = Math.max(0.6, lw); ctx.lineCap = 'butt';
+    ctx.beginPath();
+    for (const lot of lots) for (const b of lot.bays) {
+      // Each bay's two side lines (shared lines are simply drawn twice)
+      const [c0, c1, c2, c3] = bayCorners(b);
+      ctx.moveTo(...P(...c0)); ctx.lineTo(...P(...c3));
+      ctx.moveTo(...P(...c1)); ctx.lineTo(...P(...c2));
+    }
+    ctx.stroke();
+  }
+
+  // The cars: two simple body styles (cars and SUVs), drawn as instances, with collision boxes
+  // so a ball bounces off them
+  addCars(course) {
+    const cars = this.parking?.cars || [];
+    this.carBoxes = [];
+    if (!cars.length) return;
+    const m = new THREE.Matrix4(), q = new THREE.Quaternion(), p = new THREE.Vector3(), one = new THREE.Vector3(1, 1, 1), c = new THREE.Color();
+    const up = new THREE.Vector3(0, 1, 0);
+    const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.32, metalness: 0.35 });
+    for (const suv of [false, true]) {
+      const list = cars.filter((car) => car.suv === suv);
+      if (!list.length) continue;
+      const mesh = new THREE.InstancedMesh(carGeometry(suv), mat, list.length);
+      mesh.castShadow = mesh.receiveShadow = true;
+      list.forEach((car, i) => {
+        const y = course.heightAt(car.x, car.z) ?? 0;
+        // Length along local x; three.js x is mirrored
+        q.setFromAxisAngle(up, Math.atan2(-car.uz, -car.ux));
+        m.compose(p.copy(T(car.x, y, car.z)), q, one);
+        mesh.setMatrixAt(i, m);
+        mesh.setColorAt(i, c.setRGB(...car.col, THREE.SRGBColorSpace));
+        // Collision: the car's footprint, as a low box
+        const L = suv ? 2.4 : 2.3, W = suv ? 0.97 : 0.92, vx = -car.uz, vz = car.ux;
+        this.carBoxes.push({ h: suv ? 1.75 : 1.45, pts: [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([s, t]) => [car.x + vx * W * s + car.ux * L * t, car.z + vz * W * s + car.uz * L * t]) });
+      });
+      mesh.instanceMatrix.needsUpdate = true; mesh.instanceColor.needsUpdate = true;
+      this.courseGroup.add(mesh);
+    }
+    this.applyEnvIntensity(mat);
   }
 
   // Read surfaces from the aerial photo (1 m grid):
@@ -584,10 +823,14 @@ export class CourseScene {
       each('green', () => ctx.stroke());                          // fringe
       ctx.fillStyle = 'rgb(0,255,0)'; each('green', () => ctx.fill());
       ctx.fillStyle = 'rgb(0,0,255)'; each('sand', () => ctx.fill());
+      // Paved car parks: pavement too (same code as the cart paths below)
+      ctx.fillStyle = 'rgb(0,40,90)';
+      for (const lot of this.parking?.lots || []) if (lot.paved && lot.bays.length) { path(lot.pts); ctx.fill(); }
       // Cart paths: blue 90 plus green 40. Needing both keeps the soft edges of bunkers (blue only)
       // and greens (green only) from reading as path.
+      // (roads too: pavement)
       ctx.strokeStyle = 'rgb(0,40,90)'; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-      for (const pth of course.paths || []) {
+      for (const pth of [...(course.paths || []), ...(course.roads?.roads || [])]) {
         ctx.lineWidth = pth.width / res;
         ctx.beginPath();
         pth.pts.forEach(([x, z], i) => { const px = (x - minX) / res, py = (maxZ - z) / res; if (i) ctx.lineTo(px, py); else ctx.moveTo(px, py); });
@@ -606,7 +849,7 @@ export class CourseScene {
     const soft = document.createElement('canvas');
     soft.width = w; soft.height = h;
     const sc = soft.getContext('2d');
-    sc.filter = 'blur(0.6px)';
+    sc.filter = 'blur(1.2px)'; // (enough that path edges are smooth ramps, not steps)
     sc.drawImage(c, 0, 0);
     return soft;
   }
@@ -766,6 +1009,11 @@ export class CourseScene {
     const sctx = soft.getContext('2d');
     sctx.filter = 'blur(0.8px)';
     sctx.drawImage(canvas, 0, 0);
+    // Car parks (no photo: cars in about half the bays)
+    this.parking = this.findCars(course);
+    sctx.filter = 'none';
+    this.paintRoads(sctx, course, TEX_RES, minX, maxZ);
+    this.paintParking(sctx, TEX_RES, minX, maxZ);
     return soft;
   }
 
@@ -785,7 +1033,7 @@ export class CourseScene {
       this.scene.add(this.reflection.target);
     }
     this.waterMat = waterMaterial(this.scene.environment, this.reflection);
-    for (const m of this.waterMeshes || []) m.material = this.waterMat;
+    for (const m of this.waterMeshes || []) if (!m.userData.flowing) m.material = this.waterMat;
     // Let go of the old ones after the next frame has stopped using them
     if (old || oldMat) setTimeout(() => { oldMat?.dispose(); old?.dispose?.(); }, 500);
   }
@@ -794,21 +1042,49 @@ export class CourseScene {
     this.hasWater = course.waterBodies.length > 0;
     this.waterMeshes = [];
     this.makeWaterMaterial();
-    this.waterCentres = course.waterBodies.map((wb) => {
+    this.flowMat?.dispose(); this.streamMat?.dispose();
+    this.flowMat = course.waterBodies.some((wb) => wb.levelAt && !wb.ribbon) ? flowingWaterMaterial(this.scene.environment) : null;
+    this.streamMat = course.waterBodies.some((wb) => wb.ribbon) ? streamMaterial(this.scene.environment) : null;
+    // (the mirror follows the ponds; streams run and break up any reflection)
+    this.waterCentres = course.waterBodies.filter((wb) => !wb.levelAt).map((wb) => {
       let x = 0, z = 0;
       for (const [px, pz] of wb.poly) { x += px; z += pz; }
       return { x: x / wb.poly.length, z: z / wb.poly.length, level: wb.level };
     });
     for (const wb of course.waterBodies) {
-      const shape = new THREE.Shape(wb.poly.map(([x, z]) => new THREE.Vector2(-x, -z)));
+      if (wb.ribbon && wb.levelAt) {
+        const m = new THREE.Mesh(streamGeometry(wb), this.streamMat);
+        m.userData.flowing = true;
+        m.position.y = wb.level;
+        m.receiveShadow = true;
+        this.waterMeshes.push(m);
+        this.courseGroup.add(m);
+        continue;
+      }
+      // (rivers mapped as outlines: outline points at most 4 m apart, so the surface can follow the
+      // slope and the flow can change along it)
+      const poly = wb.levelAt ? densify(wb.poly, 4) : wb.poly;
+      const shape = new THREE.Shape(poly.map(([x, z]) => new THREE.Vector2(-x, -z)));
       const g = new THREE.ShapeGeometry(shape);
       g.rotateX(-Math.PI / 2);
       // World-space UVs so the ripples have a consistent scale
       const p = g.attributes.position, uv = g.attributes.uv;
       for (let i = 0; i < p.count; i++) uv.setXY(i, p.getX(i) / 14, p.getZ(i) / 14);
-      // Rivers slope: each point of the surface at the level there
-      if (wb.levelAt) for (let i = 0; i < p.count; i++) p.setY(i, wb.levelAt(-p.getX(i), p.getZ(i)) - wb.level);
-      const m = new THREE.Mesh(g, this.waterMat);
+      if (wb.levelAt) {
+        // Rivers slope: each point of the surface at the level there, flowing downhill along the
+        // channel, faster where it's steeper
+        const flowAt = streamFlow(wb);
+        const flow = new Float32Array(p.count * 3);
+        for (let i = 0; i < p.count; i++) {
+          const x = -p.getX(i), z = p.getZ(i);
+          p.setY(i, wb.levelAt(x, z) - wb.level);
+          const [tx, tz, v] = flowAt(x, z);
+          flow[i * 3] = -tx; flow[i * 3 + 1] = tz; flow[i * 3 + 2] = v; // (in UV terms: u runs along -x)
+        }
+        g.setAttribute('flow', new THREE.BufferAttribute(flow, 3));
+      }
+      const m = new THREE.Mesh(g, wb.levelAt ? this.flowMat : this.waterMat);
+      m.userData.flowing = !!wb.levelAt;
       m.position.y = wb.level;
       m.receiveShadow = true;
       this.waterMeshes.push(m);
@@ -969,8 +1245,9 @@ export class CourseScene {
       const reedLimit = { natural: 0.2, reedy: -0.45, rocky: 0.55 }[s.wb.style];
       if (reedLimit === undefined || noise(s.x * 0.035 + 7, s.z * 0.035 - 3) < reedLimit) continue;
       if (nearPlay(s.x, s.z, s.nx, s.nz)) continue;
-      // Mostly just inside the water, some right at the edge
-      const d = -0.1 - Math.random() ** 1.3 * 1.6, along = (Math.random() - 0.5) * 0.6;
+      // Mostly just inside the water, some right at the edge (in a stream, only along its banks:
+      // the current keeps the channel clear)
+      const d = -0.1 - Math.random() ** 1.3 * (s.wb.levelAt ? 0.45 : 1.6), along = (Math.random() - 0.5) * 0.6;
       const x = s.x + s.nx * d + s.tx * along, z = s.z + s.nz * d + s.tz * along;
       const k = kinds[Math.random() < 0.35 ? 1 : 0];
       if (k.n >= k.mesh.instanceMatrix.count) continue;
@@ -1008,14 +1285,15 @@ export class CourseScene {
       if (!isWater(x, z) && ['sand', 'path', 'green'].includes(this.fastSurface(x, z, true))) continue;
       const size = 0.25 + Math.random() ** 1.5 * (rocky ? 0.65 : 0.35);
       // On the bank: sunk about a third into the ground. In the water: breaking the surface.
-      const ground = course.heightAt(x, z) ?? s.level;
-      const y = isWater(x, z) ? Math.max(ground - size * 0.35, s.level - size * 0.3) : ground - size * 0.35;
+      // (in a stream they stand higher: the current keeps them washed clean and wet)
+      const ground = course.heightAt(x, z) ?? s.level, wet = isWater(x, z), stream = wet && !!s.wb.levelAt;
+      const y = wet ? Math.max(ground - size * 0.35, s.level - size * (stream ? 0.08 : 0.3)) : ground - size * 0.35;
       e.set((Math.random() - 0.5) * 0.6, Math.random() * 6.28, (Math.random() - 0.5) * 0.6);
       q.setFromEuler(e);
       m.compose(p.copy(T(x, y, z)), q, sc.set(size * (0.9 + Math.random() * 0.6), size * (0.55 + Math.random() * 0.35), size * (0.9 + Math.random() * 0.6)));
       mesh.setMatrixAt(n, m);
       // Grey to brownish grey; darker where wet at the waterline
-      const v = (0.8 + Math.random() * 0.35) * (isWater(x, z) ? 0.85 : 1), warm = Math.random() * 0.1;
+      const v = (0.8 + Math.random() * 0.35) * (stream ? 0.55 : wet ? 0.85 : 1), warm = Math.random() * 0.1;
       mesh.setColorAt(n++, c.setRGB((0.7 + warm) * v, (0.67 + warm * 0.5) * v, 0.62 * v, THREE.SRGBColorSpace));
     }
     mesh.count = n;
@@ -1125,6 +1403,26 @@ export class CourseScene {
     this.pendingTrees = trees;
   }
 
+  // Trees the aerial photo shows that nothing has placed yet (see treesFromPhoto): in the rough and
+  // beyond, clear of mown grass, sand, water and paths
+  addPhotoTrees(course, canopy) {
+    const ROUGHISH = new Set(['rough', 'deeprough', 'native', 'oob']);
+    const allowed = (x, z) => {
+      if (course.heightAt(x, z) === null) return false;
+      const s = this.fastSurface(x, z);
+      return (s === null || ROUGHISH.has(s)) && !this.nearMown(x, z, 2) && !this.nearPath(x, z) && !this.nearSand(x, z, 1.5);
+    };
+    const heightAt = canopy ? (x, z) => {
+      const i = Math.floor((x - canopy.minX) / canopy.res), j = Math.floor((canopy.maxZ - z) / canopy.res);
+      return i >= 0 && j >= 0 && i < canopy.w && j < canopy.h ? canopy.heights[j * canopy.w + i] : 0;
+    } : null;
+    const found = treesFromPhoto(this.photoRaster, { allowed, existing: this.pendingTrees, heightAt });
+    assignSpecies(found, this.photoAt());
+    this.pendingTrees.push(...found);
+    this.photoTrees = found.length;
+    this.photoTreeList = found.map((t) => [t.x, t.z, t.h, t.r]);
+  }
+
   // Trees mapped in OpenStreetMap (single trees and tree rows), merged with the ones found above
   // (and the ones added in the course editor: single trees and tree areas)
   addOsmTrees(course, canopy) {
@@ -1173,7 +1471,7 @@ export class CourseScene {
     this.forest.quality = this.quality?.name || 'balanced';
     // Tree models and their distant pictures are made once per session
     await this.forest.prepare(this.renderer, progress);
-    const o = this.osmTrees, extra = [o?.added && `${o.added.toLocaleString()} from OpenStreetMap`, o?.user && `${o.user.toLocaleString()} added in the editor`].filter(Boolean);
+    const o = this.osmTrees, extra = [o?.added && `${o.added.toLocaleString()} from OpenStreetMap`, this.photoTrees && `${this.photoTrees.toLocaleString()} seen in the aerial photo`, o?.user && `${o.user.toLocaleString()} added in the editor`].filter(Boolean);
     const osm = extra.length ? ` (${extra.join(', ')})` : '';
     await progress('trees-place', 'Planting trees', 0, 0, `${trees.length.toLocaleString()} trees${osm}`);
     this.forest.build(trees, (x, z) => course.heightAt(x, z), (m) => this.applyEnvIntensity(m));
@@ -1475,12 +1773,16 @@ export class CourseScene {
         }
       }
     }
-    // A dot at each grid crossing on the green
+    // A dot at each grid crossing on the green. It runs along whichever grid line points most
+    // nearly downhill (so it never leaves the grid) to the next crossing, then starts again.
+    // Where that crossing is off the green the line ends, so the dot stays put.
     for (let i = -steps; i <= steps; i++) for (let j = -steps; j <= steps; j++) {
       const x = cx + fx * i * spacing + rx * j * spacing, z = cz + fz * i * spacing + rz * j * spacing;
       if (!onGreen(x, z)) continue;
-      const sl = slopeAt(x, z), l = Math.hypot(sl.dx, sl.dz) || 1;
-      dots.push({ x, z, dx: sl.dx / l, dz: sl.dz / l, pct: sl.pct, phase: Math.random() });
+      const sl = slopeAt(x, z), along = sl.dx * fx + sl.dz * fz, across = sl.dx * rx + sl.dz * rz;
+      const [dx, dz] = Math.abs(along) >= Math.abs(across) ? [fx * Math.sign(along), fz * Math.sign(along)] : [rx * Math.sign(across), rz * Math.sign(across)];
+      const moves = sl.pct >= 0.3 && onGreen(x + dx * spacing, z + dz * spacing);
+      dots.push({ x, z, dx, dz, pct: moves ? sl.pct : 0, phase: Math.random() });
     }
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
@@ -1515,9 +1817,10 @@ export class CourseScene {
     if (!pg) return;
     const arr = pg.dotPos.array;
     pg.dots.forEach((d, i) => {
-      // Faster on steeper ground; each dot slides downhill across one grid cell, then repeats
-      d.phase = (d.phase + dt * (0.15 + d.pct * 0.3)) % 1;
-      const travel = d.pct < 0.3 ? 0 : d.phase * pg.spacing;
+      // Faster on steeper ground (a square every ~3 s at 0.5% slope, about two a second at 4%);
+      // each dot slides one grid square along its line, then repeats
+      if (d.pct) d.phase = (d.phase + dt * (0.08 + d.pct * 0.5)) % 1;
+      const travel = d.pct ? d.phase * pg.spacing : 0;
       const x = d.x + d.dx * travel, z = d.z + d.dz * travel;
       const y = this.course.heightAt(x, z) ?? 0;
       arr[i * 3] = -x; arr[i * 3 + 1] = y + 0.02; arr[i * 3 + 2] = z;
@@ -2124,14 +2427,20 @@ export class CourseScene {
 
 // ------------------------------------------------------------------ helpers
 
-// Cart path in the surface mask: blue ≈ 0.35 together with green ≈ 0.16 (see buildSurfaceMask)
-const pathWeight = (sm, ws) => smoothstep(0.2, 0.28, sm.b).mul(smoothstep(0.42, 0.5, sm.b).oneMinus())
-  .mul(smoothstep(0.07, 0.12, sm.g)).mul(smoothstep(0.24, 0.3, sm.g).oneMinus()).mul(ws.oneMinus());
+// Cart path in the surface mask: blue ≈ 0.35 together with green ≈ 0.16 (see buildSurfaceMask).
+// How much path a spot is: the smaller of the two as a share of the full path code (bunkers are
+// blue without the green, greens green without the blue, so neither counts). The mask is blurred,
+// so this rises smoothly across a path's edge; the edge is drawn where it crosses one half,
+// softened over about a screen pixel - a smooth line rather than the mask's half-metre steps.
+const pathWeight = (sm, ws) => {
+  const p = sm.b.div(0.353).min(sm.g.div(0.157)), aa = fwidth(p).max(0.02);
+  return smoothstep(float(0.5).sub(aa), float(0.5).add(aa), p).mul(ws.oneMinus());
+};
 
-// Close-up ground textures (CC0, ambientCG: Grass005, Grass004, Ground080, Asphalt031) and the
-// three.js water normal map (MIT). Average colours (linear) let the shader use them as detail.
-const GROUND_FILES = { lawn: 'lawn', rough: 'rough', sand: 'sand', asphalt: 'asphalt' };
-const GROUND_MEAN = { lawn: [0.131, 0.23, 0.025], rough: [0.118, 0.152, 0.03], sand: [0.462, 0.342, 0.165], asphalt: [0.208, 0.208, 0.208] };
+// Close-up ground textures (CC0, ambientCG: Grass005, Grass004, Ground080, Asphalt031, Ground094B,
+// Rock058) and the three.js water normal map (MIT). Average colours (linear) let the shader use them as detail.
+const GROUND_FILES = { lawn: 'lawn', rough: 'rough', sand: 'sand', asphalt: 'asphalt', mud: 'mud', rock: 'rock' };
+const GROUND_MEAN = { lawn: [0.131, 0.23, 0.025], rough: [0.118, 0.152, 0.03], sand: [0.462, 0.342, 0.165], asphalt: [0.208, 0.208, 0.208], mud: [0.262, 0.201, 0.138], rock: [0.079, 0.091, 0.105] };
 const loadedTextures = new Map(), texturePromises = [];
 function loadTexture(file, srgb) {
   if (!loadedTextures.has(file)) {
@@ -2149,7 +2458,7 @@ const groundTexture = (name) => loadTexture(`${GROUND_FILES[name]}_color.jpg`, t
 const groundNormal = (name) => loadTexture(`${GROUND_FILES[name]}_normal.jpg`, false);
 // Start every download and wait for them, so the ground never shows half-loaded (black) textures
 function preloadTextures() {
-  for (const n of Object.keys(GROUND_FILES)) { groundTexture(n); groundNormal(n); }
+  for (const n of Object.keys(GROUND_FILES)) { groundTexture(n); if (!['mud', 'rock'].includes(n)) groundNormal(n); }
   loadTexture('water_normal.jpg', false);
   return Promise.all(texturePromises);
 }
@@ -2177,6 +2486,154 @@ function waterMaterial(env, reflection) {
   m.colorNode = deep.mul(fresnel.oneMinus());
   m.emissiveNode = reflection.rgb.mul(fresnel).mul(0.92);
   return m;
+}
+
+// Running water (streams and rivers): the ripples are carried along by the current. Each vertex has
+// a flow attribute: the direction downstream in UV terms and the speed in m/s. The ripple
+// texture slides that way in two layers half a cycle apart, each faded out as it jumps back (the
+// usual flow-map trick), and fast water gets light streaks of foam.
+function flowingWaterMaterial(env) {
+  const m = new THREE.MeshPhysicalNodeMaterial({ roughness: 0.1, metalness: 0, ior: 1.33 });
+  if (env) { m.envMap = env; m.envMapIntensity = 0.85; }
+  const ripples = loadTexture('water_normal.jpg', false);
+  const f = attribute('flow', 'vec3');
+  const w = uv(), speed = f.z, fast = smoothstep(0.5, 2.2, speed);
+  const vel = f.xy.mul(speed).div(14);           // UV units per second (UVs are metres / 14)
+  const CYCLE = 1.5;
+  const ph0 = fract(time.div(CYCLE)), ph1 = fract(time.div(CYCLE).add(0.5));
+  const w0 = abs(ph0.mul(2).sub(1)).oneMinus();  // (each layer unseen as it jumps back)
+  const layer = (ph, shift) => {
+    const q = w.sub(vel.mul(ph.mul(CYCLE))).add(shift);
+    const a = texture(ripples, q.mul(2.4)).xyz.mul(2).sub(1);
+    const b = texture(ripples, q.mul(0.9).add(0.31)).xyz.mul(2).sub(1);
+    return vec3(a.xy.add(b.xy.mul(0.6)), a.z.mul(b.z));
+  };
+  const l0 = layer(ph0, vec2(0, 0)), l1 = layer(ph1, vec2(0.43, 0.17));
+  const n = normalize(mix(l1, l0, w0));
+  m.normalNode = normalMap(n.mul(0.5).add(0.5), vec2(float(0.22).add(fast.mul(0.3))));
+  const dist = distance(cameraPosition, positionWorld);
+  // (a shallow stream shows a little more colour than a deep pond)
+  const deep = mix(vec3(0.045, 0.085, 0.07), vec3(0.022, 0.05, 0.042), smoothstep(10, 120, dist));
+  // Foam: where the ripple crests stack up in fast water
+  const crest = mix(l1.x, l0.x, w0).add(mix(l1.y, l0.y, w0)).mul(0.5);
+  const foam = smoothstep(0.25, 0.7, crest).mul(fast).mul(0.55);
+  const facing = clamp(dot(normalView, positionViewDirection), 0, 1);
+  const fresnel = float(0.04).add(float(0.96).mul(pow(facing.oneMinus(), 4)));
+  m.colorNode = mix(deep.mul(fresnel.oneMinus()), vec3(0.62, 0.66, 0.64), foam);
+  m.roughnessNode = mix(float(0.1), float(0.45), foam);
+  return m;
+}
+
+// A stream laid down its channel (see streams.js): rows across it every 2 m, seven points each,
+// from bank to bank. UVs are metres downstream and across, so the ripples can be drawn out along
+// the current and carried down it; 'stream' holds the speed (m/s), where across the channel the
+// point is (-1 one bank, 1 the other) and the half width.
+const ACROSS = [-1, -0.7, -0.35, 0, 0.35, 0.7, 1];
+function streamGeometry(wb) {
+  const { chain, i0, i1 } = wb.ribbon, A = ACROSS.length, rows = i1 - i0 + 1;
+  const pos = new Float32Array(rows * A * 3), uvs = new Float32Array(rows * A * 2), st = new Float32Array(rows * A * 3), nrm = new Float32Array(rows * A * 3);
+  for (let r = 0; r < rows; r++) {
+    const i = i0 + r, [cx, cz] = chain.pts[i], [nx, nz] = chain.nrm[i], hw = Math.max(1.25, chain.hw[i]);
+    // (across measured looking downstream, so the two banks keep their sides whichever way it runs)
+    const side = chain.down[Math.min(i + 1, chain.pts.length - 1)] >= chain.down[Math.max(0, i - 1)] ? 1 : -1;
+    for (let a = 0; a < A; a++) {
+      const k = r * A + a, t = ACROSS[a], x = cx + nx * hw * t, z = cz + nz * hw * t;
+      pos[k * 3] = -x; pos[k * 3 + 1] = wb.levelAt(x, z) - wb.level; pos[k * 3 + 2] = z;
+      uvs[k * 2] = chain.down[i]; uvs[k * 2 + 1] = t * hw * side;
+      st[k * 3] = chain.speed[i]; st[k * 3 + 1] = t; st[k * 3 + 2] = hw;
+      nrm[k * 3 + 1] = 1;
+    }
+  }
+  const idx = [];
+  for (let r = 0; r < rows - 1; r++) for (let a = 0; a < A - 1; a++) {
+    const p = r * A + a, q = p + A;
+    idx.push(p, q, p + 1, p + 1, q, q + 1);
+  }
+  // (facing up: the mirrored x can turn the winding over)
+  const ax = pos[A * 3] - pos[0], az = pos[A * 3 + 2] - pos[2], bx = pos[3] - pos[0], bz = pos[5] - pos[2];
+  if (az * bx - ax * bz < 0) for (let k = 0; k < idx.length; k += 3) [idx[k + 1], idx[k + 2]] = [idx[k + 2], idx[k + 1]];
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.BufferAttribute(nrm, 3));
+  g.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+  g.setAttribute('stream', new THREE.BufferAttribute(st, 3));
+  g.setIndex(idx);
+  return g;
+}
+
+// Stream water: ripples drawn out along the current and carried down it (two layers half a cycle
+// apart, each faded out as it jumps back), quicker mid-channel than by the banks. The middle is
+// deep and dark; towards the banks it shallows and the bed shows through. Fast water breaks into
+// streaks of white, most of all along the edges.
+function streamMaterial(env) {
+  const m = new THREE.MeshPhysicalNodeMaterial({ roughness: 0.08, metalness: 0, ior: 1.33 });
+  if (env) { m.envMap = env; m.envMapIntensity = 0.9; }
+  const ripples = loadTexture('water_normal.jpg', false);
+  const st = attribute('stream', 'vec3'), P = uv();
+  const across = abs(st.y), fast = smoothstep(0.45, 2.0, st.x);
+  const v = st.x.mul(float(1).sub(across.mul(across).mul(0.6)));
+  const CYCLE = 1.2;
+  const ph0 = fract(time.div(CYCLE)), ph1 = fract(time.div(CYCLE).add(0.5));
+  const w0 = abs(ph0.mul(2).sub(1)).oneMinus();
+  const layer = (ph, shift) => {
+    const q = P.sub(vec2(v.mul(ph).mul(CYCLE), 0)).add(shift);
+    const a = texture(ripples, q.mul(vec2(0.07, 0.2))).xyz.mul(2).sub(1);
+    const b = texture(ripples, q.mul(vec2(0.22, 0.55)).add(0.37)).xyz.mul(2).sub(1);
+    return vec3(a.xy.add(b.xy.mul(0.7)), a.z.mul(b.z));
+  };
+  const l0 = layer(ph0, vec2(0, 0)), l1 = layer(ph1, vec2(3.7, 1.3));
+  const n = normalize(mix(l1, l0, w0));
+  m.normalNode = normalMap(n.mul(0.5).add(0.5), vec2(float(0.28).add(fast.mul(0.35))));
+  const dist = distance(cameraPosition, positionWorld);
+  const deep = mix(vec3(0.03, 0.075, 0.062), vec3(0.02, 0.05, 0.044), smoothstep(10, 120, dist));
+  const shallow = vec3(0.11, 0.12, 0.075);
+  const base = mix(deep, shallow, smoothstep(0.45, 1, across).mul(0.8));
+  const crest = mix(l1.x, l0.x, w0).add(mix(l1.y, l0.y, w0)).mul(0.5);
+  const foam = smoothstep(0.25, 0.7, crest).mul(fast).mul(0.5)
+    .add(smoothstep(0.82, 1, across).mul(smoothstep(0.05, 0.45, crest)).mul(smoothstep(0.3, 1.4, st.x)).mul(0.4)).min(0.8);
+  const facing = clamp(dot(normalView, positionViewDirection), 0, 1);
+  const fresnel = float(0.04).add(float(0.96).mul(pow(facing.oneMinus(), 4)));
+  m.colorNode = mix(base.mul(fresnel.oneMinus()), vec3(0.64, 0.68, 0.66), foam);
+  m.roughnessNode = mix(float(0.08), float(0.5), foam);
+  return m;
+}
+
+// An outline with extra points so no side is longer than max metres
+function densify(poly, max) {
+  const out = [];
+  for (let i = 0; i < poly.length; i++) {
+    const [ax, az] = poly[i], [bx, bz] = poly[(i + 1) % poly.length], n = Math.max(1, Math.ceil(Math.hypot(bx - ax, bz - az) / max));
+    for (let k = 0; k < n; k++) out.push([ax + ((bx - ax) * k) / n, az + ((bz - az) * k) / n]);
+  }
+  return out;
+}
+
+// Which way, and how fast, a stream or river runs at a point: (x, z) => [tx, tz, metres/second].
+// The channel's direction there is the average direction of its banks within 12 m (as an axis,
+// so the two banks, drawn opposite ways, agree); downstream is whichever way along it the water
+// level drops, measured over 50 m so bumps in the elevation data don't flip it. Speed grows with
+// the slope: barely moving on the flat, about 0.6 m/s at 1 in 100, 2.5 m/s on steep stretches.
+function streamFlow(wb) {
+  const edges = [];
+  for (let i = 0; i < wb.poly.length; i++) {
+    const [ax, az] = wb.poly[i], [bx, bz] = wb.poly[(i + 1) % wb.poly.length], len = Math.hypot(bx - ax, bz - az);
+    if (len > 0.01) edges.push({ x: (ax + bx) / 2, z: (az + bz) / 2, len, a: Math.atan2(bz - az, bx - ax) });
+  }
+  return (x, z) => {
+    let c = 0, s = 0;
+    for (const e of edges) {
+      const d = Math.hypot(e.x - x, e.z - z);
+      if (d > 12) continue;
+      const k = e.len * (1 - d / 13);
+      c += Math.cos(2 * e.a) * k; s += Math.sin(2 * e.a) * k;
+    }
+    if (!c && !s) return [1, 0, 0.1];
+    const ang = Math.atan2(s, c) / 2;
+    let tx = Math.cos(ang), tz = Math.sin(ang);
+    let slope = (wb.levelAt(x - tx * 25, z - tz * 25) - wb.levelAt(x + tx * 25, z + tz * 25)) / 50;
+    if (slope < 0) { tx = -tx; tz = -tz; slope = -slope; }
+    return [tx, tz, Math.min(2.5, 0.12 + slope * 48)];
+  };
 }
 
 // Blurred copy of the course picture (about 2 m per pixel, blurred over ~8 m)
@@ -2319,7 +2776,8 @@ function terrainMaterial(map, soft, mask, mowDirs, strength, shore, hasSand = fa
     // Where there's little mud, the grass right at the water is darker and wet instead
     const wetLine = smoothstep(0.36, 0.5, sh).mul(smoothstep(0.5, 0.75, sh).oneMinus()).mul(mudAmt.oneMinus()).mul(0.4);
     const wet = smoothstep(0.25, 0.6, sh);
-    const mudCol = mix(vec3(0.28, 0.155, 0.07), vec3(0.13, 0.075, 0.038), wet).mul(mix(vec3(1), dS, 0.7));
+    // (with the grain of real damp earth: CC0 ambientCG Ground094B)
+    const mudCol = mix(vec3(0.28, 0.155, 0.07), vec3(0.13, 0.075, 0.038), wet).mul(mix(ratio('mud', 0.45), ratio('mud', 0.13, 0.3), 0.35));
     // Raked bunkers: fine grooves about 5 cm apart running along the hole, gently wavy as a rake
     // is pulled by hand. They show up close and fade out by ~25 m (finer than the screen can show
     // further off). Round the sand, the grass at the edge drops into a shadowed lip.
@@ -2343,8 +2801,10 @@ function terrainMaterial(map, soft, mask, mowDirs, strength, shore, hasSand = fa
     const wr = clamp(float(1).sub(wf).sub(wg).sub(ws).sub(wp), 0, 1);
     const q = positionWorld.xz;
     const nt = (name, scale) => texture(groundNormal(name), q.mul(scale)).xyz;
-    // (Cart paths go without: WebGPU allows 16 textures per shader and asphalt is smooth enough)
-    const nb = nt('lawn', 0.8).mul(wf.add(wg)).add(nt('rough', 0.6).mul(wr)).add(nt('sand', 0.35).mul(ws)).add(vec3(0.5, 0.5, 1).mul(wp));
+    // (Cart paths and bunkers go without: WebGPU allows 16 textures per shader - with the shadow
+    // and sky maps this shader is at that limit, and one more makes the whole ground fail to draw.
+    // Asphalt is smooth enough, and raked sand gets its grooves from the colour.)
+    const nb = nt('lawn', 0.8).mul(wf.add(wg)).add(nt('rough', 0.6).mul(wr)).add(vec3(0.5, 0.5, 1).mul(ws.add(wp)));
     const near = smoothstep(15, 160, distance(cameraPosition, positionWorld)).oneMinus();
     // (the muddy bank by the water is smoother than turf, and raked sand than wind-rippled sand)
     const sh = texture(shoreTex, vUv).r;
@@ -2412,6 +2872,42 @@ function golfBallMaterial() {
   });
 }
 
+// A parked car about 4.5 m long (length along x, nose towards +x), as boxes: the body, a cabin of
+// glass narrowing towards the roof, and four wheels. Vertex colours are multipliers: the body
+// takes the car's colour, the glass and tyres stay dark.
+function carGeometry(suv = false) {
+  const parts = [];
+  const box = (lx, ly, lz, cx, cy, cz, shade, taper = 0) => {
+    const g = new THREE.BoxGeometry(lx, ly, lz).toNonIndexed();
+    const pos = g.attributes.position;
+    // (the top of the cabin narrower than its base, like a windscreen and rear window)
+    if (taper) for (let i = 0; i < pos.count; i++) if (pos.getY(i) > 0) { pos.setX(i, pos.getX(i) * (1 - taper)); pos.setZ(i, pos.getZ(i) * (1 - taper * 0.35)); }
+    g.translate(cx, cy, cz);
+    g.deleteAttribute('uv');
+    const col = []; for (let i = 0; i < pos.count; i++) col.push(shade, shade, shade);
+    g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+    parts.push(g);
+  };
+  const L = suv ? 4.75 : 4.55, W = suv ? 1.92 : 1.8, bodyH = suv ? 0.85 : 0.68, clear = suv ? 0.32 : 0.24;
+  box(L, bodyH, W, 0, clear + bodyH / 2, 0, 1);                                                   // body
+  box(L * 0.06, bodyH * 0.5, W * 0.9, L * 0.48, clear + bodyH * 0.55, 0, 0.55);                  // grille
+  const cabL = suv ? 2.9 : 2.35, cabH = suv ? 0.72 : 0.62;
+  box(cabL, cabH, W * 0.88, suv ? -0.25 : -0.3, clear + bodyH + cabH / 2, 0, 0.13, suv ? 0.12 : 0.24); // glass
+  box(cabL * (suv ? 0.82 : 0.6), 0.05, W * 0.78, suv ? -0.25 : -0.3, clear + bodyH + cabH, 0, 1);   // roof
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+    const w = new THREE.CylinderGeometry(0.34, 0.34, 0.24, 12).toNonIndexed();
+    w.rotateX(Math.PI / 2);
+    w.translate(sx * L * 0.33, 0.34, sz * (W / 2 - 0.08));
+    w.deleteAttribute('uv');
+    const col = []; for (let i = 0; i < w.attributes.position.count; i++) col.push(0.05, 0.05, 0.05);
+    w.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+    parts.push(w);
+  }
+  const g = mergeGeometries(parts);
+  g.computeVertexNormals();
+  return g;
+}
+
 // A lumpy stone about 1 m across (scaled and turned per rock): a sphere pushed in and out by noise
 function rockGeometry() {
   let g = new THREE.IcosahedronGeometry(0.5, 2);
@@ -2433,9 +2929,13 @@ function rockGeometry() {
 function rockMaterial() {
   const m = new THREE.MeshStandardNodeMaterial({ roughness: 0.9, metalness: 0 });
   m.envMapIntensity = 0.5;
-  const LUMA = vec3(0.2126, 0.7152, 0.0722);
-  const grain = dot(texture(groundTexture('asphalt'), positionWorld.xz.mul(0.8).add(positionWorld.y.mul(0.6))).rgb, LUMA).div(dot(vec3(...GROUND_MEAN.asphalt), LUMA));
-  m.colorNode = vec3(mix(float(1), clamp(grain, 0.4, 1.8), 0.8));
+  // Photo-scanned rock (CC0 ambientCG Rock058), projected from above, the front and the side and
+  // blended by which way the surface faces (the stones have no texture coordinates of their own),
+  // divided by its average colour so it adds cracks and veins to each stone's own colour
+  const tex = groundTexture('rock'), p = positionWorld.mul(1.6), w = abs(normalWorld);
+  const c = texture(tex, p.xz).rgb.mul(w.y).add(texture(tex, p.zy).rgb.mul(w.x)).add(texture(tex, p.xy).rgb.mul(w.z)).div(w.x.add(w.y).add(w.z));
+  const r = c.div(vec3(...GROUND_MEAN.rock));
+  m.colorNode = clamp(mix(vec3(dot(r, vec3(0.2126, 0.7152, 0.0722))), r, 0.5), 0.3, 2.2);
   return m;
 }
 

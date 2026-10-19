@@ -69,6 +69,112 @@ export function treesFromCanopy(cm, allowed) {
   return out;
 }
 
+// Tree crowns seen in the aerial photo, to fill the gaps the canopy map and OpenStreetMap leave
+// (the canopy map can be years old, or miss whole groups of trees). photo: { data (RGBA), w, h,
+// res (m per pixel, about 1), minX, maxZ }. Tree crowns are the darkest, most textured vegetation
+// in the photo, with deep shade close by: the cut-offs are learned from the photo itself. Spots on a jittered 3 m grid (the
+// same spots for the same course, so the game and the editor agree) that sit well inside crown
+// cover become trees, unless a tree already stands within 4 m or allowed(x, z) rules the spot out.
+// Returns new trees { x, z, h, r, kind: null, photo: true }; heightAt(x, z) gives a canopy-map
+// height where there is one.
+export function treesFromPhoto(photo, { allowed = () => true, existing = [], heightAt = null } = {}) {
+  const { data, w, h, res, minX, maxZ } = photo, N = w * h;
+  const L = new Float32Array(N), veg = new Uint8Array(N);
+  for (let k = 0; k < N; k++) {
+    const r = data[k * 4], g = data[k * 4 + 1], b = data[k * 4 + 2];
+    L[k] = (r + g + b) / 3;
+    veg[k] = g >= r * 0.98 && g >= b * 1.02 && data[k * 4 + 3] > 0 ? 1 : 0;
+  }
+  // Texture: how much the brightness varies over 5×5 pixels (integral images)
+  const W1 = w + 1, I = new Float64Array(W1 * (h + 1)), I2 = new Float64Array(W1 * (h + 1));
+  for (let j = 0; j < h; j++) {
+    let row = 0, row2 = 0;
+    for (let i = 0; i < w; i++) {
+      const v = L[j * w + i]; row += v; row2 += v * v;
+      I[(j + 1) * W1 + i + 1] = I[j * W1 + i + 1] + row; I2[(j + 1) * W1 + i + 1] = I2[j * W1 + i + 1] + row2;
+    }
+  }
+  const box = (i, j, R) => {
+    const i0 = Math.max(0, i - R), i1 = Math.min(w, i + R + 1), j0 = Math.max(0, j - R), j1 = Math.min(h, j + R + 1);
+    const n = (i1 - i0) * (j1 - j0), a = (A) => A[j1 * W1 + i1] - A[j0 * W1 + i1] - A[j1 * W1 + i0] + A[j0 * W1 + i0];
+    return [a(I) / n, a(I2) / n];
+  };
+  const sd = (i, j) => { const [m, m2] = box(i, j, 2); return Math.sqrt(Math.max(0, m2 - m * m)); };
+  // Brightness of the ground around a spot (about 15 m across)
+  const around = (i, j) => box(i, j, Math.round(7 / res))[0];
+  // Cut-offs from the vegetation in this photo: darker than most of it, and more textured than its
+  // typical (mown or smooth) grass
+  const vl = [], vs = [];
+  for (let k = 0; k < N; k += 7) if (veg[k]) { vl.push(L[k]); vs.push(sd(k % w, Math.floor(k / w))); }
+  if (vl.length < 100) return [];
+  vl.sort((a, b) => a - b); vs.sort((a, b) => a - b);
+  const dark = vl[Math.floor(vl.length * 0.45)], rough = vs[Math.floor(vs.length * 0.5)];
+  // Deep shade: as dark as the darkest quarter of the vegetation. A tree always has some within a
+  // few metres (gaps in its crown, its shadow); a patch of dark, lush grass has none, however
+  // much darker it is than the grass round it
+  const shade = vl[Math.floor(vl.length * 0.25)];
+  const shaded = (x, z) => {
+    const ci = Math.floor((x - minX) / res), cj = Math.floor((maxZ - z) / res), R = Math.round(4 / res);
+    for (let j = Math.max(0, cj - R); j <= Math.min(h - 1, cj + R); j++) for (let i = Math.max(0, ci - R); i <= Math.min(w - 1, ci + R); i++) if (L[j * w + i] < shade) return true;
+    return false;
+  };
+  // A crown: vegetation darker than most, and either clearly darker than the ground around it
+  // (a sunlit crown is lighter than a shaded one, and its middle is evenly dark) or textured
+  const crown = new Uint8Array(N);
+  for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) {
+    const k = j * w + i;
+    if (veg[k] && L[k] < dark && (L[k] < around(i, j) - 4 || sd(i, j) > rough * 0.9)) crown[k] = 1;
+  }
+  // Clean up speckle: keep a pixel where most of its 3×3 neighbourhood agrees
+  const cover = new Uint8Array(N);
+  for (let j = 1; j < h - 1; j++) for (let i = 1; i < w - 1; i++) {
+    let n = 0;
+    for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) n += crown[(j + dj) * w + i + di];
+    cover[j * w + i] = n >= 4 ? 1 : 0;
+  }
+  const at = (x, z) => {
+    const i = Math.floor((x - minX) / res), j = Math.floor((maxZ - z) / res);
+    return i >= 0 && j >= 0 && i < w && j < h ? cover[j * w + i] : 0;
+  };
+  // Trees already standing, for keeping new ones 4 m clear of them and of each other
+  const cell = 8, grid = new Map(), key = (a, b) => a * 73856093 ^ b * 19349663;
+  const put = (t) => { const k = key(Math.floor(t.x / cell), Math.floor(t.z / cell)); if (!grid.has(k)) grid.set(k, []); grid.get(k).push(t); };
+  const near = (x, z, d) => {
+    const gx = Math.floor(x / cell), gz = Math.floor(z / cell);
+    for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) for (const t of grid.get(key(gx + a, gz + b)) || []) if (Math.hypot(t.x - x, t.z - z) < d) return true;
+    return false;
+  };
+  for (const t of existing) put(t);
+  // (candidate spots every 3 m, so small single crowns get one near their middle)
+  const out = [], STEP = 3;
+  const x0 = Math.ceil(minX / STEP) * STEP, z1 = Math.floor(maxZ / STEP) * STEP;
+  for (let gz = z1; gz > maxZ - h * res; gz -= STEP) for (let gx = x0; gx < minX + w * res; gx += STEP) {
+    const x = gx + (hash(gx, gz, 2.3) - 0.5) * STEP * 0.6, z = gz + (hash(gx, gz, 4.1) - 0.5) * STEP * 0.6;
+    // Well inside crown cover: the spot and most of a ring 2 m around it
+    let n = at(x, z) * 2;
+    for (const [dx, dz] of [[2, 0], [-2, 0], [0, 2], [0, -2], [1.4, 1.4], [-1.4, 1.4], [1.4, -1.4], [-1.4, -1.4]]) n += at(x + dx, z + dz);
+    if (n < 7 || near(x, z, 4) || !shaded(x, z) || !allowed(x, z)) continue;
+    const canopy = heightAt?.(x, z) || 0, k = hash(x, z, 8.8);
+    const t = { x, z, h: canopy >= 4 ? canopy : 9 + k * 8, r: 2.6 + hash(x, z, 9.9) * 1.6, kind: null, photo: true };
+    out.push(t); put(t);
+  }
+  return out;
+}
+
+// Trees taken out in the course editor: [[x, z], ...]. A tree found automatically (canopy map,
+// OpenStreetMap, aerial photo) within 3 m of one is left out; the player's own trees aren't affected.
+export function removeTrees(trees, removed) {
+  if (!removed?.length) return trees;
+  const cell = 6, grid = new Map(), key = (a, b) => a * 73856093 ^ b * 19349663;
+  for (const [x, z] of removed) { const k = key(Math.floor(x / cell), Math.floor(z / cell)); if (!grid.has(k)) grid.set(k, []); grid.get(k).push([x, z]); }
+  const gone = (t) => {
+    const gx = Math.floor(t.x / cell), gz = Math.floor(t.z / cell);
+    for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) for (const [x, z] of grid.get(key(gx + a, gz + b)) || []) if (Math.hypot(t.x - x, t.z - z) < 3) return true;
+    return false;
+  };
+  return trees.filter((t) => t.user || !gone(t));
+}
+
 // Trees people have mapped in OpenStreetMap (single trees, and tree rows sampled every 7 m) added
 // to the ones already found (canopy map or imagery). A mapped tree with a found tree within a few
 // metres is that tree (OSM positions are often a few metres off), so nothing is added - though a

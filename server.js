@@ -22,6 +22,8 @@ import { checkCourse, buildCourse, BUILT_DIR } from './lib/builder.js';
 import { geoFor, ensureSatellite } from './lib/imagery.js';
 import { ensureBuildings } from './lib/buildings.js';
 import { ensurePaths } from './lib/paths.js';
+import { ensureParking } from './lib/parking.js';
+import { ensureRoads } from './lib/roads.js';
 import { ensurePhoto, photoMeta, savePhoto } from './lib/coursephoto.js';
 import { ensureCanopy } from './lib/canopy.js';
 import { MevoClient, DEFAULT_SETUP } from './lib/mevo.js';
@@ -438,6 +440,49 @@ const httpServer = http.createServer(async (req, res) => {
       const oob = (cd.pOOB?.coords || []).map((c) => [c.x, c.z]);
       return json(res, await ensurePaths(rf.replace(/\.real\.json$/i, '.sat'), geo, real.grid, oob, reporter(m[1], 'paths')));
     }
+    if ((m = p.match(/^\/api\/courses\/([\w-]+)\/phototrees$/))) {
+      // Trees the game saw in the aerial photo, saved by the game so the editor shows the same ones
+      // ({ trees: [[x, z, height, radius], ...] })
+      const f = courseFile(m[1]);
+      const rf = f && realFile(f);
+      if (!rf || !fs.existsSync(rf)) return json(res, { trees: null });
+      const satDir = rf.replace(/\.real\.json$/i, '.sat'), file = path.join(satDir, 'phototrees.json');
+      if (req.method === 'PUT') {
+        const b = await readBody(req, 4e6).catch(() => null);
+        const r2 = (v) => Math.round(v * 100) / 100;
+        const trees = Array.isArray(b?.trees) ? b.trees.slice(0, 60000).filter((t) => Array.isArray(t) && t.length === 4 && t.every(Number.isFinite)).map((t) => t.map(r2)) : null;
+        if (!trees) return json(res, { error: 'Bad tree list' }, 400);
+        fs.mkdirSync(satDir, { recursive: true });
+        fs.writeFileSync(file, JSON.stringify({ trees }));
+        return json(res, { ok: true });
+      }
+      if (!fs.existsSync(file)) return json(res, { trees: null });
+      return json(res, JSON.parse(fs.readFileSync(file, 'utf8')));
+    }
+    if ((m = p.match(/^\/api\/courses\/([\w-]+)\/roads$/))) {
+      // Public roads round the course (drawn by the game where its terrain reaches)
+      const f = courseFile(m[1]);
+      const rf = f && realFile(f);
+      const none = { yellowCentre: false, roads: [] };
+      if (!rf || !fs.existsSync(rf)) return json(res, none);
+      const real = JSON.parse(fs.readFileSync(rf, 'utf8'));
+      const cd = readCourseData(f);
+      const geo = geoFor(cd, real);
+      if (!geo) return json(res, none);
+      const oob = (cd.pOOB?.coords || []).map((c) => [c.x, c.z]);
+      return json(res, await ensureRoads(rf.replace(/\.real\.json$/i, '.sat'), geo, real.grid, oob, reporter(m[1], 'roads')));
+    }
+    if ((m = p.match(/^\/api\/courses\/([\w-]+)\/parking$/))) {
+      // Car parks (their bays and cars are laid out by the game)
+      const f = courseFile(m[1]);
+      const rf = f && realFile(f);
+      const none = { lots: [], aisles: [], spaces: [] };
+      if (!rf || !fs.existsSync(rf)) return json(res, none);
+      const real = JSON.parse(fs.readFileSync(rf, 'utf8'));
+      const geo = geoFor(readCourseData(f), real);
+      if (!geo) return json(res, none);
+      return json(res, await ensureParking(rf.replace(/\.real\.json$/i, '.sat'), geo, real.grid, reporter(m[1], 'parking')));
+    }
     if ((m = p.match(/^\/api\/courses\/([\w-]+)\/buildings$/))) {
       const f = courseFile(m[1]);
       const rf = f && realFile(f);
@@ -649,7 +694,7 @@ const httpServer = http.createServer(async (req, res) => {
     if (p === '/api/builder/build' && req.method === 'POST') {
       const b = await readBody(req);
       const jobId = Date.now().toString(36);
-      const log = (msg) => { console.log(`[build] ${msg}`); broadcast('build', { jobId, msg }); };
+      const log = (msg, extra) => { if (msg) console.log(`[build] ${msg}`); broadcast('build', { jobId, msg, ...extra }); };
       buildCourse({ osmType: b.osmType, osmId: b.osmId, group: b.group ?? null, name: b.name || null, location: b.location || '' }, log)
         .then((r) => { ensurePhoto(path.dirname(r.dataFile), photoInfo(r.dataFile), { log: (m) => console.log(`[photo] ${m}`) }); return r; })
         .then((r) => broadcast('build', { jobId, done: true, courseId: path.basename(path.dirname(r.dataFile)), needsReview: r.needsReview }))
@@ -658,33 +703,37 @@ const httpServer = http.createServer(async (req, res) => {
     }
     if ((m = p.match(/^\/api\/courses\/([\w-]+)\/update$/)) && req.method === 'POST') {
       // Update a built course from OpenStreetMap: everything downloaded again (not from saved
-      // answers), the course rebuilt in place, then its cart paths and buildings fetched afresh.
+      // answers), the course rebuilt in place, then its cart paths, buildings, car parks and roads
+      // fetched afresh.
       // Imagery, elevation and tree heights aren't from OpenStreetMap and are kept.
       const id = m[1], f = courseFile(id);
       const cd = f && readCourseData(f);
       const b = cd?.GolfSimBuilder;
       if (!b?.osmType || !b?.osmId) return json(res, { error: 'This course was not made with the builder, so it has no OpenStreetMap source' }, 400);
       const jobId = Date.now().toString(36);
-      const log = (msg) => { console.log(`[update] ${msg}`); broadcast('build', { jobId, msg }); };
+      const log = (msg, extra) => { if (msg) console.log(`[update] ${msg}`); broadcast('build', { jobId, msg, ...extra }); };
       // (trees added in the editor are the player's own: they carry over)
       let keep = {};
-      try { const old = JSON.parse(fs.readFileSync(realFile(f), 'utf8')); keep = { userTrees: old.userTrees, treeAreas: old.treeAreas }; } catch { /* none */ }
+      try { const old = JSON.parse(fs.readFileSync(realFile(f), 'utf8')); keep = { userTrees: old.userTrees, treeAreas: old.treeAreas, removedTrees: old.removedTrees }; } catch { /* none */ }
       withFreshOsm(async () => {
         const r = await buildCourse({ osmType: b.osmType, osmId: b.osmId, group: b.group ?? null, name: cd.CourseName, location: cd.Location || '', id }, log);
-        if (keep.userTrees?.length || keep.treeAreas?.length) {
+        if (keep.userTrees?.length || keep.treeAreas?.length || keep.removedTrees?.length) {
           const rfNew = realFile(r.dataFile), nr = JSON.parse(fs.readFileSync(rfNew, 'utf8'));
-          Object.assign(nr, { userTrees: keep.userTrees || [], treeAreas: keep.treeAreas || [] });
+          Object.assign(nr, { userTrees: keep.userTrees || [], treeAreas: keep.treeAreas || [], removedTrees: keep.removedTrees || [] });
           fs.writeFileSync(rfNew, JSON.stringify(nr));
           log('Kept the trees added in the editor.');
         }
         const sat = satDir(r.dataFile);
-        for (const name of ['paths.json', 'buildings.json']) fs.rmSync(path.join(sat, name), { force: true });
+        for (const name of ['paths.json', 'buildings.json', 'parking.json', 'roads.json', 'phototrees.json']) fs.rmSync(path.join(sat, name), { force: true });
         summaries.delete(r.dataFile);
         const real = JSON.parse(fs.readFileSync(realFile(r.dataFile), 'utf8'));
         const nd = readCourseData(r.dataFile), geo = geoFor(nd, real);
         if (geo && fs.existsSync(sat)) {
-          await ensurePaths(sat, geo, real.grid, (nd.pOOB?.coords || []).map((c) => [c.x, c.z]), log);
-          await ensureBuildings(sat, geo, real.grid, log);
+          const oob = (nd.pOOB?.coords || []).map((c) => [c.x, c.z]);
+          log('', { step: 'paths' }); await ensurePaths(sat, geo, real.grid, oob, log);
+          log('', { step: 'buildings' }); await ensureBuildings(sat, geo, real.grid, log);
+          log('', { step: 'parking' }); await ensureParking(sat, geo, real.grid, log);
+          log('', { step: 'roads' }); await ensureRoads(sat, geo, real.grid, oob, log);
         }
         return r;
       })
@@ -712,6 +761,9 @@ const httpServer = http.createServer(async (req, res) => {
         if (Array.isArray(b.userTrees)) {
           real.userTrees = b.userTrees.filter((t) => fin(t?.x) && fin(t?.z)).slice(0, 20000)
             .map((t) => ({ x: r2(t.x), z: r2(t.z), size: ['small', 'medium', 'large'].includes(t.size) ? t.size : 'medium', ...(kindOk(t.kind) ? { kind: t.kind } : {}) }));
+        }
+        if (Array.isArray(b.removedTrees)) {
+          real.removedTrees = b.removedTrees.filter((p) => fin(p?.[0]) && fin(p?.[1])).slice(0, 50000).map((p) => [r2(p[0]), r2(p[1])]);
         }
         if (Array.isArray(b.treeAreas)) {
           real.treeAreas = b.treeAreas.filter((a) => Array.isArray(a?.pts) && a.pts.length >= 3 && a.pts.every((p) => fin(p?.[0]) && fin(p?.[1]))).slice(0, 2000)

@@ -8,6 +8,7 @@
 // These drive both the physics (heightAt / normalAt / surfaceAt) and the rendering.
 
 import { courseMowing } from './mowing.js';
+import { prepareStreams, streamFlow } from './streams.js';
 
 export const TEE_TYPES = ['Black', 'Blue', 'White', 'Green', 'Yellow', 'Red', 'Junior', 'Par3'];
 export const PIN_DAYS = ['Thursday', 'Friday', 'Saturday', 'Sunday'];
@@ -230,20 +231,20 @@ export function buildCourse(courseData, real = null) {
     for (const [kind, list] of Object.entries(real.features || {})) {
       const surface = FEATURE_SURFACE[kind];
       if (!surface) continue;
-      for (const f of list) {
+      // (streams: joined up and smoothed into curves, see streams.js)
+      for (const f of kind === 'water' ? prepareStreams(list) : list) {
         // Mapped outlines are often a few straight segments; real turf edges are curved
-        const poly = surface === 'sand' ? roundOutline(f.pts) : smoothPoly(f.pts);
+        // (river pieces are already smooth; smoothing them again would pull their ends apart)
+        const poly = f.flow ? f.pts : surface === 'sand' ? roundOutline(f.pts) : smoothPoly(f.pts);
         const xs = poly.map((p) => p[0]), zs = poly.map((p) => p[1]);
-        // (river pieces are already smooth ribbons; smoothing would pull their ends apart)
-        if (f.flow) poly.splice(0, poly.length, ...f.pts);
-        feats.push({ surface, poly, raw: f.pts, inner: !!f.hole, flow: !!f.flow, bbox: [Math.min(...xs), Math.min(...zs), Math.max(...xs), Math.max(...zs)] });
+        feats.push({ surface, poly, raw: f.pts, inner: !!f.hole, flow: !!f.flow, ribbon: f.ribbon || null, bbox: [Math.min(...xs), Math.min(...zs), Math.max(...xs), Math.max(...zs)] });
       }
     }
     feats.forEach((f, idx) => addBox(f.bbox[0] - 2, f.bbox[1] - 2, f.bbox[2] + 2, f.bbox[3] + 2, 'feats', idx));
   }
-  // Cart paths: line segments with a width (OpenStreetMap)
+  // Cart paths and roads: line segments with a width (OpenStreetMap)
   const pathSegs = [];
-  for (const pth of real?.paths || []) {
+  for (const pth of [...(real?.paths || []), ...(real?.roads?.roads || [])]) {
     for (let i = 1; i < pth.pts.length; i++) {
       const [ax, az] = pth.pts[i - 1], [bx, bz] = pth.pts[i], hw = pth.width / 2;
       pathSegs.push({ ax, az, bx, bz, hw });
@@ -421,7 +422,7 @@ export function buildCourse(courseData, real = null) {
         f.levelAt = coarseLevels(f.bbox, bankLevel);
         const ls = f.poly.map(([x, z]) => f.levelAt(x, z));
         f.level = ls.reduce((a, b) => a + b, 0) / ls.length;
-        carveShore(f.poly, f.bbox, f.levelAt);
+        carveShore(f.poly, f.bbox, f.levelAt, f);
         continue;
       }
       const bank = f.poly.map(([x, z]) => sampleGrid(x, z)).filter((v) => v !== null).sort((a, b) => a - b);
@@ -429,6 +430,7 @@ export function buildCourse(courseData, real = null) {
       f.level = bank[Math.floor(bank.length * 0.2)] - 0.1;
       carveShore(f.poly, f.bbox, f.level);
     }
+    streamFlow(feats.filter((f) => f.ribbon && f.levelAt));
   } else buildSyntheticHeights();
 
   // Shape the ground around a pond into a bank that meets the water exactly on its outline:
@@ -449,7 +451,14 @@ export function buildCourse(courseData, real = null) {
   }
 
   // (level: a number, or a function of position for sloping water)
-  function carveShore(poly, bbox, level) {
+  // Streams (stream: the feature) get an even slope straight through the waterline instead, with the
+  // ground just above the water at the outline: the terrain's 2 m triangles then meet the water
+  // in a clean line rather than a saw-tooth, and the water's own edge tucks under the bank.
+  function carveShore(poly, bbox, level, stream = null) {
+    // (the bank is never raised inside other water: the next piece of the stream, or a pond)
+    const otherWater = stream ? feats.filter((o) => o !== stream && o.surface === 'water' && !o.inner
+      && o.bbox[0] < bbox[2] + 9 && o.bbox[2] > bbox[0] - 9 && o.bbox[1] < bbox[3] + 9 && o.bbox[3] > bbox[1] - 9) : [];
+    const inOther = (x, z) => otherWater.some((o) => pointInPoly(o.poly, x, z));
     const pad = 7;
     const levelAt = typeof level === 'function' ? level : () => level;
     const i0 = Math.max(0, Math.floor((bbox[0] - pad - minX) / cell)), i1 = Math.min(nx - 1, Math.ceil((bbox[2] + pad - minX) / cell));
@@ -461,6 +470,14 @@ export function buildCourse(courseData, real = null) {
       if (!inside && e > pad) continue;
       const k = j * nx + i;
       const L = levelAt(x, z);
+      if (stream) {
+        const sd = inside ? -e : e, even = L + 0.06 + 0.35 * sd;
+        if (inside) heights[k] = Math.min(heights[k], Math.max(L - 1.2, even));
+        else if (inOther(x, z)) continue;
+        else if (e <= 2) heights[k] = even;
+        else heights[k] = Math.max(L + 0.76 + 0.05 * (e - 2), Math.min(heights[k], even));
+        continue;
+      }
       const target = inside ? L - Math.min(1.8, 0.12 + 0.35 * e) : L + 0.3 * e;
       heights[k] = Math.min(heights[k], target);
     }
@@ -551,7 +568,7 @@ export function buildCourse(courseData, real = null) {
     sources: real?.source || null,
     // Water drawn on screen: mapped ponds when available, otherwise the penalty areas
     waterBodies: real && feats.some((f) => f.surface === 'water' && f.level != null)
-      ? feats.filter((f) => f.surface === 'water' && !f.inner && f.level != null).map((f) => ({ poly: f.poly, level: f.level, levelAt: f.levelAt || null }))
+      ? feats.filter((f) => f.surface === 'water' && !f.inner && f.level != null).map((f) => ({ poly: f.poly, level: f.level, levelAt: f.levelAt || null, ribbon: f.ribbon }))
       : hazards.filter((h) => !h.innerOOB).map((h) => ({ poly: h.poly, level: h.level })),
     // Trees mapped in OpenStreetMap: single trees ([x, z, height?, crown?, leaf?]) and tree rows (lines)
     trees: real?.trees || [],
@@ -559,9 +576,15 @@ export function buildCourse(courseData, real = null) {
     // Trees added in the course editor: single trees ({ x, z, size }) and tree areas ({ pts, density })
     userTrees: real?.userTrees || [],
     treeAreas: real?.treeAreas || [],
+    // Trees found automatically that were taken out in the course editor: [[x, z]]
+    removedTrees: real?.removedTrees || [],
     // Mapped surface polygons ({ surface, poly, inner }) for painting the terrain
     features: feats,
     paths: real?.paths || [],
+    // Car parks (OpenStreetMap): { lots, aisles, spaces }
+    parking: real?.parking || null,
+    // Public roads (OpenStreetMap): { yellowCentre, roads: [{ kind, width, lanes, oneway, pts }] }
+    roads: real?.roads || null,
     bounds: { minX, maxX, minZ, maxZ },
     grid: { nx, nz, cell, heights },
     heightAt,

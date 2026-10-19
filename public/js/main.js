@@ -406,7 +406,7 @@ const loader = {
   // Messages from the server's downloads (aerial imagery, buildings, paths, tree heights)
   serverEvent(p) {
     if (!this.course || p.course !== this.course) return;
-    const label = { imagery: 'Aerial imagery', buildings: 'Buildings', paths: 'Cart paths', canopy: 'Tree heights' }[p.task];
+    const label = { imagery: 'Aerial imagery', buildings: 'Buildings', paths: 'Cart paths', parking: 'Car parks', roads: 'Roads', canopy: 'Tree heights' }[p.task];
     if (label) this.step(p.task, label, { done: p.done, total: p.total, msg: p.msg, stallAfter: 60 });
   },
 };
@@ -479,14 +479,18 @@ $('btn-start').onclick = async () => {
           .then((v) => { loader.finish(task); return v; });
       };
       S.imageryLoading = true;
-      const [manifest, b, paths, cm] = await Promise.all([
+      const [manifest, b, paths, parking, roads, cm] = await Promise.all([
         watch('imagery', 'Aerial imagery', `/api/courses/${id}/satellite`, null),
         watch('buildings', 'Buildings', `/api/courses/${id}/buildings`, []),
         watch('paths', 'Cart paths', `/api/courses/${id}/paths`, []),
+        watch('parking', 'Car parks', `/api/courses/${id}/parking`, null),
+        watch('roads', 'Roads', `/api/courses/${id}/roads`, null),
         watch('canopy', 'Tree heights', `/api/courses/${id}/canopy`, null),
       ]);
       S.imageryLoading = false;
       real.paths = paths;
+      real.parking = parking;
+      real.roads = roads;
       if (!manifest?.chunks) loader.fail('imagery', 'Not available; the course will be painted instead');
       if (cm?.available) {
         const buf = await fetchProgress(`/api/courses/${id}/canopy.bin`, (got, total) => loader.step('canopy-file', 'Tree height map', { done: got, total, msg: `${mb(got)} of ${mb(total)}` }), 'buffer').catch(() => null);
@@ -511,13 +515,18 @@ $('btn-start').onclick = async () => {
       await breathe();
     });
     if (current) loader.finish(current);
+    // (the trees seen in the aerial photo, kept with the course so the editor shows the same ones)
+    if (scene.photoTreeList) {
+      fetch(`/api/courses/${id}/phototrees`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ trees: scene.photoTreeList }) }).catch(() => {});
+      scene.photoTreeList = null;
+    }
     // Solid things the ball can hit (Jolt): terrain, trunks, buildings, the flagstick
     S.collider?.dispose();
     S.collider = null;
     loader.step('collisions', 'Collisions');
     await breathe();
     try {
-      S.collider = new CollisionWorld(await loadJolt(), S.course, { trees: scene.trees?.all || [], buildings });
+      S.collider = new CollisionWorld(await loadJolt(), S.course, { trees: scene.trees?.all || [], buildings: buildings.concat(scene.carBoxes || []) });
       loader.finish('collisions');
     } catch (err) {
       loader.fail('collisions', 'Using the simpler built-in checks');
@@ -1062,7 +1071,7 @@ function showShotData(shot, res) {
 function drawMinimap() {
   const cv = $('minimap'), ctx = cv.getContext('2d');
   const src = scene.minimapCanvas || scene.courseCanvas;
-  if (!src) return;
+  if (!src || !S.ball) return; // (nothing to show until the ball is placed)
   const W = cv.width, H = cv.height;
   const { minX, maxZ } = S.course.bounds;
   const RES = (S.course.bounds.maxX - minX) / src.width;

@@ -1,12 +1,14 @@
 // Trees: where they stand (from tree-height maps, or the aerial photo as a fallback) and how
-// they're drawn (procedural trees from ez-tree with bark and leaf textures).
+// they're drawn (procedural trees from ez-tree with bark and leaf textures: its own, plus ours for
+// the species it has none for).
 //
-// Every tree is one of ~14 variants (different species, presets, seeds and branching), turned,
+// Every tree is one of 24 variants (different species, presets, seeds and branching), turned,
 // stretched and tinted on its own so no two look alike. Each variant is drawn three ways:
 //   near     - the full tree (leaves, branches, bark) close to the camera
 //   mid      - a lighter build of the same tree further out (same trunk and limbs)
 //   impostor - pictures of the full tree, taken from 24 directions when the course loads, shown
-//              on a single card that always faces you, lit by the sun using baked normals
+//              on a single card that always faces you (blended between the nearest pictures),
+//              lit by the sun using baked normals, like the 3D leaves
 // Trees on the edge of woods (the ones you actually see) stay detailed much further out than
 // trees inside a wood, and trees behind the camera never take the detailed slots.
 // Trees between the camera and the ball fade to a see-through stipple.
@@ -14,7 +16,7 @@ import * as THREE from 'three/webgpu';
 import {
   Fn, uniform, vec2, vec3, vec4, float, uv, positionWorld, positionLocal, cameraPosition, clamp, dot, length, mix,
   smoothstep, step, fract, floor, screenCoordinate, sin, cos, atan, asin, normalize, cross, max, texture,
-  time, instanceIndex, instancedBufferAttribute, normalView, faceDirection, select,
+  time, instanceIndex, instancedBufferAttribute, normalView, attribute, normalViewGeometry, pow,
 } from 'three/tsl';
 import { Tree } from 'ez-tree';
 import { hash, fract1 } from './treeplace.js';
@@ -86,7 +88,7 @@ const SHAPES = {
     o.bark.type = 'birch';
     for (const l of Object.keys(o.branch.radius)) o.branch.radius[l] *= 0.6;
     o.branch.force = { direction: { x: 0, y: -1, z: 0 }, strength: 0.012 };
-    o.leaves.type = 'aspen'; o.leaves.size *= 0.75; o.leaves.count = Math.round(o.leaves.count * 1.2);
+    o.leaves.size *= 0.75; o.leaves.count = Math.round(o.leaves.count * 1.2); // (birch leaves: see OWN)
   },
   // Weeping willow: long limbs whose twigs pour down towards the ground
   willow(o) {
@@ -94,7 +96,7 @@ const SHAPES = {
     o.branch.force = { direction: { x: 0, y: -1, z: 0 }, strength: 0.09 };
     o.branch.length[2] *= 1.6; if (o.branch.length[3] != null) o.branch.length[3] *= 2.2;
     for (const l of Object.keys(o.branch.gnarliness)) o.branch.gnarliness[l] *= 0.5;
-    o.leaves.type = 'ash'; o.leaves.count = Math.round(o.leaves.count * 2.4); o.leaves.size *= 0.85; o.leaves.angle = 5; o.leaves.start = 0;
+    o.leaves.count = Math.round(o.leaves.count * 2.4); // (willow leaves: see OWN) o.leaves.size *= 0.85; o.leaves.angle = 5; o.leaves.start = 0;
   },
   // Lombardy poplar: a tall, narrow column, branches swept up along the trunk
   poplar(o) {
@@ -125,7 +127,7 @@ const VARIANTS = [
   { kind: 'pine', preset: 'Pine Medium', seed: 1111 }, { kind: 'pine', preset: 'Pine Medium', seed: 1212 },
   { kind: 'pine', preset: 'Pine Large', seed: 1313, big: true }, { kind: 'pine', preset: 'Pine Large', seed: 1414, big: true },
   { kind: 'maple', preset: 'Oak Medium', seed: 1515, tint: [0.95, 1.02, 0.85] }, { kind: 'maple', preset: 'Oak Large', seed: 1616, big: true, tint: [0.95, 1.02, 0.85] },
-  { kind: 'birch', preset: 'Ash Medium', seed: 1717, green: true, tint: [1.08, 1.06, 0.95] }, { kind: 'birch', preset: 'Ash Medium', seed: 1818, green: true, tint: [1.08, 1.06, 0.95] },
+  { kind: 'birch', preset: 'Ash Medium', seed: 1717, tint: [1.08, 1.06, 0.95] }, { kind: 'birch', preset: 'Ash Medium', seed: 1818, tint: [1.08, 1.06, 0.95] },
   { kind: 'willow', preset: 'Ash Medium', seed: 1919, tint: [1.05, 1.08, 0.8] }, { kind: 'willow', preset: 'Ash Large', seed: 2020, big: true, tint: [1.05, 1.08, 0.8] },
   { kind: 'poplar', preset: 'Aspen Medium', seed: 2121, green: true }, { kind: 'poplar', preset: 'Aspen Large', seed: 2222, green: true, big: true },
   { kind: 'spruce', preset: 'Pine Medium', seed: 2323, tint: [0.72, 0.85, 0.92] }, { kind: 'spruce', preset: 'Pine Large', seed: 2424, big: true, tint: [0.72, 0.85, 0.92] },
@@ -153,6 +155,27 @@ function tweakOptions(o, seed, lod) {
   }
 }
 
+// Our own pictures for species ez-tree has none of (CC0, see NOTICE.md): leafy twigs for maple,
+// willow and birch (made by scripts/leaf-twigs.py from scanned leaves), and bark for ash, maple,
+// poplar, pine and spruce. The other species keep ez-tree's own.
+const OWN = { leaves: ['maple', 'willow', 'birch'], bark: ['ash', 'maple', 'poplar', 'pine', 'spruce'] };
+let own = null;
+async function loadOwnTextures() {
+  if (own) return;
+  const loader = new THREE.TextureLoader();
+  const load = async (file, srgb) => {
+    const t = await loader.loadAsync(`/textures/trees/${file}`);
+    if (srgb) t.colorSpace = THREE.SRGBColorSpace;
+    return t;
+  };
+  const out = { leaves: {}, bark: {} };
+  await Promise.all([
+    ...OWN.leaves.map(async (k) => { const t = await load(`${k}_leaves.png`, true); t.premultiplyAlpha = true; out.leaves[k] = t; }),
+    ...OWN.bark.map(async (k) => { out.bark[k] = { map: await load(`${k}_bark_color.jpg`, true), normal: await load(`${k}_bark_normal.jpg`, false) }; }),
+  ]);
+  own = out;
+}
+
 function buildModel(v, lod) {
   const tree = new Tree();
   tree.loadPreset(v.preset);
@@ -175,6 +198,7 @@ function buildModel(v, lod) {
     for (let i = from; i < idx.length; i++) keep.push(idx[i]);
     bark.setIndex(keep);
   }
+  shapeCrown(leaves);
   bark.computeBoundingBox(); leaves.computeBoundingBox();
   const bb = bark.boundingBox, lb = leaves.boundingBox;
   const height = Math.max(bb.max.y, lb.max.y) - bb.min.y;
@@ -183,10 +207,45 @@ function buildModel(v, lod) {
   const p = bark.attributes.position;
   let trunk = 0;
   for (let i = 0; i < p.count; i++) if (p.getY(i) < height * 0.03) trunk = Math.max(trunk, Math.hypot(p.getX(i), p.getZ(i)));
+  let barkMat = tree.branchesMesh.material, leafMat = tree.leavesMesh.material;
+  const ownBark = own?.bark[v.kind], ownLeaves = own?.leaves[v.kind];
+  if (ownBark) {
+    // (tiled as ez-tree tiles its own bark for this tree)
+    const sc = tree.options.bark.textureScale;
+    const tile = (t) => { const c = t.clone(); c.wrapS = c.wrapT = THREE.RepeatWrapping; c.repeat.set(sc.x, 1 / sc.y); c.needsUpdate = true; return c; };
+    barkMat = { map: tile(ownBark.map), normalMap: tile(ownBark.normal), color: barkMat.color };
+  }
+  if (ownLeaves) leafMat = { map: ownLeaves, alphaTest: leafMat.alphaTest, color: leafMat.color };
   return {
-    bark, leaves, height, crown, trunk: trunk || height * 0.02, crownBase: (lb.min.y - bb.min.y) / height,
-    barkMat: tree.branchesMesh.material, leafMat: tree.leavesMesh.material,
+    bark, leaves, height, crown, trunk: trunk || height * 0.02, crownBase: (lb.min.y - bb.min.y) / height, barkMat, leafMat,
   };
+}
+
+// Leaves lit as one crown rather than thousands of loose cards: each leaf's normal is bent most of
+// the way towards pointing out of the crown, so a tree shades softly from its sunny side round to
+// its shady side as a real canopy does (instead of every card catching the sun on its own, which
+// looks speckled and flat). Leaves deep inside the crown or low in it are shaded by the rest:
+// leafAo, 1 on the outside at the top down to 0.4 in the heart of the tree.
+const smooth = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+function shapeCrown(g) {
+  if (!g.attributes.normal) g.computeVertexNormals();
+  g.computeBoundingBox();
+  const b = g.boundingBox, c = b.getCenter(new THREE.Vector3()), r = b.getSize(new THREE.Vector3()).multiplyScalar(0.5);
+  const p = g.attributes.position, n = g.attributes.normal, ao = new Float32Array(p.count);
+  const out = new THREE.Vector3(), nn = new THREE.Vector3();
+  for (let i = 0; i < p.count; i++) {
+    out.set((p.getX(i) - c.x) / Math.max(0.1, r.x), (p.getY(i) - c.y) / Math.max(0.1, r.y), (p.getZ(i) - c.z) / Math.max(0.1, r.z));
+    const depth = Math.min(1, out.length());
+    out.normalize();
+    nn.set(n.getX(i), n.getY(i), n.getZ(i));
+    if (nn.dot(out) < 0) nn.negate();
+    nn.lerp(out, 0.7).normalize();
+    n.setXYZ(i, nn.x, nn.y, nn.z);
+    const up = (p.getY(i) - b.min.y) / Math.max(0.1, b.max.y - b.min.y);
+    ao[i] = (0.5 + 0.5 * smooth(0.25, 1, depth)) * (0.8 + 0.2 * up);
+  }
+  n.needsUpdate = true;
+  g.setAttribute('leafAo', new THREE.BufferAttribute(ao, 1));
 }
 
 // ------------------------------------------------------------------ materials
@@ -212,6 +271,16 @@ const seeThroughMask = Fn(([P]) => {
 
 // Aspen leaf texture is autumn yellow; keep its detail but make it summer green
 const greenLeaves = (c) => vec3(dot(c, vec3(0.3, 0.6, 0.1))).mul(vec3(0.55, 0.85, 0.32)).mul(1.15);
+// A leaf's colour: its picture (summer green for aspens), a richer green, shaded inside the crown
+const leafColour = (map, v) => {
+  const tx = texture(map, uv()), leafAo = attribute('leafAo', 'float');
+  return vec4((v.green ? greenLeaves(tx.rgb) : tx.rgb).mul(vec3(0.6, 0.68, 0.5)).mul(leafAo), tx.a);
+};
+// Sunlight through the leaves: looking towards the sun, a crown glows a warm yellow-green at its
+// thin edges and gaps, and a little light always comes through. viewDir: from the camera.
+const LEAF_GLOW = vec3(1.05, 1.2, 0.55);
+const leafGlow = (albedo, viewDir) => albedo.mul(vec3(impostorLight.sun)).mul(LEAF_GLOW)
+  .mul(pow(clamp(dot(viewDir, impostorLight.sunDir), 0, 1), 4).mul(0.75).add(0.05));
 
 function barkMaterial(src) {
   const m = new THREE.MeshStandardNodeMaterial({ map: src.map || null, normalMap: src.normalMap || null, roughness: 0.95, metalness: 0 });
@@ -224,10 +293,17 @@ function leafMaterial(src, v) {
   const m = new THREE.MeshStandardNodeMaterial({
     map: src.map || null, alphaTest: Math.max(0.35, src.alphaTest || 0.5), side: THREE.DoubleSide, roughness: 0.82, metalness: 0,
   });
-  m.color.setRGB(0.6, 0.68, 0.5); // shaded inside the crown, and a richer summer green
+  m.color.setRGB(0.6, 0.68, 0.5); // a richer summer green
   m.envMapIntensity = 0.45;
   // (keep the picture's alpha: a vec3 colour alone would make every leaf card a solid square)
-  if (v.green && src.map) { const tx = texture(src.map, uv()); m.colorNode = vec4(greenLeaves(tx.rgb).mul(vec3(0.6, 0.68, 0.5)), tx.a); }
+  if (src.map) {
+    const c = leafColour(src.map, v);
+    m.colorNode = c;
+    m.emissiveNode = leafGlow(c.rgb, normalize(positionWorld.sub(cameraPosition)));
+  }
+  // The crown-shaped normals (see shapeCrown), on both sides of each card: the back of a leaf
+  // faces the same way out of the crown as its front
+  m.normalNode = normalViewGeometry;
   // Further off, the leaf picture is read from its smaller, blurred copies, where the see-through
   // gaps average the alpha down below the cut-off, so whole leaves dropped out and trees looked
   // bare between ~50 and 130 m (before the distant tree pictures take over). Boosting the alpha
@@ -271,10 +347,11 @@ async function bakeImpostors(renderer, models, onProgress) {
       new THREE.MeshBasicNodeMaterial({ map: leafMap, alphaTest: 0.5, side: THREE.DoubleSide }),
     ];
     albedoMats[1].color.setRGB(0.6, 0.68, 0.5);
-    if (v.green && leafMap) { const tx = texture(leafMap, uv()); albedoMats[1].colorNode = vec4(greenLeaves(tx.rgb).mul(vec3(0.6, 0.68, 0.5)), tx.a); }
+    if (leafMap) albedoMats[1].colorNode = leafColour(leafMap, v);
+    // (leaves: their crown-shaped normals, the same on both sides of a card, as the 3D trees use)
     const normalMat = (map, side) => {
       const n = new THREE.MeshBasicNodeMaterial({ side, alphaTest: map ? 0.5 : 0 });
-      n.colorNode = normalView.mul(side === THREE.DoubleSide ? faceDirection : 1).mul(0.5).add(0.5);
+      n.colorNode = (map ? normalViewGeometry : normalView).mul(0.5).add(0.5);
       if (map) n.opacityNode = texture(map, uv()).a;
       return n;
     };
@@ -329,14 +406,18 @@ function impostorMaterial(atlas, attrs) {
     const local = vec3(toCam.x.mul(cs).add(toCam.z.mul(sn)), toCam.y, toCam.z.mul(cs).sub(toCam.x.mul(sn)));
     const az = atan(local.x, local.z).div(Math.PI * 2).add(1).fract().mul(AZ);
     const a0 = floor(az), a1 = a0.add(1).mod(AZ), w = az.sub(a0);
-    const el = asin(clamp(local.y, -1, 1));
-    const e = select(el.lessThan((ELS[0] + ELS[1]) / 2), float(0), select(el.lessThan((ELS[1] + ELS[2]) / 2), float(1), float(2)));
+    // Between the two nearest directions round the tree and the two nearest heights, blended, so
+    // the picture changes smoothly as you move instead of jumping (the heights are evenly spaced)
+    const fe = clamp(asin(clamp(local.y, -1, 1)).sub(ELS[0]).div(ELS[1] - ELS[0]), 0, ELS.length - 1.001);
+    const e0 = floor(fe), e1 = e0.add(1).min(ELS.length - 1), we = fe.sub(e0);
     // (pictures are stored top-down in the atlas)
-    const frameUv = (a) => vec2(e.mul(AZ).add(a).add(uv().x).div(FRAMES), data.x.add(uv().y.oneMinus()).div(attrs.V));
+    const frameUv = (a, e) => vec2(e.mul(AZ).add(a).add(uv().x).div(FRAMES), data.x.add(uv().y.oneMinus()).div(attrs.V));
+    const pick = (tex) => mix(
+      mix(texture(tex, frameUv(a0, e0)), texture(tex, frameUv(a1, e0)), w),
+      mix(texture(tex, frameUv(a0, e1)), texture(tex, frameUv(a1, e1)), w), we);
     // The pictures sit on transparent black, so smaller (mipmapped) versions are darkened at the
     // edges by exactly their coverage: divide it back out
-    const c = mix(texture(atlas.albedo, frameUv(a0)), texture(atlas.albedo, frameUv(a1)), w);
-    const n = mix(texture(atlas.normals, frameUv(a0)), texture(atlas.normals, frameUv(a1)), w);
+    const c = pick(atlas.albedo), n = pick(atlas.normals);
     const albedo = vec4(c.rgb.div(max(c.a, 0.02)), clamp(c.a.mul(1.6), 0, 1));
     const nv = n.rgb.div(max(n.a, 0.02)).mul(2).sub(1);
     // Baked normals are in the picture's camera frame; turn them into the world
@@ -349,7 +430,8 @@ function impostorMaterial(atlas, attrs) {
     const diffuse = dot(nw, L.sunDir).mul(0.5).add(0.5).pow(1.5);
     const ambient = mix(vec3(L.ground), vec3(L.sky), nw.y.mul(0.5).add(0.5)).add(0.16);
     const tint = vec3(data.z, data.w, data.z.add(data.w).mul(0.45));
-    const lit = albedo.rgb.mul(tint).mul(ambient.add(vec3(L.sun).mul(diffuse)));
+    const lit = albedo.rgb.mul(tint).mul(ambient.add(vec3(L.sun).mul(diffuse)))
+      .add(leafGlow(albedo.rgb.mul(tint), toCam.negate()));
     return vec4(lit, albedo.a);
   })();
   m.maskNode = seeThroughMask(positionWorld);
@@ -373,6 +455,7 @@ export class Forest {
   // Generate the variants and their impostor pictures (once per session)
   async prepare(renderer, onProgress = async () => {}) {
     if (this.models) return;
+    await loadOwnTextures();
     const models = [];
     for (let i = 0; i < VARIANTS.length; i++) {
       const v = VARIANTS[i];

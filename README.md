@@ -106,10 +106,17 @@ Open a built course from the builder or the **Edit** link in the main menu
   select it, drag its corners, drag the small circles to add a corner, or Alt+click to remove
   one. Drag inside a selected shape to move the whole thing (handy for lining it up with the
   aerial photo), or nudge it with the arrow keys (25 cm, Shift for 1 m). You can also change its
-  type or delete it.
+  type or delete it. Tick **Stream or river** on a water shape to make it running water rather
+  than a flat pond.
 * **Mowing:** under **Course**, choose the mowing pattern for the fairways and for the greens:
   straight stripes, diagonal stripes, checkerboard, diamonds or none. A small preview shows each
   one. New courses start with straight stripes on fairways and a checkerboard on greens.
+* **Trees:** the map shows every tree the game will plant. Dark circles come from the tree-height
+  map and OpenStreetMap, amber dashed ones were guessed from the aerial photo, and bright ones are
+  your own. Click a found tree to **Remove** it (for a dark patch that isn't really a tree) or
+  **Replace** it with one of your own to move or change. Removed trees show as a red cross; click
+  one to put the tree back. You can also place single trees and draw tree areas with a species
+  and height range.
 * Ctrl+Z undoes, Ctrl+S saves, and **Play** opens the course in the simulator. Heights for
   everything you place come from the terrain automatically.
 
@@ -261,26 +268,41 @@ Built courses look like the real place:
   then fairways get mowing stripes, greens are smoothed, and bunkers get clean sand.
 * **Trees** stand where they really are: GolfSim reads a worldwide 1 m tree-height map (Meta &
   World Resources Institute) and puts a tree at every crown top, with its real height and spread.
-  Where that map has no data, trees go where the aerial photo shows canopy.
-* **Tree models** are procedural oaks, ashes, aspens and pines (EZ-Tree): 14 variants, each
-  tree turned, stretched, leaned and tinted on its own, with bark and leaf textures and swaying
-  leaves. Close trees are fully detailed, further ones lighter, and distant ones are pictures of
-  the real models (taken from 24 directions when the course loads, lit by the sun). Trees on
-  the edge of a wood, the ones you actually see, stay detailed much further out than trees
-  inside it.
+  The aerial photo fills the gaps: tree crowns it shows (the darkest, most textured vegetation)
+  get a tree too, wherever none stands yet. That catches trees the height map misses or that
+  were planted since. Wrong guesses can be removed in the course editor.
+* **Tree models** are procedural (EZ-Tree) in nine species: oak, maple, ash, birch, aspen,
+  poplar, willow, pine and spruce, in 24 variants. Each tree is turned, stretched, leaned and
+  tinted on its own, with photo-scanned bark and leaf textures (maple, willow and birch leaves
+  and five of the barks are CC0 scans from ambientCG and Poly Haven) and swaying leaves. Crowns
+  are lit as a whole: darker inside and underneath, and glowing yellow-green when the sun is
+  behind them. Close trees are fully detailed, further ones lighter, and distant ones are
+  pictures of the real models (taken from 24 directions when the course loads, blended as you
+  move, lit by the sun). Trees on the edge of a wood, the ones you actually see, stay detailed
+  much further out than trees inside it.
 * **Seeing past trees:** trees between the camera and the ball, and close ones in your line of
   sight, fade to a see-through stipple so you can see your shot and still know they are there.
 * **Buildings** are 3D outlines from OpenStreetMap. Coverage varies by area.
+* **Roads** near the course come from OpenStreetMap: asphalt, and on main roads white edge lines
+  and a centre line (double yellow in the Americas, dashed white elsewhere) with lane lines.
+  They stop where the course's terrain ends. The ball plays them like a cart path.
+* **Car parks** come from OpenStreetMap too: paved ones get fresh asphalt and painted bays (laid
+  along the mapped aisles, or in standard rows). Cars are parked where the aerial photo shows one,
+  in roughly its colour; grass and dirt overflow fields stay empty unless the photo shows them full.
+  The ball bounces off cars.
 * **Surroundings:** a ring of lower-resolution imagery about 1.5 km wide extends the view to
   the horizon.
 * **Close-up ground:** photo-scanned grass, sand and asphalt textures (CC0, from ambientCG) with
   normal maps, blended over the aerial photo near the camera.
 * **Water:** solid, with drifting ripples and a live mirror image of the trees, sky and clouds
   that gets stronger at low viewing angles. The Performance setting turns the mirror off.
+  Streams and rivers run downhill: their surface follows the slope of the banks, the ripples are
+  carried downstream, and the steeper the stretch, the faster it flows (with streaks of foam on
+  fast water).
 * **Lighting:** real-time sun shadows, sky reflections, and grass tufts around the ball (kept
   off cart paths and out of water).
 
-Imagery, buildings, cart paths and tree heights download the first time a course is opened;
+Imagery, buildings, cart paths, roads, car parks and tree heights download the first time a course is opened;
 the loading screen shows each step with its progress and warns if one stops moving. This can take a few
 minutes, because the USGS server renders the photos on request. They're then cached next to
 the course (`*.sat/`).
@@ -311,7 +333,7 @@ the course (`*.sat/`).
   also detected in the aerial photo as long, thin, pale strips when the map has few. They look
   like pavement, and the ball bounces high and runs a long way on them. A ball that stops on a
   path gets free relief at the nearest point off it, no nearer the hole.
-* **Solid objects** (Jolt Physics): the ground, tree trunks, buildings and the flagstick are
+* **Solid objects** (Jolt Physics): the ground, tree trunks, buildings, parked cars and the flagstick are
   bodies in a Jolt collision world, and every step of the ball's flight and roll is checked
   against them. The ground in Jolt is a height field that matches the rendered terrain to within
   a couple of centimetres. A ball that hits the flagstick bounces off it; a gentle putt that
@@ -360,8 +382,8 @@ locally with `npm run package` (Windows; output in `dist/`).
   the browser
 * `lib/builder.js`: builds a playable course from OpenStreetMap
 * `lib/realdata.js`: OpenStreetMap search/download, elevation (USGS 3DEP or global tiles), terrain grid
-* `lib/imagery.js`, `lib/buildings.js`, `lib/paths.js`: aerial imagery (NAIP / Esri), buildings
-  and cart paths, cached per course
+* `lib/imagery.js`, `lib/buildings.js`, `lib/paths.js`, `lib/roads.js`, `lib/parking.js`: aerial
+  imagery (NAIP / Esri), buildings, cart paths, roads and car parks, cached per course
 * `lib/coursephoto.js`: finds a picture for each course
 * `public/js/course.js`: course file + real data → terrain, surfaces and hazards
 * `public/js/physics.js`: flight, bounce and roll
@@ -372,3 +394,4 @@ locally with `npm run package` (Windows; output in `dist/`).
   the builder and editor pages
 * `test/`: physics calibration, a course-map renderer and a fake launch monitor
 * `scripts/package-win.ps1`: builds the portable Windows zip
+* `scripts/leaf-twigs.py`: builds the maple, willow and birch leaf pictures from scanned leaves (see the file for how)
