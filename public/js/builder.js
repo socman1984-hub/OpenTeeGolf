@@ -94,21 +94,96 @@ async function build(c) {
   $('build-done').classList.add('hidden');
   $('log').innerHTML = '';
   logLine('Starting…');
+  startProgress(BUILD_STEPS);
   card.scrollIntoView({ behavior: 'smooth', block: 'start' });
   try {
-    const r = await api('/api/builder/build', {
+    await startJob(api('/api/builder/build', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         osmType: c.osmType, osmId: c.osmId, name: $('b-name').value.trim(), location: current?.location || '',
         group: $('b-group') ? $('b-group').value : null,
       }),
-    });
-    job = r.jobId;
+    }));
   } catch (err) {
     logLine(err.message, 'err');
+    endProgress(false);
     $('b-build').disabled = false;
   }
+}
+
+// ------------------------------------------------------------------ build progress
+// The server names each step as it starts ({ step }, and for downloads { at, total, unit });
+// the page shows them as a checklist with an overall bar and a running clock, so a slow download
+// visibly isn't stuck.
+
+const BUILD_STEPS = [
+  ['boundary', 'Finding the course in OpenStreetMap'],
+  ['features', 'Downloading greens, fairways, bunkers, tees and water'],
+  ['holes', 'Laying out the holes'],
+  ['elevation', 'Downloading elevation'],
+  ['terrain', 'Building the terrain'],
+];
+const UPDATE_STEPS = [...BUILD_STEPS, ['paths', 'Cart paths'], ['buildings', 'Buildings'], ['parking', 'Car parks'], ['roads', 'Roads']];
+let prog = null;
+
+function startProgress(steps) {
+  prog = { steps: steps.map(([id, label]) => ({ id, label, state: 'todo', detail: '', frac: 0, t0: 0, t1: 0 })), t0: Date.now(), end: null };
+  $('progress').classList.remove('hidden', 'finished', 'failed');
+  clearInterval(startProgress.timer);
+  startProgress.timer = setInterval(renderProgress, 1000);
+  renderProgress();
+}
+
+function progressStep(m) {
+  if (!prog) return;
+  let i = prog.steps.findIndex((s) => s.id === m.step);
+  if (i < 0) { prog.steps.push({ id: m.step, label: m.step, state: 'todo', detail: '', frac: 0, t0: 0, t1: 0 }); i = prog.steps.length - 1; }
+  // (starting a step finishes the ones before it, even any the server skipped)
+  prog.steps.forEach((s, k) => { if (k < i && s.state !== 'done') { s.state = 'done'; s.t1 ||= Date.now(); } });
+  const s = prog.steps[i];
+  if (s.state !== 'active') { s.state = 'active'; s.t0 = Date.now(); s.detail = ''; s.frac = 0; }
+  if (m.total) {
+    s.frac = Math.min(1, m.at / m.total);
+    s.detail = m.unit === 'bytes' ? `${(m.at / 1048576).toFixed(1)} of ${(m.total / 1048576).toFixed(1)} MB`
+      : m.unit === 'tiles' ? `${m.at} of ${m.total} tiles` : `${m.at} of ${m.total}`;
+  }
+  renderProgress();
+}
+
+function progressNote(msg) {
+  // The latest message shows under the step it belongs to (e.g. "server busy — retrying")
+  const s = prog?.steps.find((x) => x.state === 'active');
+  if (s && msg && !/^(Updating|Downloading course data)/.test(msg)) { s.detail = msg.replace(/…$/, ''); renderProgress(); }
+}
+
+function endProgress(ok) {
+  if (!prog) return;
+  clearInterval(startProgress.timer);
+  prog.end = Date.now();
+  for (const s of prog.steps) {
+    if (ok) { if (s.state !== 'done') { s.state = 'done'; s.t1 ||= prog.end; } }
+    else if (s.state === 'active') { s.state = 'failed'; s.t1 = prog.end; }
+  }
+  $('progress').classList.add(ok ? 'finished' : 'failed');
+  renderProgress();
+}
+
+const secs = (ms) => { const t = Math.round(ms / 1000); return t < 60 ? `${t} s` : `${Math.floor(t / 60)} min ${String(t % 60).padStart(2, '0')} s`; };
+function renderProgress() {
+  if (!prog) return;
+  const now = prog.end || Date.now(), n = prog.steps.length;
+  const doneN = prog.steps.filter((s) => s.state === 'done').length, act = prog.steps.find((s) => s.state === 'active');
+  const pct = Math.round(((doneN + (act ? act.frac : 0)) / n) * 100);
+  const title = prog.end ? ($('progress').classList.contains('failed') ? 'Stopped' : 'Finished') : act ? `Step ${prog.steps.indexOf(act) + 1} of ${n}` : 'Starting';
+  // (a step running long is usually the public OpenStreetMap servers being busy)
+  const slow = act && !act.frac && now - act.t0 > 25000 && !act.detail ? 'Still working — the public map servers can take a minute or two when they’re busy' : '';
+  $('progress').innerHTML = `
+    <div class="bar"><i style="width:${prog.end && doneN === n ? 100 : pct}%"></i><b></b></div>
+    <div class="summary"><span>${title}</span><span>${secs(now - prog.t0)}</span></div>
+    <ol>${prog.steps.map((s) => `<li class="${s.state}"><span class="mark"></span>
+      <span>${esc(s.label)}${s.state === 'active' && (s.detail || slow) ? `<span class="detail">${esc(s.detail || slow)}</span>` : ''}</span>
+      <span class="time">${s.state === 'active' ? secs(now - s.t0) : s.t1 && s.t0 ? secs(s.t1 - s.t0) : ''}</span></li>`).join('')}</ol>`;
 }
 
 function logLine(text, cls = '') {
@@ -128,16 +203,32 @@ events.addEventListener('check', (e) => {
     line.innerHTML = `<span class="spin"></span>${esc(m.msg)}`;
   }
 });
+// (a job's first events can arrive before the request that started it has answered with its id:
+// they're held until it does)
+let early = [];
+const startJob = async (request) => {
+  job = 'pending'; early = [];
+  try { job = (await request).jobId; } catch (err) { job = null; throw err; }
+  for (const m of early) if (m.jobId === job) onBuild(m);
+  early = [];
+};
 events.addEventListener('build', (e) => {
   const m = JSON.parse(e.data);
-  if (m.jobId !== job) return;
-  if (m.msg) logLine(m.msg);
+  if (job === 'pending') early.push(m);
+  else if (m.jobId === job) onBuild(m);
+});
+function onBuild(m) {
+  if (m.step) progressStep(m);
+  if (m.msg) { logLine(m.msg); if (!m.step) progressNote(m.msg); }
   if (m.error) {
     logLine(`Build failed: ${m.error}`, 'err');
+    endProgress(false);
+    $('log-box').open = true;
     if ($('b-build')) $('b-build').disabled = false;
     for (const b of document.querySelectorAll('#mine .update')) b.disabled = false;
   }
   if (m.done) {
+    endProgress(true);
     logLine(m.needsReview ? 'Done — some holes were guessed. Open the editor to check tees, pins and par.' : 'Done! The course is ready to play.', 'ok');
     $('play-link').href = playUrl(m.courseId);
     $('edit-link').href = editUrl(m.courseId);
@@ -145,7 +236,7 @@ events.addEventListener('build', (e) => {
     if ($('b-build')) $('b-build').disabled = false;
     loadMine();
   }
-});
+}
 
 // ------------------------------------------------------------------ your courses
 
@@ -184,12 +275,14 @@ async function updateCourse(c) {
   $('build-done').classList.add('hidden');
   $('log').innerHTML = '';
   logLine(`Updating ${c.name} from OpenStreetMap…`);
+  startProgress(UPDATE_STEPS);
   $('build-card').scrollIntoView({ behavior: 'smooth', block: 'start' });
   for (const b of document.querySelectorAll('#mine .update')) b.disabled = true;
   try {
-    job = (await api(`/api/courses/${c.id}/update`, { method: 'POST' })).jobId;
+    await startJob(api(`/api/courses/${c.id}/update`, { method: 'POST' }));
   } catch (err) {
     logLine(err.message, 'err');
+    endProgress(false);
     for (const b of document.querySelectorAll('#mine .update')) b.disabled = false;
   }
 }

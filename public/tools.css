@@ -31,6 +31,28 @@ a.button.primary { background: #2f8f4e; border-color: #3fae63; font-weight: 600;
 .form-row label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); flex: 1; min-width: 200px; }
 .log { font: 12px/1.5 ui-monospace, Consolas, monospace; background: #0b120c; border: 1px solid var(--line); border-radius: 8px; padding: 10px; max-height: 240px; overflow: auto; white-space: pre-wrap; }
 .log .err { color: var(--bad); }
+/* Build progress: an overall bar, then each step with a tick, a spinner (with its own time and
+   detail) or an empty circle */
+.build-progress { margin-bottom: 10px; }
+.build-progress .bar { position: relative; height: 8px; border-radius: 4px; background: rgba(255,255,255,0.08); overflow: hidden; margin-bottom: 6px; }
+.build-progress .bar > i { position: absolute; inset: 0 auto 0 0; background: var(--good); border-radius: 4px; transition: width 0.4s ease; }
+.build-progress .bar > b { position: absolute; inset: 0; background: linear-gradient(90deg, transparent, rgba(255,255,255,0.18), transparent); animation: bp-shine 1.6s linear infinite; }
+.build-progress.finished .bar > b, .build-progress.failed .bar > b { display: none; }
+.build-progress.failed .bar > i { background: var(--bad); }
+@keyframes bp-shine { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
+.build-progress .summary { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); margin-bottom: 8px; }
+.build-progress ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.build-progress li { display: grid; grid-template-columns: 20px 1fr auto; align-items: start; gap: 6px; font-size: 13px; color: var(--muted); }
+.build-progress li .mark { width: 14px; height: 14px; margin-top: 2px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.2); }
+.build-progress li.done { color: var(--text); }
+.build-progress li.done .mark { border: none; background: var(--good); position: relative; }
+.build-progress li.done .mark::after { content: ""; position: absolute; left: 4px; top: 1px; width: 4px; height: 8px; border: solid #0b120c; border-width: 0 2px 2px 0; transform: rotate(45deg); }
+.build-progress li.active { color: var(--text); font-weight: 600; }
+.build-progress li.active .mark { border-color: rgba(255,255,255,0.2); border-top-color: var(--accent); animation: spin 0.9s linear infinite; }
+.build-progress li.failed .mark { border-color: var(--bad); }
+.build-progress li .detail { display: block; font-weight: 400; font-size: 12px; color: var(--muted); margin-top: 1px; }
+.build-progress li .time { font-size: 12px; font-variant-numeric: tabular-nums; color: var(--muted); }
+.log-box summary { cursor: pointer; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
 .log .ok { color: var(--good); }
 .row.left { justify-content: flex-start; }
 .credit { font-size: 12px; text-align: center; }
