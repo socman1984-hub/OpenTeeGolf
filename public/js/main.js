@@ -1236,6 +1236,19 @@ function setFreeView(on) {
 // (drop the focus, or Space - which flies up in free view - would press the button again)
 $('free-btn').onclick = (e) => { e.currentTarget.blur(); setFreeView(scene.mode !== 'free'); };
 
+// Full screen: the whole page fills the screen (no browser bars or tabs); U or the button toggles,
+// Esc leaves (the browser handles that one)
+let fsChanged = 0;
+function toggleFullscreen() {
+  if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
+  else document.documentElement.requestFullscreen?.({ navigationUI: 'hide' }).catch(() => toast('Full screen isn’t available here', 2000));
+}
+document.addEventListener('fullscreenchange', () => {
+  fsChanged = performance.now();
+  $('fs-btn').textContent = document.fullscreenElement ? '⛶ Exit full screen (U)' : '⛶ Full screen (U)';
+});
+$('fs-btn').onclick = (e) => { e.currentTarget.blur(); toggleFullscreen(); };
+
 function showScorecard(afterHole = false, final = false) {
   const holes = S.course.holes;
   const half = (from, to) => holes.slice(from, to);
@@ -1321,6 +1334,7 @@ window.addEventListener('keydown', (e) => {
   const step = (e.shiftKey ? 0.2 : 1) * (onGreen() ? 0.5 : 1) * (Math.PI / 180);
   switch (e.key) {
     case 'f': case 'F': setFreeView(scene.mode !== 'free'); break;
+    case 'u': case 'U': toggleFullscreen(); break;
     case 'p': case 'P': setFps(!S.showFps); break;
     case 'h': case 'H': setTraces(S.showTraces === false); toast(S.showTraces ? 'Previous shot traces on' : 'Previous shot traces off', 1500); break;
     case 'g': case 'G':
@@ -1349,6 +1363,8 @@ window.addEventListener('keydown', (e) => {
       break;
     case 'Enter': if (S.phase === 'holed') nextHole(); break;
     case 'Escape':
+      // (Esc that just took the page out of full screen does nothing else)
+      if (document.fullscreenElement || performance.now() - fsChanged < 500) break;
       if (scene.mode === 'free') setFreeView(false);
       else if (!$('scorecard').classList.contains('hidden')) $('scorecard').classList.add('hidden');
       else if (confirm('Quit this round and return to the menu?')) openMenu();
