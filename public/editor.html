@@ -49,6 +49,7 @@
         <summary>Trees</summary>
         <label class="check"><input id="t-show" type="checkbox" checked> Show trees on the map</label>
         <div id="tree-info" class="muted small"></div>
+        <button id="t-review" title="Go through the trees found automatically that stand in the line of play">Review trees in the line of play</button>
         <div class="tree-tool">
           <button id="t-add">Add trees</button>
           <select id="t-size" title="Size of the trees you add">
@@ -99,6 +100,7 @@
     <div class="map-wrap">
       <canvas id="map" tabindex="0"></canvas>
       <div id="mode-hint" class="mode-hint hidden"></div>
+      <div id="review" class="review hidden"></div>
       <div class="map-tools">
         <button id="fit-hole" title="Zoom to the selected hole">Hole</button>
         <button id="fit-all" title="Zoom to the whole course">Course</button>

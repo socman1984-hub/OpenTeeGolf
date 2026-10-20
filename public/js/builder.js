@@ -6,6 +6,7 @@ const editUrl = (id) => `/editor.html?course=${encodeURIComponent(id)}`;
 
 let current = null; // selected search result
 let job = null;
+let jobKind = 'build'; // 'build' (a new course: on to the editor's tree review) or 'update'
 
 async function api(url, opts) {
   const res = await fetch(url, opts);
@@ -95,6 +96,7 @@ async function build(c) {
   $('log').innerHTML = '';
   logLine('Starting…');
   startProgress(BUILD_STEPS);
+  jobKind = 'build';
   card.scrollIntoView({ behavior: 'smooth', block: 'start' });
   try {
     await startJob(api('/api/builder/build', {
@@ -235,6 +237,12 @@ function onBuild(m) {
     $('build-done').classList.remove('hidden');
     if ($('b-build')) $('b-build').disabled = false;
     loadMine();
+    // A new course: straight on to the editor to check the trees found automatically that stand
+    // in the line of play (and the holes, if any were guessed)
+    if (jobKind === 'build') {
+      logLine('Opening the editor to review the trees in the line of play…');
+      setTimeout(() => { location.href = `${editUrl(m.courseId)}&review=trees`; }, 1500);
+    }
   }
 }
 
@@ -276,6 +284,7 @@ async function updateCourse(c) {
   $('log').innerHTML = '';
   logLine(`Updating ${c.name} from OpenStreetMap…`);
   startProgress(UPDATE_STEPS);
+  jobKind = 'update';
   $('build-card').scrollIntoView({ behavior: 'smooth', block: 'start' });
   for (const b of document.querySelectorAll('#mine .update')) b.disabled = true;
   try {

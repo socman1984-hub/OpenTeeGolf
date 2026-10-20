@@ -204,6 +204,103 @@ async function loadTrees() {
   treeEnv.note = canopy ? '' : ' (this course has no tree-height map)';
   shownKey = '';
   draw();
+  // (straight after building a course: go through the trees in the line of play)
+  if (new URLSearchParams(location.search).get('review') === 'trees' && !review.started) startReview();
+}
+
+// ------------------------------------------------------------------ tree review
+// Trees found automatically (tree-height map, OpenStreetMap, aerial photo) that stand in the line
+// of play: trunk within 4 m (plus half the crown, up to 3 m more) of the line from a hole's back
+// tee through its aim points to the green - in the way of a normal shot. Some are real and part
+// of the hole; some are mistakes (or would make the hole unplayable). Trees close together on the
+// same hole are one group; the player goes through the groups one by one: keep or remove.
+const review = { started: false, list: [], i: 0, kept: 0, removed: 0 };
+function treesInPlay() {
+  const segDist = (x, z, a, b) => {
+    const dx = b.x - a.x, dz = b.z - a.z, l2 = dx * dx + dz * dz;
+    const t = l2 ? Math.max(0, Math.min(1, ((x - a.x) * dx + (z - a.z) * dz) / l2)) : 0;
+    return Math.hypot(x - a.x - dx * t, z - a.z - dz * t);
+  };
+  const lines = holes.map((h) => [TEE_ORDER.map((k) => h.tees[k]).find(Boolean), ...h.aims, h.green].filter(Boolean));
+  const out = [];
+  for (const t of plannedTrees()) {
+    if (t.user) continue;
+    let best = null;
+    lines.forEach((pts, hi) => {
+      for (let k = 1; k < pts.length; k++) {
+        const d = segDist(t.x, t.z, pts[k - 1], pts[k]);
+        if (d < 4 + Math.min(3, (t.r || 3) * 0.5) && (!best || d < best.d)) best = { d, hole: hi };
+      }
+    });
+    if (best) out.push({ t, ...best });
+  }
+  // Group trees within 8 m of each other on the same hole
+  const groups = [];
+  for (const f of out) {
+    const g = groups.find((gr) => gr.hole === f.hole && gr.trees.some((o) => Math.hypot(o.x - f.t.x, o.z - f.t.z) < 8));
+    if (g) { g.trees.push(f.t); g.d = Math.min(g.d, f.d); } else groups.push({ hole: f.hole, d: f.d, trees: [f.t] });
+  }
+  // hole by hole
+  return groups.sort((a, b) => holes[a.hole].number - holes[b.hole].number || a.d - b.d);
+}
+function startReview() {
+  review.started = true;
+  review.list = treesInPlay(); review.i = 0; review.kept = 0; review.removed = 0;
+  showReview();
+}
+function showReview() {
+  const box = $('review'), item = review.list[review.i];
+  box.classList.remove('hidden');
+  if (!item) {
+    const none = !review.list.length;
+    box.innerHTML = none
+      ? `<h3>No trees in the line of play</h3><div class="muted small">None of the trees found automatically stand in the way of a normal shot.</div>
+        <div class="btn-row"><button id="rv-close">Close</button></div>`
+      : `<h3>Review done</h3><div class="muted small">${review.removed} removed, ${review.kept} kept. Removed trees show as a red cross: click one to put it back.</div>
+        <div class="btn-row"><button id="rv-save" class="primary">Save the course</button><button id="rv-close">Close</button></div>`;
+    $('rv-close').onclick = () => { box.classList.add('hidden'); clearTreeSel(); renderShapePanel(); draw(); };
+    if ($('rv-save')) $('rv-save').onclick = async () => { await save(); box.classList.add('hidden'); };
+    clearTreeSel(); renderShapePanel(); draw();
+    return;
+  }
+  const { trees, hole, d } = item, h = holes[hole], n = trees.length;
+  // Show the trees, their hole selected (its line drawn), the nearest one picked
+  sel.hole = hole; sel.shape = -1; clearTreeSel(); sel.found = trees[0];
+  renderHoles(); renderShapePanel();
+  const xs = trees.map((t) => t.x), zs = trees.map((t) => t.z);
+  view.cx = (Math.min(...xs) + Math.max(...xs)) / 2; view.cz = (Math.min(...zs) + Math.max(...zs)) / 2;
+  view.scale = Math.min(W(), H()) / Math.max(90, (Math.max(...xs) - Math.min(...xs)) * 2.5, (Math.max(...zs) - Math.min(...zs)) * 2.5);
+  draw();
+  const photo = trees.filter((t) => t.photo).length;
+  const what = n === 1 ? `A tree ${photo ? 'guessed from the aerial photo' : 'found from the tree-height map or OpenStreetMap'}, about ${Math.round(trees[0].h)} m tall,`
+    : `${n} trees together (${photo === n ? 'all' : photo ? `${photo}` : 'none'} guessed from the aerial photo),`;
+  box.innerHTML = `<h3>${review.i + 1} of ${review.list.length} · hole ${h.number}</h3>
+    <div class="muted small">${what} ${d < 2 ? 'right on' : `${Math.round(d)} m from`} the line of play. ${n === 1 ? 'Does it' : 'Do they'} belong there?</div>
+    <div class="btn-row">
+      <button id="rv-keep" class="keep">Keep</button><button id="rv-remove" class="remove">Remove</button>
+      <button id="rv-keep-all">Keep the rest</button><button id="rv-remove-all">Remove the rest</button>
+    </div>`;
+  const remove = (item2) => { for (const t of item2.trees) removedTrees.push([Math.round(t.x * 100) / 100, Math.round(t.z * 100) / 100]); };
+  const count = (from) => review.list.slice(from).reduce((s2, g) => s2 + g.trees.length, 0);
+  $('rv-keep').onclick = () => { review.kept += n; review.i++; showReview(); };
+  $('rv-remove').onclick = () => { change(); remove(item); review.removed += n; review.i++; showReview(); };
+  $('rv-keep-all').onclick = () => { review.kept += count(review.i); review.i = review.list.length; showReview(); };
+  $('rv-remove-all').onclick = () => {
+    change();
+    for (; review.i < review.list.length; review.i++) { remove(review.list[review.i]); review.removed += review.list[review.i].trees.length; }
+    showReview();
+  };
+}
+// The flagged trees still to look at, ringed on the map (the group being looked at in yellow)
+function drawReview() {
+  if (!review.started || review.i >= review.list.length) return;
+  ctx.strokeStyle = '#ff8a3d'; ctx.lineWidth = 2; ctx.setLineDash([4, 3]);
+  for (let k = review.i; k < review.list.length; k++) for (const t of review.list[k].trees) {
+    const [x, y] = toScreen(t.x, t.z);
+    ctx.strokeStyle = k === review.i ? '#ffd84a' : '#ff8a3d';
+    ctx.beginPath(); ctx.arc(x, y, Math.max(7, t.r * view.scale + 3), 0, 7); ctx.stroke();
+  }
+  ctx.setLineDash([]);
 }
 const treeEnv = { heightAt: undefined, allowed: () => true, note: '' };
 let photoReady = Promise.resolve(null);
@@ -416,6 +513,7 @@ function draw() {
   // Holes: others faint, the selected one with handles
   holes.forEach((h, i) => { if (i !== sel.hole) drawHole(h, false); });
   if (holes[sel.hole]) drawHole(holes[sel.hole], true);
+  if (showTrees) drawReview();
   // Selected shape vertices
   const s = shapes[sel.shape];
   if (s) {
@@ -1087,6 +1185,7 @@ $('t-hmin').onchange = () => { treeOpts.hMin = Math.min(40, Math.max(2, +$('t-hm
 $('t-hmax').onchange = () => { treeOpts.hMax = Math.min(40, Math.max(2, +$('t-hmax').value || AREA_HEIGHTS.max)); };
 $('species-list').innerHTML = TREE_SPECIES.map((sp) => `<li><i style="background:${SPECIES_COLOR[sp.id]}"></i><b>${esc(sp.label)}</b><span>${esc(sp.about)}</span></li>`).join('')
   + `<li><i style="background:rgba(80,175,70,0.9)"></i><b>Automatic</b><span>chosen from the aerial photo</span></li>`;
+$('t-review').onclick = () => { if (!showTrees) { showTrees = true; $('t-show').checked = true; } startReview(); };
 $('t-show').onchange = () => { showTrees = $('t-show').checked; if (!showTrees && (sel.tree >= 0 || sel.found || sel.removed >= 0)) { clearTreeSel(); renderShapePanel(); } draw(); };
 $('save').onclick = save;
 $('play').onclick = async (e) => {
