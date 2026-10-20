@@ -6,7 +6,7 @@
   <title>OpenTeeGolf</title>
   <meta name="description" content="OpenTeeGolf is a free, open-source golf simulator for the FlightScope Mevo+ that turns any course mapped in OpenStreetMap into a playable 3D course.">
   <meta property="og:title" content="OpenTeeGolf: free, open-source golf simulator">
-  <meta property="og:description" content="Play any course mapped in OpenStreetMap with your Mevo+. Real terrain, aerial imagery, trees and water. Free forever (GPL-3.0).">
+  <meta property="og:description" content="Play any course mapped in OpenStreetMap with your Mevo+. Real terrain, aerial imagery, woods, rough, streams and live weather. Free forever (GPL-3.0).">
   <meta property="og:image" content="https://socman1984-hub.github.io/OpenTeeGolf/img/ball-flight.jpg">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='52' r='9' fill='%23fff'/%3E%3Cpath d='M30 4h4v40h-4z' fill='%23ddd'/%3E%3Cpath d='M34 5l20 8-20 8z' fill='%23e8282b'/%3E%3C/svg%3E">
   <style>
@@ -73,11 +73,15 @@
     .card h3 span { font-size: 22px; }
     .card p { margin: 0; color: var(--muted); font-size: 15px; }
 
-    .gallery { display: grid; grid-template-columns: 1.4fr 1fr; gap: 18px; }
+    .gallery { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px 18px; }
     .gallery figure { margin: 0; }
-    .gallery figure:first-child { grid-row: span 2; }
     .gallery figcaption { color: var(--muted); font-size: 14px; margin-top: 8px; }
-    @media (max-width: 800px) { .gallery { grid-template-columns: 1fr; } .gallery figure:first-child { grid-row: auto; } }
+    @media (max-width: 800px) { .gallery { grid-template-columns: 1fr; } }
+    .news { margin: 0; padding: 0; list-style: none; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 28px; }
+    .news li { padding-left: 20px; position: relative; color: var(--muted); }
+    .news li::before { content: ""; position: absolute; left: 4px; top: 0.6em; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
+    .news li b { color: var(--text); }
+    @media (max-width: 700px) { .news { grid-template-columns: 1fr; } }
 
     ol.steps { counter-reset: s; list-style: none; padding: 0; margin: 0; display: grid; gap: 14px; }
     ol.steps li { counter-increment: s; position: relative; padding: 16px 18px 16px 62px; background: var(--card); border: 1px solid var(--line); border-radius: 12px; }
@@ -105,10 +109,11 @@
       <a class="brand" href="#">
         <svg viewBox="0 0 64 64" aria-hidden="true"><circle cx="32" cy="52" r="9" fill="#fff"/><rect x="30" y="4" width="4" height="40" fill="#cfd8cf"/><path d="M34 5l20 8-20 8z" fill="#e8282b"/></svg>
         OpenTeeGolf
-        <span class="beta">Early beta</span>
+        <span class="beta">Alpha</span>
       </a>
       <nav>
         <a class="opt" href="#features">Features</a>
+        <a class="opt" href="#new">What's new</a>
         <a class="opt" href="#start">Get started</a>
         <a class="opt" href="https://github.com/socman1984-hub/OpenTeeGolf">GitHub</a>
         <a class="btn discord small" href="https://discord.gg/YNsyWkCayd">
@@ -123,9 +128,9 @@
     <section class="hero">
       <div class="wrap">
         <div>
-          <p class="beta-note"><b>Early beta.</b> OpenTeeGolf is new and still changing fast: expect bugs and rough edges. Please report anything that goes wrong on the <a href="https://discord.gg/YNsyWkCayd">Discord</a> or <a href="https://github.com/socman1984-hub/OpenTeeGolf/issues">GitHub</a>.</p>
+          <p class="beta-note"><b>Alpha.</b> OpenTeeGolf is new and still changing fast: expect bugs and rough edges. Please report anything that goes wrong on the <a href="https://discord.gg/YNsyWkCayd">Discord</a> or <a href="https://github.com/socman1984-hub/OpenTeeGolf/issues">GitHub</a>.</p>
           <h1>Play any course in the world, free.</h1>
-          <p class="lead">OpenTeeGolf is an open-source golf simulator for the FlightScope Mevo+. It builds playable 3D courses from OpenStreetMap, with real terrain, aerial imagery, trees and water, and it will always be free.</p>
+          <p class="lead">OpenTeeGolf is an open-source golf simulator for the FlightScope Mevo+. It builds playable 3D courses from OpenStreetMap, with real terrain, aerial imagery, woods, rough, streams and live weather, and it will always be free.</p>
           <div class="ctas">
             <a class="btn primary" id="dl" href="https://github.com/socman1984-hub/OpenTeeGolf/releases/latest">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m0 0-5-5m5 5 5-5M4 20h16"/></svg>
@@ -143,7 +148,7 @@
           <div class="dl-meta" id="dl-meta">Windows 10 or 11 (64-bit) · free and open source (GPL-3.0)</div>
         </div>
         <figure>
-          <img class="shot" src="img/ball-flight.jpg" width="1600" height="900" alt="A drive in flight with its yellow tracer, down a tree-lined fairway towards a green with bunkers">
+          <img class="shot" src="img/ball-flight.jpg" width="1600" height="900" alt="A tee shot in flight with its yellow tracer, over a creek towards a green with bunkers, a wooden footbridge and woods behind">
         </figure>
       </div>
     </section>
@@ -153,11 +158,11 @@
         <h2>What it does</h2>
         <p class="sub">Everything runs on your own PC. The game opens in your browser and courses are built from public map data.</p>
         <div class="grid">
-          <div class="card"><h3><span>🗺️</span>Any mapped course</h3><p>Search OpenStreetMap for a course and build it in a few minutes: greens, fairways, bunkers, tees, water, rivers, cart paths and buildings, with real elevation.</p></div>
-          <div class="card"><h3><span>🌳</span>Real-world detail</h3><p>Aerial imagery under your feet, trees placed from canopy-height data and OpenStreetMap, and water that reflects the sky and trees.</p></div>
+          <div class="card"><h3><span>🗺️</span>Any mapped course</h3><p>Search OpenStreetMap for a course and build it in a few minutes: greens, fairways, bunkers, tees, ponds, streams, cart paths, roads, car parks and buildings, with real elevation. A checklist shows each step as it builds.</p></div>
+          <div class="card"><h3><span>🌳</span>Real-world detail</h3><p>Trees placed from canopy-height data and the aerial photo, with undergrowth along the woods. Rough you can see blade by blade up close, tall native grass, streams that flow downhill, and wooden bridges where cart paths cross water.</p></div>
           <div class="card"><h3><span>📡</span>Mevo+ support</h3><p>Connect straight to the Mevo+ over its Wi-Fi, with no other software (experimental), or through FS Golf. There's a live camera and level screen for setting up.</p></div>
-          <div class="card"><h3><span>⛳</span>Ball flight and bounce</h3><p>Physics for carry, spin, wind, weather and altitude, bounce and roll on firm or soft ground, trees and flagsticks to hit, and a slope grid for reading putts.</p></div>
-          <div class="card"><h3><span>✏️</span>Course editor</h3><p>Move tees, pins and aim points, reshape greens and bunkers, and plant trees one at a time or by the acre. Update a course whenever its map improves.</p></div>
+          <div class="card"><h3><span>⛳</span>Ball flight and bounce</h3><p>Physics for carry, spin, wind and altitude, with the real weather at the course by default. Bounce and roll on firm or soft ground, trees and flagsticks to hit, and a slope grid for reading putts.</p></div>
+          <div class="card"><h3><span>✏️</span>Course editor</h3><p>After each build, a quick review of any trees standing in the line of play. Move tees, pins and aim points, reshape greens and bunkers, and plant or remove trees. Update a course whenever its map improves.</p></div>
           <div class="card"><h3><span>🔄</span>Free and updating</h3><p>Open source under the GPL-3.0, so it stays free. The game tells you when a new version is out and installs it in one click.</p></div>
         </div>
       </div>
@@ -166,16 +171,36 @@
     <section>
       <div class="wrap">
         <h2>Screenshots</h2>
-        <p class="sub">Captured in the game, at the high graphics setting.</p>
+        <p class="sub">Captured in the game at the high graphics setting, on courses built straight from OpenStreetMap.</p>
         <div class="gallery">
-          <figure><img class="shot" src="img/tee-view.jpg" width="1600" height="900" loading="lazy" alt="Looking down the first fairway from the tee, with trees on both sides and the flag in the distance"><figcaption>From the tee: the fairway, rough and tree lines come from the map and tree-height data.</figcaption></figure>
-          <figure><img class="shot" src="img/ball-flight.jpg" width="1600" height="900" loading="lazy" alt="The camera following a drive in flight"><figcaption>Following the ball, with its tracer.</figcaption></figure>
-          <figure><img class="shot" src="img/hole-flyover.jpg" width="1600" height="900" loading="lazy" alt="An aerial view of a seaside hole with buildings, cart paths and the green"><figcaption>The flyover at the start of each hole.</figcaption></figure>
+          <figure><img class="shot" src="img/tee-view.jpg" width="1600" height="900" loading="lazy" alt="Looking down the first hole from the tee, with a cart path winding through tall native grass and woods on both sides"><figcaption>From the tee: fairways, rough, tall grass and tree lines all come from the map, tree-height data and the aerial photo.</figcaption></figure>
+          <figure><img class="shot" src="img/ball-flight.jpg" width="1600" height="900" loading="lazy" alt="The camera following a tee shot over a creek towards the green"><figcaption>Following the ball, with its tracer.</figcaption></figure>
+          <figure><img class="shot" src="img/hole-flyover.jpg" width="1600" height="900" loading="lazy" alt="Looking down on a par 3 from behind the tee: the fairway, a creek in front of the green, a wooden footbridge and thick woods all round"><figcaption>The flyover at the start of each hole.</figcaption></figure>
+          <figure><img class="shot" src="img/water.jpg" width="1600" height="900" loading="lazy" alt="A long pond reflecting the trees and sky, with the green and its bunkers beyond"><figcaption>Ponds and streams reflect the sky and the trees around them.</figcaption></figure>
+          <figure><img class="shot" src="img/rough.jpg" width="1600" height="900" loading="lazy" alt="Eye level in the rough: individual blades of grass in the foreground, the fairway and flag beyond"><figcaption>Down in the rough, with blades of grass up close.</figcaption></figure>
+          <figure><img class="shot" src="img/stream.jpg" width="1600" height="900" loading="lazy" alt="A creek with sandy banks and reeds running through woods towards a wooden footbridge"><figcaption>Streams flow downhill, faster where it gets steeper.</figcaption></figure>
         </div>
       </div>
     </section>
 
-    <section class="alt" id="start">
+    <section class="alt" id="new">
+      <div class="wrap">
+        <h2>Recently added</h2>
+        <p class="sub">OpenTeeGolf is in alpha and changes every week. The <a href="https://github.com/socman1984-hub/OpenTeeGolf/releases">release notes</a> have the full list.</p>
+        <ul class="news">
+          <li><b>Rough you can see.</b> Blades of grass up close, thickest right beside the fairway, and a clearer edge between fairway and rough.</li>
+          <li><b>Tall native grass</b> in several kinds that blend into each other and sway in the wind.</li>
+          <li><b>Better trees.</b> New leaf and bark textures, light through the leaves, whole trees swaying, and undergrowth along the edge of the woods.</li>
+          <li><b>Flowing streams</b> that run downhill, faster where it's steeper, with smooth banks.</li>
+          <li><b>Wooden bridges</b> wherever a cart path crosses water.</li>
+          <li><b>Roads and car parks</b> from OpenStreetMap around the course.</li>
+          <li><b>Tree review after building.</b> The editor flags trees in the line of play so you can keep or remove them in a few clicks.</li>
+          <li><b>Live weather by default:</b> the real wind and temperature at the course.</li>
+        </ul>
+      </div>
+    </section>
+
+    <section id="start">
       <div class="wrap two">
         <div>
           <h2>Get started</h2>
@@ -201,7 +226,7 @@
       </div>
     </section>
 
-    <section id="community">
+    <section class="alt" id="community">
       <div class="wrap">
         <h2>Community</h2>
         <p class="sub">OpenTeeGolf is made in the open. Come say hello, share courses, report problems, or help build it.</p>

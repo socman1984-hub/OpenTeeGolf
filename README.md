@@ -1,6 +1,6 @@
 # OpenTeeGolf
 
-> **⚠️ EARLY BETA:** OpenTeeGolf is new and still changing fast. Expect bugs and rough edges, and
+> **⚠️ ALPHA:** OpenTeeGolf is new and still changing fast. Expect bugs and rough edges, and
 > please report problems on the [Discord](https://discord.gg/YNsyWkCayd) or as a
 > [GitHub issue](https://github.com/socman1984-hub/OpenTeeGolf/issues).
 
@@ -117,6 +117,11 @@ Open a built course from the builder or the **Edit** link in the main menu
   **Replace** it with one of your own to move or change. Removed trees show as a red cross; click
   one to put the tree back. You can also place single trees and draw tree areas with a species
   and height range.
+* **Tree review:** after building a new course the editor opens on a review of the trees found
+  automatically that stand in the line of play (within a few metres of the line from the tee
+  through the aim points to the green). It goes hole by hole, with trees close together as one
+  group: keep or remove each, or keep or remove the rest, then save. **Review trees in the line
+  of play** under Trees runs it again any time.
 * Ctrl+Z undoes, Ctrl+S saves, and **Play** opens the course in the simulator. Heights for
   everything you place come from the terrain automatically.
 
@@ -202,7 +207,7 @@ node test/send-shot.js 150 12 0 2700 0
 **Free view:**
 * Drag to move, right-drag to turn, and scroll to zoom.
 * WASD flies around, Q/E moves down/up (Space also goes up), and Shift goes faster.
-* Clicking the ground still aims your shot. Clicking the minimap flies the camera there.
+* Clicking the ground or the minimap still aims your shot; the camera stays where it is.
 * F or Esc returns to the ball. A shot from the launch monitor also brings you back
   automatically.
 
@@ -222,8 +227,8 @@ count. If free view stutters, try Balanced or Performance.
 ## Weather
 
 Choose the weather in the menu:
-* **Live:** the real current conditions at the course, from Open-Meteo (free, no account
-  needed).
+* **Live** (the default): the real current conditions at the course, from Open-Meteo (free, no
+  account needed). If they can't be fetched, or the course has no location, it plays breezy.
 * **Presets:** Calm, Breezy, Windy or Rain.
 * **Custom:** set the wind speed and direction yourself (into you, behind you, across, or
   random per hole).
@@ -280,6 +285,9 @@ Built courses look like the real place:
   pictures of the real models (taken from 24 directions when the course loads, blended as you
   move, lit by the sun). Trees on the edge of a wood, the ones you actually see, stay detailed
   much further out than trees inside it.
+* **Undergrowth:** the outside edges of dense woods (what you see from the course) are lined with
+  low leafy shrubs, so a wood reads as thick rather than a row of trunks. Lone trees, thin rows
+  and the inside of woods get none.
 * **Seeing past trees:** trees between the camera and the ball, and close ones in your line of
   sight, fade to a see-through stipple so you can see your shot and still know they are there.
 * **Buildings** are 3D outlines from OpenStreetMap. Coverage varies by area.
@@ -299,6 +307,13 @@ Built courses look like the real place:
   Streams and rivers run downhill: their surface follows the slope of the banks, the ripples are
   carried downstream, and the steeper the stretch, the faster it flows (with streaks of foam on
   fast water).
+* **Tall grass:** unmown areas seen in the photo are a meadow of four kinds of grass (fine
+  bunch grass, taller grass with seed heads, broader leafy grass, and grass flattened by the
+  weather), in drifts of green and straw, over tawny ground. It's densest around the camera,
+  thinning out smoothly with distance.
+* **Rough up close:** a carpet of real grass blades covers the rough around the camera, fading
+  into the ground's texture further out. The rough is thickest and tallest right where the
+  fairway (or fringe, green or tee) ends, so the edge stands out, and thins over about 20 m.
 * **Lighting:** real-time sun shadows, sky reflections, and grass tufts around the ball (kept
   off cart paths and out of water).
 
