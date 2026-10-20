@@ -68,9 +68,14 @@ const jolt = simulateShot(flat, origin, shot, { ...opts, collider: world });
 check(Math.abs(plain.carry - jolt.carry) < 0.5 && Math.abs(plain.total - jolt.total) < 1.5,
   `drive: carry ${plain.carry.toFixed(1)} / ${jolt.carry.toFixed(1)} m, total ${plain.total.toFixed(1)} / ${jolt.total.toFixed(1)} m (without / with Jolt)`);
 
-// 3. A trunk straight down the line knocks the ball back
-const toTree = simulateShot(flat, { x: 0, y: flat.heightAt(0, 0), z: 0 }, { speedMph: 80, vla: 3, hla: 0, backSpin: 1500, sideSpin: 0 }, { ...opts, collider: world });
-check(toTree.treeHits.includes('trunk') && toTree.rest.z < 40, `low shot into a trunk stops short of it (rest z = ${toTree.rest.z.toFixed(1)}, hits: ${toTree.treeHits.join(', ')})`);
+// 3. A trunk straight down the line knocks the ball off its line (on this rolling ground it then
+// runs on downhill, so where it ends depends on the slopes: it just mustn't end where it would
+// have without the tree)
+const lowShot = { speedMph: 80, vla: 3, hla: 0, backSpin: 1500, sideSpin: 0 }, lowFrom = { x: 0, y: flat.heightAt(0, 0), z: 0 };
+const toTree = simulateShot(flat, lowFrom, lowShot, { ...opts, collider: world });
+const noTree = simulateShot(flat, lowFrom, lowShot, { ...opts, collider: new CollisionWorld(Jolt, flat, {}) });
+const moved = Math.hypot(toTree.rest.x - noTree.rest.x, toTree.rest.z - noTree.rest.z);
+check(toTree.treeHits.includes('trunk') && moved > 5, `low shot into a trunk is knocked off its line (ends ${moved.toFixed(1)} m from where it would without the tree, hits: ${toTree.treeHits.join(', ')})`);
 
 // 4. A building wall stops a low runner
 const toWall = simulateShot(flat, { x: -150, y: flat.heightAt(-150, 280), z: 280 }, { speedMph: 60, vla: 3, hla: 0, backSpin: 500, sideSpin: 0 }, { ...opts, collider: world });

@@ -105,4 +105,16 @@ const h = simulateShot({ ...flat('green') }, { x: 0, y: 0, z: 0 },
 console.log(`putt at pin 2m: ${h.result}`);
 if (h.result !== 'holed') failed++;
 
+// Break: a straight putt across a green rising 2% towards +x curls downhill (towards -x). The
+// normal is worked out as course.js does it, so the two can't disagree on which way is down.
+const tilted = (() => {
+  const heightAt = (x) => 0.02 * x;
+  const normalAt = (x, z) => { const a = heightAt(x - 1) - heightAt(x + 1), b = 2, l = Math.hypot(a, b); return [a / l, b / l, 0]; };
+  return { heightAt, normalAt, surfaceAt: () => 'green' };
+})();
+const br = simulateShot(tilted, { x: 0, y: 0, z: 0 },
+  { speedMph: 6, vla: 1, hla: 0, backSpin: 0, sideSpin: 0 }, { heading: 0, stimp: 10 });
+console.log(`putt across a 2% slope breaks ${(br.rest.x * 100).toFixed(0)} cm (should be negative: downhill)`);
+if (!(br.rest.x < -0.3)) failed++;
+
 process.exit(failed ? 1 : 0);

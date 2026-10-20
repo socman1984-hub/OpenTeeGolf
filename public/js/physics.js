@@ -285,8 +285,9 @@ export function simulateShot(course, origin, shot, opts) {
       const sp = surfaceParams(surf);
       const mu = surf === 'green' ? greenRoll : sp.roll;
       const n = course.normalAt(p[0], p[2]);
-      // Gravity component along the slope
-      const gx = -G * n[1] * n[0], gz = -G * n[1] * n[2];
+      // Gravity component along the slope: downhill, the way the ground's normal leans
+      // (g - (g.n)n with g = (0, -G, 0): horizontally +G n.y n.x, +G n.y n.z)
+      const gx = G * n[1] * n[0], gz = G * n[1] * n[2];
       // Keep velocity horizontal; the height follows the terrain.
       v[1] = 0;
       const sp2 = Math.hypot(v[0], v[2]);
