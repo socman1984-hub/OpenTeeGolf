@@ -111,6 +111,9 @@ export function grassMesh(geo, mat, count) {
   const mesh = new THREE.InstancedMesh(geo, mat, count);
   mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(count * 3), 3);
   mesh.receiveShadow = true;
+  // (layer 1: drawn by the camera, not into the pond reflections, where it's never noticed but
+  // would cost a second full drawing of every blade)
+  mesh.layers.set(1);
   return mesh;
 }
 

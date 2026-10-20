@@ -100,3 +100,37 @@ export function onRoad(roads, pad = 0) {
     return false;
   };
 }
+
+// A cart path's centre line from the map made smooth and straight: small zigzags (mapping jitter,
+// under 0.6 m) taken out, so straight runs are straight, then the corners rounded off over at most
+// 4 m each side (a few passes of corner cutting). The ends stay where they are, so paths still meet.
+export function smoothLine(pts, tolerance = 0.6) {
+  if (!pts || pts.length < 3) return pts;
+  // Douglas-Peucker: keep only the points the line really bends at
+  const keep = new Uint8Array(pts.length); keep[0] = keep[pts.length - 1] = 1;
+  const stack = [[0, pts.length - 1]];
+  while (stack.length) {
+    const [a, b] = stack.pop(), [ax, az] = pts[a], [bx, bz] = pts[b], dx = bx - ax, dz = bz - az, l = Math.hypot(dx, dz) || 1;
+    let far = -1, fd = tolerance;
+    for (let i = a + 1; i < b; i++) {
+      const d = Math.abs((pts[i][0] - ax) * dz - (pts[i][1] - az) * dx) / l;
+      if (d > fd) { fd = d; far = i; }
+    }
+    if (far >= 0) { keep[far] = 1; stack.push([a, far], [far, b]); }
+  }
+  let line = pts.filter((_, i) => keep[i]);
+  // Corner cutting: each corner replaced by two points, a quarter of the way along each side
+  // (no more than 4 m), three times over
+  for (let pass = 0; pass < 3; pass++) {
+    const out = [line[0]];
+    for (let i = 1; i < line.length - 1; i++) {
+      const [px, pz] = line[i - 1], [cx, cz] = line[i], [nx, nz] = line[i + 1];
+      const l0 = Math.hypot(cx - px, cz - pz) || 1, l1 = Math.hypot(nx - cx, nz - cz) || 1;
+      const c0 = Math.min(0.25, 4 / l0), c1 = Math.min(0.25, 4 / l1);
+      out.push([cx + (px - cx) * c0, cz + (pz - cz) * c0], [cx + (nx - cx) * c1, cz + (nz - cz) * c1]);
+    }
+    out.push(line[line.length - 1]);
+    line = out;
+  }
+  return line;
+}

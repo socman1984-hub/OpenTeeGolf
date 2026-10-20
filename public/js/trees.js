@@ -26,6 +26,8 @@ import { hash, fract1 } from './treeplace.js';
 export { treesFromCanopy, addMappedTrees, treesInArea, addTreeAreas } from './treeplace.js';
 
 const T = (x, y, z) => new THREE.Vector3(-x, y, z);
+// Shrubs inside woods are drawn out to about this far from the camera (see buildShrubs)
+const SHRUB_NEAR = 70;
 
 // ------------------------------------------------------------------ where trees stand
 
@@ -479,7 +481,9 @@ function impostorMaterial(atlas, attrs) {
 
 // ------------------------------------------------------------------ the forest
 
-const LIMITS = { high: { near: 300, mid: 1400 }, balanced: { near: 200, mid: 850 }, performance: { near: 100, mid: 450 } };
+// near/mid: how many trees at most; nearR/midR: out to what effective distance (m) they're drawn
+// that way (beyond midR, the pictures)
+const LIMITS = { high: { near: 180, mid: 800, nearR: 42, midR: 100 }, balanced: { near: 140, mid: 560, nearR: 40, midR: 90 }, performance: { near: 60, mid: 260, nearR: 35, midR: 75 } };
 
 export class Forest {
   constructor() {
@@ -596,6 +600,7 @@ export class Forest {
   // much closer than they are (they're what you see); trees behind the camera as further away.
   update(camera, force = false) {
     if (!this.trees) return;
+    this.updateShrubs(camera);
     const cam = camera.position, dir = camera.getWorldDirection(new THREE.Vector3());
     const now = performance.now();
     if (!force && this.lastCam) {
@@ -613,7 +618,7 @@ export class Forest {
       const dx = t.center[0] - cam.x, dz = t.center[2] - cam.z, d = Math.hypot(dx, dz);
       const facing = d > 1 ? (dx * hx + dz * hz) / (d * hl) : 1;
       const e = d * (t.edge ? 0.45 : 1) * (facing < 0.2 ? 3 : 1);
-      if (e < 130) scored.push([e, i]);
+      if (e < lim.midR) scored.push([e, i]);
     }
     scored.sort((a, b) => a[0] - b[0]);
     const lod = new Uint8Array(this.trees.length); // 0 impostor, 1 mid, 2 near
@@ -621,7 +626,7 @@ export class Forest {
     for (const V of this.variants) { V.nearUsed = 0; V.midUsed = 0; }
     for (const [e, i] of scored) {
       const vi = this.trees[i].variant, V = this.variants[vi];
-      if (e < 45 && nNear < lim.near && V.nearUsed < V.near.bark.instanceMatrix.count) { lod[i] = 2; nNear++; V.nearUsed++; }
+      if (e < lim.nearR && nNear < lim.near && V.nearUsed < V.near.bark.instanceMatrix.count) { lod[i] = 2; nNear++; V.nearUsed++; }
       else if (nMid < lim.mid && V.midUsed < V.mid.bark.instanceMatrix.count) { lod[i] = 1; nMid++; V.midUsed++; }
     }
     // Write the instances
@@ -651,93 +656,153 @@ export class Forest {
     this.counts = { near: nNear, mid: nMid, impostor: ni };
   }
 
-  // Undergrowth along the edges of dense woods (what you see of a wood from the course): low leafy
-  // shrubs on the open side of each edge tree that has plenty of others round it, under the edge
-  // of its crown and a little beyond, so the wood reads as thick rather than a row of trunks.
+  // Undergrowth in big, dense woods (not clumps of trees): leafy shrubs of every size filling the ground under the trees, so
+  // a wood reads as thick rather than trunks standing on bare ground. Two kinds of spot:
+  //   edge     - on the open side of each tree along the outside of a dense wood, under the edge
+  //              of its crown and a little beyond (what you see of a wood from the course); always
+  //              drawn
+  //   interior - a jittered 2.5 m grid over the ground inside dense woods; drawn only within
+  //              SHRUB_NEAR m of the camera (further in, the trees and the edge shrubs hide them)
+  // Interior shrubs are kept in 160 m chunks, so those far from the camera are skipped (few,
+  // large chunks: every separate mesh costs time to set up when the course loads). Sizes run from knee-high
+  // sprigs to a few big thickets; leaves come from the woods' own trees (oak, ash, maple), and
+  // each shrub has its own shade: fresh, dark, yellowish or blue-green, with the odd reddish one.
   // allowed(x, z): where a shrub may grow (rough, not by paths or mown grass).
   buildShrubs(heightAt, allowed, envApply = () => {}) {
     const trees = this.trees || [];
     const cell = 14, grid = new Map(), key = (a, b) => a * 73856093 ^ b * 19349663;
     for (const t of trees) { const k = key(Math.floor(t.x / cell), Math.floor(t.z / cell)); if (!grid.has(k)) grid.set(k, []); grid.get(k).push(t); }
+    const around = (x, z, r) => {
+      const out = [], gx = Math.floor(x / cell), gz = Math.floor(z / cell);
+      for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) for (const o of grid.get(key(gx + a, gz + b)) || []) if (Math.hypot(o.x - x, o.z - z) < r) out.push(o);
+      return out;
+    };
+    // Only real woods get undergrowth, not clumps or copses: a tree is deep in a wood when at least
+    // 70 trees stand within 35 m of it (a clump never reaches that, however tight), and a tree is
+    // in the woods when such a one is within 20 m (so the edge of a wood counts too)
+    const big = 25, bgrid = new Map();
+    for (const t of trees) { const k = key(Math.floor(t.x / big), Math.floor(t.z / big)); if (!bgrid.has(k)) bgrid.set(k, []); bgrid.get(k).push(t); }
+    const within = (x, z, r, fn) => {
+      const gx = Math.floor(x / big), gz = Math.floor(z / big), n = Math.ceil(r / big);
+      for (let a = -n; a <= n; a++) for (let b = -n; b <= n; b++) for (const o of bgrid.get(key(gx + a, gz + b)) || []) if (Math.hypot(o.x - x, o.z - z) < r && fn(o)) return true;
+      return false;
+    };
+    const core = new Set();
+    for (const t of trees) { let n = 0; within(t.x, t.z, 35, () => ++n >= 70); if (n >= 70) core.add(t); }
+    const woods = new Map();
+    const inWoods = (t) => { if (!woods.has(t)) woods.set(t, core.has(t) || within(t.x, t.z, 20, (o) => core.has(o))); return woods.get(t); };
     const spots = [], taken = new Map();
     // (shrubs may overlap a little, as real ones grow into each other, but not stand inside one another)
     const free = (x, z, r) => {
       const gx = Math.floor(x / 4), gz = Math.floor(z / 4);
-      for (let a = -2; a <= 2; a++) for (let b = -2; b <= 2; b++) for (const [px, pz, pr] of taken.get(key(gx + a, gz + b)) || []) if (Math.hypot(px - x, pz - z) < (r + pr) * 0.55) return false;
+      for (let a = -2; a <= 2; a++) for (let b = -2; b <= 2; b++) for (const [px, pz, pr] of taken.get(key(gx + a, gz + b)) || []) if (Math.hypot(px - x, pz - z) < (r + pr) * 0.5) return false;
       return true;
     };
+    // Sizes vary a lot: mostly small and medium, some big, the odd thicket
+    const size = (x, z, i) => {
+      const sz = hash(x + i * 3.1, z, 15.1), v1 = hash(x, z + i * 2.3, 15.9), v2 = hash(x + i, z + i, 16.3);
+      if (sz > 0.95) return { h: 3 + v1 * 1.5, w: 5 + v2 * 3, big: true };
+      if (sz > 0.8) return { h: 2.2 + v1 * 1.2, w: 3.5 + v2 * 2, big: true };
+      if (sz > 0.5) return { h: 1.3 + v1 * 1, w: 2 + v2 * 1.6 };
+      if (sz > 0.2) return { h: 0.8 + v1 * 0.7, w: 1.2 + v2 * 1.1 };
+      return { h: 0.45 + v1 * 0.4, w: 0.7 + v2 * 0.6 };
+    };
+    const add = (x, z, s, edge) => {
+      if (!allowed(x, z) || !free(x, z, s.w / 2)) return;
+      const y = heightAt(x, z);
+      if (y === null || y === undefined) return;
+      const k = key(Math.floor(x / 4), Math.floor(z / 4));
+      if (!taken.has(k)) taken.set(k, []);
+      taken.get(k).push([x, z, s.w / 2]);
+      spots.push({ x, z, y, h: s.h, w: s.w, edge, kind: hash(x, z, 17.1), rot: hash(x, z, 18.7) * 6.283, tint: hash(x, z, 19.3), shade: hash(x, z, 20.9) });
+    };
+    // The edges first (they matter most)
     for (const t of trees) {
-      if (!t.edge || t.user) continue;
+      if (!t.edge || t.user || !inWoods(t)) continue;
       // neighbours within 14 m, and which way is open
-      let n = 0;
+      const near = around(t.x, t.z, cell).filter((o) => o !== t);
       const seen = new Array(8).fill(false);
-      const gx = Math.floor(t.x / cell), gz = Math.floor(t.z / cell);
-      for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) for (const o of grid.get(key(gx + a, gz + b)) || []) {
-        if (o === t) continue;
-        const dx = o.x - t.x, dz = o.z - t.z, d = Math.hypot(dx, dz);
-        if (d > cell) continue;
-        n++;
-        seen[Math.floor(((Math.atan2(dz, dx) + Math.PI) / (2 * Math.PI)) * 8) % 8] = true;
-      }
+      for (const o of near) seen[Math.floor(((Math.atan2(o.z - t.z, o.x - t.x) + Math.PI) / (2 * Math.PI)) * 8) % 8] = true;
       // Only the outside of dense woods: plenty of trees round it, open on one side (not a gap
       // within the wood, nor a lone tree or a thin row), and open ground beyond
       const open = seen.filter((v) => !v).length;
-      if (n < 8 || open < 2 || open > 5) continue;
+      if (near.length < 8 || open < 2 || open > 5) continue;
       let ox = 0, oz = 0;
       seen.forEach((s, k) => { if (!s) { const a = ((k + 0.5) / 8) * 2 * Math.PI - Math.PI; ox += Math.cos(a); oz += Math.sin(a); } });
       const ol = Math.hypot(ox, oz);
       if (ol < 0.01) continue;
       ox /= ol; oz /= ol;
-      const bx = t.x + ox * 12, bz = t.z + oz * 12, bk = [Math.floor(bx / cell), Math.floor(bz / cell)];
-      let beyond = false;
-      for (let a = -1; a <= 1 && !beyond; a++) for (let b = -1; b <= 1 && !beyond; b++) for (const o of grid.get(key(bk[0] + a, bk[1] + b)) || []) if (Math.hypot(o.x - bx, o.z - bz) < 7) { beyond = true; break; }
-      if (beyond) continue;
-      const count = 4 + Math.floor(hash(t.x, t.z, 12.3) * 3);
+      if (around(t.x + ox * 12, t.z + oz * 12, 7).length) continue;
+      const count = 5 + Math.floor(hash(t.x, t.z, 12.3) * 4);
       for (let i = 0; i < count; i++) {
-        const turn = (hash(t.x + i, t.z, 13.7) - 0.5) * 2.8, c = Math.cos(turn), s = Math.sin(turn);
-        const dx = ox * c - oz * s, dz = ox * s + oz * c;
-        // Sizes vary a lot: mostly small and medium, about one in seven big enough to fill a
-        // wide gap (set a little further back, under the trees, so it doesn't spill out far)
-        const sz = hash(t.x + i * 3.1, t.z, 15.1), big = sz > 0.85, mid = sz > 0.55;
-        const v1 = hash(t.x, t.z + i * 2.3, 15.9), v2 = hash(t.x + i, t.z + i, 16.3);
-        const h = big ? 2.6 + v1 * 1.4 : mid ? 1.6 + v1 * 1 : 0.8 + v1 * 0.8;
-        const w = big ? 4 + v2 * 2.5 : mid ? 2.4 + v2 * 1.6 : 1.2 + v2 * 1.2;
-        const d = (t.rh || t.coneR || 3) * (big ? 0.15 + hash(t.x, t.z + i, 14.1) * 0.5 : 0.35 + hash(t.x, t.z + i, 14.1) * 0.85) + 0.5;
-        const x = t.x + dx * d, z = t.z + dz * d;
-        if (!allowed(x, z) || !free(x, z, w / 2)) continue;
-        const y = heightAt(x, z);
-        if (y === null || y === undefined) continue;
-        const k = key(Math.floor(x / 4), Math.floor(z / 4));
-        if (!taken.has(k)) taken.set(k, []);
-        taken.get(k).push([x, z, w / 2]);
-        spots.push({ x, z, y, h, w, kind: hash(x, z, 17.1) < 0.6 ? 0 : 1, rot: hash(x, z, 18.7) * 6.283, tint: hash(x, z, 19.3) });
+        const turn = (hash(t.x + i, t.z, 13.7) - 0.5) * 3.2, c = Math.cos(turn), s = Math.sin(turn);
+        const dx = ox * c - oz * s, dz = ox * s + oz * c, sz = size(t.x, t.z, i);
+        // (big ones set a little further back, under the trees, so they don't spill out far)
+        const d = (t.rh || t.coneR || 3) * (sz.big ? 0.15 + hash(t.x, t.z + i, 14.1) * 0.5 : 0.3 + hash(t.x, t.z + i, 14.1) * 0.9) + 0.4;
+        add(t.x + dx * d, t.z + dz * d, sz, true);
       }
     }
-    // Two looks, leaves of oak and ash (whichever the woods' own trees use)
+    // Then the ground inside dense woods: wherever there are at least 4 trees within 9 m and
+    // one within 6 m, nearly every spot on a 2.5 m grid gets a shrub
+    if (trees.length) {
+      let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+      for (const t of trees) { minX = Math.min(minX, t.x); maxX = Math.max(maxX, t.x); minZ = Math.min(minZ, t.z); maxZ = Math.max(maxZ, t.z); }
+      const STEP = 2.5;
+      for (let gz = Math.floor(minZ / STEP); gz <= Math.ceil(maxZ / STEP); gz++) for (let gx = Math.floor(minX / STEP); gx <= Math.ceil(maxX / STEP); gx++) {
+        const x = (gx + hash(gx, gz, 21.7)) * STEP, z = (gz + hash(gx, gz, 22.3)) * STEP;
+        if (hash(gx, gz, 23.9) > 0.9) continue;
+        const near = around(x, z, 9);
+        if (near.length < 4 || !near.some((o) => Math.hypot(o.x - x, o.z - z) < 6) || !near.every(inWoods)) continue;
+        add(x, z, size(x, z, 7), false);
+      }
+    }
+    // Leaves of the woods' own broadleaf trees
     const pick = (kind) => this.models.find((md) => md.v.kind === kind)?.near;
-    const sources = [pick('oak'), pick('ash')].filter(Boolean);
-    const geo = shrubGeometry();
+    const sources = [pick('oak'), pick('ash'), pick('maple')].filter(Boolean);
+    const geos = { edge: shrubGeometry(28), interior: shrubGeometry(18) };
+    const mats = sources.map((src) => { const mat = leafMaterial(src.leafMat, { green: false }); envApply(mat); return mat; });
     const m = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3(), up = new THREE.Vector3(0, 1, 0), col = new THREE.Color();
-    this.shrubCount = 0;
-    sources.forEach((src, si) => {
-      const list = spots.filter((p) => p.kind % sources.length === si);
-      if (!list.length) return;
-      const mat = leafMaterial(src.leafMat, { green: false });
-      envApply(mat);
-      const mesh = new THREE.InstancedMesh(geo, mat, list.length);
+    // Shades (multiplying the leaf texture): fresh, dark, yellowish, blue-green, and rarely reddish
+    const SHADES = [[0.82, 0.95, 0.66], [0.58, 0.7, 0.5], [0.98, 1.0, 0.58], [0.6, 0.8, 0.72], [0.95, 0.68, 0.48]];
+    const shadeOf = (p) => SHADES[p.shade < 0.32 ? 0 : p.shade < 0.6 ? 1 : p.shade < 0.8 ? 2 : p.shade < 0.96 ? 3 : 4];
+    const chunks = new Map(), CH = 160;
+    for (const p of spots) {
+      // (edge shrubs, always drawn, in one mesh per kind of leaf)
+      const ck = p.edge ? `0,0,1,${Math.floor(p.kind * sources.length)}` : `${Math.floor(p.x / CH)},${Math.floor(p.z / CH)},0,${Math.floor(p.kind * sources.length)}`;
+      if (!chunks.has(ck)) chunks.set(ck, []);
+      chunks.get(ck).push(p);
+    }
+    this.shrubCount = 0; this.shrubChunks = [];
+    if (!sources.length) return;
+    for (const [ck, list] of chunks) {
+      const [cx, cz, edge, si] = ck.split(',').map(Number);
+      const mesh = new THREE.InstancedMesh(edge ? geos.edge : geos.interior, mats[si], list.length);
       mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(list.length * 3), 3);
       list.forEach((p, i) => {
         q.setFromAxisAngle(up, p.rot);
         m.compose(T(p.x, p.y - 0.1, p.z), q, sc.set(p.w, p.h, p.w * (0.8 + p.tint * 0.4)));
         mesh.setMatrixAt(i, m);
-        // a little darker and more varied than the trees above them (they grow in their shade)
-        mesh.setColorAt(i, col.setRGB(0.7 + p.tint * 0.25, 0.8 + p.tint * 0.2, 0.62 + p.tint * 0.2));
+        const [r, g, b] = shadeOf(p), v = 0.85 + p.tint * 0.3;
+        mesh.setColorAt(i, col.setRGB(r * v, g * v, b * v));
       });
       mesh.receiveShadow = true;
       mesh.computeBoundingSphere();
+      mesh.layers.set(1); // (not drawn into the pond reflections)
       this.group.add(mesh);
+      if (!edge) this.shrubChunks.push({ mesh, x: (cx + 0.5) * CH, z: (cz + 0.5) * CH });
       this.shrubCount += list.length;
-    });
+    }
+    this.shrubCam = null;
+  }
+
+  // Shrubs inside the woods: only the chunks near the camera
+  updateShrubs(camera) {
+    const ch = this.shrubChunks;
+    if (!ch?.length) return;
+    const x = -camera.position.x, z = camera.position.z;
+    if (this.shrubCam && Math.hypot(x - this.shrubCam.x, z - this.shrubCam.z) < 6) return;
+    this.shrubCam = { x, z };
+    for (const c of ch) c.mesh.visible = Math.hypot(c.x - x, c.z - z) < SHRUB_NEAR + 113; // (+ half a chunk's diagonal)
   }
 
   triangles() {

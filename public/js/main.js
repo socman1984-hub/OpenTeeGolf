@@ -1,5 +1,6 @@
 // OpenTeeGolf game loop: course setup, receiving shots, rules and HUD.
 import { buildCourse, TEE_TYPES } from './course.js';
+import { smoothLine } from './roads.js';
 import { CourseScene } from './scene.js';
 import { simulateShot, LIE_EFFECT, stimpToRoll, SURFACE_NAMES } from './physics.js';
 import { loadJolt, CollisionWorld } from './collision.js';
@@ -488,7 +489,7 @@ $('btn-start').onclick = async () => {
         watch('canopy', 'Tree heights', `/api/courses/${id}/canopy`, null),
       ]);
       S.imageryLoading = false;
-      real.paths = paths;
+      real.paths = (paths || []).map((p) => ({ ...p, pts: smoothLine(p.pts) })); // (straight runs straight, bends rounded)
       real.parking = parking;
       real.roads = roads;
       if (!manifest?.chunks) loader.fail('imagery', 'Not available; the course will be painted instead');
@@ -508,7 +509,7 @@ $('btn-start').onclick = async () => {
     loader.finish('course');
     // The scene reports its own steps (photos, painting, trees, graphics)
     let current = null;
-    await scene.build(S.course, { imagery, buildings, canopy }, async (stepId, label, done = null, total = null, msg = '') => {
+    await scene.build(S.course, { imagery, buildings, canopy, buildingTypes: real?.buildingTypes || {} }, async (stepId, label, done = null, total = null, msg = '') => {
       if (current && current !== stepId) loader.finish(current);
       current = stepId;
       loader.step(stepId, label, { done, total, msg });
