@@ -7,7 +7,7 @@
 //   - water (penalty areas) and OOB
 // These drive both the physics (heightAt / normalAt / surfaceAt) and the rendering.
 
-import { courseMowing } from './mowing.js';
+import { courseMowing, courseGrass } from './mowing.js';
 import { prepareStreams, streamFlow } from './streams.js';
 
 export const TEE_TYPES = ['Black', 'Blue', 'White', 'Green', 'Yellow', 'Red', 'Junior', 'Par3'];
@@ -561,6 +561,7 @@ export function buildCourse(courseData, real = null) {
     altitudeM: (courseData.altitudeV2 || courseData.altitude || 0) * (courseData.altitudeV2 ? 0.3048 : 1),
     defaultStimp: courseData.DefaultStimp || 10,
     mowing: courseMowing(courseData),
+    grass: courseGrass(courseData),
     holes,
     hazards,
     oob,

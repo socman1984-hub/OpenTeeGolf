@@ -3,7 +3,8 @@
 import { makeCourseData, TEE_ORDER, PIN_DAYS } from './coursefile.js';
 import { smoothPoly } from './course.js';
 import { treesFromCanopy, treesFromPhoto, removeTrees, addMappedTrees, addTreeAreas, TREE_SIZES, TREE_SPECIES, TREE_MIXES, AREA_HEIGHTS } from './treeplace.js';
-import { MOW_PATTERNS, MOW_WIDTH, courseMowing, mowShade } from './mowing.js';
+import { MOW_PATTERNS, MOW_WIDTH, courseMowing, mowShade, GRASS_HEIGHTS, courseGrass } from './mowing.js';
+import { BUILDING_TYPES, classifyBuildings, footprintInfo } from './buildingtypes.js';
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
@@ -32,12 +33,15 @@ let removedTrees = [];       // found trees taken out: [[x, z], ...]
 let baseTrees = [];          // found trees, for showing
 let shownTrees = [], shownKey = '';
 let showTrees = true;
+// Buildings around the course (OpenStreetMap), what each is (the player's choices: { "x,z": type }),
+// and whether they're shown
+let buildings = [], buildingTypes = {}, showBuildings = true, buildingKinds = null, kindsKey = '';
 const treeOpts = { size: 'medium', density: 'medium', kind: 'auto', areaKind: 'auto', hMin: AREA_HEIGHTS.min, hMax: AREA_HEIGHTS.max };
 // Map colours for each species (planted trees are drawn in them; 'auto' ones in the usual green)
 const SPECIES_COLOR = { oak: '#5f9e3c', maple: '#c86b2d', ash: '#9fcf5a', birch: '#f2f0dc', aspen: '#e8d74a', poplar: '#3fb5a3', willow: '#a7e07a', pine: '#2f6b4a', spruce: '#3d6f9e' };
 const speciesOptions = (sel) => [...TREE_MIXES, ...TREE_SPECIES].map((o) => `<option value="${o.id}" ${o.id === (sel || 'auto') ? 'selected' : ''}>${esc(o.label)}</option>`).join('');
-const course = { name: '', location: '', stimp: 10, mowing: courseMowing(null) };
-const sel = { hole: 0, shape: -1, tree: -1, found: null, removed: -1 };
+const course = { name: '', location: '', stimp: 10, mowing: courseMowing(null), grass: courseGrass(null) };
+const sel = { hole: 0, shape: -1, tree: -1, found: null, removed: -1, many: [], building: -1 }; // many: found trees picked with Shift
 const view = { cx: 0, cz: 0, scale: 1 };
 let mode = null;   // { type: 'place', kind, key } | { type: 'draw', kind, pts }
 let drag = null;
@@ -113,6 +117,8 @@ async function load() {
   editable = !!list.courses.find((c) => c.id === courseId)?.editable;
   course.name = g.CourseName || ''; course.location = g.Location || ''; course.stimp = g.DefaultStimp || 10;
   course.mowing = courseMowing(g);
+  course.grass = courseGrass(g);
+  $('c-rough-h').value = course.grass.rough; $('c-native-h').value = course.grass.native;
   holes = g.Holes.map((h) => {
     const tees = {}, aims = [];
     let green = null;
@@ -146,6 +152,9 @@ async function load() {
     grid = { ...r.grid, h: new Float32Array(bytes.buffer) };
     hill = makeHillshade(grid);
   }
+  buildingTypes = { ...(r?.buildingTypes || {}) };
+  fetch(`/api/courses/${courseId}/buildings`).then((x) => (x.ok ? x.json() : [])).catch(() => [])
+    .then((list) => { buildings = Array.isArray(list) ? list.filter((b) => b.pts?.length >= 4) : []; renderBuildingInfo(); draw(); });
   document.title = `${course.name} · Course Editor`;
   $('c-name').value = course.name; $('c-location').value = course.location; $('c-stimp').value = course.stimp;
   showMowing();
@@ -416,7 +425,7 @@ async function save() {
   const P = (p) => ({ x: r2(p.x), y: Math.round(heightAt(p.x, p.z) * 1000) / 1000, z: r2(p.z) });
   const sorted = [...holes].sort((a, b) => a.number - b.number);
   const out = makeCourseData({
-    name: course.name, location: course.location, stimp: course.stimp, mowing: { ...course.mowing },
+    name: course.name, location: course.location, stimp: course.stimp, mowing: { ...course.mowing }, grass: { rough: course.grass.rough, native: course.grass.native },
     lat: courseData.CourseLat, lon: courseData.CourseLong, altitudeM: (courseData.altitudeV2 || 0) * 0.3048,
     designer: courseData.Designer || 'OpenTeeGolf course builder',
     holes: sorted.map((h) => ({
@@ -434,7 +443,7 @@ async function save() {
   const treeAreas = shapes.filter((s) => s.kind === 'trees').map((s) => ({ ...areaData(s), pts: s.pts.map(([x, z]) => [r2(x), r2(z)]) }));
   setStatus('Saving…');
   const res = await fetch(`/api/courses/${courseId}`, {
-    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ course: out, features, userTrees, treeAreas, removedTrees }),
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ course: out, features, userTrees, treeAreas, removedTrees, buildingTypes }),
   });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) return setStatus(`Save failed: ${body.error || res.status}`);
@@ -448,7 +457,7 @@ function setDirty(d) { dirty = d; $('dirty').textContent = d ? '● unsaved chan
 
 // ------------------------------------------------------------------ undo
 
-const snapshot = () => JSON.stringify({ holes, shapes, course, userTrees, removedTrees });
+const snapshot = () => JSON.stringify({ holes, shapes, course, userTrees, removedTrees, buildingTypes });
 function change() {
   undoStack.push(snapshot());
   if (undoStack.length > 100) undoStack.shift();
@@ -458,7 +467,7 @@ function undo() {
   const s = undoStack.pop();
   if (!s) return;
   const o = JSON.parse(s);
-  holes = o.holes; shapes = o.shapes; Object.assign(course, o.course); userTrees = o.userTrees || []; removedTrees = o.removedTrees || [];
+  holes = o.holes; shapes = o.shapes; Object.assign(course, o.course); userTrees = o.userTrees || []; removedTrees = o.removedTrees || []; buildingTypes = o.buildingTypes || {};
   sel.hole = Math.min(sel.hole, holes.length - 1); sel.shape = -1; sel.tree = -1; sel.found = null; sel.removed = -1;
   setDirty(true);
   renderHoles(); renderShapePanel(); showMowing(); draw();
@@ -509,6 +518,7 @@ function draw() {
     });
   }
   ctx.globalAlpha = 1;
+  if (showBuildings) drawBuildings();
   if (showTrees) drawTrees();
   // Holes: others faint, the selected one with handles
   holes.forEach((h, i) => { if (i !== sel.hole) drawHole(h, false); });
@@ -585,6 +595,18 @@ function drawTrees() {
     }
     ctx.stroke();
   }
+  // Trees picked with Shift: a ring round each, and the box being dragged
+  ctx.lineWidth = 2; ctx.strokeStyle = '#ffd84a';
+  for (const t of sel.many) {
+    const [sx, sy] = toScreen(t.x, t.z);
+    ctx.beginPath(); ctx.arc(sx, sy, Math.max(6, t.r * view.scale + 3), 0, 7); ctx.stroke();
+  }
+  if (drag?.type === 'box') {
+    ctx.setLineDash([5, 4]); ctx.strokeStyle = '#ffd84a'; ctx.fillStyle = 'rgba(255,216,74,0.08)';
+    ctx.fillRect(drag.sx, drag.sy, drag.ex - drag.sx, drag.ey - drag.sy);
+    ctx.strokeRect(drag.sx, drag.sy, drag.ex - drag.sx, drag.ey - drag.sy);
+    ctx.setLineDash([]);
+  }
   const s = userTrees[sel.tree], f = sel.found, rm = removedTrees[sel.removed];
   const ring = s ? [s.x, s.z, (TREE_SIZES[s.size] || 13) * 0.33] : f ? [f.x, f.z, f.r] : rm ? [rm[0], rm[1], 2] : null;
   if (ring) {
@@ -641,6 +663,62 @@ function drawHole(h, active) {
   }
 }
 
+// ------------------------------------------------------------------ buildings
+
+// What each building is (worked out again only when something it depends on changes)
+function kinds() {
+  const tee = (h) => h && TEE_ORDER.map((t) => h.tees[t]).find(Boolean);
+  const start = [tee(holes[0]), holes[8]?.green, tee(holes[9]), holes[17]?.green].filter(Boolean);
+  const key = `${buildings.length}|${JSON.stringify(start)}|${JSON.stringify(buildingTypes)}`;
+  if (key !== kindsKey) { buildingKinds = classifyBuildings(buildings, start, buildingTypes); kindsKey = key; }
+  return buildingKinds;
+}
+// Choose a building's type (back to the guess: the choice is dropped)
+function setBuildingType(key, type, auto) {
+  if (type === auto) delete buildingTypes[key]; else buildingTypes[key] = type;
+  renderShapePanel(); renderBuildingInfo(); draw();
+}
+function renderBuildingInfo() {
+  const legend = $('b-legend');
+  if (legend && !legend.childElementCount) legend.innerHTML = BUILDING_TYPES.map((t) => `<span><i style="background:${t.colour}"></i>${t.label.split(' (')[0]}</span>`).join('');
+  const el = $('b-info');
+  if (!el) return;
+  if (!buildings.length) { el.textContent = 'No buildings mapped around this course.'; return; }
+  const n = {};
+  for (const k of kinds()) n[k.type] = (n[k.type] || 0) + 1;
+  const changed = Object.keys(buildingTypes).length;
+  el.textContent = `${buildings.length} buildings: ${BUILDING_TYPES.filter((t) => n[t.id]).map((t) => `${n[t.id]} ${t.label.split(' (')[0].toLowerCase()}`).join(', ')}${changed ? ` · ${changed} set by you` : ''}`;
+}
+function drawBuildings() {
+  if (!buildings.length) return;
+  const ks = kinds(), colour = Object.fromEntries(BUILDING_TYPES.map((t) => [t.id, t.colour]));
+  ctx.lineWidth = 1.5;
+  buildings.forEach((b, i) => {
+    ctx.beginPath();
+    b.pts.forEach(([x, z], j) => { const [sx, sy] = toScreen(x, z); if (j) ctx.lineTo(sx, sy); else ctx.moveTo(sx, sy); });
+    ctx.closePath();
+    ctx.globalAlpha = 0.55; ctx.fillStyle = colour[ks[i].type] || '#ccc'; ctx.fill();
+    ctx.globalAlpha = 1; ctx.strokeStyle = i === sel.building ? '#ffd84a' : 'rgba(0,0,0,0.6)'; ctx.lineWidth = i === sel.building ? 3 : 1.2; ctx.stroke();
+  });
+  // (the type written on each, once there's room)
+  if (view.scale > 1.2) {
+    ctx.font = '11px system-ui'; ctx.textAlign = 'center'; ctx.fillStyle = '#fff'; ctx.strokeStyle = 'rgba(0,0,0,0.7)'; ctx.lineWidth = 3;
+    buildings.forEach((b, i) => {
+      const { cx, cz } = footprintInfo(b.pts), [sx, sy] = toScreen(cx, cz), t = BUILDING_TYPES.find((x) => x.id === ks[i].type)?.label.split(' (')[0] || '';
+      ctx.strokeText(t, sx, sy + 4); ctx.fillText(t, sx, sy + 4);
+    });
+    ctx.textAlign = 'start';
+  }
+}
+// The building under the cursor (the smallest, where they overlap), or -1
+function hitBuilding(sx, sy) {
+  const [x, z] = toWorld(sx, sy);
+  let best = -1, ba = Infinity;
+  buildings.forEach((b, i) => { if (pointInPoly(b.pts, x, z)) { const { area } = footprintInfo(b.pts); if (area < ba) { ba = area; best = i; } } });
+  return best;
+}
+const escapeHtml = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+
 // ------------------------------------------------------------------ hit testing
 
 function hitHandle(sx, sy) {
@@ -692,7 +770,7 @@ function hitRemoved(sx, sy) {
   if (view.scale <= 0.6) return -1;
   return removedTrees.findIndex(([x, z]) => { const [px, py] = toScreen(x, z); return Math.hypot(px - sx, py - sy) < 7; });
 }
-const clearTreeSel = () => { sel.tree = -1; sel.found = null; sel.removed = -1; };
+const clearTreeSel = () => { sel.tree = -1; sel.found = null; sel.removed = -1; sel.many = []; sel.building = -1; };
 
 function hitShape(sx, sy) {
   const [x, z] = toWorld(sx, sy);
@@ -728,6 +806,11 @@ canvas.addEventListener('mousedown', (e) => {
   if (mode?.type === 'draw') {
     if (e.detail > 1) return finishDraw(); // double-click
     mode.pts.push([x, z]); draw(); return;
+  }
+  // Shift: pick many found trees - click one to add or drop it, or drag a box round several
+  if (e.shiftKey && showTrees) {
+    drag = { type: 'box', sx, sy, ex: sx, ey: sy, found: hitFoundTree(sx, sy) };
+    return;
   }
   const hd = hitHandle(sx, sy);
   if (hd) { change(); drag = { type: 'handle', hd }; return; }
@@ -797,16 +880,43 @@ window.addEventListener('mousemove', (e) => {
     shapes[sel.shape].pts[drag.i] = [x, z];
   } else if (drag.type === 'tree') {
     userTrees[drag.i].x = x; userTrees[drag.i].z = z;
+  } else if (drag.type === 'box') {
+    drag.ex = sx; drag.ey = sy;
   }
   draw();
 });
 window.addEventListener('mouseup', (e) => {
+  if (drag?.type === 'box') {
+    const many = sel.many.slice();
+    sel.tree = -1; sel.removed = -1; sel.shape = -1;
+    if (sel.found && !many.includes(sel.found)) many.push(sel.found);
+    sel.found = null;
+    if (Math.hypot(drag.ex - drag.sx, drag.ey - drag.sy) < 4) {
+      // a Shift-click: add the tree under it, or drop it if it's already picked
+      if (drag.found) { const k = many.indexOf(drag.found); if (k >= 0) many.splice(k, 1); else many.push(drag.found); }
+    } else {
+      const x0 = Math.min(drag.sx, drag.ex), x1 = Math.max(drag.sx, drag.ex), y0 = Math.min(drag.sy, drag.ey), y1 = Math.max(drag.sy, drag.ey);
+      for (const t of plannedTrees()) {
+        if (t.user) continue;
+        const [px, py] = toScreen(t.x, t.z);
+        if (px >= x0 && px <= x1 && py >= y0 && py <= y1 && !many.includes(t)) many.push(t);
+      }
+    }
+    if (many.length === 1) sel.found = many[0]; else sel.many = many;
+    drag = null;
+    renderShapePanel(); draw();
+    return;
+  }
   if ((drag?.type === 'pan' && drag.click) || (drag?.type === 'move' && !drag.moved)) {
     // A click (not a drag) selects whatever shape is under the cursor
     clearTreeSel();
     if (drag.found) { sel.found = drag.found; sel.shape = -1; }
     else if (drag.removed >= 0) { sel.removed = drag.removed; sel.shape = -1; }
-    else sel.shape = hitShape(drag.sx, drag.sy);
+    else {
+      const bi = showBuildings ? hitBuilding(drag.sx, drag.sy) : -1;
+      sel.building = bi;
+      sel.shape = bi >= 0 ? -1 : hitShape(drag.sx, drag.sy);
+    }
     renderShapePanel();
     draw();
   }
@@ -833,6 +943,7 @@ window.addEventListener('keydown', (e) => {
   if (e.key === 'Backspace' && mode?.type === 'draw') { mode.pts.pop(); draw(); return; }
   if ((e.key === 'Delete' || e.key === 'Backspace') && sel.tree >= 0) { deleteTree(); return; }
   if ((e.key === 'Delete' || e.key === 'Backspace') && sel.found) { removeFound(); return; }
+  if ((e.key === 'Delete' || e.key === 'Backspace') && sel.many.length) { removeMany(); return; }
   if ((e.key === 'Delete' || e.key === 'Backspace') && sel.shape >= 0) deleteShape();
   // Arrow keys nudge the selected shape: 25 cm, or 1 m with Shift (up = north on the map)
   const nudge = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, 1], ArrowDown: [0, -1] }[e.key];
@@ -916,6 +1027,16 @@ function removeFound(replace = false) {
   }
   renderShapePanel(); draw();
 }
+// Take out every tree picked with Shift (one undo step)
+function removeMany() {
+  if (!sel.many.length) return;
+  change();
+  for (const f of sel.many) removedTrees.push([Math.round(f.x * 100) / 100, Math.round(f.z * 100) / 100]);
+  const n = sel.many.length;
+  clearTreeSel();
+  setStatus(`Removed ${n} trees (Ctrl+Z to undo)`);
+  renderShapePanel(); draw();
+}
 function restoreRemoved() {
   if (sel.removed < 0) return;
   change();
@@ -961,6 +1082,30 @@ function renderShapePanel() {
     $('t-sel-size').onchange = () => { change(); t.size = $('t-sel-size').value; draw(); };
     $('t-sel-kind').onchange = () => { change(); t.kind = $('t-sel-kind').value; draw(); };
     $('t-del').onclick = deleteTree;
+    return;
+  }
+  if (sel.building >= 0 && buildings[sel.building]) {
+    const k = kinds()[sel.building], b = buildings[sel.building], { area } = footprintInfo(b.pts);
+    const label = (id) => BUILDING_TYPES.find((t) => t.id === id)?.label || id;
+    box.className = 'small';
+    box.innerHTML = `
+      <label>Selected building <select id="b-type">${BUILDING_TYPES.map((t) => `<option value="${t.id}" ${t.id === k.type ? 'selected' : ''}>${t.label}</option>`).join('')}</select></label>
+      <div class="muted">${b.name ? `${escapeHtml(b.name)} · ` : ''}about ${Math.round(area)} m²${b.kind && b.kind !== 'yes' ? ` · mapped as “${escapeHtml(b.kind)}”` : ''}.
+        ${k.type === k.auto ? 'The game’s guess.' : `The game guessed ${label(k.auto).toLowerCase()}.`}</div>
+      ${k.type !== k.auto ? '<div class="btn-row"><button id="b-auto">Use the game’s guess</button></div>' : ''}`;
+    $('b-type').onchange = () => { change(); setBuildingType(k.key, $('b-type').value, k.auto); };
+    if ($('b-auto')) $('b-auto').onclick = () => { change(); setBuildingType(k.key, k.auto, k.auto); };
+    return;
+  }
+  if (sel.many.length) {
+    const photo = sel.many.filter((t) => t.photo).length;
+    box.className = 'small';
+    box.innerHTML = `
+      <div><b>${sel.many.length} trees selected</b></div>
+      <div class="muted">${photo ? `${photo} guessed from the aerial photo, ` : ''}${sel.many.length - photo} from the tree-height map or OpenStreetMap. Shift-click a tree to add or drop it.</div>
+      <div class="btn-row"><button id="m-del">Remove ${sel.many.length} trees</button><button id="m-clear">Clear selection</button></div>`;
+    $('m-del').onclick = removeMany;
+    $('m-clear').onclick = () => { clearTreeSel(); renderShapePanel(); draw(); };
     return;
   }
   if (sel.found) {
@@ -1128,6 +1273,11 @@ function autoPins(h) {
 
 $('c-name').oninput = () => { course.name = $('c-name').value; setDirty(true); };
 $('c-location').oninput = () => { course.location = $('c-location').value; setDirty(true); };
+// Rough and tall grass heights
+for (const [kind, id] of [['rough', 'c-rough-h'], ['native', 'c-native-h']]) {
+  $(id).innerHTML = GRASS_HEIGHTS[kind].map((o) => `<option value="${o.id}">${o.label}</option>`).join('');
+  $(id).onchange = () => { change(); course.grass[kind] = $(id).value; setDirty(true); };
+}
 $('c-stimp').onchange = () => { course.stimp = +$('c-stimp').value || 10; setDirty(true); };
 
 // Mowing patterns: a picker and a small top-down preview for fairways and for greens
@@ -1186,6 +1336,7 @@ $('t-hmax').onchange = () => { treeOpts.hMax = Math.min(40, Math.max(2, +$('t-hm
 $('species-list').innerHTML = TREE_SPECIES.map((sp) => `<li><i style="background:${SPECIES_COLOR[sp.id]}"></i><b>${esc(sp.label)}</b><span>${esc(sp.about)}</span></li>`).join('')
   + `<li><i style="background:rgba(80,175,70,0.9)"></i><b>Automatic</b><span>chosen from the aerial photo</span></li>`;
 $('t-review').onclick = () => { if (!showTrees) { showTrees = true; $('t-show').checked = true; } startReview(); };
+$('b-show').onchange = () => { showBuildings = $('b-show').checked; if (!showBuildings && sel.building >= 0) { sel.building = -1; renderShapePanel(); } draw(); };
 $('t-show').onchange = () => { showTrees = $('t-show').checked; if (!showTrees && (sel.tree >= 0 || sel.found || sel.removed >= 0)) { clearTreeSel(); renderShapePanel(); } draw(); };
 $('save').onclick = save;
 $('play').onclick = async (e) => {

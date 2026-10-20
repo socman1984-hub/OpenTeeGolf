@@ -60,3 +60,8 @@
 .tree-tool button.active { outline: 2px solid var(--accent); }
 .tree-tool select { font-size: 12px; }
 #tree-info { margin-bottom: 6px; }
+
+/* Buildings: a key to the colours on the map */
+.b-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; margin: 6px 0; }
+.b-legend span { display: inline-flex; align-items: center; gap: 5px; }
+.b-legend i { width: 11px; height: 11px; border-radius: 2px; display: inline-block; border: 1px solid rgba(0,0,0,0.4); }

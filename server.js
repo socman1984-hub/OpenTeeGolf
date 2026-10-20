@@ -16,10 +16,11 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { normalizeSpin } from './public/js/physics.js';
 import { TREE_SPECIES, TREE_MIXES } from './public/js/treeplace.js';
+import { BUILDING_TYPES } from './public/js/buildingtypes.js';
 import { searchCourses, withFreshOsm } from './lib/realdata.js';
 import { VERSION, checkForUpdate, installUpdate, canInstall, cleanUpAfterUpdate } from './lib/updater.js';
 import { checkCourse, buildCourse, BUILT_DIR } from './lib/builder.js';
-import { geoFor, ensureSatellite } from './lib/imagery.js';
+import { geoFor, ensureSatellite, recheckSatellite } from './lib/imagery.js';
 import { ensureBuildings } from './lib/buildings.js';
 import { ensurePaths } from './lib/paths.js';
 import { ensureParking } from './lib/parking.js';
@@ -27,6 +28,7 @@ import { ensureRoads } from './lib/roads.js';
 import { ensurePhoto, photoMeta, savePhoto } from './lib/coursephoto.js';
 import { ensureCanopy } from './lib/canopy.js';
 import { MevoClient, DEFAULT_SETUP } from './lib/mevo.js';
+const BUILDING_TYPE_IDS = new Set(BUILDING_TYPES.map((t) => t.id));
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const HTTP_PORT = +(process.env.PORT || 8080);
@@ -705,7 +707,8 @@ const httpServer = http.createServer(async (req, res) => {
       // Update a built course from OpenStreetMap: everything downloaded again (not from saved
       // answers), the course rebuilt in place, then its cart paths, buildings, car parks and roads
       // fetched afresh.
-      // Imagery, elevation and tree heights aren't from OpenStreetMap and are kept.
+      // Elevation and tree heights aren't from OpenStreetMap and are kept; the aerial photo is
+      // kept unless another source now has a clearly clearer one.
       const id = m[1], f = courseFile(id);
       const cd = f && readCourseData(f);
       const b = cd?.GolfSimBuilder;
@@ -714,14 +717,21 @@ const httpServer = http.createServer(async (req, res) => {
       const log = (msg, extra) => { if (msg) console.log(`[update] ${msg}`); broadcast('build', { jobId, msg, ...extra }); };
       // (trees added in the editor are the player's own: they carry over)
       let keep = {};
-      try { const old = JSON.parse(fs.readFileSync(realFile(f), 'utf8')); keep = { userTrees: old.userTrees, treeAreas: old.treeAreas, removedTrees: old.removedTrees }; } catch { /* none */ }
+      try { const old = JSON.parse(fs.readFileSync(realFile(f), 'utf8')); keep = { userTrees: old.userTrees, treeAreas: old.treeAreas, removedTrees: old.removedTrees, buildingTypes: old.buildingTypes }; } catch { /* none */ }
       withFreshOsm(async () => {
         const r = await buildCourse({ osmType: b.osmType, osmId: b.osmId, group: b.group ?? null, name: cd.CourseName, location: cd.Location || '', id }, log);
-        if (keep.userTrees?.length || keep.treeAreas?.length || keep.removedTrees?.length) {
+        if (keep.userTrees?.length || keep.treeAreas?.length || keep.removedTrees?.length || Object.keys(keep.buildingTypes || {}).length) {
           const rfNew = realFile(r.dataFile), nr = JSON.parse(fs.readFileSync(rfNew, 'utf8'));
-          Object.assign(nr, { userTrees: keep.userTrees || [], treeAreas: keep.treeAreas || [], removedTrees: keep.removedTrees || [] });
+          Object.assign(nr, { userTrees: keep.userTrees || [], treeAreas: keep.treeAreas || [], removedTrees: keep.removedTrees || [], buildingTypes: keep.buildingTypes || {} });
           fs.writeFileSync(rfNew, JSON.stringify(nr));
           log('Kept the trees added in the editor.');
+        }
+        // (and the course's look chosen in the editor: mowing patterns, grass heights)
+        if (cd.Mowing || cd.Grass) {
+          const nd0 = readCourseData(r.dataFile);
+          if (cd.Mowing) nd0.Mowing = cd.Mowing;
+          if (cd.Grass) nd0.Grass = cd.Grass;
+          fs.writeFileSync(r.dataFile, JSON.stringify(nd0, null, 1));
         }
         const sat = satDir(r.dataFile);
         for (const name of ['paths.json', 'buildings.json', 'parking.json', 'roads.json', 'phototrees.json']) fs.rmSync(path.join(sat, name), { force: true });
@@ -734,6 +744,8 @@ const httpServer = http.createServer(async (req, res) => {
           log('', { step: 'buildings' }); await ensureBuildings(sat, geo, real.grid, log);
           log('', { step: 'parking' }); await ensureParking(sat, geo, real.grid, log);
           log('', { step: 'roads' }); await ensureRoads(sat, geo, real.grid, oob, log);
+          log('', { step: 'imagery' });
+          try { await recheckSatellite(sat, geo, real.grid, log); } catch (err) { log(`Aerial photo check skipped (${err.message})`); }
         }
         return r;
       })
@@ -772,6 +784,11 @@ const httpServer = http.createServer(async (req, res) => {
               ...(kindOk(a.kind) ? { kind: a.kind } : {}),
               ...(ht(a.hMin) !== undefined && ht(a.hMax) !== undefined ? { hMin: ht(a.hMin), hMax: ht(a.hMax) } : {}),
             }));
+        }
+        // (building types picked in the editor: { "x,z": type })
+        if (b.buildingTypes && typeof b.buildingTypes === 'object') {
+          real.buildingTypes = Object.fromEntries(Object.entries(b.buildingTypes)
+            .filter(([k, v]) => /^-?\d+,-?\d+$/.test(k) && BUILDING_TYPE_IDS.has(v)).slice(0, 20000));
         }
         real.edited = new Date().toISOString();
         fs.writeFileSync(rf, JSON.stringify(real));

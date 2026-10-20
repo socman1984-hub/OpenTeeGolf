@@ -14,6 +14,20 @@ export const MOW_DEFAULTS = { fairway: 'stripes', green: 'checker' };
 export const MOW_WIDTH = { fairway: 3.5, green: 1 };
 
 export const mowIndex = (id) => Math.max(0, MOW_PATTERNS.findIndex((p) => p.id === id));
+// How tall the course's rough and its tall native grass (heather) grow, chosen in the course
+// editor: a scale on the grass's height (the rough's "long" is how it used to be)
+export const GRASS_HEIGHTS = {
+  rough: [{ id: 'short', label: 'Short', scale: 0.55 }, { id: 'medium', label: 'Medium', scale: 0.8 }, { id: 'long', label: 'Long', scale: 1.1 }],
+  native: [{ id: 'short', label: 'Short', scale: 0.7 }, { id: 'medium', label: 'Medium', scale: 1 }, { id: 'tall', label: 'Tall', scale: 1.3 }],
+};
+const GRASS_DEFAULTS = { rough: 'medium', native: 'medium' };
+// The course's choices ({ rough, native } ids) and their scales
+export const courseGrass = (courseData) => {
+  const pick = (k) => (GRASS_HEIGHTS[k].some((o) => o.id === courseData?.Grass?.[k]) ? courseData.Grass[k] : GRASS_DEFAULTS[k]);
+  const rough = pick('rough'), native = pick('native');
+  return { rough, native, roughScale: GRASS_HEIGHTS.rough.find((o) => o.id === rough).scale, nativeScale: GRASS_HEIGHTS.native.find((o) => o.id === native).scale };
+};
+
 export const courseMowing = (courseData) => ({
   fairway: MOW_PATTERNS.some((p) => p.id === courseData?.Mowing?.fairway) ? courseData.Mowing.fairway : MOW_DEFAULTS.fairway,
   green: MOW_PATTERNS.some((p) => p.id === courseData?.Mowing?.green) ? courseData.Mowing.green : MOW_DEFAULTS.green,
