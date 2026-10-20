@@ -76,7 +76,9 @@ export function treesFromCanopy(cm, allowed) {
 // same spots for the same course, so the game and the editor agree) that sit well inside crown
 // cover become trees, unless a tree already stands within 4 m or allowed(x, z) rules the spot out.
 // Returns new trees { x, z, h, r, kind: null, photo: true }; heightAt(x, z) gives a canopy-map
-// height where there is one.
+// height where there is one. With a height map, a spot also needs something at least 3 m tall
+// within 2 m (the map and the photo don't line up exactly): dark patches on open ground - the
+// long shadows of bare trees in a photo taken in winter, dark lush grass - are flat there.
 export function treesFromPhoto(photo, { allowed = () => true, existing = [], heightAt = null } = {}) {
   const { data, w, h, res, minX, maxZ } = photo, N = w * h;
   const L = new Float32Array(N), veg = new Uint8Array(N);
@@ -145,6 +147,11 @@ export function treesFromPhoto(photo, { allowed = () => true, existing = [], hei
     return false;
   };
   for (const t of existing) put(t);
+  const standing = (x, z) => {
+    if (!heightAt) return true;
+    for (const [dx, dz] of [[0, 0], [2, 0], [-2, 0], [0, 2], [0, -2], [1.4, 1.4], [-1.4, 1.4], [1.4, -1.4], [-1.4, -1.4]]) if ((heightAt(x + dx, z + dz) || 0) >= 3) return true;
+    return false;
+  };
   // (candidate spots every 3 m, so small single crowns get one near their middle)
   const out = [], STEP = 3;
   const x0 = Math.ceil(minX / STEP) * STEP, z1 = Math.floor(maxZ / STEP) * STEP;
@@ -153,7 +160,7 @@ export function treesFromPhoto(photo, { allowed = () => true, existing = [], hei
     // Well inside crown cover: the spot and most of a ring 2 m around it
     let n = at(x, z) * 2;
     for (const [dx, dz] of [[2, 0], [-2, 0], [0, 2], [0, -2], [1.4, 1.4], [-1.4, 1.4], [1.4, -1.4], [-1.4, -1.4]]) n += at(x + dx, z + dz);
-    if (n < 7 || near(x, z, 4) || !shaded(x, z) || !allowed(x, z)) continue;
+    if (n < 7 || near(x, z, 4) || !shaded(x, z) || !standing(x, z) || !allowed(x, z)) continue;
     const canopy = heightAt?.(x, z) || 0, k = hash(x, z, 8.8);
     const t = { x, z, h: canopy >= 4 ? canopy : 9 + k * 8, r: 2.6 + hash(x, z, 9.9) * 1.6, kind: null, photo: true };
     out.push(t); put(t);

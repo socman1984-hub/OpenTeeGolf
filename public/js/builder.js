@@ -126,7 +126,7 @@ const BUILD_STEPS = [
   ['elevation', 'Downloading elevation'],
   ['terrain', 'Building the terrain'],
 ];
-const UPDATE_STEPS = [...BUILD_STEPS, ['paths', 'Cart paths'], ['buildings', 'Buildings'], ['parking', 'Car parks'], ['roads', 'Roads']];
+const UPDATE_STEPS = [...BUILD_STEPS, ['paths', 'Cart paths'], ['buildings', 'Buildings'], ['parking', 'Car parks'], ['roads', 'Roads'], ['imagery', 'Aerial photo (the clearest source)']];
 let prog = null;
 
 function startProgress(steps) {
