@@ -6,7 +6,7 @@ import * as THREE from 'three/webgpu';
 import {
   Fn, texture, uv, vec2, vec3, float, mix, clamp, smoothstep, dot, distance, normalize, sin, cos, abs, atan,
   positionWorld, cameraPosition, instancedBufferAttribute, PI, normalMap, time, reflector, normalView, positionViewDirection, pow,
-  uniform, select, fwidth, normalWorld, attribute, fract,
+  uniform, select, fwidth, normalWorld, attribute, fract, floor, step,
 } from 'three/tsl';
 import { SkyMesh } from 'three/addons/objects/SkyMesh.js';
 import { Line2 } from 'three/addons/lines/webgpu/Line2.js';
@@ -16,10 +16,11 @@ import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometr
 import { noise, pointInPoly } from './course.js';
 import { Forest, treesFromCanopy, assignSpecies, addMappedTrees, addTreeAreas, fade, impostorLight } from './trees.js';
 import { treesFromPhoto, removeTrees } from './treeplace.js';
-import { tuftGeometry, reedGeometry, grassMaterial, grassMesh, grassWind, addBend } from './grass.js';
+import { tuftGeometry, reedGeometry, grassMaterial, grassMesh, grassWind, addBend, NATIVE_KINDS, nativeClumpGeometry } from './grass.js';
 import { MOW_WIDTH, mowIndex } from './mowing.js';
 import { layoutParking, bayCorners, carColour } from './parking.js';
 import { roadLines, roadSamples, stripTriangles, onRoad } from './roads.js';
+import { MIN_HW } from './streams.js';
 
 // The course's mowing patterns (pattern numbers from mowing.js), read by the terrain shader
 const mowPattern = { fairway: uniform(1), green: uniform(3) };
@@ -61,6 +62,9 @@ export class CourseScene {
     this.scene = new THREE.Scene();
     this.scene.fog = new THREE.FogExp2(0xc4d8e6, 0.00032);
     this.camera = new THREE.PerspectiveCamera(55, 1, 0.05, 9000);
+    // (layer 1: tall grass - drawn by this camera, but not again by the water's mirror, whose
+    // camera sees only layer 0)
+    this.camera.layers.enable(1);
     this.camPos = new THREE.Vector3(0, 50, -50);
     this.camLook = new THREE.Vector3();
     this.camGoalPos = this.camPos.clone();
@@ -161,7 +165,7 @@ export class CourseScene {
       this.sun.shadow.map?.dispose();
       this.sun.shadow.map = null;
     }
-    if (this.grass) { this.dynamic.remove(this.grass); this.grass = null; this.grassCenter = null; }
+    if (this.grass) { this.dynamic.remove(this.grass, this.grassBack); this.grass = this.grassBack = this.grassJob = null; this.grassCenter = null; }
     if (this.lieGrass) { this.dynamic.remove(this.lieGrass); this.lieGrass = null; this.lieKey = null; }
     this.lastSize = null; // water reflection detail follows the setting too
     this.resize?.();
@@ -258,6 +262,7 @@ export class CourseScene {
     }
 
     this.addWater(course);
+    this.addBridges(course);
     this.addBankGrass(course, shore);
     this.addReedsAndRocks(course, shore);
     this.addStakesAndMarkers(course);
@@ -270,24 +275,40 @@ export class CourseScene {
     if (this.photoRaster) this.addPhotoTrees(course, canopy);
     this.photoRaster = null;
     this.pendingTrees = removeTrees(this.pendingTrees, course.removedTrees);
-    // (no trunks in the road: crowns from the height map can hang over one)
-    if (course.roads?.roads?.length) {
-      const road = onRoad(course.roads.roads, 0.8);
-      this.pendingTrees = this.pendingTrees.filter((t) => t.user || !road(t.x, t.z));
-    }
+    // No trunks on roads or cart paths (mapped, or seen in the photo): crowns found from above
+    // often hang over one. Such a tree moves to the nearest clear spot within 3 m, or goes. (The
+    // player's own trees stay where they were put.)
+    const lanes = [...(course.roads?.roads || []), ...(course.paths || [])];
+    const paved = onRoad(lanes, 0.8);
+    const blocked = (x, z) => paved(x, z) || this.nearPath(x, z, 0.8);
+    this.pendingTrees = this.pendingTrees.filter((t) => {
+      if (t.user || !blocked(t.x, t.z)) return true;
+      for (const d of [1, 1.5, 2, 2.5, 3]) for (let k = 0; k < 12; k++) {
+        const a = (k / 12) * Math.PI * 2, x = t.x + Math.cos(a) * d, z = t.z + Math.sin(a) * d;
+        if (!blocked(x, z) && course.heightAt(x, z) !== null) { t.x = x; t.z = z; return true; }
+      }
+      return false;
+    });
     await this.plantForest(course, this.pendingTrees, progress);
-    if (sat) this.addNativeGrass(course, sat);
+    this.addNativeGrass(course, sat); // (also clears the last course's, without a photo)
+    this.addRoughCarpet(course);
     if (buildings.length) this.addBuildings(course, buildings);
     this.addCars(course);
     this.addRoadMarkings(course);
-    this.grassCenter = null;
+    this.grassCenter = null; this.grassJob = null;
+    if (this.grass) this.grass.count = 0; // (the next lot is laid out at once, for the new course)
     if (this.lieGrass) this.lieGrass.count = 0;
     this.lieKey = null;
     this.applyEnvIntensity(this.courseGroup);
     this.applyEnvIntensity(this.dynamic);
     // Build every shader now rather than stalling on the first frames of play
     await progress('shaders', 'Preparing graphics');
+    // (everything, not just what's in view now: the tall grass tiles, say, would otherwise each
+    // stall a frame the first time they come into view)
+    const culled = [];
+    this.scene.traverse((o) => { if (o.isMesh && o.frustumCulled) { culled.push(o); o.frustumCulled = false; } });
     try { await this.renderer.compileAsync(this.scene, this.camera); } catch (err) { console.warn('Shader warm-up skipped', err); }
+    for (const o of culled) o.frustumCulled = true;
   }
 
   // Mowing patterns on fairways and greens: { fairway, green } pattern ids (mowing.js)
@@ -461,6 +482,105 @@ export class CourseScene {
   }
 
   // The lines painted on main roads (see roadLines), as thin strips just above the ground
+  // ---- bridges: where a cart path runs into a pond or stream, a timber footbridge carries it
+  // across. Each spans the water plus about 2 m of bank either side, rising from the path's
+  // height at each end to at least half a metre above the water mid-span (a gentle arch), with a
+  // plank deck, a fascia board down each side, and posts and a rail along both edges.
+  addBridges(course) {
+    const water = (course.waterBodies || []).filter((wb) => wb.poly?.length > 2);
+    this.bridgeCount = 0;
+    if (!water.length || !course.paths?.length) return;
+    const bbox = water.map((wb) => {
+      const xs = wb.poly.map((p) => p[0]), zs = wb.poly.map((p) => p[1]);
+      return [Math.min(...xs), Math.min(...zs), Math.max(...xs), Math.max(...zs)];
+    });
+    const waterAt = (x, z) => {
+      for (let i = 0; i < water.length; i++) {
+        const b = bbox[i];
+        if (x >= b[0] && x <= b[2] && z >= b[1] && z <= b[3] && pointInPoly(water[i].poly, x, z)) return water[i];
+      }
+      return null;
+    };
+    const decks = [];
+    for (const path of course.paths) {
+      // the path every half metre
+      const S = [];
+      for (let i = 1; i < path.pts.length; i++) {
+        const [ax, az] = path.pts[i - 1], [bx, bz] = path.pts[i], n = Math.max(1, Math.ceil(Math.hypot(bx - ax, bz - az) / 0.5));
+        for (let k = i === 1 ? 0 : 1; k <= n; k++) S.push([ax + ((bx - ax) * k) / n, az + ((bz - az) * k) / n]);
+      }
+      for (let k = 0; k < S.length; k++) {
+        if (!waterAt(...S[k])) continue;
+        let e = k;
+        while (e + 1 < S.length && waterAt(...S[e + 1])) e++;
+        if (e - k >= 1) {
+          const a = Math.max(0, k - 4), b = Math.min(S.length - 1, e + 4);
+          const ends = [course.heightAt(...S[a]), course.heightAt(...S[b])];
+          if (ends[0] !== null && ends[1] !== null) {
+            const pts = S.slice(a, b + 1).map(([x, z], i, arr) => {
+              const wb = waterAt(x, z), lvl = wb ? (wb.levelAt ? wb.levelAt(x, z) : wb.level) : -Infinity;
+              const lin = ends[0] + (ends[1] - ends[0]) * (i / (arr.length - 1)) + 0.12;
+              return [x, z, Math.max(lin, lvl + 0.55)];
+            });
+            // (smoothed into a gentle arch, the ends kept where they meet the path)
+            for (let pass = 0; pass < 3; pass++) for (let i = 1; i < pts.length - 1; i++) pts[i][2] = Math.max(pts[i][2], (pts[i - 1][2] + pts[i + 1][2]) / 2);
+            decks.push({ pts, w: Math.max(2.2, path.width + 0.6) });
+          }
+        }
+        k = e;
+      }
+    }
+    if (!decks.length) return;
+    const pos = [], col = [];
+    const quad = (a, b, c, d, rgb) => { pos.push(...a, ...b, ...c, ...a, ...c, ...d); for (let i = 0; i < 6; i++) col.push(...rgb); };
+    const W3 = (x, y, z) => [-x, y, z];
+    const posts = [];
+    for (const { pts, w } of decks) {
+      const hw = w / 2;
+      let along = 0;
+      for (let i = 0; i < pts.length; i++) {
+        const p = pts[i], a = pts[Math.max(0, i - 1)], b = pts[Math.min(pts.length - 1, i + 1)];
+        const dx = b[0] - a[0], dz = b[1] - a[1], l = Math.hypot(dx, dz) || 1, nx = -dz / l, nz = dx / l;
+        p.n = [nx, nz];
+        if (i && (along += Math.hypot(p[0] - pts[i - 1][0], p[1] - pts[i - 1][1])) >= 2 || i === 0 || i === pts.length - 1) {
+          if (i) along = 0;
+          for (const side of [-1, 1]) posts.push([p[0] + nx * hw * side, p[1] + nz * hw * side, p[2]]);
+        }
+      }
+      for (let i = 1; i < pts.length; i++) {
+        const p = pts[i - 1], q = pts[i];
+        const L = (o, s2, dy = 0) => W3(o[0] + o.n[0] * hw * s2, o[2] + dy, o[1] + o.n[1] * hw * s2);
+        // planks: alternate shades of weathered timber
+        // (vertex colours are linear: a weathered brown timber is quite dark in these numbers)
+        const v = 0.85 + ((i * 7) % 3) * 0.1, wood = [0.16 * v, 0.085 * v, 0.042 * v];
+        quad(L(p, -1), L(q, -1), L(q, 1), L(p, 1), wood);
+        for (const s2 of [-1, 1]) {
+          // fascia down the side, and the rail along the top of the posts
+          quad(L(p, s2), L(q, s2), L(q, s2, -0.3), L(p, s2, -0.3), [0.09, 0.05, 0.026]);
+          quad(L(p, s2, 0.86), L(q, s2, 0.86), L(q, s2, 0.96), L(p, s2, 0.96), [0.12, 0.066, 0.034]);
+        }
+      }
+    }
+    const deck = new THREE.BufferGeometry();
+    deck.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    deck.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+    deck.computeVertexNormals();
+    const parts = [deck];
+    for (const [x, z, y] of posts) {
+      const g = new THREE.BoxGeometry(0.12, 1.25, 0.12).toNonIndexed();
+      g.deleteAttribute('uv');
+      g.translate(-x, y + 0.35, z);
+      const c = []; for (let i = 0; i < g.attributes.position.count; i++) c.push(0.1, 0.056, 0.03);
+      g.setAttribute('color', new THREE.Float32BufferAttribute(c, 3));
+      parts.push(g);
+    }
+    const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9, metalness: 0, side: THREE.DoubleSide });
+    const mesh = new THREE.Mesh(mergeGeometries(parts), mat);
+    mesh.castShadow = mesh.receiveShadow = true;
+    this.courseGroup.add(mesh);
+    this.bridgeCount = decks.length;
+  }
+
   addRoadMarkings(course) {
     const roads = course.roads?.roads || [];
     const flat = { white: [], yellow: [] };
@@ -816,8 +936,8 @@ export class CourseScene {
         ctx.closePath();
       };
       const each = (surface, fn) => { for (const f of course.features) if (f.surface === surface && !f.inner) { path(f.poly); fn(); } };
-      ctx.lineWidth = 4 / res; ctx.strokeStyle = 'rgb(120,0,0)';
-      each('fairway', () => ctx.stroke());                       // first cut: half-way look
+      ctx.lineWidth = 2 / res; ctx.strokeStyle = 'rgb(120,0,0)';
+      each('fairway', () => ctx.stroke());                       // first cut: a narrow half-way band
       ctx.fillStyle = 'rgb(255,0,0)'; each('fairway', () => ctx.fill()); each('tee', () => ctx.fill());
       ctx.lineWidth = 3 / res; ctx.strokeStyle = 'rgb(255,0,0)';               // collar: fairway-height ring
       each('green', () => ctx.stroke());                          // fringe
@@ -912,7 +1032,7 @@ export class CourseScene {
     // Fairways/tees and greens get separate direction maps. Where a fairway meets a green each
     // keeps its own constant direction right up to (and past) its edge; blending the two angles
     // there would bend the stripes into swirls.
-    const layer = (surfaces) => {
+    const layer = (surfaces, blue) => {
       const c2 = document.createElement('canvas');
       c2.width = fw; c2.height = fh;
       const x2 = c2.getContext('2d');
@@ -926,18 +1046,29 @@ export class CourseScene {
       // Spread each shape's direction ~10 m beyond its outline first, then fill the shapes on top
       for (const f of shapes) { const [ax, az] = principalAxis(f.poly); x2.strokeStyle = color(ax, az); x2.lineWidth = 10; x2.lineJoin = 'round'; trace(f); x2.stroke(); }
       for (const f of shapes) { const [ax, az] = principalAxis(f.poly); x2.fillStyle = color(ax, az); trace(f); x2.fill(); }
-      // Blue (unused by the directions): how muddy each pond's bank is, out to 6 m from the water
-      // ('lighten' keeps the larger value per channel, so red and green are untouched)
+      // Blue (unused by the directions; 'lighten' keeps the larger value per channel, so red and
+      // green are untouched). Fairway map: how muddy each pond's bank is, out to 6 m from the water.
+      // Green map: where the tall unmown grass grows, for the tawny ground beneath it.
       x2.globalCompositeOperation = 'lighten'; x2.lineJoin = 'round'; x2.lineWidth = 6;
-      for (const wb of course.waterBodies || []) {
+      if (blue === 'mud') for (const wb of course.waterBodies || []) {
         const b = Math.round(255 * ({ natural: 1, reedy: 0.8, rocky: 0.45, manicured: 0.05 }[wb.style] ?? 1));
         x2.fillStyle = x2.strokeStyle = `rgb(0,0,${b})`;
         trace({ poly: wb.poly }); x2.fill(); x2.stroke();
       }
+      if (blue === 'native' && ov) {
+        const nc = document.createElement('canvas');
+        nc.width = ov.w; nc.height = ov.h;
+        const nx = nc.getContext('2d'), ni = nx.createImageData(ov.w, ov.h);
+        for (let k = 0; k < ov.codes.length; k++) if (ov.codes[k] === 3) { ni.data[k * 4 + 2] = 255; ni.data[k * 4 + 3] = 255; }
+        nx.putImageData(ni, 0, 0);
+        x2.filter = 'blur(1px)';
+        x2.drawImage(nc, (ov.minX - minX) / fres, (maxZ - ov.maxZ) / fres, (ov.w * ov.res) / fres, (ov.h * ov.res) / fres);
+        x2.filter = 'none';
+      }
       x2.globalCompositeOperation = 'source-over';
       return c2;
     };
-    return { fairway: layer(['fairway', 'tee']), green: layer(['green']) };
+    return { fairway: layer(['fairway', 'tee'], 'mud'), green: layer(['green'], 'native') };
   }
 
   addSurround(course, sat) {
@@ -1053,7 +1184,7 @@ export class CourseScene {
     });
     for (const wb of course.waterBodies) {
       if (wb.ribbon && wb.levelAt) {
-        const m = new THREE.Mesh(streamGeometry(wb), this.streamMat);
+        const m = new THREE.Mesh(streamGeometry(wb, meshGroundAt(course)), this.streamMat);
         m.userData.flowing = true;
         m.position.y = wb.level;
         m.receiveShadow = true;
@@ -1475,6 +1606,8 @@ export class CourseScene {
     const osm = extra.length ? ` (${extra.join(', ')})` : '';
     await progress('trees-place', 'Planting trees', 0, 0, `${trees.length.toLocaleString()} trees${osm}`);
     this.forest.build(trees, (x, z) => course.heightAt(x, z), (m) => this.applyEnvIntensity(m));
+    // (undergrowth along the edges of dense woods: in the rough, clear of paths and mown grass)
+    this.forest.buildShrubs((x, z) => course.heightAt(x, z), (x, z) => ROUGH.has(this.fastSurface(x, z)) && !this.nearPath(x, z, 1.5) && !this.nearMown(x, z, 2) && !this.nearSand(x, z, 1.5), (m) => this.applyEnvIntensity(m));
     this.forest.update(this.camera, true);
     this.updateImpostorLight();
     this.courseGroup.add(this.forest.group);
@@ -1773,16 +1906,21 @@ export class CourseScene {
         }
       }
     }
-    // A dot at each grid crossing on the green. It runs along whichever grid line points most
-    // nearly downhill (so it never leaves the grid) to the next crossing, then starts again.
-    // Where that crossing is off the green the line ends, so the dot stays put.
+    // Two dots at each grid crossing on the green, one on each of its lines (so they never leave
+    // the grid): one shows the slope along the putt, the other the slope across it. Each runs
+    // downhill along its line to the next crossing, then starts again, faster the steeper that
+    // way is; where it's flat that way (under 0.3%), or the line ends at the edge of the green,
+    // it stays still on the crossing.
     for (let i = -steps; i <= steps; i++) for (let j = -steps; j <= steps; j++) {
       const x = cx + fx * i * spacing + rx * j * spacing, z = cz + fz * i * spacing + rz * j * spacing;
       if (!onGreen(x, z)) continue;
-      const sl = slopeAt(x, z), along = sl.dx * fx + sl.dz * fz, across = sl.dx * rx + sl.dz * rz;
-      const [dx, dz] = Math.abs(along) >= Math.abs(across) ? [fx * Math.sign(along), fz * Math.sign(along)] : [rx * Math.sign(across), rz * Math.sign(across)];
-      const moves = sl.pct >= 0.3 && onGreen(x + dx * spacing, z + dz * spacing);
-      dots.push({ x, z, dx, dz, pct: moves ? sl.pct : 0, phase: Math.random() });
+      const sl = slopeAt(x, z), l = Math.hypot(sl.dx, sl.dz) || 1;
+      for (const [ux, uz] of [[fx, fz], [rx, rz]]) {
+        const part = (sl.dx * ux + sl.dz * uz) / l, pct = sl.pct * Math.abs(part);
+        const dx = ux * Math.sign(part), dz = uz * Math.sign(part);
+        const moves = pct >= 0.3 && onGreen(x + dx * spacing, z + dz * spacing);
+        dots.push({ x, z, dx, dz, pct: moves ? pct : 0, phase: Math.random() });
+      }
     }
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
@@ -1828,65 +1966,263 @@ export class CourseScene {
     pg.dotPos.needsUpdate = true;
   }
 
-  // ---- heather / native grass: tall wispy clumps over the areas detected in the photo
+  // ---- tall unmown grass ("native" areas detected in the photo)
+  // Four kinds of clump (see nativeClumpGeometry), mixed in drifts: which kinds grow where, and
+  // how green or straw-coloured they are, change gently across an area as in a real meadow. A
+  // lighter layer covers every area; near the ball (or the free camera) a dense layer fills in,
+  // thinning out smoothly so its edge never shows.
+
+  // A clump at (x, z): its kind, height and colour (col: the photo's colour there)
+  nativeClump(x, z, col, c) {
+    const drift = noise(x * 0.045 + 3, z * 0.045 - 7) * 0.5 + 0.5, flat = noise(x * 0.12 - 5, z * 0.12 + 2) * 0.5 + 0.5;
+    const w = [1, 0.25 + drift * 0.7, 0.2 + (1 - drift) * 0.6, 0.05 + flat * flat * 0.6];
+    let r = Math.random() * (w[0] + w[1] + w[2] + w[3]), kind = 0;
+    while (kind < 3 && (r -= w[kind]) > 0) kind++;
+    // (taller and shorter stands across an area)
+    const H = [[0.55, 1.0], [0.75, 1.2], [0.45, 0.75], [0.4, 0.65]][kind];
+    const h = (H[0] + Math.random() * (H[1] - H[0])) * (0.85 + 0.3 * (noise(x * 0.06 - 9, z * 0.06 + 4) * 0.5 + 0.5));
+    // Greener in some drifts, straw-coloured in others, with smaller patches within them, the odd
+    // clump darker (shaded, or still green at the base), each a little different
+    const straw = Math.min(1, Math.max(0, (noise(x * 0.03 + 11, z * 0.03 - 4) * 0.5 + 0.5) * 0.75 + (noise(x * 0.14 + 2, z * 0.14 - 8) * 0.5 + 0.5) * 0.4 - 0.08));
+    const v = (0.88 + Math.random() * 0.24) * (Math.random() < 0.12 ? 0.75 : 1);
+    const tint = [0.74 + straw * 0.5, 0.97 + straw * 0.06, 0.6 + straw * 0.18];
+    c.setRGB(col[0] * tint[0] * v, col[1] * tint[1] * v, col[2] * tint[2] * v * 0.92, THREE.SRGBColorSpace);
+    return { kind, h };
+  }
+
+  nativeColour(x, z) {
+    const S = this.nativeSample;
+    if (S) {
+      const i = Math.floor((x - S.minX) / S.res), j = Math.floor((S.maxZ - z) / S.res), o = (j * S.w + i) * 4;
+      if (i >= 0 && j >= 0 && i < S.w && o < S.data.length) return [S.data[o] / 255, S.data[o + 1] / 255, S.data[o + 2] / 255];
+    }
+    return [0.62, 0.55, 0.36];
+  }
+
+  // (cells: only ones the course itself counts as native - checked once per cell, as that check
+  // is slow - and then the quick per-metre look-up for paths, water and mapped features)
+  nativeSpot(x, z) {
+    return this.fastSurface(x, z) === 'native' && !this.nearPath(x, z, 1.5) && !this.nearSand(x, z, 1.5);
+  }
 
   addNativeGrass(course, sat) {
-    const o = sat.overlay, S = sat.sample;
+    this.nativeTiles = null; this.nativeNear = null; // (their meshes go with the rest of the course)
+    const o = sat?.overlay;
     if (!o) return;
     const cells = [];
-    for (let k = 0; k < o.codes.length; k += 1) if (o.codes[k] === 3) cells.push(k);
-    if (!cells.length) return;
-    // Roughly one clump per 2 m², capped so huge native areas stay fast
-    const want = Math.min(140000, Math.round(cells.length / 1.6)) * (this.quality?.native ?? 1) | 0;
-    const blades = [];
-    for (let i = 0; i < 11; i++) {
-      const a = (i / 11) * Math.PI * 2 + Math.random() * 0.6, lean = 0.15 + Math.random() * 0.35, hgt = 0.6 + Math.random() * 0.5;
-      const bx = Math.cos(a) * 0.05, bz = Math.sin(a) * 0.05, wdt = 0.012 + Math.random() * 0.01;
-      const g = new THREE.BufferGeometry();
-      g.setAttribute('position', new THREE.Float32BufferAttribute([
-        bx - wdt, 0, bz, bx + wdt, 0, bz, bx + Math.cos(a) * lean * 0.45, hgt, bz + Math.sin(a) * lean * 0.45,
-      ], 3));
-      // Darker at the base, sun-bleached at the tips
-      g.setAttribute('color', new THREE.Float32BufferAttribute([0.45, 0.47, 0.36, 0.45, 0.47, 0.36, 1.18, 1.12, 0.92], 3));
-      blades.push(g);
+    for (let k = 0; k < o.codes.length; k += 1) {
+      if (o.codes[k] !== 3) continue;
+      const x = o.minX + ((k % o.w) + 0.5) * o.res, z = o.maxZ - (Math.floor(k / o.w) + 0.5) * o.res;
+      if (course.surfaceAt(x, z) === 'native') cells.push(k);
     }
-    const geo = addBend(mergeGeometries(blades));
-    geo.computeVertexNormals();
-    const mat = grassMaterial({ sway: 0.035 }); // (tall clumps sway in the wind)
-    mat.envMapIntensity = 0.5;
-    const mesh = new THREE.InstancedMesh(geo, mat, want);
-    mesh.receiveShadow = true;
+    if (!cells.length) return;
+    this.nativeSample = sat.sample;
+    // About one clump per 1.5 m², capped so huge native areas stay fast
+    const want = Math.min(110000, Math.round((cells.length * o.res * o.res) / 1.5)) * (this.quality?.native ?? 1) | 0;
     const m = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3(), p = new THREE.Vector3(), c = new THREE.Color();
     const up = new THREE.Vector3(0, 1, 0);
-    let n = 0;
-    for (let tries = 0; tries < want * 3 && n < want; tries++) {
+    // (in 64 m tiles, so the parts behind and beside the camera are skipped)
+    const FAR = 64, farTiles = new Map();
+    for (let tries = 0, n = 0; tries < want * 3 && n < want; tries++) {
       const k = cells[Math.floor(Math.random() * cells.length)];
       const x = o.minX + ((k % o.w) + Math.random()) * o.res, z = o.maxZ - (Math.floor(k / o.w) + Math.random()) * o.res;
-      if (course.surfaceAt(x, z) !== 'native' || this.fastSurface(x, z) === 'water' || this.nearPath(x, z, 1.5)) continue;
+      if (!this.nativeSpot(x, z)) continue;
       const y = course.heightAt(x, z);
       if (y === null) continue;
+      const { kind, h } = this.nativeClump(x, z, this.nativeColour(x, z), c);
+      const wide = 1.1 + Math.random() * 0.7;
       q.setFromAxisAngle(up, Math.random() * 6.28);
-      const hgt = 0.35 + Math.random() * 0.4;
-      m.compose(p.copy(T(x, y - 0.03, z)), q, sc.set(1.4 + Math.random() * 1.4, hgt, 1.4 + Math.random() * 1.4));
-      mesh.setMatrixAt(n, m);
-      // Colour from the photo underneath (tan, golden or brownish heather)
-      let col = [0.62, 0.55, 0.36];
-      if (S) {
-        const i = Math.floor((x - S.minX) / S.res), j = Math.floor((S.maxZ - z) / S.res), oo = (j * S.w + i) * 4;
-        if (oo >= 0 && oo < S.data.length) col = [S.data[oo] / 255, S.data[oo + 1] / 255, S.data[oo + 2] / 255];
-      }
-      mesh.setColorAt(n, c.setRGB(col[0] * 1.05, col[1] * 1.02, col[2] * 0.9, THREE.SRGBColorSpace));
+      m.compose(p.copy(T(x, y - 0.03, z)), q, sc.set(wide, h, wide * (0.85 + Math.random() * 0.3)));
+      const fk = `${Math.floor(x / FAR)},${Math.floor(z / FAR)}`;
+      if (!farTiles.has(fk)) farTiles.set(fk, NATIVE_KINDS.map(() => []));
+      farTiles.get(fk)[kind].push(m.clone(), c.clone());
       n++;
     }
-    mesh.count = n;
-    mesh.instanceMatrix.needsUpdate = true;
-    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    this.nativeMat = grassMaterial({ sway: 0.035 }); // (tall clumps sway in the wind)
+    this.nativeMat.envMapIntensity = 0.5;
+    this.nativeClumps = 0;
+    const liteGeos = NATIVE_KINDS.map((kind) => nativeClumpGeometry(kind, true));
+    for (const lists of farTiles.values()) NATIVE_KINDS.forEach((kind, i) => {
+      const list = lists[i], count = list.length / 2;
+      if (!count) return;
+      const mesh = grassMesh(liteGeos[i], this.nativeMat, count);
+      for (let j = 0; j < count; j++) { mesh.setMatrixAt(j, list[j * 2]); mesh.setColorAt(j, list[j * 2 + 1]); }
+      mesh.instanceMatrix.needsUpdate = true; mesh.instanceColor.needsUpdate = true;
+      mesh.computeBoundingSphere();
+      mesh.layers.set(1);
+      this.courseGroup.add(mesh);
+      this.nativeClumps += count;
+    });
+    // The dense layer near the camera: about three full clumps a square metre over every area,
+    // worked out once here and kept in 24 m tiles. The graphics card fades them by distance from
+    // the camera every frame (nativeNearMaterial): every clump out to 16 m, then fewer and fewer,
+    // each growing up out of the ground as it comes in, none past 36 m. So the dense patch moves
+    // smoothly with you, wherever you go. Only the tiles in reach are drawn (updateNativeTiles).
+    const area = cells.length * o.res * o.res;
+    const N = Math.min(500000, Math.round(area * 3.5 * (this.quality?.native ?? 1)));
+    const TILE = 24, tiles = new Map();
+    for (let tries = 0, n = 0; tries < N * 2 && n < N; tries++) {
+      const k = cells[Math.floor(Math.random() * cells.length)];
+      const x = o.minX + ((k % o.w) + Math.random()) * o.res, z = o.maxZ - (Math.floor(k / o.w) + Math.random()) * o.res;
+      if (!this.nativeSpot(x, z)) continue;
+      const y = course.heightAt(x, z);
+      if (y === null) continue;
+      const { kind, h } = this.nativeClump(x, z, this.nativeColour(x, z), c);
+      const tk = `${Math.floor(x / TILE)},${Math.floor(z / TILE)}`;
+      let tile = tiles.get(tk);
+      if (!tile) tiles.set(tk, (tile = { x: (Math.floor(x / TILE) + 0.5) * TILE, z: (Math.floor(z / TILE) + 0.5) * TILE, kinds: [[], [], [], []] }));
+      tile.kinds[kind].push(x, y, z, h, c.r, c.g, c.b);
+      n++;
+    }
+    // Each tile keeps its clumps' data, per kind; four meshes (one per kind) draw the tiles in
+    // reach, their data copied in whenever the tiles in reach change (updateNativeTiles). New
+    // objects coming into view stall the renderer while it sets them up, so none ever do.
+    this.nativeTiles = [];
+    const most = [0, 0, 0, 0];
+    for (const tile of tiles.values()) {
+      tile.data = tile.kinds.map((list, kind) => {
+        const n = list.length / 7;
+        const mats = new Float32Array(n * 16), cols = new Float32Array(n * 3), orig = new Float32Array(n * 4);
+        for (let j = 0; j < n; j++) {
+          const [x, y, z, h, r, gg, b] = list.slice(j * 7, j * 7 + 7), wide = 0.9 + Math.random() * 0.6;
+          q.setFromAxisAngle(up, Math.random() * 6.28);
+          m.compose(p.copy(T(x, y - 0.03, z)), q, sc.set(wide, h, wide * (0.85 + Math.random() * 0.3)));
+          m.toArray(mats, j * 16);
+          cols.set([r, gg, b], j * 3);
+          orig.set([-x, y - 0.03, z, Math.random()], j * 4);
+        }
+        most[kind] = Math.max(most[kind], n);
+        return { n, mats, cols, orig };
+      });
+      delete tile.kinds;
+      this.nativeTiles.push(tile);
+    }
+    this.nativeNearMat = nativeNearMaterial();
+    this.nativeNearMat.envMapIntensity = 0.5;
+    // (room for every tile that can be in reach at once: a 24 m grid within 49 m of a point)
+    const inReach = Math.ceil((Math.PI * (NATIVE_FADE.R + 17 + TILE) ** 2) / TILE ** 2);
+    this.nativeNear = NATIVE_KINDS.map((kind, i) => {
+      const cap = Math.max(1, Math.min(most[i] * inReach, 120000));
+      const g = new THREE.BufferGeometry(), base = nativeClumpGeometry(kind);
+      for (const [name, attr] of Object.entries(base.attributes)) g.setAttribute(name, attr);
+      g.setAttribute('origin', new THREE.InstancedBufferAttribute(new Float32Array(cap * 4), 4));
+      const mesh = grassMesh(g, this.nativeNearMat, cap);
+      mesh.count = 0; mesh.frustumCulled = false;
+      for (const a of [mesh.instanceMatrix, mesh.instanceColor, g.attributes.origin]) a.setUsage(THREE.DynamicDrawUsage);
+      mesh.layers.set(1);
+      this.courseGroup.add(mesh);
+      return mesh;
+    });
+    this.nativeInReach = '';
+  }
+
+  // The dense tall grass in reach of the camera (the rest would all be faded out anyway): when the
+  // tiles in reach change, their clumps are copied into the four meshes
+  updateNativeTiles() {
+    const tiles = this.nativeTiles, meshes = this.nativeNear;
+    if (!tiles?.length || !meshes) return;
+    const cx = -this.camera.position.x, cz = this.camera.position.z, reach = NATIVE_FADE.R + 17; // (+ half a tile's diagonal)
+    const near = [];
+    for (let i = 0; i < tiles.length; i++) if (Math.hypot(tiles[i].x - cx, tiles[i].z - cz) < reach) near.push(i);
+    const key = near.join(',');
+    if (key === this.nativeInReach) return;
+    this.nativeInReach = key;
+    meshes.forEach((mesh, kind) => {
+      const cap = mesh.instanceMatrix.count, origin = mesh.geometry.attributes.origin;
+      let n = 0;
+      for (const i of near) {
+        const d = tiles[i].data[kind];
+        if (!d.n || n + d.n > cap) continue;
+        mesh.instanceMatrix.array.set(d.mats, n * 16); mesh.instanceColor.array.set(d.cols, n * 3); origin.array.set(d.orig, n * 4);
+        n += d.n;
+      }
+      mesh.count = n;
+      // (only the part in use goes to the graphics card)
+      for (const [a, size] of [[mesh.instanceMatrix, 16], [mesh.instanceColor, 3], [origin, 4]]) {
+        a.clearUpdateRanges(); a.addUpdateRange(0, Math.max(1, n) * size); a.needsUpdate = true;
+      }
+    });
+  }
+
+  // ---- close-up rough: a carpet of short grass right round the camera
+  // One fixed set of tufts on a jittered grid 34 m square, laid out afresh round the camera every
+  // frame by the graphics card: each tuft takes the copy of its square nearest the camera, so the
+  // carpet follows you anywhere with nothing to work out as you move. Where each one stands, and
+  // whether and how tall it grows there, come from a map of the course at 1 m (roughMap): the
+  // ground height, how much rough grass (none on fairways, greens, tees, paths, sand or water;
+  // thickest right beside mown grass, thinning out over 20 m; taller in deep rough) and the light
+  // and shade in the photo. It fades out by 16 m, where the tufts round the ball and the ground's
+  // own texture carry on.
+  // How thick the rough is at d metres from mown grass: 1 right at the edge (out to 3 m), easing
+  // down to 0 by 22 m
+  roughEdge(d) { return 1 - Math.min(1, Math.max(0, (d - 3) / 19)); }
+
+  addRoughCarpet(course) {
+    const { minX, maxX, minZ, maxZ } = course.bounds;
+    const w = Math.ceil(maxX - minX), h = Math.ceil(maxZ - minZ), data = new Uint8Array(w * h * 4);
+    const AMOUNT = { rough: 150, oob: 130, deeprough: 235 }, S = this.imagery?.sample;
+    const MOWN = new Set(['fairway', 'firstcut', 'fringe', 'green', 'tee']);
+    // How far each metre is from mown grass (two-pass chamfer distance, in metres): the rough is
+    // thickest right where the fairway ends and thins out over about 20 m
+    const surfs = new Array(w * h), far = new Float32Array(w * h);
+    for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) {
+      const k = j * w + i, surf = this.fastSurface(minX + i + 0.5, maxZ - j - 0.5);
+      surfs[k] = surf; far[k] = MOWN.has(surf) ? 0 : 1e6;
+    }
+    for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) {
+      const k = j * w + i;
+      if (i > 0) far[k] = Math.min(far[k], far[k - 1] + 1);
+      if (j > 0) far[k] = Math.min(far[k], far[k - w] + 1);
+      if (i > 0 && j > 0) far[k] = Math.min(far[k], far[k - w - 1] + 1.414);
+      if (i < w - 1 && j > 0) far[k] = Math.min(far[k], far[k - w + 1] + 1.414);
+    }
+    for (let j = h - 1; j >= 0; j--) for (let i = w - 1; i >= 0; i--) {
+      const k = j * w + i;
+      if (i < w - 1) far[k] = Math.min(far[k], far[k + 1] + 1);
+      if (j < h - 1) far[k] = Math.min(far[k], far[k + w] + 1);
+      if (i < w - 1 && j < h - 1) far[k] = Math.min(far[k], far[k + w + 1] + 1.414);
+      if (i > 0 && j < h - 1) far[k] = Math.min(far[k], far[k + w - 1] + 1.414);
+    }
+    for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) {
+      const x = minX + i + 0.5, z = maxZ - j - 0.5, o = (j * w + i) * 4, k = j * w + i;
+      const y = course.heightAt(x, z) ?? this.hmin, v = Math.max(0, Math.min(65535, Math.round((y - this.hmin) * 100)));
+      data[o] = v >> 8; data[o + 1] = v & 255;
+      const surf = surfs[k], near = this.roughEdge(far[k]);
+      // (none within 1.5 m of sand: read between metres, the map would otherwise put tufts in it)
+      data[o + 2] = AMOUNT[surf] && !this.nearPath(x, z, 0.6) && !this.nearSand(x, z, 1.5) ? Math.min(255, Math.round(AMOUNT[surf] * (0.6 + 0.65 * near * near))) : 0;
+      let shade = 1;
+      if (S) {
+        const si = Math.floor((x - S.minX) / S.res), sj = Math.floor((S.maxZ - z) / S.res), so = (sj * S.w + si) * 4;
+        if (so >= 0 && so < S.data.length) shade = Math.max(0.75, Math.min(1.2, (0.2126 * S.data[so] + 0.7152 * S.data[so + 1] + 0.0722 * S.data[so + 2]) / 255 / 0.3));
+      }
+      data[o + 3] = Math.round(((shade - 0.75) / 0.45) * 255);
+    }
+    this.mownDist = { far, w, h, minX, maxZ };
+    const map = new THREE.DataTexture(data, w, h, THREE.RGBAFormat, THREE.UnsignedByteType);
+    map.magFilter = map.minFilter = THREE.NearestFilter; map.generateMipmaps = false; map.colorSpace = THREE.NoColorSpace;
+    map.needsUpdate = true;
+    const G = { high: 236, balanced: 200, performance: 136 }[this.quality?.name] || 200, SIDE = 34, cell = new Float32Array(G * G * 4);
+    for (let k = 0; k < G * G; k++) {
+      const gi = k % G, gj = Math.floor(k / G);
+      cell.set([((gi + Math.random()) / G) * SIDE, ((gj + Math.random()) / G) * SIDE, Math.random(), Math.random()], k * 4);
+    }
+    const base = tuftGeometry({ blades: (this.quality?.blades ?? 8) + 2, spread: 0.5 });
+    const g = new THREE.BufferGeometry();
+    for (const [name, attr] of Object.entries(base.attributes)) g.setAttribute(name, attr);
+    g.setAttribute('cell', new THREE.InstancedBufferAttribute(cell, 4));
+    const mat = roughCarpetMaterial(map, { minX, maxZ, w, h, hmin: this.hmin, SIDE });
+    this.applyEnvIntensity(mat);
+    const mesh = new THREE.InstancedMesh(g, mat, G * G);
+    mesh.frustumCulled = false; mesh.receiveShadow = true; mesh.layers.set(1);
     this.courseGroup.add(mesh);
-    this.nativeClumps = n;
   }
 
   // ---- grass tufts around the ball (close-up detail)
 
+  // The new tufts are laid out on a second mesh a few milliseconds each frame (stepGrass), while
+  // the ones already there stay on screen; when it's done the two swap. (All at once it takes
+  // 30-40 ms, a visible hitch every few metres you move.) The very first lot, before there's
+  // anything to show, is laid out at once.
   placeGrass(center, minMove = 8) {
     if (!this.course) return;
     if (this.grassCenter && Math.hypot(center.x - this.grassCenter.x, center.z - this.grassCenter.z) < minMove) return;
@@ -1894,20 +2230,39 @@ export class CourseScene {
     if (!this.grass) {
       const mat = grassMaterial();
       this.applyEnvIntensity(mat);
-      this.grass = grassMesh(tuftGeometry({ blades: this.quality?.blades ?? 8 }), mat, this.quality?.grass ?? 20000);
-      this.grass.frustumCulled = false;
-      this.dynamic.add(this.grass);
+      const geo = tuftGeometry({ blades: this.quality?.blades ?? 8 }), count = this.quality?.grass ?? 20000;
+      [this.grass, this.grassBack] = [0, 1].map(() => {
+        const mesh = grassMesh(geo, mat, count);
+        mesh.frustumCulled = false; mesh.count = 0;
+        this.dynamic.add(mesh);
+        return mesh;
+      });
     }
+    const first = this.grass.count === 0;
+    this.grassJob = { center: { x: center.x, z: center.z }, k: 0, n: 0 };
+    if (first) { this.stepGrass(Infinity); }
+  }
+
+  stepGrass(budgetMs = 3) {
+    const job = this.grassJob, mesh = this.grassBack;
+    if (!job || !mesh) return;
+    const t0 = performance.now(), center = job.center;
     const m = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3(), p = new THREE.Vector3(), c = new THREE.Color();
     const up = new THREE.Vector3(0, 1, 0);
-    let n = 0;
-    const maxGrass = this.grass.instanceMatrix.count;
-    for (let k = 0; k < maxGrass * 2.5 && n < maxGrass; k++) {
+    const maxGrass = mesh.instanceMatrix.count, tries = maxGrass * 2.5;
+    while (job.k < tries && job.n < maxGrass) {
+      if ((job.k & 63) === 0 && performance.now() - t0 > budgetMs) return;
+      job.k++;
       // Densest near the centre, thinning out smoothly to 42 m (no density step, which would
       // show as a ring), and none right on the ball: the patch around it has its own, shorter grass
       const r = Math.random() ** 0.8 * 42, a = Math.random() * Math.PI * 2;
       if (r < 0.3) continue;
       const x = center.x + Math.cos(a) * r, z = center.z + Math.sin(a) * r;
+      // Thickest right beside the fairway, as the close-up carpet: away from it fewer tufts, and
+      // shorter (checked first, as it's the quickest)
+      const M = this.mownDist, mi = M ? Math.floor(x - M.minX) : -1, mj = M ? Math.floor(M.maxZ - z) : -1;
+      const near = M && mi >= 0 && mj >= 0 && mi < M.w && mj < M.h ? this.roughEdge(M.far[mj * M.w + mi]) : 0.5;
+      if (Math.random() > 0.45 + 0.55 * near) continue;
       const s = this.fastSurface(x, z);
       // Tufts only in the rough, never on mown grass (fairway, first cut, fringe, green, tee)
       if (!ROUGH.has(s)) continue;
@@ -1917,19 +2272,24 @@ export class CourseScene {
       // Rough stands clearly taller than the cut grass around the fairways and greens
       // (shrinking into the ground over the last 12 m, so the edge of the area fades out)
       const fadeOut = Math.min(1, (42 - r) / 12);
-      const h = ((s === 'deeprough' || s === 'native' ? 0.08 : 0.055) + Math.random() * (s === 'rough' || s === 'oob' ? 0.04 : 0.06)) * fadeOut;
+      const h = ((s === 'deeprough' || s === 'native' ? 0.08 : 0.055) + Math.random() * (s === 'rough' || s === 'oob' ? 0.04 : 0.06)) * fadeOut * (0.85 + 0.9 * near);
       q.setFromAxisAngle(up, Math.random() * 6.28);
       m.compose(p.copy(T(x, y - 0.004, z)), q, sc.set(h * (1.2 + Math.random() * 0.8), h, h * (1.2 + Math.random() * 0.8)));
-      this.grass.setMatrixAt(n, m);
-      this.grass.setColorAt(n, this.grassColor(x, z, s, c));
-      n++;
+      mesh.setMatrixAt(job.n, m);
+      mesh.setColorAt(job.n, this.grassColor(x, z, s, c));
+      job.n++;
     }
-    this.grass.count = n;
-    this.grass.instanceMatrix.needsUpdate = true;
-    if (this.grass.instanceColor) this.grass.instanceColor.needsUpdate = true;
+    // Done: show the new lot in place of the old
+    mesh.count = job.n;
+    mesh.instanceMatrix.needsUpdate = true;
+    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    const old = this.grass;
+    old.count = 0;
+    this.grass = mesh; this.grassBack = old;
+    this.grassJob = null;
   }
 
-  // Grass colour: the olive of the rough on the ground, lighter or darker with the light and shade
+  // Grass colour: the dark green of the rough on the ground, lighter or darker with the light and shade
   // in the photo underneath. (Only the photo's brightness: its colour runs blue-grey, which made
   // the tufts read as a teal patch against the ground.)
   grassColor(x, z, s, c) {
@@ -1939,7 +2299,7 @@ export class CourseScene {
       const i = Math.floor((x - S.minX) / S.res), j = Math.floor((S.maxZ - z) / S.res), o = (j * S.w + i) * 4;
       if (o >= 0 && o < S.data.length) shade = Math.max(0.75, Math.min(1.2, (0.2126 * S.data[o] + 0.7152 * S.data[o + 1] + 0.0722 * S.data[o + 2]) / 255 / 0.3));
     }
-    const tgt = s === 'native' ? [0.4, 0.62, 0.24] : [0.27, 0.33, 0.11];
+    const tgt = s === 'native' ? [0.4, 0.62, 0.24] : [0.25, 0.33, 0.18]; // (the rough's dark, slightly blue green)
     const v = (0.85 + Math.random() * 0.3) * shade;
     return c.setRGB(tgt[0] * v, tgt[1] * v, tgt[2] * v, THREE.SRGBColorSpace);
   }
@@ -2282,23 +2642,6 @@ export class CourseScene {
     }
   }
 
-  // Free view: jump to look at a course-space point
-  flyTo(x, z) {
-    if (this.mode !== 'free') return;
-    const y = this.course.heightAt(x, z) ?? 0;
-    const target = T(x, y, z);
-    const offset = this.camera.position.clone().sub(this.controls.target);
-    if (offset.length() > 400) offset.setLength(400);
-    this.controls.target.copy(target);
-    this.camera.position.copy(target).add(offset);
-  }
-
-  // Camera position/heading in course space (for the minimap)
-  cameraInfo() {
-    const p = this.camera.position, t = this.mode === 'free' ? this.controls.target : this.camLook;
-    return { x: -p.x, z: p.z, heading: Math.atan2(-(t.x - p.x), t.z - p.z) };
-  }
-
   frame() {
     const raw = this.clock.getDelta();
     const dt = Math.min(0.05, raw);
@@ -2406,6 +2749,9 @@ export class CourseScene {
     // Flag flutter and water ripples
     // Trees: detailed near the camera, light further away; see-through between camera and ball
     this.forest?.update(this.camera);
+    this.updateNativeTiles();
+    this.stepGrass();
+    carpetBall.value.copy(this.ball.position);
     fade.focus.value.copy(this.ball.position);
     fade.look.value.copy(this.camLook);
     fade.on.value = this.mode === 'address' || this.mode === 'follow' ? 1 : 0;
@@ -2524,21 +2870,98 @@ function flowingWaterMaterial(env) {
   return m;
 }
 
+// The dense tall grass near the camera (see addNativeGrass): each clump has an 'origin' (its base
+// in the scene, and w a random number). Every clump is shown out to FULL metres from the camera,
+// then fewer and fewer out to R; a clump whose number the falling density passes grows up out
+// of the ground over a few metres rather than appearing at once, and shrinks back the same way.
+const NATIVE_FADE = { FULL: 16, R: 36 };
+function nativeNearMaterial() {
+  const o = attribute('origin', 'vec4');
+  return grassMaterial({
+    sway: 0.035,
+    place: (p) => {
+      const d = distance(cameraPosition.xz, o.xz);
+      const density = clamp(float(NATIVE_FADE.R).sub(d).div(NATIVE_FADE.R - NATIVE_FADE.FULL), 0, 1).pow(1.2);
+      const grow = clamp(density.sub(o.w).div(0.12), 0, 1);
+      return o.xyz.add(p.sub(o.xyz).mul(grow));
+    },
+  });
+}
+
+// The close-up rough carpet (see addRoughCarpet). map: per metre of the course, ground height
+// (red and green: centimetres above the lowest point), how much rough grass (blue) and the photo's
+// light and shade (alpha). It's read texel by texel (exactly, unfiltered) and blended by hand.
+const carpetBall = uniform(new THREE.Vector3(0, -1e6, 0));
+function roughCarpetMaterial(map, { minX, maxZ, w, h, hmin, SIDE }) {
+  const cell = attribute('cell', 'vec4'), R = 16;
+  const look = (cx, cz) => {
+    const fx = cx.sub(minX).sub(0.5), fz = float(maxZ).sub(cz).sub(0.5);
+    const i0 = floor(fx), j0 = floor(fz), u = fx.sub(i0), v = fz.sub(j0);
+    const at = (di, dj) => texture(map, vec2(i0.add(di + 0.5).div(w), j0.add(dj + 0.5).div(h))).level(0);
+    const a = at(0, 0), b = at(1, 0), c = at(0, 1), d = at(1, 1);
+    const ht = (t) => t.r.mul(255 * 256).add(t.g.mul(255)).div(100).add(hmin);
+    const lerp4 = (fa, fb, fc, fd) => mix(mix(fa, fb, u), mix(fc, fd, u), v);
+    return { y: lerp4(ht(a), ht(b), ht(c), ht(d)), amount: lerp4(a.b, b.b, c.b, d.b), shade: lerp4(a.a, b.a, c.a, d.a).mul(0.45).add(0.75) };
+  };
+  // (where this tuft stands now: the copy of its square nearest the camera; course x is mirrored)
+  const camX = cameraPosition.x.negate(), camZ = cameraPosition.z;
+  const sx = cell.x.add(floor(camX.sub(cell.x).div(SIDE).add(0.5)).mul(SIDE));
+  const sz = cell.y.add(floor(camZ.sub(cell.y).div(SIDE).add(0.5)).mul(SIDE));
+  const spot = look(sx, sz);
+  const at = vec3(sx.negate(), spot.y.sub(0.01), sz);
+  const fade = smoothstep(R, R - 4, distance(at, cameraPosition));
+  // From about 24 cm and dense right beside the fairway down to 9 cm and patchy 20 m out (deep
+  // rough the tallest; all a little more than real rough, so the blades read from standing
+  // height), none right round the ball, whose own patch shows how it lies
+  const clear = smoothstep(0.2, 0.5, distance(vec2(sx.negate(), sz), carpetBall.xz));
+  // (where it's thinner, fewer tufts as well as shorter ones)
+  const present = step(fract(cell.w.mul(7.31)), smoothstep(0.25, 0.75, spot.amount).mul(0.45).add(0.55));
+  const hgt = spot.amount.mul(0.26).mul(cell.z.mul(0.5).add(0.75)).mul(fade).mul(clear).mul(present);
+  const turn = cell.w.mul(6.283), cs = cos(turn), sn = sin(turn);
+  const m = grassMaterial({
+    sway: 0.006,
+    place: (p) => at.add(vec3(p.x.mul(cs).sub(p.z.mul(sn)).mul(1.6), p.y, p.x.mul(sn).add(p.z.mul(cs)).mul(1.6)).mul(hgt)),
+  });
+  // The dark green of the rough (as the tufts round the ball), lighter or darker with the photo
+  m.colorNode = vec3(0.05, 0.088, 0.028).mul(spot.shade).mul(cell.z.mul(0.3).add(0.85));
+  return m;
+}
+
+// The ground's height exactly as the terrain mesh draws it: each 2 m square of the height grid as
+// two flat triangles (split from its +x corner to its +z corner, as built above)
+function meshGroundAt(course) {
+  const { nx, nz, cell, heights } = course.grid, { minX, minZ } = course.bounds;
+  return (x, z) => {
+    const fx = (x - minX) / cell, fz = (z - minZ) / cell, i = Math.floor(fx), j = Math.floor(fz);
+    if (i < 0 || j < 0 || i >= nx - 1 || j >= nz - 1) return null;
+    const u = fx - i, v = fz - j, k = j * nx + i;
+    const a = heights[k], b = heights[k + 1], c = heights[k + nx], d = heights[k + nx + 1];
+    return u + v <= 1 ? a * (1 - u - v) + b * u + c * v : d * (u + v - 1) + b * (1 - v) + c * (1 - u);
+  };
+}
+
 // A stream laid down its channel (see streams.js): rows across it every 2 m, seven points each,
 // from bank to bank. UVs are metres downstream and across, so the ripples can be drawn out along
 // the current and carried down it; 'stream' holds the speed (m/s), where across the channel the
 // point is (-1 one bank, 1 the other) and the half width.
 const ACROSS = [-1, -0.7, -0.35, 0, 0.35, 0.7, 1];
-function streamGeometry(wb) {
+function streamGeometry(wb, groundAt) {
   const { chain, i0, i1 } = wb.ribbon, A = ACROSS.length, rows = i1 - i0 + 1;
   const pos = new Float32Array(rows * A * 3), uvs = new Float32Array(rows * A * 2), st = new Float32Array(rows * A * 3), nrm = new Float32Array(rows * A * 3);
   for (let r = 0; r < rows; r++) {
-    const i = i0 + r, [cx, cz] = chain.pts[i], [nx, nz] = chain.nrm[i], hw = Math.max(1.25, chain.hw[i]);
+    const i = i0 + r, [cx, cz] = chain.pts[i], [nx, nz] = chain.nrm[i], hw = Math.max(MIN_HW, chain.hw[i]);
     // (across measured looking downstream, so the two banks keep their sides whichever way it runs)
     const side = chain.down[Math.min(i + 1, chain.pts.length - 1)] >= chain.down[Math.max(0, i - 1)] ? 1 : -1;
     for (let a = 0; a < A; a++) {
       const k = r * A + a, t = ACROSS[a], x = cx + nx * hw * t, z = cz + nz * hw * t;
-      pos[k * 3] = -x; pos[k * 3 + 1] = wb.levelAt(x, z) - wb.level; pos[k * 3 + 2] = z;
+      // (never under the ground drawn beneath it - or anywhere within half a metre, so the ground
+      // can't show through between these points either - whatever the water level says; only
+      // the edges may go under, where they tuck beneath the banks)
+      const level = wb.levelAt(x, z);
+      let ground = -Infinity;
+      if (Math.abs(t) < 1) for (const [dx, dz] of [[0, 0], [0.5, 0], [-0.5, 0], [0, 0.5], [0, -0.5]]) ground = Math.max(ground, groundAt(x + dx, z + dz) ?? -Infinity);
+      const y = Math.max(level, ground + 0.04);
+      pos[k * 3] = -x; pos[k * 3 + 1] = y - wb.level; pos[k * 3 + 2] = z;
       uvs[k * 2] = chain.down[i]; uvs[k * 2 + 1] = t * hw * side;
       st[k * 3] = chain.speed[i]; st[k * 3 + 1] = t; st[k * 3 + 2] = hw;
       nrm[k * 3 + 1] = 1;
@@ -2698,9 +3121,11 @@ function terrainMaterial(map, soft, mask, mowDirs, strength, shore, hasSand = fa
     const shadeSoft = clamp(dot(texture(soft, vUv).rgb, vec3(0.2126, 0.7152, 0.0722)).div(0.3), 0.85, 1.15);
     // (deep, warm greens: real turf reads darker and less blue than a bright lime; sand evenly
     // pale, as freshly raked)
-    const graded = vec3(0.075, 0.155, 0.01).mul(mix(1, shadeSoft, 0.35)).mul(wf)
-      .add(vec3(0.06, 0.08, 0.014).mul(shade.min(1.1)).mul(wr))
-      .add(vec3(0.098, 0.19, 0.016).mul(mix(1, shadeSoft, 0.12)).mul(wg))
+    // (mown grass a little lighter and warmer than the rough, the rough a deep, slightly blue
+    // green: close in colour, as on a real course, with a crisp edge between them)
+    const graded = vec3(0.06, 0.112, 0.022).mul(mix(1, shadeSoft, 0.35)).mul(wf)
+      .add(mix(vec3(0.04, 0.072, 0.024), vec3(0.085, 0.078, 0.034), texture(dirTexG, vUv).b).mul(shade.min(1.1)).mul(wr)) // (tawny under tall grass)
+      .add(vec3(0.07, 0.128, 0.025).mul(mix(1, shadeSoft, 0.12)).mul(wg))
       .add(vec3(0.52, 0.41, 0.25).mul(mix(1, shadeSoft, 0.2)).mul(ws))
       .add(vec3(lum.mul(1.05)).mul(wp));                                    // pavement: the photo, greyed
     // Fairways, greens and sand are fully graded (no photo detail); the rough mostly, and fully

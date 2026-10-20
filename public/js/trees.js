@@ -16,9 +16,11 @@ import * as THREE from 'three/webgpu';
 import {
   Fn, uniform, vec2, vec3, vec4, float, uv, positionWorld, positionLocal, cameraPosition, clamp, dot, length, mix,
   smoothstep, step, fract, floor, screenCoordinate, sin, cos, atan, asin, normalize, cross, max, texture,
-  time, instanceIndex, instancedBufferAttribute, normalView, attribute, normalViewGeometry, pow,
+  time, instanceIndex, instancedBufferAttribute, normalView, attribute, normalViewGeometry, pow, positionGeometry,
 } from 'three/tsl';
+import { grassWind } from './grass.js';
 import { Tree } from 'ez-tree';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { hash, fract1 } from './treeplace.js';
 // Where trees stand (shared with the course editor, which has no 3D)
 export { treesFromCanopy, addMappedTrees, treesInArea, addTreeAreas } from './treeplace.js';
@@ -248,6 +250,28 @@ function shapeCrown(g) {
   g.setAttribute('leafAo', new THREE.BufferAttribute(ao, 1));
 }
 
+// A shrub about 1 unit across and 1 tall: leaf cards over a low dome, facing outwards, lit as one
+// crown (see shapeCrown)
+function shrubGeometry(cards = 28) {
+  const parts = [], o = new THREE.Object3D();
+  for (let i = 0; i < cards; i++) {
+    const az = (i / cards) * Math.PI * 2 + Math.random() * 0.6, el = Math.random() ** 0.8 * 1.2;
+    const r = 0.25 + Math.random() * 0.2;
+    const cx = Math.cos(el) * Math.cos(az) * r, cy = 0.2 + Math.sin(el) * 0.5, cz = Math.cos(el) * Math.sin(az) * r;
+    const size = 0.6 + Math.random() * 0.35;
+    const g = new THREE.PlaneGeometry(size, size);
+    o.position.set(cx, cy, cz);
+    o.lookAt(cx * 3, cy * 1.6 + 0.2, cz * 3);
+    o.rotateZ(Math.random() * Math.PI * 2);
+    o.updateMatrix();
+    g.applyMatrix4(o.matrix);
+    parts.push(g);
+  }
+  const g = mergeGeometries(parts);
+  shapeCrown(g);
+  return g;
+}
+
 // ------------------------------------------------------------------ materials
 
 // Camera-to-ball see-through: fragments near the line from the camera to the ball are dropped in
@@ -282,16 +306,32 @@ const LEAF_GLOW = vec3(1.05, 1.2, 0.55);
 const leafGlow = (albedo, viewDir) => albedo.mul(vec3(impostorLight.sun)).mul(LEAF_GLOW)
   .mul(pow(clamp(dot(viewDir, impostorLight.sunDir), 0, 1), 4).mul(0.75).add(0.05));
 
+// The whole tree sways as one, its trunk, branches and leaves together (each tree in its own
+// rhythm; bark and leaves of a tree share an instance number): not at all at the foot, more and
+// more up the tree, by height up the model itself (not in the scene, where the height above the
+// lowest point of the course would add to it), and further in wind
+const treeSway = () => {
+  const phase = float(instanceIndex).mul(1.618).fract().mul(6.283);
+  const up = positionGeometry.y.max(0);
+  // (models are about 60 units tall: the top moves about 15 cm in still air)
+  const amount = up.mul(up).mul(0.00004).mul(grassWind.mul(0.12).add(1).min(3));
+  return positionLocal.add(vec3(sin(time.mul(1.1).add(phase)), 0, cos(time.mul(0.9).add(phase.mul(1.7)))).mul(amount));
+};
+
 function barkMaterial(src) {
   const m = new THREE.MeshStandardNodeMaterial({ map: src.map || null, normalMap: src.normalMap || null, roughness: 0.95, metalness: 0 });
   if (src.color) m.color.copy(src.color);
   m.envMapIntensity = 0.5;
+  m.positionNode = treeSway();
   m.maskNode = seeThroughMask(positionWorld);
   return m;
 }
 function leafMaterial(src, v) {
-  const m = new THREE.MeshStandardNodeMaterial({
+  // (leaves barely mirror the sky: with the crown-shaped normals, a normal sheen turned the crowns
+  // pale blue-white wherever they faced away from you)
+  const m = new THREE.MeshPhysicalNodeMaterial({
     map: src.map || null, alphaTest: Math.max(0.35, src.alphaTest || 0.5), side: THREE.DoubleSide, roughness: 0.82, metalness: 0,
+    specularIntensity: 0.12,
   });
   m.color.setRGB(0.6, 0.68, 0.5); // a richer summer green
   m.envMapIntensity = 0.45;
@@ -309,10 +349,8 @@ function leafMaterial(src, v) {
   // bare between ~50 and 130 m (before the distant tree pictures take over). Boosting the alpha
   // with distance keeps each leaf about as full as it is up close.
   m.opacityNode = mix(float(1), float(2.6), smoothstep(12, 110, length(positionWorld.sub(cameraPosition))));
-  // Leaves sway a little, the tops most, each tree in its own rhythm
-  const phase = float(instanceIndex).mul(1.618).fract().mul(6.283);
-  const sway = positionLocal.y.mul(0.0035);
-  m.positionNode = positionLocal.add(vec3(sin(time.mul(1.7).add(phase)), 0, cos(time.mul(1.3).add(phase.mul(1.7)))).mul(sway));
+  // (the leaves move with their branches: see treeSway)
+  m.positionNode = treeSway();
   m.maskNode = seeThroughMask(positionWorld);
   return m;
 }
@@ -611,6 +649,95 @@ export class Forest {
     this.impostors.count = ni;
     ia.center.needsUpdate = true; ia.size.needsUpdate = true; ia.data.needsUpdate = true;
     this.counts = { near: nNear, mid: nMid, impostor: ni };
+  }
+
+  // Undergrowth along the edges of dense woods (what you see of a wood from the course): low leafy
+  // shrubs on the open side of each edge tree that has plenty of others round it, under the edge
+  // of its crown and a little beyond, so the wood reads as thick rather than a row of trunks.
+  // allowed(x, z): where a shrub may grow (rough, not by paths or mown grass).
+  buildShrubs(heightAt, allowed, envApply = () => {}) {
+    const trees = this.trees || [];
+    const cell = 14, grid = new Map(), key = (a, b) => a * 73856093 ^ b * 19349663;
+    for (const t of trees) { const k = key(Math.floor(t.x / cell), Math.floor(t.z / cell)); if (!grid.has(k)) grid.set(k, []); grid.get(k).push(t); }
+    const spots = [], taken = new Map();
+    // (shrubs may overlap a little, as real ones grow into each other, but not stand inside one another)
+    const free = (x, z, r) => {
+      const gx = Math.floor(x / 4), gz = Math.floor(z / 4);
+      for (let a = -2; a <= 2; a++) for (let b = -2; b <= 2; b++) for (const [px, pz, pr] of taken.get(key(gx + a, gz + b)) || []) if (Math.hypot(px - x, pz - z) < (r + pr) * 0.55) return false;
+      return true;
+    };
+    for (const t of trees) {
+      if (!t.edge || t.user) continue;
+      // neighbours within 14 m, and which way is open
+      let n = 0;
+      const seen = new Array(8).fill(false);
+      const gx = Math.floor(t.x / cell), gz = Math.floor(t.z / cell);
+      for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) for (const o of grid.get(key(gx + a, gz + b)) || []) {
+        if (o === t) continue;
+        const dx = o.x - t.x, dz = o.z - t.z, d = Math.hypot(dx, dz);
+        if (d > cell) continue;
+        n++;
+        seen[Math.floor(((Math.atan2(dz, dx) + Math.PI) / (2 * Math.PI)) * 8) % 8] = true;
+      }
+      // Only the outside of dense woods: plenty of trees round it, open on one side (not a gap
+      // within the wood, nor a lone tree or a thin row), and open ground beyond
+      const open = seen.filter((v) => !v).length;
+      if (n < 8 || open < 2 || open > 5) continue;
+      let ox = 0, oz = 0;
+      seen.forEach((s, k) => { if (!s) { const a = ((k + 0.5) / 8) * 2 * Math.PI - Math.PI; ox += Math.cos(a); oz += Math.sin(a); } });
+      const ol = Math.hypot(ox, oz);
+      if (ol < 0.01) continue;
+      ox /= ol; oz /= ol;
+      const bx = t.x + ox * 12, bz = t.z + oz * 12, bk = [Math.floor(bx / cell), Math.floor(bz / cell)];
+      let beyond = false;
+      for (let a = -1; a <= 1 && !beyond; a++) for (let b = -1; b <= 1 && !beyond; b++) for (const o of grid.get(key(bk[0] + a, bk[1] + b)) || []) if (Math.hypot(o.x - bx, o.z - bz) < 7) { beyond = true; break; }
+      if (beyond) continue;
+      const count = 4 + Math.floor(hash(t.x, t.z, 12.3) * 3);
+      for (let i = 0; i < count; i++) {
+        const turn = (hash(t.x + i, t.z, 13.7) - 0.5) * 2.8, c = Math.cos(turn), s = Math.sin(turn);
+        const dx = ox * c - oz * s, dz = ox * s + oz * c;
+        // Sizes vary a lot: mostly small and medium, about one in seven big enough to fill a
+        // wide gap (set a little further back, under the trees, so it doesn't spill out far)
+        const sz = hash(t.x + i * 3.1, t.z, 15.1), big = sz > 0.85, mid = sz > 0.55;
+        const v1 = hash(t.x, t.z + i * 2.3, 15.9), v2 = hash(t.x + i, t.z + i, 16.3);
+        const h = big ? 2.6 + v1 * 1.4 : mid ? 1.6 + v1 * 1 : 0.8 + v1 * 0.8;
+        const w = big ? 4 + v2 * 2.5 : mid ? 2.4 + v2 * 1.6 : 1.2 + v2 * 1.2;
+        const d = (t.rh || t.coneR || 3) * (big ? 0.15 + hash(t.x, t.z + i, 14.1) * 0.5 : 0.35 + hash(t.x, t.z + i, 14.1) * 0.85) + 0.5;
+        const x = t.x + dx * d, z = t.z + dz * d;
+        if (!allowed(x, z) || !free(x, z, w / 2)) continue;
+        const y = heightAt(x, z);
+        if (y === null || y === undefined) continue;
+        const k = key(Math.floor(x / 4), Math.floor(z / 4));
+        if (!taken.has(k)) taken.set(k, []);
+        taken.get(k).push([x, z, w / 2]);
+        spots.push({ x, z, y, h, w, kind: hash(x, z, 17.1) < 0.6 ? 0 : 1, rot: hash(x, z, 18.7) * 6.283, tint: hash(x, z, 19.3) });
+      }
+    }
+    // Two looks, leaves of oak and ash (whichever the woods' own trees use)
+    const pick = (kind) => this.models.find((md) => md.v.kind === kind)?.near;
+    const sources = [pick('oak'), pick('ash')].filter(Boolean);
+    const geo = shrubGeometry();
+    const m = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3(), up = new THREE.Vector3(0, 1, 0), col = new THREE.Color();
+    this.shrubCount = 0;
+    sources.forEach((src, si) => {
+      const list = spots.filter((p) => p.kind % sources.length === si);
+      if (!list.length) return;
+      const mat = leafMaterial(src.leafMat, { green: false });
+      envApply(mat);
+      const mesh = new THREE.InstancedMesh(geo, mat, list.length);
+      mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(list.length * 3), 3);
+      list.forEach((p, i) => {
+        q.setFromAxisAngle(up, p.rot);
+        m.compose(T(p.x, p.y - 0.1, p.z), q, sc.set(p.w, p.h, p.w * (0.8 + p.tint * 0.4)));
+        mesh.setMatrixAt(i, m);
+        // a little darker and more varied than the trees above them (they grow in their shade)
+        mesh.setColorAt(i, col.setRGB(0.7 + p.tint * 0.25, 0.8 + p.tint * 0.2, 0.62 + p.tint * 0.2));
+      });
+      mesh.receiveShadow = true;
+      mesh.computeBoundingSphere();
+      this.group.add(mesh);
+      this.shrubCount += list.length;
+    });
   }
 
   triangles() {

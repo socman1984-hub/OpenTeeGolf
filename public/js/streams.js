@@ -8,6 +8,10 @@
 // Water areas mapped as outlines (riverbanks) are only rounded off a little.
 
 const STEP = 2;
+// Narrowest a stream is drawn (half width, m). The ground is a mesh of 2 m squares: across a
+// narrower channel there's often no ground point inside it, and the ground then spans straight
+// from bank to bank above the water (brown teeth across the stream). 3.8 m always holds some.
+export const MIN_HW = 1.9;
 const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
 
 // A ribbon's centre line and half widths, or null if the outline isn't one
@@ -119,7 +123,7 @@ export function prepareStreams(list) {
     for (let i0 = 0; i0 < pts.length - 1; i0 += 75) {
       const i1 = Math.min(pts.length - 1, i0 + 75), left = [], right = [];
       for (let i = i0; i <= i1; i++) {
-        const [x, z] = pts[i], [nx, nz] = nrm[i], w = Math.max(1.25, hw[i]);
+        const [x, z] = pts[i], [nx, nz] = nrm[i], w = Math.max(MIN_HW, hw[i]);
         left.push([x + nx * w, z + nz * w]); right.push([x - nx * w, z - nz * w]);
       }
       out.push({ hole: false, flow: true, pts: [...left, ...right.reverse()], ribbon: { chain, i0, i1 } });

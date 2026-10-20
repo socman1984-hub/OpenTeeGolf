@@ -114,17 +114,61 @@ export function grassMesh(geo, mat, count) {
   return mesh;
 }
 
-// sway: how far (m) the tips move in calm air; geometry needs a `bend` attribute (addBend)
-export function grassMaterial({ sway = 0.006 } = {}) {
+// sway: how far (m) the tips move in calm air; geometry needs a `bend` attribute (addBend).
+// place(p): optional, moves each vertex (in the scene) before it sways
+export function grassMaterial({ sway = 0.006, place = null } = {}) {
   const m = new THREE.MeshStandardNodeMaterial({ vertexColors: true, side: THREE.DoubleSide, roughness: 1, metalness: 0 });
   m.envMapIntensity = 0.35; // (reflecting more sky turns the blades blue-green against the ground)
   // Sway: gusts roll across the grass as waves (by position; three.js has already placed each tuft
   // in the scene when positionNode runs, so positionLocal is in metres), plus a little of each
   // tuft's own rhythm. Further and faster in wind.
-  const p = positionLocal;
+  const p = place ? place(positionLocal) : positionLocal;
   const own = float(instanceIndex).mul(1.618).fract().mul(1.5);
   const t = time.mul(grassWind.mul(0.12).add(1.2)).add(p.x.mul(0.35)).add(p.z.mul(0.27)).add(own);
   const amp = grassWind.mul(0.35).add(1).min(4).mul(sway);
   m.positionNode = p.add(vec3(sin(t), 0, cos(t.mul(0.83).add(1.3))).mul(attribute('bend', 'float').mul(amp)));
   return m;
+}
+
+// Tall unmown grass ("native" areas), about 1 unit tall like a tuft, in four kinds so an area
+// reads as a natural mix rather than one clump repeated:
+//   bunch  - a dense fountain of fine arching blades (fescue)
+//   seed   - finer blades with taller bare stalks carrying pale seed heads
+//   leafy  - fewer, broader, greener blades
+//   lodged - blades flattened over by wind and rain, low and spreading
+// lite: fewer blades, for the far reaches of an area
+export const NATIVE_KINDS = ['bunch', 'seed', 'leafy', 'lodged'];
+export function nativeClumpGeometry(kind, lite = false) {
+  const k = lite ? 0.45 : 1, n = (b) => Math.max(5, Math.round(b * k));
+  const strip = (x0, z0, lx, lz, H, w, colBase, colTop) => {
+    // a thin upright stalk as two crossed strips, so it shows from every side
+    const parts = [];
+    for (const [ux, uz] of [[1, 0], [0, 1]]) {
+      const p = (y, s) => [x0 + lx * y + ux * w * s, y, z0 + lz * y + uz * w * s];
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute([...p(0, -1), ...p(0, 1), ...p(H, 1), ...p(0, -1), ...p(H, 1), ...p(H, -1)], 3));
+      g.setAttribute('normal', new THREE.Float32BufferAttribute([0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0], 3));
+      g.setAttribute('color', new THREE.Float32BufferAttribute([...colBase, ...colBase, ...colTop, ...colBase, ...colTop, ...colTop], 3));
+      parts.push(g);
+    }
+    return parts;
+  };
+  if (kind === 'bunch') return tuftGeometry({ blades: n(20), spread: 0.32, lean: [0.25, 0.7], height: [0.6, 1.0], width: [0.022, 0.036], dry: 0.45 });
+  if (kind === 'leafy') return tuftGeometry({ blades: n(12), spread: 0.28, lean: [0.3, 0.75], height: [0.5, 0.85], width: [0.05, 0.08], dry: 0.08 });
+  if (kind === 'lodged') return tuftGeometry({ blades: n(17), spread: 0.45, lean: [0.8, 1.3], height: [0.35, 0.65], width: [0.028, 0.045], dry: 0.55 });
+  // seed: a tuft of fine blades, plus stalks standing above it with seed heads
+  const base = tuftGeometry({ blades: n(12), spread: 0.25, lean: [0.15, 0.5], height: [0.5, 0.8], width: [0.02, 0.032], dry: 0.4 });
+  base.deleteAttribute('bend');
+  const parts = [base];
+  for (let i = 0; i < n(7); i++) {
+    const a = Math.random() * Math.PI * 2, r = Math.random() * 0.18, H = 0.95 + Math.random() * 0.35;
+    const lx = Math.cos(a) * (0.05 + Math.random() * 0.12), lz = Math.sin(a) * (0.05 + Math.random() * 0.12);
+    const x0 = Math.cos(a) * r, z0 = Math.sin(a) * r;
+    parts.push(...strip(x0, z0, lx, lz, H, 0.006, [0.55, 0.55, 0.42], [1.05, 0.98, 0.72]));
+    // the seed head: a slim spike at the top of the stalk, paler and wider than the stalk
+    const head = strip(x0 + lx * H, z0 + lz * H, lx * 0.6, lz * 0.6, 0.12 + Math.random() * 0.06, 0.016, [1.15, 1.05, 0.75], [1.3, 1.18, 0.85]);
+    for (const g of head) g.translate(0, H - 0.02, 0);
+    parts.push(...head);
+  }
+  return addBend(mergeGeometries(parts));
 }
