@@ -1124,18 +1124,7 @@ function drawMinimap() {
   ctx.strokeStyle = '#000';
   ctx.lineWidth = 1 / s;
   ctx.beginPath(); ctx.arc(bx, by, dotR, 0, 7); ctx.fill(); ctx.stroke();
-  if (scene.mode === 'free') {
-    // Where the free camera is and which way it looks
-    const cam = scene.cameraInfo();
-    const [cx, cy] = px(cam);
-    ctx.save();
-    ctx.translate(cx, cy);
-    ctx.rotate(cam.heading);
-    ctx.fillStyle = '#7fd4ff'; ctx.strokeStyle = '#000'; ctx.lineWidth = 1 / s;
-    ctx.beginPath(); ctx.moveTo(0, -dotR * 3); ctx.lineTo(dotR * 1.8, dotR * 1.6); ctx.lineTo(-dotR * 1.8, dotR * 1.6); ctx.closePath(); ctx.fill(); ctx.stroke();
-    ctx.restore();
-  }
-  // Hovered spot: lines from the ball and on to the pin (in free view too, where a click flies there)
+  // Hovered spot: lines from the ball and on to the pin
   const hov = S.mmHover;
   if (hov) {
     const [hx, hy] = px(hov);
@@ -1179,7 +1168,7 @@ function drawMinimap() {
   ctx.fillRect(0, H - 40, W, 40);
   ctx.fillStyle = '#fff';
   ctx.font = '22px system-ui';
-  ctx.fillText(scene.mode === 'free' ? 'Click to fly there' : `To pin ${fmt(dist(S.ball, g))} · click to aim`, 12, H - 13);
+  ctx.fillText(`To pin ${fmt(dist(S.ball, g))} · click to aim`, 12, H - 13);
 }
 
 // A small dark tag with text, centred on (x, y) and kept inside the minimap
@@ -1196,7 +1185,7 @@ function mapLabel(ctx, text, x, y, color) {
   ctx.textAlign = 'start'; ctx.textBaseline = 'alphabetic';
 }
 
-// Minimap: click/drag to aim (or to fly the free camera there)
+// Minimap: click/drag to aim (in free view too: the camera stays where it is)
 function minimapPoint(e) {
   const cv = $('minimap'), m = S.minimap;
   if (!m) return null;
@@ -1206,8 +1195,8 @@ function minimapPoint(e) {
 function minimapInput(e) {
   const p = minimapPoint(e);
   if (!p) return;
-  if (scene.mode === 'free') { scene.flyTo(p.x, p.z); drawMinimap(); }
-  else aimAt(p);
+  aimAt(p);
+  drawMinimap();
 }
 $('minimap').addEventListener('pointerdown', (e) => { e.target.setPointerCapture(e.pointerId); minimapInput(e); });
 $('minimap').addEventListener('pointermove', (e) => {

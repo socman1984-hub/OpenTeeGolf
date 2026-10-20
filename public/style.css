@@ -29,7 +29,7 @@ select option { background: #1b261d; }
 .discord-link:hover { filter: brightness(1.1); }
 .discord-link svg { width: 16px; height: 16px; }
 .menu-card .sub { margin: 4px 0 18px; color: var(--muted); }
-/* Early beta: a badge by the title (menu and hole card) and a note under the menu title */
+/* Alpha: a badge by the title (menu and hole card) and a note under the menu title */
 .beta-badge { display: inline-block; padding: 2px 8px; border-radius: 6px; background: var(--accent); color: #1a1a1a; font-size: 11px; font-weight: 800; letter-spacing: 0.8px; text-transform: uppercase; vertical-align: middle; white-space: nowrap; }
 .hole-num .beta-badge { margin-left: 10px; font-size: 9px; padding: 1px 6px; position: relative; top: -2px; }
 .menu-card .sub:has(+ .beta-note) { margin-bottom: 10px; }
