@@ -167,8 +167,11 @@ function plan(b, kind, photo) {
     }
     if (n) {
       rr /= n; gg /= n; bb /= n;
-      // (not where a tree hangs over it, or the photo is in deep shadow)
-      if (!(gg > rr * 1.08 && gg > bb * 1.05) && rr + gg + bb > 60) {
+      // (not where a tree hangs over it or a lawn shows round it - no green or yellow-green roofs -
+      // nor where the photo is in deep shadow)
+      const hsl0 = {}; new THREE.Color().setRGB(rr / 255, gg / 255, bb / 255).getHSL(hsl0);
+      const greenish = hsl0.h > 50 / 360 && hsl0.h < 170 / 360 && hsl0.s > 0.12;
+      if (!greenish && rr + gg + bb > 60) {
         roofCol = new THREE.Color().setRGB(rr / 255, gg / 255, bb / 255, THREE.SRGBColorSpace);
         // (the photo is lit and hazy: a little darker and richer)
         const hsl = {}; roofCol.getHSL(hsl); roofCol.setHSL(hsl.h, Math.min(1, hsl.s * 1.15), hsl.l * 0.8);
@@ -199,7 +202,9 @@ function addBuilding(W, R, P, groundAt) {
   // (sheds and barns sit nearly on the ground: just a low concrete curb)
   const floorY = gMax + (type === 'large' || type === 'club' ? 0.15 : type === 'porch' || type === 'shed' || type === 'barn' || type === 'garage' ? 0.1 : 0.35), base = gMin - 0.6, eave = floorY + wallH;
   const parapet = roof === 'flat' ? (type === 'large' || type === 'club' ? 0.7 : type === 'porch' ? 0.25 : 0.35) : 0;
-  const top = eave + parapet;
+  // (under a pitched roof the walls stop a little short of it: their top edge would otherwise lie
+  // right on the roof's underside and flicker against it from a distance)
+  const top = eave + parapet - (roof === 'flat' ? 0 : 0.06);
   // The front (or garage) door goes on the longest wall, usually the front of a house
   let doorWall = -1, longest = 0;
   for (let i = 0; i < pts.length; i++) { const a = pts[i], c = pts[(i + 1) % pts.length], l = Math.hypot(c[0] - a[0], c[1] - a[1]); if (l > longest) { longest = l; doorWall = i; } }
@@ -267,7 +272,9 @@ function addBuilding(W, R, P, groundAt) {
     for (const s of [-1, 1]) {
       const n = [ux * s, 0, uz * s];
       const len = 2 * B;
-      pushTri(W, [P3(s * A, -B, eave), P3(s * A, B, eave), P3(s * A, 0, ridge)], [[0, eave - floorY], [len, eave - floorY], [B, ridge - floorY]], n, gableCol, [len, gableStyle, seed + 7.7 + s, wallH], 0);
+      // (just under the roof, as the walls)
+      const gTop = ridge - 0.1, gEave = eave - 0.06;
+      pushTri(W, [P3(s * A, -B, gEave), P3(s * A, B, gEave), P3(s * A, 0, gTop)], [[0, gEave - floorY], [len, gEave - floorY], [B, gTop - floorY]], n, gableCol, [len, gableStyle, seed + 7.7 + s, wallH], 0);
     }
     // fascia boards along the eaves and up the verges (white or dark trim)
     const trim = srgb(P.seed > 0.5 ? 0xf2f2ee : 0x3a3a3a);

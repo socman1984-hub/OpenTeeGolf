@@ -7,7 +7,7 @@
 //   - water (penalty areas) and OOB
 // These drive both the physics (heightAt / normalAt / surfaceAt) and the rendering.
 
-import { courseMowing, courseGrass } from './mowing.js';
+import { courseMowing, courseGrass, courseSurface } from './mowing.js';
 import { prepareStreams, streamFlow } from './streams.js';
 
 export const TEE_TYPES = ['Black', 'Blue', 'White', 'Green', 'Yellow', 'Red', 'Junior', 'Par3'];
@@ -101,6 +101,30 @@ function decodeF32(b64) {
   return new Float32Array(bytes.buffer);
 }
 
+// A polygon filled into a grid of 1 m cells over its bounding box (scanline, even-odd)
+function rasterPoly(poly, [x0, z0, x1, z1]) {
+  const w = Math.ceil(x1 - x0) + 1, h = Math.ceil(z1 - z0) + 1, data = new Uint8Array(w * h);
+  const xs = [];
+  for (let j = 0; j < h; j++) {
+    const z = z0 + j + 0.5;
+    xs.length = 0;
+    for (let i = 0, k = poly.length - 1; i < poly.length; k = i++) {
+      const [ax, az] = poly[k], [bx, bz] = poly[i];
+      if ((az > z) !== (bz > z)) xs.push(ax + ((z - az) / (bz - az)) * (bx - ax));
+    }
+    xs.sort((a, b) => a - b);
+    for (let n = 0; n + 1 < xs.length; n += 2) {
+      const a = Math.max(0, Math.ceil(xs[n] - x0 - 0.5)), b = Math.min(w - 1, Math.floor(xs[n + 1] - x0 - 0.5));
+      for (let i = a; i <= b; i++) data[j * w + i] = 1;
+    }
+  }
+  return { data, w, h, x0, z0 };
+}
+const maskAt = (m, x, z) => {
+  const i = Math.floor(x - m.x0), j = Math.floor(z - m.z0);
+  return i >= 0 && j >= 0 && i < m.w && j < m.h && m.data[j * m.w + i] === 1;
+};
+
 export function pointInPoly(poly, x, z) {
   let inside = false;
   for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
@@ -108,6 +132,28 @@ export function pointInPoly(poly, x, z) {
     if (zi > z !== zj > z && x < ((xj - xi) * (z - zi)) / (zj - zi) + xi) inside = !inside;
   }
   return inside;
+}
+
+// For big outlines: their edges sorted into 16 m tiles, so the distance to the edge near a point
+// only looks at the edges close by (beyond max metres: Infinity)
+const EDGE_TILE = 16;
+function edgeIndex(poly) {
+  const tiles = new Map(), key = (i, j) => i * 73856093 ^ j * 19349663;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const [ax, az] = poly[j], [bx, bz] = poly[i];
+    for (let ti = Math.floor(Math.min(ax, bx) / EDGE_TILE); ti <= Math.floor(Math.max(ax, bx) / EDGE_TILE); ti++)
+      for (let tj = Math.floor(Math.min(az, bz) / EDGE_TILE); tj <= Math.floor(Math.max(az, bz) / EDGE_TILE); tj++) {
+        const k = key(ti, tj);
+        if (!tiles.has(k)) tiles.set(k, []);
+        tiles.get(k).push([ax, az, bx, bz]);
+      }
+  }
+  return (x, z, max) => {
+    const r = Math.ceil(max / EDGE_TILE), ti = Math.floor(x / EDGE_TILE), tj = Math.floor(z / EDGE_TILE);
+    let best = Infinity;
+    for (let a = -r; a <= r; a++) for (let b = -r; b <= r; b++) for (const e of tiles.get(key(ti + a, tj + b)) || []) best = Math.min(best, segDist(x, z, e[0], e[1], e[2], e[3]).d);
+    return best;
+  };
 }
 
 function distToPolyEdge(poly, x, z) {
@@ -223,6 +269,7 @@ export function buildCourse(courseData, real = null) {
     const xs = hz.poly.map((p) => p[0]), zs = hz.poly.map((p) => p[1]);
     hz.bbox = [Math.min(...xs), Math.min(...zs), Math.max(...xs), Math.max(...zs)];
     addBox(hz.bbox[0] - 8, hz.bbox[1] - 8, hz.bbox[2] + 8, hz.bbox[3] + 8, 'hazards', idx);
+    if (hz.poly.length > 60) hz.mask = rasterPoly(hz.poly, hz.bbox);
   });
   // Mapped golf features (OpenStreetMap), already converted to course coordinates
   const FEATURE_SURFACE = { water: 'water', bunker: 'sand', green: 'green', tee: 'tee', fairway: 'fairway', rough: 'rough' };
@@ -237,10 +284,13 @@ export function buildCourse(courseData, real = null) {
         // (river pieces are already smooth; smoothing them again would pull their ends apart)
         const poly = f.flow ? f.pts : surface === 'sand' ? roundOutline(f.pts) : smoothPoly(f.pts);
         const xs = poly.map((p) => p[0]), zs = poly.map((p) => p[1]);
-        feats.push({ surface, poly, raw: f.pts, inner: !!f.hole, flow: !!f.flow, ribbon: f.ribbon || null, bbox: [Math.min(...xs), Math.min(...zs), Math.max(...xs), Math.max(...zs)] });
+        feats.push({ surface, poly, raw: f.pts, inner: !!f.hole, flow: !!f.flow, sea: !!f.sea, ribbon: f.ribbon || null, bbox: [Math.min(...xs), Math.min(...zs), Math.max(...xs), Math.max(...zs)] });
       }
     }
     feats.forEach((f, idx) => addBox(f.bbox[0] - 2, f.bbox[1] - 2, f.bbox[2] + 2, f.bbox[3] + 2, 'feats', idx));
+    // Big, detailed outlines (the sea, a large lake): filled into a 1 m grid once, so testing a
+    // point is one lookup rather than hundreds of edges
+    for (const f of feats) if (f.poly.length > 60) f.mask = rasterPoly(f.poly, f.bbox);
   }
   // Cart paths and roads: line segments with a width (OpenStreetMap)
   const pathSegs = [];
@@ -316,7 +366,7 @@ export function buildCourse(courseData, real = null) {
       for (const i of b.hazards) {
         const hz = hazards[i];
         if (x < hz.bbox[0] || x > hz.bbox[2] || z < hz.bbox[1] || z > hz.bbox[3]) continue;
-        if (pointInPoly(hz.poly, x, z)) return hz.innerOOB ? 'oob' : 'water';
+        if (hz.mask ? maskAt(hz.mask, x, z) : pointInPoly(hz.poly, x, z)) return hz.innerOOB ? 'oob' : 'water';
       }
     }
     if (oob && !pointInPoly(oob, x, z)) return 'oob';
@@ -341,7 +391,7 @@ export function buildCourse(courseData, real = null) {
     for (const i of b.feats) {
       const f = feats[i];
       if (x < f.bbox[0] || x > f.bbox[2] || z < f.bbox[1] || z > f.bbox[3]) continue;
-      if (pointInPoly(f.poly, x, z)) (f.inner ? cut : inside)[f.surface] = true;
+      if (f.mask ? maskAt(f.mask, x, z) : pointInPoly(f.poly, x, z)) (f.inner ? cut : inside)[f.surface] = true;
     }
     const has = (s) => inside[s] && !cut[s];
     if (has('water')) return 'water';
@@ -454,6 +504,17 @@ export function buildCourse(courseData, real = null) {
   // Streams (stream: the feature) get an even slope straight through the waterline instead, with the
   // ground just above the water at the outline: the terrain's 2 m triangles then meet the water
   // in a clean line rather than a saw-tooth, and the water's own edge tucks under the bank.
+  // The sea (or a big lake that runs off the map): marked so by the builder, or for courses built
+  // before that, 20 ha or more of still water reaching the edge of the map. It gets waves.
+  function isSea(f) {
+    if (f.sea) return true;
+    if (f.flow || f.ribbon) return false;
+    let a = 0;
+    for (let i = 0, j = f.poly.length - 1; i < f.poly.length; j = i++) a += f.poly[j][0] * f.poly[i][1] - f.poly[i][0] * f.poly[j][1];
+    const edge = f.bbox[0] < minX + 20 || f.bbox[2] > maxX - 20 || f.bbox[1] < minZ + 20 || f.bbox[3] > maxZ - 20;
+    return Math.abs(a) / 2 > 200000 && edge;
+  }
+
   function carveShore(poly, bbox, level, stream = null) {
     // (the bank is never raised inside other water: the next piece of the stream, or a pond)
     const otherWater = stream ? feats.filter((o) => o !== stream && o.surface === 'water' && !o.inner
@@ -463,10 +524,12 @@ export function buildCourse(courseData, real = null) {
     const levelAt = typeof level === 'function' ? level : () => level;
     const i0 = Math.max(0, Math.floor((bbox[0] - pad - minX) / cell)), i1 = Math.min(nx - 1, Math.ceil((bbox[2] + pad - minX) / cell));
     const j0 = Math.max(0, Math.floor((bbox[1] - pad - minZ) / cell)), j1 = Math.min(nz - 1, Math.ceil((bbox[3] + pad - minZ) / cell));
+    // (big outlines, e.g. the sea: a quick inside test and only the nearby edges)
+    const big = poly.length > 60, edge = big ? edgeIndex(poly) : null, mask = big ? rasterPoly(poly, bbox) : null;
     for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
       const x = minX + i * cell, z = minZ + j * cell;
-      const e = distToPolyEdge(poly, x, z);
-      const inside = pointInPoly(poly, x, z);
+      const e = big ? edge(x, z, pad + 1) : distToPolyEdge(poly, x, z);
+      const inside = big ? maskAt(mask, x, z) : pointInPoly(poly, x, z);
       if (!inside && e > pad) continue;
       const k = j * nx + i;
       const L = levelAt(x, z);
@@ -561,7 +624,9 @@ export function buildCourse(courseData, real = null) {
     altitudeM: (courseData.altitudeV2 || courseData.altitude || 0) * (courseData.altitudeV2 ? 0.3048 : 1),
     defaultStimp: courseData.DefaultStimp || 10,
     mowing: courseMowing(courseData),
+    lat: courseData.CourseLat, lon: courseData.CourseLong,
     grass: courseGrass(courseData),
+    surface: courseSurface(courseData),
     holes,
     hazards,
     oob,
@@ -569,7 +634,7 @@ export function buildCourse(courseData, real = null) {
     sources: real?.source || null,
     // Water drawn on screen: mapped ponds when available, otherwise the penalty areas
     waterBodies: real && feats.some((f) => f.surface === 'water' && f.level != null)
-      ? feats.filter((f) => f.surface === 'water' && !f.inner && f.level != null).map((f) => ({ poly: f.poly, level: f.level, levelAt: f.levelAt || null, ribbon: f.ribbon }))
+      ? feats.filter((f) => f.surface === 'water' && !f.inner && f.level != null).map((f) => ({ poly: f.poly, level: f.level, levelAt: f.levelAt || null, ribbon: f.ribbon, sea: isSea(f) }))
       : hazards.filter((h) => !h.innerOOB).map((h) => ({ poly: h.poly, level: h.level })),
     // Trees mapped in OpenStreetMap: single trees ([x, z, height?, crown?, leaf?]) and tree rows (lines)
     trees: real?.trees || [],

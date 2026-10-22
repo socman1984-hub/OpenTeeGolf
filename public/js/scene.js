@@ -6,7 +6,7 @@ import * as THREE from 'three/webgpu';
 import {
   Fn, texture, uv, vec2, vec3, float, mix, clamp, smoothstep, dot, distance, normalize, sin, cos, abs, atan,
   positionWorld, cameraPosition, instancedBufferAttribute, PI, normalMap, time, reflector, normalView, positionViewDirection, pow,
-  uniform, select, fwidth, normalWorld, attribute, fract, floor, step, max, length,
+  uniform, select, fwidth, normalWorld, attribute, fract, floor, step, max, length, positionLocal, transformNormalToView,
 } from 'three/tsl';
 import { SkyMesh } from 'three/addons/objects/SkyMesh.js';
 import { Line2 } from 'three/addons/lines/webgpu/Line2.js';
@@ -15,18 +15,24 @@ import { MapControls } from 'three/addons/controls/MapControls.js';
 import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 import { noise, pointInPoly } from './course.js';
 import { Forest, treesFromCanopy, assignSpecies, addMappedTrees, addTreeAreas, fade, impostorLight } from './trees.js';
-import { treesFromPhoto, removeTrees } from './treeplace.js';
+import { treesFromPhoto, removeTrees, treeRegion } from './treeplace.js';
 import { tuftGeometry, reedGeometry, grassMaterial, grassMesh, grassWind, addBend, NATIVE_KINDS, nativeClumpGeometry } from './grass.js';
 import { MOW_WIDTH, mowIndex } from './mowing.js';
 import { layoutParking, bayCorners, carColour } from './parking.js';
 import { roadLines, roadSamples, stripTriangles, onRoad } from './roads.js';
 import { buildBuildings } from './buildings.js';
 import { MIN_HW } from './streams.js';
+import { removeShadows } from './deshadow.js';
 
 // The course's mowing patterns (pattern numbers from mowing.js), read by the terrain shader
 const mowPattern = { fairway: uniform(1), green: uniform(3) };
 // How tall the rough grows (the course's setting, see mowing.js courseGrass)
 const roughScale = uniform(0.8);
+// Which way 'nearer' goes for polygon offsets: -1 with the usual depth buffer, +1 when it's
+// reversed (WebGPU passes the offset through as it is)
+let depthSign = -1;
+// 1: fairways, greens, tees and rough take the aerial photo's colours (the course's setting)
+const photoSurfaces = uniform(0);
 
 const T = (x, y, z) => new THREE.Vector3(-x, y, z);
 const TEX_RES = 1.5; // meters per texel of the generated (no imagery) course texture
@@ -64,7 +70,9 @@ export class CourseScene {
 
     this.scene = new THREE.Scene();
     this.scene.fog = new THREE.FogExp2(0xc4d8e6, 0.00032);
-    this.camera = new THREE.PerspectiveCamera(55, 1, 0.05, 9000);
+    // (near at 25 cm: the camera never comes closer to anything, and every bit nearer costs depth
+    // precision far away - surfaces that nearly touch there, roofs and walls, flicker without it)
+    this.camera = new THREE.PerspectiveCamera(55, 1, 0.25, 9000);
     // (layer 1: tall grass - drawn by this camera, but not again by the water's mirror, whose
     // camera sees only layer 0)
     this.camera.layers.enable(1);
@@ -235,13 +243,21 @@ export class CourseScene {
       }
     }
     await progress('paint', 'Painting the course');
-    this.courseCanvas = sat ? this.paintFromImagery(course, sat) : this.paintCourse(course);
+    photoSurfaces.value = sat && course.surface === 'photo' ? 1 : 0;
+    // (coloured by the photo: its copy with the shadows taken out, if one was saved before)
+    if (photoSurfaces.value) {
+      sat.cleanFile = `photo_clean_${cleanKey(course, sat)}.jpg`;
+      sat.clean = await sat.load(sat.cleanFile).catch(() => null);
+    }
+    this.courseCanvas = sat ? this.paintFromImagery(course, sat, photoSurfaces.value === 1) : this.paintCourse(course);
     this.imagery = sat;
     const tex = new THREE.CanvasTexture(this.courseCanvas);
     tex.colorSpace = THREE.SRGBColorSpace;
     tex.anisotropy = this.renderer.getMaxAnisotropy();
     const mask = this.buildSurfaceMask(course);
     this.setMowing(course.mowing);
+    // Which trees grow here (the course's region: what the game plants on its own)
+    this.treeRegion = treeRegion(course.lat, course.lon);
     this.grassScale = { rough: course.grass?.roughScale ?? 0.8, native: course.grass?.nativeScale ?? 1 };
     roughScale.value = this.grassScale.rough;
     const shore = this.buildShore(course);
@@ -360,7 +376,7 @@ export class CourseScene {
     // lat/lon -> course (inverse of the affine geo transform)
     const [a0, a1, a2] = manifest.geo.lat, [b0, b1, b2] = manifest.geo.lon, det = a1 * b2 - a2 * b1;
     const toCourse = (lat, lon) => { const dl = lat - a0, dn = lon - b0; return [(b2 * dl - a2 * dn) / det, (a1 * dn - b1 * dl) / det]; };
-    return { chunks, surround, toCourse, attribution: manifest.attribution };
+    return { chunks, surround, toCourse, attribution: manifest.attribution, url, created: manifest.created, load };
   }
 
   // Draw an image (lat/lon extent) into a canvas whose pixels map course space: px = (x - x0)/res, py = (z1 - z)/res
@@ -378,7 +394,8 @@ export class CourseScene {
     ctx.setTransform(1, 0, 0, 1, 0, 0);
   }
 
-  paintFromImagery(course, sat) {
+  // photoGrass: leave the grass as the photo shows it (no tints on fairways, tees and greens)
+  paintFromImagery(course, sat, photoGrass = false) {
     const { minX, maxX, minZ, maxZ } = course.bounds;
     const res = Math.max(0.5, Math.max(maxX - minX, maxZ - minZ) / 8192);
     const w = Math.ceil((maxX - minX) / res), h = Math.ceil((maxZ - minZ) / res);
@@ -416,6 +433,9 @@ export class CourseScene {
     };
     // Fairways the map is missing (and tree cover) detected from the photo itself
     this.detectSurfaces(course, sat, canvas, res);
+    // Coloured by the photo: shadows, tree crowns and carts taken out of the picture painted on the
+    // ground (everything above read the original). Kept as its own file next to the photos.
+    if (photoGrass) this.cleanPhoto(course, sat, canvas, res);
     // All fairway area: mapped polygons plus detected mown grass
     const fwMask = document.createElement('canvas');
     fwMask.width = w; fwMask.height = h;
@@ -446,14 +466,16 @@ export class CourseScene {
       ctx.drawImage(t, 0, 0);
       ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over';
     };
-    // First cut: a slightly darker collar around the fairways
-    ctx.strokeStyle = 'rgba(40, 80, 30, 0.22)'; ctx.lineWidth = 4 / res;
-    for (const f of course.features) if (f.surface === 'fairway' && !f.inner) { path(f.poly); ctx.stroke(); }
-    // Fairways and tees: richer green with mowing stripes; greens smoother and brighter
-    maskedFill(fwMask, '#6cb043', 0.4, 'soft-light');
-    fill('tee', '#73b84a', 0.45, 'soft-light');
-    fill('green', '#5fae47', 0.45, 'soft-light');
-    fill('green', '#64ad4a', 0.3);
+    if (!photoGrass) {
+      // First cut: a slightly darker collar around the fairways
+      ctx.strokeStyle = 'rgba(40, 80, 30, 0.22)'; ctx.lineWidth = 4 / res;
+      for (const f of course.features) if (f.surface === 'fairway' && !f.inner) { path(f.poly); ctx.stroke(); }
+      // Fairways and tees: richer green with mowing stripes; greens smoother and brighter
+      maskedFill(fwMask, '#6cb043', 0.4, 'soft-light');
+      fill('tee', '#73b84a', 0.45, 'soft-light');
+      fill('green', '#5fae47', 0.45, 'soft-light');
+      fill('green', '#64ad4a', 0.3);
+    }
     // Bunkers: clean sand
     fill('sand', '#e6d7ad', 0.7);
     // Water beds read dark under the water surface
@@ -469,6 +491,25 @@ export class CourseScene {
     this.paintRoads(ctx, course, res, minX, maxZ);
     this.paintParking(ctx, res, minX, maxZ);
     return canvas;
+  }
+
+  cleanPhoto(course, sat, canvas, res) {
+    const ctx = canvas.getContext('2d'), { minX, maxZ } = course.bounds;
+    if (sat.clean?.naturalWidth === canvas.width && sat.clean.naturalHeight === canvas.height) {
+      ctx.drawImage(sat.clean, 0, 0);
+      return;
+    }
+    removeShadows(ctx, canvas.width, canvas.height, res, (k, cell) => {
+      for (const f of course.features) {
+        if ((f.surface !== 'water' && f.surface !== 'sand') || f.inner) continue;
+        k.beginPath();
+        f.poly.forEach(([x, z], i) => { const px = (x - minX) / cell, py = (maxZ - z) / cell; if (i) k.lineTo(px, py); else k.moveTo(px, py); });
+        k.closePath(); k.fill();
+      }
+    });
+    canvas.toBlob((blob) => {
+      if (blob) fetch(sat.url(sat.cleanFile), { method: 'PUT', headers: { 'Content-Type': 'image/jpeg' }, body: blob }).catch(() => {});
+    }, 'image/jpeg', 0.92);
   }
 
   // ---- public roads (OpenStreetMap)
@@ -656,7 +697,7 @@ export class CourseScene {
       geo.setAttribute('normal', new THREE.BufferAttribute(up, 3));
       const mat = new THREE.MeshStandardMaterial({
         color: colour === 'yellow' ? 0xd8a51e : 0xe4e4dc, roughness: 0.7, side: THREE.DoubleSide,
-        polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4,
+        polygonOffset: true, polygonOffsetFactor: 2 * depthSign, polygonOffsetUnits: 4 * depthSign,
       });
       const mesh = new THREE.Mesh(geo, mat);
       mesh.receiveShadow = true;
@@ -1098,7 +1139,7 @@ export class CourseScene {
       // Green map: where the tall unmown grass grows, for the tawny ground beneath it.
       x2.globalCompositeOperation = 'lighten'; x2.lineJoin = 'round'; x2.lineWidth = 6;
       if (blue === 'mud') for (const wb of course.waterBodies || []) {
-        const b = Math.round(255 * ({ natural: 1, reedy: 0.8, rocky: 0.45, manicured: 0.05 }[wb.style] ?? 1));
+        const b = Math.round(255 * (wb.sea ? 0.08 : { natural: 1, reedy: 0.8, rocky: 0.45, manicured: 0.05 }[wb.style] ?? 1));
         x2.fillStyle = x2.strokeStyle = `rgb(0,0,${b})`;
         trace({ poly: wb.poly }); x2.fill(); x2.stroke();
       }
@@ -1227,12 +1268,13 @@ export class CourseScene {
     this.flowMat = course.waterBodies.some((wb) => wb.levelAt && !wb.ribbon) ? flowingWaterMaterial(this.scene.environment) : null;
     this.streamMat = course.waterBodies.some((wb) => wb.ribbon) ? streamMaterial(this.scene.environment) : null;
     // (the mirror follows the ponds; streams run and break up any reflection)
-    this.waterCentres = course.waterBodies.filter((wb) => !wb.levelAt).map((wb) => {
+    this.waterCentres = course.waterBodies.filter((wb) => !wb.levelAt && !wb.sea).map((wb) => {
       let x = 0, z = 0;
       for (const [px, pz] of wb.poly) { x += px; z += pz; }
       return { x: x / wb.poly.length, z: z / wb.poly.length, level: wb.level };
     });
     for (const wb of course.waterBodies) {
+      if (wb.sea) { this.addOcean(course, wb); continue; }
       if (wb.ribbon && wb.levelAt) {
         const m = new THREE.Mesh(streamGeometry(wb, meshGroundAt(course)), this.streamMat);
         m.userData.flowing = true;
@@ -1273,6 +1315,85 @@ export class CourseScene {
     }
   }
 
+  // ---- the sea: a surface of 3 m squares over the water (islands and the land left out), each
+  // point knowing how far it is from the shore and which way the shore is, for the shader: rolling
+  // swells far out, lines of surf rolling in and breaking near the shore, foam along the beach
+  addOcean(course, wb) {
+    const STEP = 3, xs = wb.poly.map((p) => p[0]), zs = wb.poly.map((p) => p[1]);
+    const x0 = Math.max(course.bounds.minX, Math.min(...xs)), x1 = Math.min(course.bounds.maxX, Math.max(...xs));
+    const z0 = Math.max(course.bounds.minZ, Math.min(...zs)), z1 = Math.min(course.bounds.maxZ, Math.max(...zs));
+    const W = Math.ceil((x1 - x0) / STEP) + 1, H = Math.ceil((z1 - z0) / STEP) + 1;
+    // which points are sea (the course's own surfaces: islands and anything mapped stay land)
+    // (water, but not one of the course's ponds or streams)
+    const others = course.waterBodies.filter((o) => o !== wb && !o.sea).map((o) => {
+      const ox = o.poly.map((p) => p[0]), oz = o.poly.map((p) => p[1]);
+      return { poly: o.poly, b: [Math.min(...ox), Math.min(...oz), Math.max(...ox), Math.max(...oz)] };
+    });
+    const pond = (x, z) => others.some((o) => x >= o.b[0] && x <= o.b[2] && z >= o.b[1] && z <= o.b[3] && pointInPoly(o.poly, x, z));
+    const sea = new Uint8Array(W * H);
+    for (let j = 0; j < H; j++) for (let i = 0; i < W; i++) {
+      const x = x0 + i * STEP, z = z0 + j * STEP;
+      if (course.surfaceAt(x, z) === 'water' && !pond(x, z)) sea[j * W + i] = 1;
+    }
+    // (a little beyond the waterline, so the edge of the surface tucks under the beach)
+    const grown = sea.slice();
+    for (let j = 1; j < H - 1; j++) for (let i = 1; i < W - 1; i++) if (!sea[j * W + i] && (sea[j * W + i - 1] || sea[j * W + i + 1] || sea[(j - 1) * W + i] || sea[(j + 1) * W + i])) grown[j * W + i] = 1;
+    // Distance to the shore (metres, two-pass chamfer; the map's edge doesn't count as shore)
+    const D = new Float32Array(W * H);
+    for (let k = 0; k < W * H; k++) D[k] = sea[k] ? 1e6 : 0;
+    const d1 = STEP, d2 = STEP * 1.414;
+    for (let j = 0; j < H; j++) for (let i = 0; i < W; i++) {
+      const k = j * W + i; if (!D[k]) continue;
+      if (i > 0) D[k] = Math.min(D[k], D[k - 1] + d1);
+      if (j > 0) { D[k] = Math.min(D[k], D[k - W] + d1); if (i > 0) D[k] = Math.min(D[k], D[k - W - 1] + d2); if (i < W - 1) D[k] = Math.min(D[k], D[k - W + 1] + d2); }
+    }
+    for (let j = H - 1; j >= 0; j--) for (let i = W - 1; i >= 0; i--) {
+      const k = j * W + i; if (!D[k]) continue;
+      if (i < W - 1) D[k] = Math.min(D[k], D[k + 1] + d1);
+      if (j < H - 1) { D[k] = Math.min(D[k], D[k + W] + d1); if (i < W - 1) D[k] = Math.min(D[k], D[k + W + 1] + d2); if (i > 0) D[k] = Math.min(D[k], D[k + W - 1] + d2); }
+    }
+    const Dc = (i, j) => D[Math.max(0, Math.min(H - 1, j)) * W + Math.max(0, Math.min(W - 1, i))];
+    // vertices (each grid point used by a kept square) and their shore distance and direction
+    const index = new Int32Array(W * H).fill(-1), pos = [], shore = [];
+    const vert = (i, j) => {
+      const k = j * W + i;
+      if (index[k] < 0) {
+        index[k] = pos.length / 3;
+        const x = x0 + i * STEP, z = z0 + j * STEP;
+        pos.push(-x, 0, z);
+        // direction towards the shore: down the distance's slope (in the scene's mirrored x)
+        const gx = Dc(i + 1, j) - Dc(i - 1, j), gz = Dc(i, j + 1) - Dc(i, j - 1), gl = Math.hypot(gx, gz) || 1;
+        shore.push(Math.min(D[k], 400), gx / gl, -gz / gl);
+      }
+      return index[k];
+    };
+    const idx = [];
+    for (let j = 0; j < H - 1; j++) for (let i = 0; i < W - 1; i++) {
+      if (!grown[j * W + i] && !grown[j * W + i + 1] && !grown[(j + 1) * W + i] && !grown[(j + 1) * W + i + 1]) continue;
+      const a = vert(i, j), b = vert(i + 1, j), c = vert(i, j + 1), d = vert(i + 1, j + 1);
+      idx.push(a, b, c, b, d, c); // (facing up: course x is mirrored in the scene)
+    }
+    if (!idx.length) return;
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    g.setAttribute('shore', new THREE.Float32BufferAttribute(shore, 3));
+    g.setIndex(idx);
+    // (swells come in from the open sea: from the middle of the water towards the course)
+    let sx = 0, sz = 0;
+    for (const [x, z] of wb.poly) { sx += x; sz += z; }
+    const cx = (course.bounds.minX + course.bounds.maxX) / 2, cz = (course.bounds.minZ + course.bounds.maxZ) / 2;
+    const dirX = cx - sx / wb.poly.length, dirZ = cz - sz / wb.poly.length, dl = Math.hypot(dirX, dirZ) || 1;
+    this.oceanMat?.dispose();
+    this.oceanMat = oceanMaterial(this.scene.environment, [-dirX / dl, dirZ / dl]);
+    const m = new THREE.Mesh(g, this.oceanMat);
+    m.position.y = wb.level;
+    m.receiveShadow = true;
+    m.frustumCulled = false;
+    m.userData.flowing = true; // (no pond mirror on it)
+    this.waterMeshes.push(m);
+    this.courseGroup.add(m);
+  }
+
   // ---- water edges: a muddy bank at the waterline and taller grass along the shore. Ponds differ:
   //   natural    - muddy bank, tall grass, reed beds in places, the odd rock
   //   manicured  - mown right down to a thin wet edge; no mud strip, tall grass or reeds
@@ -1288,6 +1409,7 @@ export class CourseScene {
   buildShore(course) {
     // Each pond gets its own kind of bank, the same every time (from where it is)
     for (const wb of course.waterBodies || []) {
+      if (wb.sea) wb.style = 'rocky'; // (the sea: no reeds or muddy bank)
       if (wb.style) continue;
       let cx = 0, cz = 0;
       for (const [x, z] of wb.poly) { cx += x; cz += z; }
@@ -1377,7 +1499,7 @@ export class CourseScene {
       // A random spot along the shoreline: thick in some stretches, sparse or bare in others
       const { x: x0, z: z0, nx, nz, tx, tz, wb } = shoreSpot();
       // (none on mown-to-the-edge ponds, less where rocks line the bank)
-      if (wb.style === 'manicured' || (wb.style === 'rocky' && Math.random() < 0.6)) continue;
+      if (wb.sea || wb.style === 'manicured' || (wb.style === 'rocky' && Math.random() < 0.6)) continue;
       if (noise(x0 * 0.06 + 31, z0 * 0.06) < -0.35) continue;
       // Step out from the water
       const d = 0.15 + Math.random() ** 1.6 * 2.4, along = (Math.random() - 0.5) * 0.3;
@@ -1427,7 +1549,7 @@ export class CourseScene {
       const s = shoreSpot();
       // Reed beds, not a continuous ring: in patches on natural ponds, round most of a reedy one,
       // rarely among rocks, never on a mown one
-      const reedLimit = { natural: 0.2, reedy: -0.45, rocky: 0.55 }[s.wb.style];
+      const reedLimit = s.wb.sea ? undefined : { natural: 0.2, reedy: -0.45, rocky: 0.55 }[s.wb.style];
       if (reedLimit === undefined || noise(s.x * 0.035 + 7, s.z * 0.035 - 3) < reedLimit) continue;
       if (nearPlay(s.x, s.z, s.nx, s.nz)) continue;
       // Mostly just inside the water, some right at the edge (in a stream, only along its banks:
@@ -1542,7 +1664,7 @@ export class CourseScene {
       x, z, h: pine ? 11 + r * 10 : 9 + r * 11, r: pine ? 2.2 + r2 * 1.4 : 2.6 + r2 * 2.8, kind: pine ? 'pine' : null,
     }));
     const photo = this.photoAt();
-    assignSpecies(trees.filter((t) => !t.kind), photo);
+    assignSpecies(trees.filter((t) => !t.kind), photo, this.treeRegion);
     this.pendingTrees = trees;
   }
 
@@ -1566,7 +1688,7 @@ export class CourseScene {
       const s = this.fastSurface(x, z);
       return s === null || ok.has(s);
     });
-    assignSpecies(trees, this.photoAt());
+    assignSpecies(trees, this.photoAt(), this.treeRegion);
     this.pendingTrees = trees;
   }
 
@@ -1584,7 +1706,7 @@ export class CourseScene {
       return i >= 0 && j >= 0 && i < canopy.w && j < canopy.h ? canopy.heights[j * canopy.w + i] : 0;
     } : null;
     const found = treesFromPhoto(this.photoRaster, { allowed, existing: this.pendingTrees, heightAt });
-    assignSpecies(found, this.photoAt());
+    assignSpecies(found, this.photoAt(), this.treeRegion);
     this.pendingTrees.push(...found);
     this.photoTrees = found.length;
     this.photoTreeList = found.map((t) => [t.x, t.z, t.h, t.r]);
@@ -1612,7 +1734,7 @@ export class CourseScene {
     // (tree areas also keep off fairways; single trees go wherever the player put them)
     const areaOk = (x, z) => allowed(x, z) && !['fairway', 'firstcut'].includes(this.fastSurface(x, z)) && course.surfaceAt(x, z) !== 'fairway';
     const user = addTreeAreas(trees, course.userTrees, course.treeAreas, { heightAt: heightAt || undefined, allowed: areaOk });
-    if (added || user) assignSpecies(trees, this.photoAt());
+    if (added || user) assignSpecies(trees, this.photoAt(), this.treeRegion);
     this.osmTrees = { added, matched, user };
   }
 
@@ -1833,8 +1955,9 @@ export class CourseScene {
     this.updateImpostorLight();
   }
 
-  // Distant tree pictures light themselves; keep them in step with the sun and sky (three.js lights
-  // divide by pi for diffuse surfaces, plus a little for the sky reflection)
+  // The sun and sky for the trees' own touches (the glow of leaves with the sun behind them) kept
+  // in step with the lights (three.js lights divide by pi for diffuse surfaces, plus a little for
+  // the sky reflection)
   updateImpostorLight() {
     impostorLight.sunDir.value.copy(SUN_DIR).normalize();
     impostorLight.sun.value.copy(this.sun.color).multiplyScalar(this.sun.intensity / Math.PI);
@@ -2897,7 +3020,7 @@ function preloadTextures() {
 // Cart path surface (see addPathStrips): pale concrete (or gravel), with the asphalt texture's grain
 // for detail, a little worn darker along each edge
 function pathMaterial(paved) {
-  const m = new THREE.MeshStandardNodeMaterial({ roughness: 0.85, metalness: 0, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4 });
+  const m = new THREE.MeshStandardNodeMaterial({ roughness: 0.85, metalness: 0, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: 2 * depthSign, polygonOffsetUnits: 4 * depthSign });
   const grain = texture(groundTexture('asphalt'), positionWorld.xz.mul(0.35)).rgb.div(vec3(...GROUND_MEAN.asphalt));
   const base = paved ? vec3(0.36, 0.355, 0.33) : vec3(0.42, 0.355, 0.27);
   const edge = smoothstep(0.82, 1, abs(uv().x.mul(2).sub(1))).mul(0.2).oneMinus();
@@ -2927,6 +3050,66 @@ function waterMaterial(env, reflection) {
   const fresnel = float(0.04).add(float(0.96).mul(pow(facing.oneMinus(), 4)));
   m.colorNode = deep.mul(fresnel.oneMinus());
   m.emissiveNode = reflection.rgb.mul(fresnel).mul(0.92);
+  return m;
+}
+
+// The sea: Gerstner swells (the surface moves up and down and the crests sharpen), fading out
+// towards the shore so they never cut into the beach; lines of surf that roll in parallel to the
+// shore and break into white water over the last 50 m, and a band of foam along the waterline.
+// Ripples on top from the water texture. shore attribute: metres to the shore, direction to it.
+// swell: the direction the swells travel (scene x, z).
+function oceanMaterial(env, swell) {
+  const m = new THREE.MeshPhysicalNodeMaterial({ roughness: 0.12, metalness: 0, ior: 1.33 });
+  if (env) { m.envMap = env; m.envMapIntensity = 0.9; }
+  const sh = attribute('shore', 'vec3'), dShore = sh.x, toShore = vec2(sh.y, sh.z);
+  const calm = smoothstep(4, 60, dShore);   // (swells die down in the shallows)
+  const P = positionLocal, q = vec2(P.x, P.z);
+  // three swells, close to the main direction, of different lengths (m) and heights
+  const SW = [[swell[0], swell[1], 46, 0.42], [swell[0] * 0.9 - swell[1] * 0.44, swell[1] * 0.9 + swell[0] * 0.44, 27, 0.22], [swell[0] * 0.9 + swell[1] * 0.44, swell[1] * 0.9 - swell[0] * 0.44, 15, 0.1]];
+  let dx = float(0), dy = float(0), dz = float(0), nx = float(0), nz = float(0);
+  for (const [ax, az, L, A] of SW) {
+    const k = (2 * Math.PI) / L, c = Math.sqrt(9.81 / k), dir = vec2(ax, az).normalize();
+    const ph = dot(dir, q).mul(k).sub(time.mul(k * c));
+    const amp = calm.mul(A), steep = 0.55 / (k * A * 3);
+    dx = dx.add(dir.x.mul(cos(ph)).mul(amp.mul(steep)));
+    dz = dz.add(dir.y.mul(cos(ph)).mul(amp.mul(steep)));
+    dy = dy.add(sin(ph).mul(amp));
+    // (the slope, for the normal)
+    nx = nx.add(dir.x.mul(cos(ph)).mul(amp.mul(k)));
+    nz = nz.add(dir.y.mul(cos(ph)).mul(amp.mul(k)));
+  }
+  // Surf: crests a set distance apart that travel in towards the shore; each one lifts a little
+  // and turns to white water as it reaches the shallows
+  // (the spacing wanders a little along the coast, so the lines aren't contour-perfect)
+  const wander = sin(P.x.mul(0.031).add(P.z.mul(0.017))).mul(2.5).add(sin(P.x.mul(0.011).sub(P.z.mul(0.027)).add(1.3)).mul(3));
+  const surfPh = dShore.add(wander).div(15).add(time.mul(0.1)).fract();
+  const crest = smoothstep(0.88, 0.97, surfPh).mul(smoothstep(1, 0.975, surfPh)).mul(smoothstep(45, 10, dShore));
+  const surfLift = smoothstep(0.6, 0.95, surfPh).mul(smoothstep(60, 20, dShore)).mul(smoothstep(2, 10, dShore)).mul(0.18);
+  m.positionNode = P.add(vec3(dx, dy.add(surfLift), dz));
+  // Ripples on top
+  const ripples = loadTexture('water_normal.jpg', false);
+  const w = q.div(14);
+  const ra = texture(ripples, w.add(time.mul(vec2(0.012, 0.007)))).xyz.mul(2).sub(1);
+  const rb = texture(ripples, w.mul(0.37).add(time.mul(vec2(-0.009, 0.011)))).xyz.mul(2).sub(1);
+  const rn = vec3(ra.xy.add(rb.xy), 0);
+  m.normalNode = normalize(transformNormalToView(vec3(nx.negate().add(rn.x.mul(0.12)), 1, nz.negate().add(rn.y.mul(0.12)))));
+  // Colour: deep blue-green offshore, lighter turquoise in the shallows; white surf on the
+  // breaking crests and a foamy band where the water washes the shore (broken up by the ripples)
+  const deep = mix(vec3(0.01, 0.04, 0.07), vec3(0.025, 0.11, 0.13), smoothstep(80, 6, dShore));
+  const froth = ra.x.add(rb.y).mul(0.5).add(0.5);
+  const shoreFoam = smoothstep(6, 1.5, dShore).mul(smoothstep(0.35, 0.7, froth.add(sin(time.mul(0.9).add(dShore.mul(0.8))).mul(0.25))));
+  // (broken white water: patchy along each line, more so further out)
+  const surf = crest.mul(smoothstep(mix(float(0.35), float(0.6), smoothstep(10, 45, dShore)), 0.75, froth));
+  const foam = clamp(shoreFoam.add(surf), 0, 1);
+  const facing = clamp(dot(normalView, positionViewDirection), 0, 1);
+  const fresnel = float(0.03).add(float(0.97).mul(pow(facing.oneMinus(), 5)));
+  m.colorNode = mix(deep.mul(fresnel.oneMinus()), vec3(0.85, 0.88, 0.86), foam);
+  m.roughnessNode = mix(float(0.12), float(0.8), foam);
+  // The sky mirrored in it: pale near the horizon (grazing views) - the swells show as bands of
+  // lighter and darker water as they tilt towards and away from you
+  const sky = mix(vec3(0.3, 0.42, 0.55), vec3(0.5, 0.6, 0.68), facing.oneMinus());
+  m.emissiveNode = sky.mul(fresnel).mul(foam.oneMinus()).mul(0.5);
+  void toShore;
   return m;
 }
 
@@ -3279,7 +3462,10 @@ function terrainMaterial(map, soft, mask, mowDirs, strength, shore, hasSand = fa
     // where the photo is pale (sand or bare ground in the picture that the map puts in the rough
     // would otherwise show as a grey halo, e.g. round a bunker drawn a little off)
     const roughW = wr.mul(mix(0.85, 1, smoothstep(0.25, 0.45, lum)));
-    const col = mix(base, graded, wf.add(roughW).add(wg).add(ws).add(wp.mul(0.7))).toVar();
+    // (with the photo's colours on the grass, the game's colours only a light tint - enough that the
+    // mapped edges still show - over the photo's own; sand and paths stay the game's)
+    const grassAmt = wf.add(roughW).add(wg).mul(mix(float(1), float(0.22), photoSurfaces));
+    const col = mix(base, graded, grassAmt.add(ws).add(wp.mul(0.7))).toVar();
 
     const q = positionWorld.xz;
     const camD = distance(cameraPosition, positionWorld);
@@ -3619,6 +3805,16 @@ function removeSmall(codes, w, h, code, minArea) {
 
 // White-balance an aerial photo towards natural vegetation colours and boost saturation a little.
 // Returns the channel gains so other imagery of the same course can be matched.
+// Which photo and which water and sand the clean photo was made from (its file name changes
+// with them, so an old one is never used)
+function cleanKey(course, sat) {
+  let s = `${sat.created}|${course.bounds.minX},${course.bounds.maxX},${course.bounds.minZ},${course.bounds.maxZ}`;
+  for (const f of course.features) if ((f.surface === 'water' || f.surface === 'sand') && !f.inner) s += `|${f.poly.length},${f.poly[0]}`;
+  let a = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) a = Math.imul(a ^ s.charCodeAt(i), 0x01000193);
+  return (a >>> 0).toString(36);
+}
+
 function colorBalance(ctx, w, h, gains = null) {
   const img = ctx.getImageData(0, 0, w, h), d = img.data;
   if (!gains) {
