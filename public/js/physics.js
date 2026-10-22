@@ -390,7 +390,10 @@ function treeInteract(trees, p, v, dt, st, trunks = true) {
     if (depth < 0) continue;
     const speed = Math.hypot(v[0], v[1], v[2]);
     if (speed < 1e-3) continue;
-    const step = speed * dt, dense = t.kind === 'spruce' ? 1.7 : t.coneBase != null ? 1.5 : 1;
+    // (a palm's head is open fronds and desert trees are airy: a ball goes through them more easily
+    // than a leafy crown; a cactus has only its flowers up there; moss and cypress are thick)
+    const SPARSE = { palm: 0.6, mesquite: 0.55, paloverde: 0.45, saguaro: 0.15, liveoak: 1.2, cypress: 1.4, magnolia: 1.3 };
+    const step = speed * dt, dense = t.kind === 'spruce' ? 1.7 : t.coneBase != null ? 1.5 : SPARSE[t.kind] ?? 1;
     if (!st.inCrown.has(t)) { st.inCrown.add(t); if (!event) event = 'leaves'; }
     // Leaves: drag (exponential speed loss per metre) and a small random knock off line
     const keep = Math.exp(-(0.008 + 0.12 * depth) * dense * step);

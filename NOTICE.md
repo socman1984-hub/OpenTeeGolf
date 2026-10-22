@@ -26,6 +26,8 @@ OpenTeeGolf is free software under the GNU General Public License v3 (see `LICEN
 | `trees/maple_leaves.png`, `trees/willow_leaves.png`, `trees/birch_leaves.png` | Twigs made with `scripts/leaf-twigs.py` from [ambientCG LeafSet010](https://ambientcg.com/view?id=LeafSet010), [LeafSet013](https://ambientcg.com/view?id=LeafSet013) and [LeafSet014](https://ambientcg.com/view?id=LeafSet014) | CC0 1.0 |
 | `trees/ash_bark_*.jpg`, `trees/spruce_bark_*.jpg` | [ambientCG Bark001](https://ambientcg.com/view?id=Bark001), [Bark006](https://ambientcg.com/view?id=Bark006) | CC0 1.0 |
 | `trees/maple_bark_*.jpg`, `trees/poplar_bark_*.jpg`, `trees/pine_bark_*.jpg` | [Poly Haven Trident Maple Bark](https://polyhaven.com/a/trident_maple_bark), [Bark Willow 02](https://polyhaven.com/a/bark_willow_02), [Pine Bark](https://polyhaven.com/a/pine_bark) | CC0 1.0 |
+| `trees/palm_leaves.png`, `trees/palm_bark_*.jpg` | Drawn by `scripts/palm-textures.py` (no source images) | Part of OpenTeeGolf (GPL-3.0-or-later) |
+| `trees/{liveoak,cypress,baldcypress,mesquite,paloverde,saguaro,sycamore,magnolia}_leaves.png`, `..._bark_*.jpg` | Drawn by `scripts/tree-textures.py` (no source images) | Part of OpenTeeGolf (GPL-3.0-or-later) |
 | `water_normal.jpg` | [three.js](https://github.com/mrdoob/three.js/blob/r186/examples/textures/waternormals.jpg) example textures | MIT |
 
 The ambientCG and Poly Haven textures were resized to 1K and recompressed; CC0 needs no attribution, but credit is given here anyway.
