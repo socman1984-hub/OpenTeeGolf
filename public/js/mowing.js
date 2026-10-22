@@ -28,6 +28,14 @@ export const courseGrass = (courseData) => {
   return { rough, native, roughScale: GRASS_HEIGHTS.rough.find((o) => o.id === rough).scale, nativeScale: GRASS_HEIGHTS.native.find((o) => o.id === native).scale };
 };
 
+// The colours of the fairways, greens, tees and rough: the game's own, or the aerial photo's
+// (the photo shows through, with the game's shapes, edges, mowing stripes and grass detail on top)
+export const SURFACE_LOOKS = [
+  { id: 'game', label: 'Game colours (even, groomed)' },
+  { id: 'photo', label: 'Aerial photo colours' },
+];
+export const courseSurface = (courseData) => (SURFACE_LOOKS.some((o) => o.id === courseData?.Surface) ? courseData.Surface : 'game');
+
 export const courseMowing = (courseData) => ({
   fairway: MOW_PATTERNS.some((p) => p.id === courseData?.Mowing?.fairway) ? courseData.Mowing.fairway : MOW_DEFAULTS.fairway,
   green: MOW_PATTERNS.some((p) => p.id === courseData?.Mowing?.green) ? courseData.Mowing.green : MOW_DEFAULTS.green,

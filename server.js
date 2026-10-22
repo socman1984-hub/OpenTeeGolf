@@ -398,6 +398,14 @@ const readBody = (req, limit = 1e5) => new Promise((resolve, reject) => {
   req.on('data', (c) => { b += c; if (b.length > limit) req.destroy(); });
   req.on('end', () => { try { resolve(b ? JSON.parse(b) : {}); } catch (e) { reject(e); } });
 });
+// (a binary body, as a Buffer)
+const readRaw = (req, limit) => new Promise((resolve, reject) => {
+  const parts = [];
+  let n = 0;
+  req.on('data', (c) => { n += c.length; if (n > limit) { req.destroy(); reject(new Error('Too big')); } else parts.push(c); });
+  req.on('end', () => resolve(Buffer.concat(parts)));
+  req.on('error', reject);
+});
 
 const PUBLIC = path.join(ROOT, 'public');
 const THREE = path.join(ROOT, 'node_modules', 'three');
@@ -512,7 +520,18 @@ const httpServer = http.createServer(async (req, res) => {
       const f = courseFile(m[1]);
       const rf = f && realFile(f);
       if (!rf) return notFound(res);
-      return serveFile(res, rf.replace(/\.real\.json$/i, '.sat'), m[2]);
+      const dir = rf.replace(/\.real\.json$/i, '.sat');
+      if (req.method === 'PUT' && /^photo_clean_\w+\.jpg$/.test(m[2])) {
+        // The game's copy of the photo with the shadows taken out (for courses coloured by the
+        // photo); the original photos stay as they are. Only the newest copy is kept.
+        const body = await readRaw(req, 80e6).catch(() => null);
+        if (!body || body[0] !== 0xff || body[1] !== 0xd8) return json(res, { error: 'Not a JPEG' }, 400);
+        fs.mkdirSync(dir, { recursive: true });
+        for (const old of fs.readdirSync(dir)) if (/^photo_clean_\w+\.jpg$/.test(old)) fs.rmSync(path.join(dir, old), { force: true });
+        fs.writeFileSync(path.join(dir, m[2]), body);
+        return json(res, { ok: true });
+      }
+      return serveFile(res, dir, m[2]);
     }
     if ((m = p.match(/^\/api\/courses\/([\w-]+)\/photo$/))) {
       const f = courseFile(m[1]);
@@ -698,7 +717,9 @@ const httpServer = http.createServer(async (req, res) => {
       const jobId = Date.now().toString(36);
       const log = (msg, extra) => { if (msg) console.log(`[build] ${msg}`); broadcast('build', { jobId, msg, ...extra }); };
       buildCourse({ osmType: b.osmType, osmId: b.osmId, group: b.group ?? null, name: b.name || null, location: b.location || '' }, log)
-        .then((r) => { ensurePhoto(path.dirname(r.dataFile), photoInfo(r.dataFile), { log: (m) => console.log(`[photo] ${m}`) }); return r; })
+        .then((r) => {
+          // (grass colours chosen in the builder)
+          if (b.surface === 'photo') { const cd0 = readCourseData(r.dataFile); cd0.Surface = 'photo'; fs.writeFileSync(r.dataFile, JSON.stringify(cd0, null, 1)); } ensurePhoto(path.dirname(r.dataFile), photoInfo(r.dataFile), { log: (m) => console.log(`[photo] ${m}`) }); return r; })
         .then((r) => broadcast('build', { jobId, done: true, courseId: path.basename(path.dirname(r.dataFile)), needsReview: r.needsReview }))
         .catch((err) => { console.error(err); broadcast('build', { jobId, error: err.message }); });
       return json(res, { jobId });
@@ -727,10 +748,11 @@ const httpServer = http.createServer(async (req, res) => {
           log('Kept the trees added in the editor.');
         }
         // (and the course's look chosen in the editor: mowing patterns, grass heights)
-        if (cd.Mowing || cd.Grass) {
+        if (cd.Mowing || cd.Grass || cd.Surface) {
           const nd0 = readCourseData(r.dataFile);
           if (cd.Mowing) nd0.Mowing = cd.Mowing;
           if (cd.Grass) nd0.Grass = cd.Grass;
+          if (cd.Surface) nd0.Surface = cd.Surface;
           fs.writeFileSync(r.dataFile, JSON.stringify(nd0, null, 1));
         }
         const sat = satDir(r.dataFile);

@@ -9,7 +9,7 @@ export const TEE_ORDER = ['Black', 'Blue', 'White', 'Green', 'Yellow', 'Red', 'J
 export const PIN_DAYS = ['Thursday', 'Friday', 'Saturday', 'Sunday'];
 
 // mowing (optional): { fairway, green } pattern ids from mowing.js
-export function makeCourseData({ name, location = '', lat = 0, lon = 0, altitudeM = 0, holes, hazards, oob, builder, designer = 'OpenTeeGolf course builder', stimp = 10, mowing = null, grass = null }) {
+export function makeCourseData({ name, location = '', lat = 0, lon = 0, altitudeM = 0, holes, hazards, oob, builder, designer = 'OpenTeeGolf course builder', stimp = 10, mowing = null, grass = null, surface = null }) {
   const pathLen = (pts) => pts.slice(1).reduce((s, p, i) => s + Math.hypot(p.x - pts[i].x, p.z - pts[i].z), 0);
   const totals = Object.fromEntries(TEE_ORDER.map((t) => [t, 0]));
   const Holes = holes.map((h) => {
@@ -36,6 +36,7 @@ export function makeCourseData({ name, location = '', lat = 0, lon = 0, altitude
     DefaultStimp: stimp,
     ...(mowing ? { Mowing: mowing } : {}),
     ...(grass ? { Grass: { rough: grass.rough, native: grass.native } } : {}),
+    ...(surface === 'photo' ? { Surface: 'photo' } : {}),
     altitudeV2: Math.round(altitudeM * 3.28084),
     pOOB: { pointCount: oob.length, coords: oob },
     Holes,

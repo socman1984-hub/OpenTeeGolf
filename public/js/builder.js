@@ -72,6 +72,7 @@ async function check(r) {
       <div class="form-row">
         <label>Course name<input id="b-name" value="${esc(c.groups.length > 1 && c.groups[0].name ? `${c.name} – ${c.groups[0].name}` : c.name)}"></label>
         ${groups}
+        <label>Grass colours<select id="b-surface"><option value="game">Game colours (even, groomed)</option><option value="photo">Aerial photo colours</option></select></label>
       </div>
       <button class="primary" id="b-build">Build course</button>`;
     if ($('b-group')) {
@@ -105,6 +106,7 @@ async function build(c) {
       body: JSON.stringify({
         osmType: c.osmType, osmId: c.osmId, name: $('b-name').value.trim(), location: current?.location || '',
         group: $('b-group') ? $('b-group').value : null,
+        surface: $('b-surface')?.value || 'game',
       }),
     }));
   } catch (err) {

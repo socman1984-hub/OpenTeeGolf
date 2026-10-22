@@ -3,7 +3,7 @@
 import { makeCourseData, TEE_ORDER, PIN_DAYS } from './coursefile.js';
 import { smoothPoly } from './course.js';
 import { treesFromCanopy, treesFromPhoto, removeTrees, addMappedTrees, addTreeAreas, TREE_SIZES, TREE_SPECIES, TREE_MIXES, AREA_HEIGHTS } from './treeplace.js';
-import { MOW_PATTERNS, MOW_WIDTH, courseMowing, mowShade, GRASS_HEIGHTS, courseGrass } from './mowing.js';
+import { MOW_PATTERNS, MOW_WIDTH, courseMowing, mowShade, GRASS_HEIGHTS, courseGrass, SURFACE_LOOKS, courseSurface } from './mowing.js';
 import { BUILDING_TYPES, classifyBuildings, footprintInfo } from './buildingtypes.js';
 
 const $ = (id) => document.getElementById(id);
@@ -38,9 +38,10 @@ let showTrees = true;
 let buildings = [], buildingTypes = {}, showBuildings = true, buildingKinds = null, kindsKey = '';
 const treeOpts = { size: 'medium', density: 'medium', kind: 'auto', areaKind: 'auto', hMin: AREA_HEIGHTS.min, hMax: AREA_HEIGHTS.max };
 // Map colours for each species (planted trees are drawn in them; 'auto' ones in the usual green)
-const SPECIES_COLOR = { oak: '#5f9e3c', maple: '#c86b2d', ash: '#9fcf5a', birch: '#f2f0dc', aspen: '#e8d74a', poplar: '#3fb5a3', willow: '#a7e07a', pine: '#2f6b4a', spruce: '#3d6f9e' };
+const SPECIES_COLOR = { oak: '#5f9e3c', maple: '#c86b2d', ash: '#9fcf5a', birch: '#f2f0dc', aspen: '#e8d74a', poplar: '#3fb5a3', willow: '#a7e07a', pine: '#2f6b4a', spruce: '#3d6f9e', palm: '#d9b44a',
+  liveoak: '#4b5e2f', magnolia: '#1f4d2b', sycamore: '#c9c3a3', cypress: '#22433a', baldcypress: '#b5653a', mesquite: '#8a7a52', paloverde: '#a4c43c', saguaro: '#3f8f5f' };
 const speciesOptions = (sel) => [...TREE_MIXES, ...TREE_SPECIES].map((o) => `<option value="${o.id}" ${o.id === (sel || 'auto') ? 'selected' : ''}>${esc(o.label)}</option>`).join('');
-const course = { name: '', location: '', stimp: 10, mowing: courseMowing(null), grass: courseGrass(null) };
+const course = { name: '', location: '', stimp: 10, mowing: courseMowing(null), grass: courseGrass(null), surface: 'game' };
 const sel = { hole: 0, shape: -1, tree: -1, found: null, removed: -1, many: [], building: -1 }; // many: found trees picked with Shift
 const view = { cx: 0, cz: 0, scale: 1 };
 let mode = null;   // { type: 'place', kind, key } | { type: 'draw', kind, pts }
@@ -118,6 +119,7 @@ async function load() {
   course.name = g.CourseName || ''; course.location = g.Location || ''; course.stimp = g.DefaultStimp || 10;
   course.mowing = courseMowing(g);
   course.grass = courseGrass(g);
+  course.surface = courseSurface(g); $('c-surface').value = course.surface;
   $('c-rough-h').value = course.grass.rough; $('c-native-h').value = course.grass.native;
   holes = g.Holes.map((h) => {
     const tees = {}, aims = [];
@@ -425,7 +427,7 @@ async function save() {
   const P = (p) => ({ x: r2(p.x), y: Math.round(heightAt(p.x, p.z) * 1000) / 1000, z: r2(p.z) });
   const sorted = [...holes].sort((a, b) => a.number - b.number);
   const out = makeCourseData({
-    name: course.name, location: course.location, stimp: course.stimp, mowing: { ...course.mowing }, grass: { rough: course.grass.rough, native: course.grass.native },
+    name: course.name, location: course.location, stimp: course.stimp, mowing: { ...course.mowing }, grass: { rough: course.grass.rough, native: course.grass.native }, surface: course.surface,
     lat: courseData.CourseLat, lon: courseData.CourseLong, altitudeM: (courseData.altitudeV2 || 0) * 0.3048,
     designer: courseData.Designer || 'OpenTeeGolf course builder',
     holes: sorted.map((h) => ({
@@ -1273,6 +1275,8 @@ function autoPins(h) {
 
 $('c-name').oninput = () => { course.name = $('c-name').value; setDirty(true); };
 $('c-location').oninput = () => { course.location = $('c-location').value; setDirty(true); };
+$('c-surface').innerHTML = SURFACE_LOOKS.map((o) => `<option value="${o.id}">${o.label}</option>`).join('');
+$('c-surface').onchange = () => { change(); course.surface = $('c-surface').value; setDirty(true); };
 // Rough and tall grass heights
 for (const [kind, id] of [['rough', 'c-rough-h'], ['native', 'c-native-h']]) {
   $(id).innerHTML = GRASS_HEIGHTS[kind].map((o) => `<option value="${o.id}">${o.label}</option>`).join('');
