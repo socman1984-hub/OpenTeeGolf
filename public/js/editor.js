@@ -2,7 +2,7 @@
 // pins) and shapes (greens, fairways, bunkers, tee boxes, water, penalty areas, OOB) can be edited.
 import { makeCourseData, TEE_ORDER, PIN_DAYS } from './coursefile.js';
 import { smoothPoly } from './course.js';
-import { treesFromCanopy, treesFromPhoto, removeTrees, addMappedTrees, addTreeAreas, TREE_SIZES, TREE_SPECIES, TREE_MIXES, AREA_HEIGHTS } from './treeplace.js';
+import { treesFromCanopy, treesFromPhoto, removeTrees, addMappedTrees, addTreeAreas, TREE_SIZES, TREE_SPECIES, TREE_MIXES, AREA_HEIGHTS, holeDistance, nearHoles } from './treeplace.js';
 import { MOW_PATTERNS, MOW_WIDTH, courseMowing, mowShade, GRASS_HEIGHTS, courseGrass, SURFACE_LOOKS, courseSurface } from './mowing.js';
 import { BUILDING_TYPES, classifyBuildings, footprintInfo } from './buildingtypes.js';
 
@@ -140,7 +140,7 @@ async function load() {
   shapes = [];
   if (r?.features) {
     for (const [kind, list2] of Object.entries(r.features)) {
-      if (FEATURE_KINDS.includes(kind)) list2.forEach((f) => shapes.push({ kind, pts: f.pts.map((p) => [...p]), inner: !!f.hole, ...(f.flow ? { flow: true } : {}) }));
+      if (FEATURE_KINDS.includes(kind)) list2.forEach((f) => shapes.push({ kind, pts: f.pts.map((p) => [...p]), inner: !!f.hole, ...(f.flow ? { flow: true } : {}), ...(f.banks ? { banks: true } : {}) }));
       else passthrough[kind] = list2;
     }
   }
@@ -208,7 +208,8 @@ async function loadTrees() {
     };
     found.push(...treesFromPhoto(raster, { allowed, existing: found, heightAt }));
   }
-  baseTrees = found;
+  // (as in the game: only out to a couple of hundred metres from the holes)
+  baseTrees = nearHoles(found, holeDistance(holes.map((h) => [TEE_ORDER.map((k) => h.tees[k]).find(Boolean), ...h.aims, h.green].filter(Boolean))));
   treeEnv.heightAt = heightAt;
   const onFairway = inShape(new Set(['fairway']));
   treeEnv.allowed = (x, z) => !onMappedBad(x, z) && !onFairway(x, z); // (for tree areas)
@@ -441,7 +442,7 @@ async function save() {
     builder: { ...(courseData.GolfSimBuilder || {}), needsReview: false, edited: new Date().toISOString() },
   });
   const features = { ...passthrough };
-  for (const k of FEATURE_KINDS) features[k] = shapes.filter((s) => s.kind === k).map((s) => ({ hole: !!s.inner, pts: s.pts.map(([x, z]) => [r2(x), r2(z)]), ...(k === 'water' && s.flow ? { flow: true } : {}) }));
+  for (const k of FEATURE_KINDS) features[k] = shapes.filter((s) => s.kind === k).map((s) => ({ hole: !!s.inner, pts: s.pts.map(([x, z]) => [r2(x), r2(z)]), ...(k === 'water' && s.flow ? { flow: true } : {}), ...(k === 'water' && s.flow && s.banks ? { banks: true } : {}) }));
   const treeAreas = shapes.filter((s) => s.kind === 'trees').map((s) => ({ ...areaData(s), pts: s.pts.map(([x, z]) => [r2(x), r2(z)]) }));
   setStatus('Saving…');
   const res = await fetch(`/api/courses/${courseId}`, {

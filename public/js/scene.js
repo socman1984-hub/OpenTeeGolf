@@ -7,6 +7,7 @@ import {
   Fn, texture, uv, vec2, vec3, float, mix, clamp, smoothstep, dot, distance, normalize, sin, cos, abs, atan,
   positionWorld, cameraPosition, instancedBufferAttribute, PI, normalMap, time, reflector, normalView, positionViewDirection, pow,
   uniform, select, fwidth, normalWorld, attribute, fract, floor, step, max, length, positionLocal, transformNormalToView,
+  output, exp, vec4, fog, positionView,
 } from 'three/tsl';
 import { SkyMesh } from 'three/addons/objects/SkyMesh.js';
 import { Line2 } from 'three/addons/lines/webgpu/Line2.js';
@@ -15,7 +16,7 @@ import { MapControls } from 'three/addons/controls/MapControls.js';
 import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 import { noise, pointInPoly } from './course.js';
 import { Forest, treesFromCanopy, assignSpecies, addMappedTrees, addTreeAreas, fade, impostorLight } from './trees.js';
-import { treesFromPhoto, removeTrees, treeRegion } from './treeplace.js';
+import { treesFromPhoto, removeTrees, treeRegion, holeDistance, nearHoles } from './treeplace.js';
 import { tuftGeometry, reedGeometry, grassMaterial, grassMesh, grassWind, addBend, NATIVE_KINDS, nativeClumpGeometry } from './grass.js';
 import { MOW_WIDTH, mowIndex } from './mowing.js';
 import { layoutParking, bayCorners, carColour } from './parking.js';
@@ -33,6 +34,24 @@ const roughScale = uniform(0.8);
 let depthSign = -1;
 // 1: fairways, greens, tees and rough take the aerial photo's colours (the course's setting)
 const photoSurfaces = uniform(0);
+// The haze over the land beyond the course: gentler with distance than the scene's fog (so hills
+// 20-30 km off still show, faded), matched to it near the course, and complete at the far edge
+// of the distant land so it melts into the sky. Updated from the scene's fog every frame.
+const FOG_BASE = 0.00018;
+const haze = {
+  color: uniform(new THREE.Color(0xc4d8e6)), k: uniform(FOG_BASE * FOG_BASE * 1000),
+  center: uniform(new THREE.Vector2()), half: uniform(1e9),
+};
+function hazed(material) {
+  material.fog = false;
+  material.outputNode = Fn(() => {
+    const d = distance(positionWorld, cameraPosition);
+    const edge = max(abs(positionWorld.x.sub(haze.center.x)), abs(positionWorld.z.sub(haze.center.y)));
+    const f = max(float(1).sub(exp(d.mul(haze.k).negate())), smoothstep(haze.half.mul(0.8), haze.half, edge));
+    return vec4(mix(output.rgb, haze.color, f), output.a);
+  })();
+  return material;
+}
 
 const T = (x, y, z) => new THREE.Vector3(-x, y, z);
 const TEX_RES = 1.5; // meters per texel of the generated (no imagery) course texture
@@ -60,7 +79,8 @@ export class CourseScene {
   constructor(container) {
     this.container = container;
     const forceWebGL = new URLSearchParams(location.search).has('webgl');
-    this.renderer = new THREE.WebGPURenderer({ antialias: true, powerPreference: 'high-performance', forceWebGL });
+    // (reversed depth: precise from the ball at your feet to mountains tens of kilometres away)
+    this.renderer = new THREE.WebGPURenderer({ antialias: true, powerPreference: 'high-performance', forceWebGL, reversedDepthBuffer: true });
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 0.75;
@@ -69,10 +89,13 @@ export class CourseScene {
     container.appendChild(this.renderer.domElement);
 
     this.scene = new THREE.Scene();
-    this.scene.fog = new THREE.FogExp2(0xc4d8e6, 0.00032);
+    this.scene.fog = new THREE.FogExp2(0xc4d8e6, FOG_BASE);
+    // (drawn as the same gentle haze as the distant land - one curve for the course and the land
+    // around it, so neither looks foggier than the other; the weather sets fog.density)
+    this.scene.fogNode = fog(haze.color, float(1).sub(exp(positionView.length().mul(haze.k).negate())));
     // (near at 25 cm: the camera never comes closer to anything, and every bit nearer costs depth
     // precision far away - surfaces that nearly touch there, roofs and walls, flicker without it)
-    this.camera = new THREE.PerspectiveCamera(55, 1, 0.25, 9000);
+    this.camera = new THREE.PerspectiveCamera(55, 1, 0.25, 200000); // (the distant land reaches 57 km)
     // (layer 1: tall grass - drawn by this camera, but not again by the water's mirror, whose
     // camera sees only layer 0)
     this.camera.layers.enable(1);
@@ -150,6 +173,9 @@ export class CourseScene {
     };
     this.ready = this.renderer.init().then(() => {
       this.backend = this.renderer.backend.isWebGPUBackend ? 'WebGPU' : 'WebGL 2';
+      // (WebGL without EXT_clip_control falls back to the usual depth buffer)
+      depthSign = this.renderer.reversedDepthBuffer ? 1 : -1;
+      if (this.renderer.reversedDepthBuffer) skyAtFarPlane(this.sky);
       const skyScene = new THREE.Scene();
       const envSky = makeSky();
       envSky.cloudCoverage.value = 0;
@@ -197,7 +223,7 @@ export class CourseScene {
 
   // imagery: { manifest, url(file) } or null; buildings: [{ h, pts }]
   // progress(stepId, label, done?, total?, detail?) may return a promise (to let the page repaint)
-  async build(course, { imagery = null, buildings = [], canopy = null, buildingTypes = {} } = {}, progress = async () => {}) {
+  async build(course, { imagery = null, buildings = [], canopy = null, buildingTypes = {}, farland = null } = {}, progress = async () => {}) {
     await this.ready;
     await progress('textures', 'Ground and water textures');
     await preloadTextures();
@@ -208,6 +234,10 @@ export class CourseScene {
     let hmin = Infinity;
     for (const v of heights) hmin = Math.min(hmin, v);
     this.hmin = hmin;
+    // The land beyond the course (elevation out to 40 km), when the server has it
+    this.farField = farland ? farHeights(course, farland) : null;
+    this.farData = farland;
+    this.s2Gain = null;
 
     // Terrain mesh
     await progress('terrain', 'Building terrain');
@@ -261,7 +291,7 @@ export class CourseScene {
     this.grassScale = { rough: course.grass?.roughScale ?? 0.8, native: course.grass?.nativeScale ?? 1 };
     roughScale.value = this.grassScale.rough;
     const shore = this.buildShore(course);
-    const mat = terrainMaterial(tex, softTexture(this.courseCanvas), mask, this.buildMowDirections(course), sat ? 0.8 : 0.9, shore.canvas, shore.hasSand, shore.hasGreens);
+    const mat = terrainMaterial(tex, await this.softTexture(this.courseCanvas, course), mask, this.buildMowDirections(course), sat ? 0.8 : 0.9, shore.canvas, shore.hasSand, shore.hasGreens);
     this.surfaceTex = mat.userData.surfaceTex; // (the close-up rough grass grows exactly where the ground is drawn as rough)
     this.makeSurfaceLookup(course, mask);
     // Small copy of the course picture for the minimap (redrawing from the full one is slow)
@@ -274,14 +304,16 @@ export class CourseScene {
     this.courseGroup.add(this.terrain);
 
     // Ground beyond the modeled area: imagery out to the horizon when we have it
-    if (sat?.surround) this.addSurround(course, sat);
-    else {
+    if (sat?.surround) await this.addSurround(course, sat);
+    else if (!this.farField) {
       const outer = new THREE.Mesh(new THREE.PlaneGeometry(14000, 14000), new THREE.MeshStandardMaterial({ color: 0x46703a, roughness: 1 }));
       outer.rotation.x = -Math.PI / 2;
       outer.position.set(-(minX + maxX) / 2, hmin - 1.5, (minZ + maxZ) / 2);
       outer.receiveShadow = true;
       this.courseGroup.add(outer);
     }
+
+    if (this.farField) await this.addFarLand(course, farland, sat, progress);
 
     this.addWater(course);
     this.addPathStrips(course);
@@ -298,6 +330,8 @@ export class CourseScene {
     if (this.photoRaster) this.addPhotoTrees(course, canopy);
     this.photoRaster = null;
     this.pendingTrees = removeTrees(this.pendingTrees, course.removedTrees);
+    // (not kilometres of forest up the mountains: only out to a couple of hundred metres from the holes)
+    this.pendingTrees = nearHoles(this.pendingTrees, holeDistance(course.holes.map((hh) => hh.path)));
     // No trunks on roads or cart paths (mapped, or seen in the photo): crowns found from above
     // often hang over one. Such a tree moves to the nearest clear spot within 3 m, or goes. (The
     // player's own trees stay where they were put.)
@@ -1159,7 +1193,7 @@ export class CourseScene {
     return { fairway: layer(['fairway', 'tee'], 'mud'), green: layer(['green'], 'native') };
   }
 
-  addSurround(course, sat) {
+  async addSurround(course, sat) {
     // A wide, coarse mesh that continues the terrain outward and carries the low-res imagery
     const all = sat.surround;
     const corners = all.flatMap((c) => [sat.toCourse(c.extent.minLat, c.extent.minLon), sat.toCourse(c.extent.maxLat, c.extent.maxLon), sat.toCourse(c.extent.minLat, c.extent.maxLon), sat.toCourse(c.extent.maxLat, c.extent.minLon)]);
@@ -1171,7 +1205,11 @@ export class CourseScene {
     const ctx = canvas.getContext('2d');
     ctx.fillStyle = '#4b6b35'; ctx.fillRect(0, 0, canvas.width, canvas.height);
     for (const c of all) this.drawGeoImage(ctx, c, sat, x0, z1, res);
+    // Even colours from Sentinel-2 (see evenColours): fully, to match the ground just inside the
+    // course's edge, which beyond the boundary is evened out the same way (see softTexture)
+    // (after the game's colour balance, which the course photo the correction is matched to has too)
     colorBalance(ctx, canvas.width, canvas.height, sat.balance);
+    if (this.farData?.sentinel?.length) await this.evenColours(ctx, canvas.width, canvas.height, x0, z1, res, 14, 60);
     const tex = new THREE.CanvasTexture(canvas);
     tex.colorSpace = THREE.SRGBColorSpace;
     tex.anisotropy = 8;
@@ -1182,15 +1220,245 @@ export class CourseScene {
     for (let i = 0; i < p.count; i++) {
       const fu = uv.getX(i), fv = uv.getY(i);
       const x = x0 + fu * (x1 - x0), z = z0 + fv * (z1 - z0);
-      const cx = Math.min(maxX - 1, Math.max(minX + 1, x)), cz = Math.min(maxZ - 1, Math.max(minZ + 1, z));
-      const inside = cx === x && cz === z;
-      const y = (this.course.heightAt(cx, cz) ?? this.hmin) - (inside ? 3 : 0.4);
-      p.setXYZ(i, -x, y, z);
+      p.setXYZ(i, -x, this.groundBeyond(x, z), z);
     }
     g.computeVertexNormals();
-    const mesh = new THREE.Mesh(g, new THREE.MeshStandardMaterial({ map: tex, roughness: 1, side: THREE.DoubleSide, envMapIntensity: 0.3 }));
+    const mat = new THREE.MeshStandardNodeMaterial({ map: tex, roughness: 1, metalness: 0, side: THREE.DoubleSide, envMapIntensity: 0.3 });
+    const mesh = new THREE.Mesh(g, this.farField ? hazed(mat) : mat);
     mesh.receiveShadow = true;
     this.courseGroup.add(mesh);
+    this.surroundRect = [x0, z0, x1, z1];
+  }
+
+  // Esri's imagery is a patchwork of photos taken at different times (a green one beside a
+  // blue-grey one beside a brown one). Sentinel-2 cloudless is one even mosaic. Keep the Esri
+  // photo's fine light and shade (rock bands, gullies, tree lines: anything smaller than about
+  // detailM metres) and take everything broader - its colour - from Sentinel-2.
+  // ctx: an Esri canvas in course space (x0 at its left, z1 at its top, res metres a pixel).
+  // weight(x, z) -> 0..1 how fully to do it (all the way by default).
+  async evenColours(ctx, w, h, x0, z1, res, zoom, detailM, weight = null) {
+    const s2 = await this.sentinelCanvas(w, h, x0, z1, res, zoom);
+    if (!s2) return;
+    // the Esri photo's broad tone (blurred to the scale the detail is kept below)
+    const blur = document.createElement('canvas');
+    blur.width = w; blur.height = h;
+    const bx = blur.getContext('2d', { willReadFrequently: true });
+    bx.filter = `blur(${Math.max(1, detailM / res)}px)`;
+    bx.drawImage(ctx.canvas, 0, 0);
+    // (Sentinel-2 is softened a little too: its own 10 m pixels shouldn't show)
+    const s2s = document.createElement('canvas');
+    s2s.width = w; s2s.height = h;
+    const ssx = s2s.getContext('2d', { willReadFrequently: true });
+    ssx.filter = `blur(${Math.max(0.5, 6 / res)}px)`;
+    ssx.drawImage(s2, 0, 0);
+    const E = ctx.getImageData(0, 0, w, h), B = bx.getImageData(0, 0, w, h).data, S = ssx.getImageData(0, 0, w, h).data, d = E.data;
+    const L = (a, o) => 0.299 * a[o] + 0.587 * a[o + 1] + 0.114 * a[o + 2] + 1;
+    // (Sentinel-2 brought to the course photo's overall brightness and tint, see softTexture)
+    const g = this.s2Gain || [1, 1, 1];
+    for (let j = 0, o = 0; j < h; j++) {
+      const pz = z1 - (j + 0.5) * res;
+      for (let i = 0; i < w; i++, o += 4) {
+        if (!S[o + 3]) continue; // (no Sentinel-2 here)
+        let k = 1;
+        if (weight) { k = weight(x0 + (i + 0.5) * res, pz); if (k <= 0) continue; }
+        // Esri's fine detail as a brightness ratio (kept within reason: no halos at patch edges)
+        const r = Math.min(1.7, Math.max(0.6, L(d, o) / L(B, o)));
+        for (let c = 0; c < 3; c++) d[o + c] += (Math.min(255, S[o + c] * g[c] * r) - d[o + c]) * k;
+      }
+    }
+    ctx.putImageData(E, 0, 0);
+  }
+
+  // Sentinel-2 tiles (the given zoom) drawn on a canvas in course space, or null without any
+  async sentinelCanvas(w, h, x0, z1, res, zoom) {
+    const far = this.farData;
+    if (!far?.sentinel?.length || !this.farField) return null;
+    const tiles = far.sentinel.filter((t) => t.file.startsWith(`s2_${zoom}_`));
+    const toCourse = this.farField.toCourse;
+    const x1 = x0 + w * res, z0 = z1 - h * res;
+    const seen = tiles.filter((t) => {
+      const c = [toCourse(t.extent.minLat, t.extent.minLon), toCourse(t.extent.maxLat, t.extent.maxLon)];
+      return Math.max(c[0][0], c[1][0]) > x0 && Math.min(c[0][0], c[1][0]) < x1 && Math.max(c[0][1], c[1][1]) > z0 && Math.min(c[0][1], c[1][1]) < z1;
+    });
+    if (!seen.length) return null;
+    this.farImages ||= new Map();
+    const load = (t) => {
+      if (!this.farImages.has(t.file)) {
+        this.farImages.set(t.file, new Promise((resolve) => {
+          const img = new Image();
+          img.onload = () => resolve(img);
+          img.onerror = () => resolve(null);
+          img.src = far.url(t.file);
+        }));
+      }
+      return this.farImages.get(t.file).then((img) => (img ? { ...t, img } : null));
+    };
+    const c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    const cx = c.getContext('2d', { willReadFrequently: true });
+    let drawn = 0;
+    for (const t of await Promise.all(seen.map(load))) if (t) { this.drawGeoImage(cx, t, { toCourse }, x0, z1, res); drawn++; }
+    return drawn ? c : null;
+  }
+
+  // For the terrain shader, a small (~1024 px) map over the course (exact values, not a picture):
+  //   RGB: a colour correction for the photo (x2): Sentinel-2's broad colour over the photo's,
+  //        so where the ground shows the photo's own colours (beyond the course) Esri's
+  //        patchwork of differently coloured photos evens out; 0.5 (no change) without Sentinel-2
+  //   A:   how far inside the course each spot is: full inside the boundary and for 25 m beyond
+  //        it, fading out by 70 m. Further out (often up a hillside) the ground shows the photo
+  //        instead of the game's rough.
+  async softTexture(canvas, course) {
+    const k = Math.min(1, 1024 / Math.max(canvas.width, canvas.height));
+    const w = Math.max(1, Math.round(canvas.width * k)), h = Math.max(1, Math.round(canvas.height * k));
+    const { minX, maxX, maxZ } = course.bounds;
+    const res = (maxX - minX) / w; // metres per pixel
+    const data = new Uint8Array(w * h * 4).fill(255);
+    for (let o = 0; o < data.length; o += 4) data[o] = data[o + 1] = data[o + 2] = 128;
+    const oob = course?.oob;
+    if (oob?.length > 2) {
+      const m = document.createElement('canvas');
+      m.width = w; m.height = h;
+      const mx = m.getContext('2d', { willReadFrequently: true });
+      mx.fillStyle = mx.strokeStyle = '#fff';
+      mx.filter = `blur(${Math.max(1, 22 / res)}px)`;
+      mx.beginPath();
+      oob.forEach(([px, pz], i) => { const u = (px - minX) / res, v = (maxZ - pz) / res; if (i) mx.lineTo(u, v); else mx.moveTo(u, v); });
+      mx.closePath();
+      mx.lineWidth = Math.max(2, 95 / res); // (out to ~47 m, then the blur fades it)
+      mx.lineJoin = 'round';
+      mx.fill(); mx.stroke();
+      const md = mx.getImageData(0, 0, w, h).data;
+      for (let o = 0; o < data.length; o += 4) data[o + 3] = md[o];
+    }
+    // colour correction: both blurred to ~30 m (close enough to follow the edge of one photo in
+    // the patchwork), the ratio per channel
+    const s2 = await this.sentinelCanvas(w, h, minX, maxZ, res, 14);
+    if (s2) {
+      const blurred = (src) => {
+        const c = document.createElement('canvas');
+        c.width = w; c.height = h;
+        const x = c.getContext('2d', { willReadFrequently: true });
+        x.filter = `blur(${Math.max(1, 30 / res)}px)`;
+        x.drawImage(src, 0, 0, w, h);
+        return x.getImageData(0, 0, w, h).data;
+      };
+      const P = blurred(canvas), S = blurred(s2);
+      // Sentinel-2 runs much darker than the aerial photo: scale it to the photo's overall brightness
+      // and tint here (kept for the land around the course too), so only the patchwork evens out
+      // (from the land outside the course where there's enough of it: fairways would tint it)
+      let outsideN = 0;
+      for (let o = 3; o < data.length; o += 4) if (data[o] <= 40) outsideN++;
+      const outside = outsideN > data.length / 4 / 10;
+      const sum = [0, 0, 0, 0, 0, 0];
+      for (let o = 0; o < data.length; o += 4) {
+        if (S[o + 3] < 16 || P[o + 3] < 16 || (outside && data[o + 3] > 40)) continue;
+        for (let c = 0; c < 3; c++) { sum[c] += P[o + c]; sum[c + 3] += S[o + c]; }
+      }
+      this.s2Gain = [0, 1, 2].map((c) => (sum[c + 3] > 0 ? Math.min(3, Math.max(0.6, sum[c] / sum[c + 3])) : 1));
+      // (blurring fades the canvases' edges to transparent; their colours there are still right)
+      for (let o = 0; o < data.length; o += 4) {
+        if (S[o + 3] < 16 || P[o + 3] < 16) continue;
+        for (let c = 0; c < 3; c++) data[o + c] = Math.round(128 * Math.min(1.99, Math.max(0.35, (S[o + c] * this.s2Gain[c] + 2) / (P[o + c] + 2))));
+      }
+    }
+    // (rows north to south above; the texture's first row is its south edge, as the picture's is)
+    const flipped = new Uint8Array(data.length), row = w * 4;
+    for (let j = 0; j < h; j++) flipped.set(data.subarray(j * row, (j + 1) * row), (h - 1 - j) * row);
+    const t = new THREE.DataTexture(flipped, w, h, THREE.RGBAFormat, THREE.UnsignedByteType);
+    t.magFilter = THREE.LinearFilter; t.minFilter = THREE.LinearFilter;
+    t.colorSpace = THREE.NoColorSpace;
+    t.needsUpdate = true;
+    return t;
+  }
+
+  // Height of the ground drawn beyond the course: under the course's own terrain inside it; just
+  // outside, its edge, easing over 600 m into the real land around it (when the distant land is
+  // known; otherwise the course's edge carried outward)
+  groundBeyond(x, z) {
+    const { minX, maxX, minZ, maxZ } = this.course.bounds;
+    const cx = Math.min(maxX - 1, Math.max(minX + 1, x)), cz = Math.min(maxZ - 1, Math.max(minZ + 1, z));
+    const edge = this.course.heightAt(cx, cz) ?? this.hmin;
+    if (cx === x && cz === z) return edge - 3;
+    if (!this.farField) return edge - 0.4;
+    const out = Math.hypot(x - cx, z - cz), t = Math.min(1, out / 600), s = t * t * (3 - 2 * t);
+    return edge - 0.4 + (this.farField.at(x, z) - (edge - 0.4)) * s;
+  }
+
+  // The land out to the horizon: one wide mesh, its points closest together near the course and
+  // spreading out to ~400 m apart at 40 km, bent down with the earth's curve, with the distant
+  // satellite photo on it. Where the course and its 1.5 km apron are, it sits just below them.
+  async addFarLand(course, far, sat, progress) {
+    const F = this.farField;
+    await progress('farland', 'Distant hills', 0, 0, 'Photos');
+    const toCourse = sat?.toCourse || F.toCourse;
+    // Photo layers, sharpest (nearest the course) first; older downloads have just one
+    const layers = far.layers || [{ half: F.half, imagery: far.imagery || [] }];
+    const load = (c) => new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => resolve({ ...c, img });
+      img.onerror = () => resolve(null);
+      img.src = far.url(c.file);
+    });
+    const SIDE = 4096;
+    const textures = [];
+    for (const L of layers) {
+      const imgs = await Promise.all(L.imagery.map(load));
+      if (!imgs.some(Boolean)) continue;
+      const res = (2 * L.half) / SIDE;
+      const canvas = document.createElement('canvas');
+      canvas.width = canvas.height = SIDE;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#66704f';
+      ctx.fillRect(0, 0, SIDE, SIDE);
+      for (const c of imgs) if (c) this.drawGeoImage(ctx, c, { toCourse }, F.cx - L.half, F.cz + L.half, res);
+      // (colour from Sentinel-2: zoom 14 tiles within 16 km, zoom 12 beyond)
+      if (sat?.balance) colorBalance(ctx, SIDE, SIDE, sat.balance);
+      if (far.sentinel?.length) await this.evenColours(ctx, SIDE, SIDE, F.cx - L.half, F.cz + L.half, res, L.half > 16000 ? 12 : 14, 60);
+      const tex = new THREE.CanvasTexture(canvas);
+      tex.colorSpace = THREE.SRGBColorSpace;
+      tex.anisotropy = 8;
+      textures.push({ tex, half: L.half });
+    }
+    await progress('farland', 'Distant hills', 0, 0, 'Shaping the land');
+    // (finer meshes cover the course and its apron: this one tucks 4 m under them)
+    const { minX, maxX, minZ, maxZ } = course.bounds;
+    const [ax0, az0, ax1, az1] = this.surroundRect || [minX, minZ, maxX, maxZ];
+    // Points closest together near the course (~60 m apart at 3 km on High, ~300 m at 40 km)
+    const N = { high: 512, balanced: 448, performance: 320 }[this.quality?.name] || 448;
+    const stretch = (f) => { const u = f * 2 - 1; return Math.sign(u) * u * u; };
+    const g = new THREE.PlaneGeometry(1, 1, N, N);
+    const p = g.attributes.position, uv = g.attributes.uv;
+    for (let i = 0; i < p.count; i++) {
+      const x = F.cx + stretch(uv.getX(i)) * F.half, z = F.cz + stretch(uv.getY(i)) * F.half;
+      const covered = x > ax0 + 20 && x < ax1 - 20 && z > az0 + 20 && z < az1 - 20;
+      p.setXYZ(i, -x, this.groundBeyond(x, z) - (covered ? 4 : 0), z);
+    }
+    g.deleteAttribute('uv');
+    g.computeVertexNormals();
+    const mat = new THREE.MeshStandardNodeMaterial({ roughness: 1, metalness: 0, side: THREE.DoubleSide, envMapIntensity: 0.3 });
+    if (textures.length) {
+      // Each spot takes the sharpest photo that covers it, fading into the next one out over the
+      // last tenth of its square (so there's no seam where one layer ends)
+      mat.colorNode = Fn(() => {
+        const x = positionWorld.x.negate(), z = positionWorld.z;
+        const uvOf = (t) => vec2(x.sub(F.cx - t.half).div(2 * t.half), z.sub(F.cz - t.half).div(2 * t.half));
+        const last = textures[textures.length - 1];
+        let col = texture(last.tex, uvOf(last)).rgb;
+        for (let k = textures.length - 2; k >= 0; k--) {
+          const t = textures[k], u = uvOf(t);
+          const edge = max(abs(u.x.sub(0.5)), abs(u.y.sub(0.5)));
+          col = mix(col, texture(t.tex, u).rgb, float(1).sub(smoothstep(0.45, 0.5, edge)));
+        }
+        return col;
+      })();
+    } else mat.color.set(0x66704f);
+    const mesh = new THREE.Mesh(g, hazed(mat));
+    mesh.frustumCulled = false;
+    this.courseGroup.add(mesh);
+    haze.center.value.set(-F.cx, F.cz);
+    haze.half.value = F.half;
+    this.farLand = mesh;
   }
 
   paintCourse(course) {
@@ -1465,9 +1733,20 @@ export class CourseScene {
     };
     const edges = [];
     let perimeter = 0;
+    // (in bits of up to 2 m; a bit with water on both sides - where a stream runs into a pond, or
+    // one piece of a river overlaps the next - is out in open water, not a shore)
     for (const wb of course.waterBodies || []) for (let k = 0; k < wb.poly.length; k++) {
-      const a = wb.poly[k], b = wb.poly[(k + 1) % wb.poly.length], len = Math.hypot(b[0] - a[0], b[1] - a[1]);
-      if (len > 0.01) { edges.push({ a, b, len, at: perimeter, wb }); perimeter += len; }
+      const p = wb.poly[k], q = wb.poly[(k + 1) % wb.poly.length], L = Math.hypot(q[0] - p[0], q[1] - p[1]);
+      if (L <= 0.01) continue;
+      const n = Math.ceil(L / 2), nx = -(q[1] - p[1]) / L, nz = (q[0] - p[0]) / L;
+      for (let s = 0; s < n; s++) {
+        const a = [p[0] + ((q[0] - p[0]) * s) / n, p[1] + ((q[1] - p[1]) * s) / n];
+        const b = [p[0] + ((q[0] - p[0]) * (s + 1)) / n, p[1] + ((q[1] - p[1]) * (s + 1)) / n];
+        const mx = (a[0] + b[0]) / 2, mz = (a[1] + b[1]) / 2;
+        if (isWater(mx + nx, mz + nz) && isWater(mx - nx, mz - nz)) continue;
+        const len = L / n;
+        edges.push({ a, b, len, at: perimeter, wb }); perimeter += len;
+      }
     }
     const shoreSpot = () => {
       const s = Math.random() * perimeter;
@@ -1948,7 +2227,7 @@ export class CourseScene {
     this.sun.intensity = 3.0 * (1 - 0.72 * cloud);
     this.hemi.intensity = 0.7 + 0.45 * cloud;
     this.renderer.toneMappingExposure = 0.75 - 0.08 * cloud;
-    this.scene.fog.density = 0.00032 * (1 + 1.5 * cloud + Math.min(3, rainMm * 1.2));
+    this.scene.fog.density = FOG_BASE * (1 + 1.5 * cloud + Math.min(3, rainMm * 1.2));
     this.terrain && (this.terrain.material.roughness = rainMm > 0.05 ? 0.7 : 0.92); // wet sheen
     grassWind.value = windMps;
     this.setRain(rainMm);
@@ -2849,6 +3128,9 @@ export class CourseScene {
   }
 
   frame() {
+    // (the distant land's haze follows the weather's fog)
+    haze.color.value.copy(this.scene.fog.color);
+    haze.k.value = this.scene.fog.density * this.scene.fog.density * 1000;
     const raw = this.clock.getDelta();
     const dt = Math.min(0.05, raw);
     // Game time follows the wall clock even if frames are slow, so shots play in real time.
@@ -3365,22 +3647,42 @@ function streamFlow(wb) {
 }
 
 // Blurred copy of the course picture (about 2 m per pixel, blurred over ~8 m)
-function softTexture(canvas) {
-  const k = Math.min(1, 1024 / Math.max(canvas.width, canvas.height));
-  const c = document.createElement('canvas');
-  c.width = Math.max(1, Math.round(canvas.width * k)); c.height = Math.max(1, Math.round(canvas.height * k));
-  const x = c.getContext('2d');
-  x.filter = 'blur(4px)';
-  x.drawImage(canvas, 0, 0, c.width, c.height);
-  const t = new THREE.CanvasTexture(c);
-  t.colorSpace = THREE.SRGBColorSpace;
-  return t;
-}
 
 // Sky dome with Preetham scattering and procedural clouds
+// Heights of the land around the course (course y, from the server's 80 km elevation grid):
+// sea level and above (the sea floor reads as sea), bent down with the earth's curve (with the
+// usual allowance for the air bending light: distant land drops by 87% of the geometric amount)
+function farHeights(course, far) {
+  const { minX, maxX, minZ, maxZ } = course.bounds;
+  const cx = (minX + maxX) / 2, cz = (minZ + maxZ) / 2;
+  const [a0, a1, a2] = far.geo.lat, [b0, b1, b2] = far.geo.lon, det = a1 * b2 - a2 * b1;
+  const e = far.extent, W = far.w, H = far.h, h = far.heights, alt = course.altitudeM || 0;
+  const cell = (i, j) => Math.max(0, h[Math.max(0, Math.min(H - 1, j)) * W + Math.max(0, Math.min(W - 1, i))]);
+  return {
+    cx, cz, half: far.half,
+    toCourse: (lat, lon) => { const dl = lat - a0, dn = lon - b0; return [(b2 * dl - a2 * dn) / det, (a1 * dn - b1 * dl) / det]; },
+    at(x, z) {
+      const lat = a0 + a1 * x + a2 * z, lon = b0 + b1 * x + b2 * z;
+      const fi = ((lon - e.minLon) / (e.maxLon - e.minLon)) * W - 0.5, fj = ((e.maxLat - lat) / (e.maxLat - e.minLat)) * H - 0.5;
+      const i = Math.floor(fi), j = Math.floor(fj), u = fi - i, v = fj - j;
+      const y = cell(i, j) * (1 - u) * (1 - v) + cell(i + 1, j) * u * (1 - v) + cell(i, j + 1) * (1 - u) * v + cell(i + 1, j + 1) * u * v;
+      const d2 = (x - cx) ** 2 + (z - cz) ** 2;
+      return y - alt - (d2 / (2 * 6371000)) * 0.87;
+    },
+  };
+}
+
+// The sky puts itself at the far plane by giving its points depth 1; with the depth buffer
+// reversed (far = 0) that would be the nearest depth and the sky would cover the ground
+function skyAtFarPlane(sky) {
+  const p = sky.material.vertexNode;
+  sky.material.vertexNode = vec4(p.x, p.y, float(0), p.w);
+  sky.material.needsUpdate = true;
+}
+
 function makeSky() {
   const sky = new SkyMesh();
-  sky.scale.setScalar(8000);
+  sky.scale.setScalar(200000); // (beyond the distant land, which would otherwise be drawn over)
   sky.turbidity.value = 3.5; sky.rayleigh.value = 1.1; sky.mieCoefficient.value = 0.004; sky.mieDirectionalG.value = 0.82;
   sky.cloudCoverage.value = 0.25; sky.cloudDensity.value = 0.35;
   sky.sunPosition.value.copy(SUN_DIR);
@@ -3421,9 +3723,14 @@ function terrainMaterial(map, soft, mask, mowDirs, strength, shore, hasSand = fa
   const material = new THREE.MeshStandardNodeMaterial({ roughness: 0.92, metalness: 0 });
   material.envMapIntensity = 0.4;
   material.userData.surfaceTex = { maskTex, shoreTex, hasSand, hasGreens };
+  const softLevel = float(Math.max(0, Math.log2(Math.max(map.image?.width || 1024, map.image?.height || 1024) / 1024)) + 1);
   material.colorNode = Fn(() => {
     const vUv = uv();
-    const base = texture(map, vUv).rgb;
+    const softTex = texture(soft, vUv);
+    // Beyond the course (see softTexture): the photo's own colours (evened out), not the game's rough
+    const wild = smoothstep(0.05, 0.5, softTex.a).oneMinus();
+    const base0 = texture(map, vUv).rgb;
+    const base = mix(base0, base0.mul(softTex.rgb.mul(2)), wild);
     const sm = texture(maskTex, vUv).rgb;
     // Crisp edges: tighten the (slightly soft) mask so each surface has a clear outline (bunkers
     // the crispest: a groomed bunker has a clean-cut edge)
@@ -3446,7 +3753,8 @@ function terrainMaterial(map, soft, mask, mowDirs, strength, shore, hasSand = fa
     // fairway bright and even, rough deeper and darker, green the smoothest and brightest
     const lum = dot(base, vec3(0.2126, 0.7152, 0.0722));
     const shade = clamp(lum.div(0.3), 0.65, 1.35);
-    const shadeSoft = clamp(dot(texture(soft, vUv).rgb, vec3(0.2126, 0.7152, 0.0722)).div(0.3), 0.85, 1.15);
+    // (the photo's broad light and shade: its own shrunken copy, ~4 m a pixel)
+    const shadeSoft = clamp(dot(texture(map, vUv).level(softLevel).rgb, vec3(0.2126, 0.7152, 0.0722)).div(0.3), 0.85, 1.15);
     // (deep, warm greens: real turf reads darker and less blue than a bright lime; sand evenly
     // pale, as freshly raked)
     // (mown grass a little lighter and warmer than the rough, the rough a deep, slightly blue
@@ -3464,7 +3772,7 @@ function terrainMaterial(map, soft, mask, mowDirs, strength, shore, hasSand = fa
     const roughW = wr.mul(mix(0.85, 1, smoothstep(0.25, 0.45, lum)));
     // (with the photo's colours on the grass, the game's colours only a light tint - enough that the
     // mapped edges still show - over the photo's own; sand and paths stay the game's)
-    const grassAmt = wf.add(roughW).add(wg).mul(mix(float(1), float(0.22), photoSurfaces));
+    const grassAmt = wf.add(roughW).add(wg).mul(mix(float(1), float(0.22), photoSurfaces)).mul(wild.oneMinus());
     const col = mix(base, graded, grassAmt.add(ws).add(wp.mul(0.7))).toVar();
 
     const q = positionWorld.xz;

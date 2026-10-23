@@ -27,6 +27,7 @@ import { ensureParking } from './lib/parking.js';
 import { ensureRoads } from './lib/roads.js';
 import { ensurePhoto, photoMeta, savePhoto } from './lib/coursephoto.js';
 import { ensureCanopy } from './lib/canopy.js';
+import { ensureFarLand } from './lib/farland.js';
 import { MevoClient, DEFAULT_SETUP } from './lib/mevo.js';
 const BUILDING_TYPE_IDS = new Set(BUILDING_TYPES.map((t) => t.id));
 
@@ -469,6 +470,22 @@ const httpServer = http.createServer(async (req, res) => {
       if (!fs.existsSync(file)) return json(res, { trees: null });
       return json(res, JSON.parse(fs.readFileSync(file, 'utf8')));
     }
+    if ((m = p.match(/^\/api\/courses\/([\w-]+)\/riverbanks$/)) && req.method === 'PUT') {
+      // Rivers fitted to the aerial photo by the game (public/js/riverbanks.js): the course's water
+      // list with its streams' outlines replaced ({ water: [{ pts, hole, flow?, banks?, sea? }] })
+      const f = courseFile(m[1]);
+      const rf = f && realFile(f);
+      if (!rf || !fs.existsSync(rf)) return json(res, { error: 'No map data' }, 404);
+      const b = await readBody(req, 20e6).catch(() => null);
+      const fin = Number.isFinite, r2 = (v) => Math.round(v * 100) / 100;
+      const water = Array.isArray(b?.water) && b.water.length < 20000 && b.water.every((w) => Array.isArray(w?.pts) && w.pts.length >= 3 && w.pts.every((q) => fin(q?.[0]) && fin(q?.[1])))
+        ? b.water.map((w) => ({ hole: !!w.hole, pts: w.pts.map((q) => [r2(q[0]), r2(q[1])]), ...(w.flow ? { flow: true } : {}), ...(w.banks ? { banks: true } : {}), ...(w.sea ? { sea: true } : {}) })) : null;
+      if (!water) return json(res, { error: 'Bad water list' }, 400);
+      const real = JSON.parse(fs.readFileSync(rf, 'utf8'));
+      real.features = { ...(real.features || {}), water };
+      fs.writeFileSync(rf, JSON.stringify(real));
+      return json(res, { ok: true });
+    }
     if ((m = p.match(/^\/api\/courses\/([\w-]+)\/roads$/))) {
       // Public roads round the course (drawn by the game where its terrain reaches)
       const f = courseFile(m[1]);
@@ -511,6 +528,26 @@ const httpServer = http.createServer(async (req, res) => {
       const geo = geoFor(readCourseData(f), real);
       if (!geo) return json(res, { available: false });
       return json(res, await ensureCanopy(satDir(f), geo, real.grid, reporter(m[1], 'canopy')));
+    }
+    if ((m = p.match(/^\/api\/courses\/([\w-]+)\/farland$/))) {
+      // The land out to the horizon: elevation and a photo for 40 km around the course (downloaded
+      // the first time); the heights themselves are farland.bin, the photo far_*.jpg
+      const f = courseFile(m[1]);
+      const rf = f && realFile(f);
+      if (!rf || !fs.existsSync(rf)) return json(res, { available: false });
+      const real = JSON.parse(fs.readFileSync(rf, 'utf8'));
+      const geo = geoFor(readCourseData(f), real);
+      if (!geo) return json(res, { available: false });
+      try {
+        return json(res, { available: true, ...(await ensureFarLand(satDir(f), geo, real.grid, reporter(m[1], 'farland'))) });
+      } catch (err) {
+        console.warn(`Distant land unavailable: ${err.message}`);
+        return json(res, { available: false, error: err.message });
+      }
+    }
+    if ((m = p.match(/^\/api\/courses\/([\w-]+)\/farland\.bin$/))) {
+      const f = courseFile(m[1]);
+      return f ? serveFile(res, satDir(f), 'farland.bin') : notFound(res);
     }
     if ((m = p.match(/^\/api\/courses\/([\w-]+)\/canopy\.bin$/))) {
       const f = courseFile(m[1]);

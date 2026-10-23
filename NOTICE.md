@@ -45,6 +45,7 @@ are responsible for following these terms.
 | Elevation (elsewhere) | [AWS Terrain Tiles](https://registry.opendata.aws/terrain-tiles/) (Mapzen Terrarium) | Various open sources, see the registry page for attribution |
 | Aerial photos (US) | USGS/USDA [NAIP](https://naip-usdaonline.hub.arcgis.com/) | Public domain |
 | Aerial photos (elsewhere) | [Esri World Imagery](https://www.arcgis.com/home/item.html?id=10df2279f9684e4a9f6a7f08febac2a9) | Esri, Maxar, Earthstar Geographics and the GIS User Community. Personal, non-commercial use; attribution shown in-game. |
+| Distant land's colours (beyond the course) | [Sentinel-2 cloudless 2020](https://s2maps.eu) by EOX IT Services GmbH (contains modified Copernicus Sentinel data 2020) | CC BY-NC-SA 4.0. Non-commercial; attribution shown in-game. |
 | Tree heights | [Meta & World Resources Institute, High Resolution Canopy Height Maps](https://registry.opendata.aws/dataforgood-fb-forests/) | CC BY 4.0; credited in-game |
 | Weather | [Open-Meteo](https://open-meteo.com) | Data CC BY 4.0; the free API is for non-commercial use |
 | Course pictures | Wikimedia Commons, Wikidata, Wikipedia, or the course's own website | Wikimedia files carry their own licences (credited on each card). Website pictures belong to the course and are only shown locally to the player. |

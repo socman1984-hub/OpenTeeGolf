@@ -5,7 +5,9 @@
 // gentle curves, and cut into pieces again. Each new piece keeps { chain, i0, i1 }: its stretch
 // of the smoothed line (samples every 2 m: pts, hw half widths, s distance along), which the game
 // uses to lay a proper stream mesh down the channel.
-// Water areas mapped as outlines (riverbanks) are only rounded off a little.
+// Water areas mapped as outlines (riverbanks) are only rounded off a little. Ribbons fitted to
+// the aerial photo (riverbanks.js, marked banks) vary in width and wander off the mapped line;
+// they're read the same way.
 
 const STEP = 2;
 // Narrowest a stream is drawn (half width, m). The ground is a mesh of 2 m squares: across a
@@ -14,8 +16,9 @@ const STEP = 2;
 export const MIN_HW = 1.9;
 const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
 
-// A ribbon's centre line and half widths, or null if the outline isn't one
-function asRibbon(pts) {
+// A ribbon's centre line and half widths, or null if the outline isn't one (any width will do
+// for one fitted to the photo; a mapped one is the same width all along)
+function asRibbon(pts, banks = false) {
   const n = pts.length, m = n / 2;
   if (n < 4 || n % 2) return null;
   const centre = [], hw = [];
@@ -25,7 +28,7 @@ function asRibbon(pts) {
     hw.push(dist(l, r) / 2);
   }
   const sorted = [...hw].sort((a, b) => a - b), med = sorted[m >> 1];
-  if (!(med > 0.5) || hw.some((w) => Math.abs(w - med) > med * 0.15)) return null;
+  if (!(med > 0.5) || (!banks && hw.some((w) => Math.abs(w - med) > med * 0.15))) return null;
   return { centre, hw };
 }
 
@@ -80,14 +83,15 @@ function chaikin(ring, passes) {
   return p;
 }
 
-// list: the course's mapped water ({ hole, pts, flow }); returns it with the streams smoothed
-export function prepareStreams(list) {
-  const out = [], ribbons = [];
+// The streams in a list of water features, joined up and smoothed: chains of { pts (every 2 m),
+// hw (half widths), s (distance along), nrm (unit normals to the left), pieces (the features they
+// came from), banks (all fitted to the photo) }; rest: everything else, as it was
+export function streamChains(list) {
+  const rest = [], ribbons = [];
   for (const f of list || []) {
-    if (!f.flow || f.hole) { out.push(f); continue; }
-    const r = asRibbon(f.pts);
-    if (r) ribbons.push(r);
-    else out.push({ ...f, pts: chaikin(f.pts, 2) });
+    const r = f.flow && !f.hole ? asRibbon(f.pts, f.banks) : null;
+    if (r) ribbons.push({ ...r, f });
+    else rest.push(f);
   }
   // Join the pieces: one starts where another ends
   const next = ribbons.map((r) => ribbons.findIndex((o) => o !== r && dist(o.centre[0], r.centre[r.centre.length - 1]) < 0.3));
@@ -96,17 +100,20 @@ export function prepareStreams(list) {
   const chains = [];
   const follow = (start) => {
     const pts = [], hw = [];
+    const pieces = [];
     for (let i = start; i >= 0 && !used.has(i); i = next[i]) {
       used.add(i);
       const r = ribbons[i], skip = pts.length ? 1 : 0;
       pts.push(...r.centre.slice(skip)); hw.push(...r.hw.slice(skip));
+      pieces.push(r.f);
     }
-    if (pts.length >= 2) chains.push({ pts, hw });
+    if (pts.length >= 2) chains.push({ pts, hw, pieces });
+    else rest.push(...pieces);
   };
   ribbons.forEach((r, i) => { if (!hasPrev.has(i)) follow(i); });
   ribbons.forEach((r, i) => { if (!used.has(i)) follow(i); }); // (loops)
 
-  for (const c of chains) {
+  return { rest, chains: chains.map((c) => {
     // Smooth over about 12 m each side: sharp mapped corners become gentle bends
     let [pts, hw] = resample(c.pts, c.hw, 1);
     [pts, hw] = smoothLine(pts, hw, 12, 2);
@@ -118,6 +125,16 @@ export function prepareStreams(list) {
       const a = pts[Math.max(0, i - 1)], b = pts[Math.min(pts.length - 1, i + 1)], l = dist(a, b) || 1;
       return [-(b[1] - a[1]) / l, (b[0] - a[0]) / l];
     });
+    return { pts, hw, s, nrm, pieces: c.pieces, banks: c.pieces.every((f) => f.banks) };
+  }) };
+}
+
+// list: the course's mapped water ({ hole, pts, flow }); returns it with the streams smoothed
+export function prepareStreams(list) {
+  const { chains, rest } = streamChains(list);
+  // (water areas: rounded off a little)
+  const out = rest.map((f) => (f.flow && !f.hole ? { ...f, pts: chaikin(f.pts, 2) } : f));
+  for (const { pts, hw, s, nrm } of chains) {
     const chain = { pts, hw, s, nrm };
     // Pieces of 75 samples (150 m), each sharing its end row with the next
     for (let i0 = 0; i0 < pts.length - 1; i0 += 75) {

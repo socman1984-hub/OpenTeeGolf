@@ -1,6 +1,7 @@
 // OpenTeeGolf game loop: course setup, receiving shots, rules and HUD.
 import { buildCourse, TEE_TYPES } from './course.js';
 import { smoothLine } from './roads.js';
+import { fitRiverBanks, riverPhoto, needsBanks } from './riverbanks.js';
 import { CourseScene } from './scene.js';
 import { simulateShot, LIE_EFFECT, stimpToRoll, SURFACE_NAMES } from './physics.js';
 import { loadJolt, CollisionWorld } from './collision.js';
@@ -407,7 +408,7 @@ const loader = {
   // Messages from the server's downloads (aerial imagery, buildings, paths, tree heights)
   serverEvent(p) {
     if (!this.course || p.course !== this.course) return;
-    const label = { imagery: 'Aerial imagery', buildings: 'Buildings', paths: 'Cart paths', parking: 'Car parks', roads: 'Roads', canopy: 'Tree heights' }[p.task];
+    const label = { imagery: 'Aerial imagery', buildings: 'Buildings', paths: 'Cart paths', parking: 'Car parks', roads: 'Roads', canopy: 'Tree heights', farland: 'Distant hills' }[p.task];
     if (label) this.step(p.task, label, { done: p.done, total: p.total, msg: p.msg, stallAfter: 60 });
   },
 };
@@ -472,7 +473,7 @@ $('btn-start').onclick = async () => {
     }
     // Aerial imagery, buildings, cart paths and tree heights (downloaded and cached by the server
     // the first time; it reports progress over the event stream)
-    let imagery = null, buildings = [], canopy = null;
+    let imagery = null, buildings = [], canopy = null, farland = null;
     if (real) {
       const watch = (task, label, url, fallback) => {
         loader.step(task, label, { stallAfter: 60, msg: 'Asking the server…' });
@@ -480,13 +481,14 @@ $('btn-start').onclick = async () => {
           .then((v) => { loader.finish(task); return v; });
       };
       S.imageryLoading = true;
-      const [manifest, b, paths, parking, roads, cm] = await Promise.all([
+      const [manifest, b, paths, parking, roads, cm, fm] = await Promise.all([
         watch('imagery', 'Aerial imagery', `/api/courses/${id}/satellite`, null),
         watch('buildings', 'Buildings', `/api/courses/${id}/buildings`, []),
         watch('paths', 'Cart paths', `/api/courses/${id}/paths`, []),
         watch('parking', 'Car parks', `/api/courses/${id}/parking`, null),
         watch('roads', 'Roads', `/api/courses/${id}/roads`, null),
         watch('canopy', 'Tree heights', `/api/courses/${id}/canopy`, null),
+        watch('farland', 'Distant hills', `/api/courses/${id}/farland`, null),
       ]);
       S.imageryLoading = false;
       real.paths = (paths || []).map((p) => ({ ...p, pts: smoothLine(p.pts) })); // (straight runs straight, bends rounded)
@@ -499,7 +501,29 @@ $('btn-start').onclick = async () => {
         if (buf) canopy = { ...cm, heights: new Uint8Array(buf) };
       }
       if (manifest?.chunks) imagery = { manifest, url: (f) => `/api/courses/${id}/satellite/${f}` };
+      // The land out to the horizon (elevation and a photo for 40 km around the course)
+      const geo = real.geo || manifest?.geo;
+      if (fm?.available && geo) {
+        const buf = await fetchProgress(`/api/courses/${id}/farland.bin`, (got, total) => loader.step('farland-file', 'Distant hills', { done: got, total, msg: `${mb(got)} of ${mb(total)}` }), 'buffer').catch(() => null);
+        loader.finish('farland-file');
+        if (buf) farland = { ...fm, geo, heights: new Int16Array(buf), url: (f) => `/api/courses/${id}/satellite/${f}` };
+      }
       buildings = b;
+    }
+    // Rivers mapped as a line: their real width from the aerial photo, the first time (kept with
+    // the course's map data, so the editor shows them too)
+    if (real && imagery && needsBanks(real.features?.water)) {
+      loader.step('riverbanks', 'River banks');
+      await breathe();
+      try {
+        const photo = await riverPhoto(imagery, real.features.water);
+        const water = photo && fitRiverBanks(real.features.water, photo);
+        if (water) {
+          real.features.water = water;
+          fetch(`/api/courses/${id}/riverbanks`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ water }) }).catch(() => {});
+        }
+      } catch (err) { console.warn('River banks', err); }
+      loader.finish('riverbanks');
     }
     loader.step('course', 'Course layout');
     await breathe();
@@ -509,7 +533,7 @@ $('btn-start').onclick = async () => {
     loader.finish('course');
     // The scene reports its own steps (photos, painting, trees, graphics)
     let current = null;
-    await scene.build(S.course, { imagery, buildings, canopy, buildingTypes: real?.buildingTypes || {} }, async (stepId, label, done = null, total = null, msg = '') => {
+    await scene.build(S.course, { imagery, buildings, canopy, farland, buildingTypes: real?.buildingTypes || {} }, async (stepId, label, done = null, total = null, msg = '') => {
       if (current && current !== stepId) loader.finish(current);
       current = stepId;
       loader.step(stepId, label, { done, total, msg });
@@ -538,6 +562,7 @@ $('btn-start').onclick = async () => {
       real ? 'Map data © OpenStreetMap contributors' : '',
       real?.source?.elevation ? `Elevation: ${real.source.elevation.split(',')[0]}` : '',
       canopy ? 'Tree heights: Meta & WRI (CC BY 4.0)' : '',
+      farland?.sentinelAttribution ? 'Distant land: Sentinel-2 cloudless 2020 by EOX (CC BY-NC-SA 4.0), Terrarium elevation' : '',
     ].filter(Boolean).join(' · ');
   }
   S.windRel = S.course.holes.map(() => (S.settings.windDir === 'rand' ? Math.random() * 360 : +S.settings.windDir));
