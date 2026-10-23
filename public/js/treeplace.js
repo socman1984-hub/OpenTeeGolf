@@ -78,7 +78,14 @@ export function treesFromCanopy(cm, allowed) {
 // Returns new trees { x, z, h, r, kind: null, photo: true }; heightAt(x, z) gives a canopy-map
 // height where there is one. With a height map, a spot also needs something at least 3 m tall
 // within 2 m (the map and the photo don't line up exactly): dark patches on open ground - the
-// long shadows of bare trees in a photo taken in winter, dark lush grass - are flat there.
+// long shadows of bare trees in a photo taken in winter, dark lush grass - are flat there. Where
+// the map shows nothing at all for 12 m around, though, it simply doesn't know about these trees
+// (planted since, or too slim for it: rows of young spruce between fairways), so the photo is
+// trusted, though it's read differently: a small conifer from above is a compact dark blob (its
+// crown and shadow, near black and often bluish, so not "vegetation" by colour) with lighter
+// ground all round. The tree goes on the blob's darkest spot; the darkest blobs are planted first,
+// 5 m apart, so a lighter neighbouring spot can't take a crown's place. Long dark shade (under a
+// cliff, beside a wood) isn't compact, and isn't taken.
 export function treesFromPhoto(photo, { allowed = () => true, existing = [], heightAt = null } = {}) {
   const { data, w, h, res, minX, maxZ } = photo, N = w * h;
   const L = new Float32Array(N), veg = new Uint8Array(N);
@@ -147,25 +154,111 @@ export function treesFromPhoto(photo, { allowed = () => true, existing = [], hei
     return false;
   };
   for (const t of existing) put(t);
+  // 2: something tall within 2 m; 1: nothing tall within 12 m (the map doesn't know); 0: neither
   const standing = (x, z) => {
-    if (!heightAt) return true;
-    for (const [dx, dz] of [[0, 0], [2, 0], [-2, 0], [0, 2], [0, -2], [1.4, 1.4], [-1.4, 1.4], [1.4, -1.4], [-1.4, -1.4]]) if ((heightAt(x + dx, z + dz) || 0) >= 3) return true;
-    return false;
+    if (!heightAt) return 2;
+    for (const [dx, dz] of [[0, 0], [2, 0], [-2, 0], [0, 2], [0, -2], [1.4, 1.4], [-1.4, 1.4], [1.4, -1.4], [-1.4, -1.4]]) if ((heightAt(x + dx, z + dz) || 0) >= 3) return 2;
+    for (let r = 4; r <= 12; r += 4) {
+      for (let a = 0; a < 12; a++) if ((heightAt(x + r * Math.cos((a * Math.PI) / 6), z + r * Math.sin((a * Math.PI) / 6)) || 0) >= 3) return 0;
+    }
+    return 1;
+  };
+  // The darkest spot (3 x 3 m average) within 3 m: [x, z, brightness]
+  const darkest = (x, z) => {
+    const ci = Math.floor((x - minX) / res), cj = Math.floor((maxZ - z) / res), R = Math.round(3 / res);
+    let best = null;
+    for (let j = Math.max(1, cj - R); j <= Math.min(h - 2, cj + R); j++) for (let i = Math.max(1, ci - R); i <= Math.min(w - 2, ci + R); i++) {
+      if ((i - ci) ** 2 + (j - cj) ** 2 > R * R) continue;
+      const v = box(i, j, Math.max(1, Math.round(1 / res)))[0];
+      if (!best || v < best[2]) best = [minX + (i + 0.5) * res, maxZ - (j + 0.5) * res, v];
+    }
+    return best;
+  };
+  // A compact dark blob near (x, z), on ground the canopy map knows nothing about: kept in loose
+  const blob = (x, z) => {
+    const d = darkest(x, z);
+    if (!d || d[2] >= shade) return;
+    const ci = Math.floor((d[0] - minX) / res), cj = Math.floor((maxZ - d[1]) / res);
+    if (d[2] > around(ci, cj) * 0.62) return;
+    // lighter ground 6 m out in most directions
+    let light = 0;
+    for (let a = 0; a < 8; a++) {
+      const i = Math.round(ci + (Math.cos((a * Math.PI) / 4) * 6) / res), j = Math.round(cj - (Math.sin((a * Math.PI) / 4) * 6) / res);
+      if (i >= 0 && j >= 0 && i < w && j < h && L[j * w + i] > d[2] * 1.6) light++;
+    }
+    if (light >= 5) loose.push(d);
   };
   // (candidate spots every 3 m, so small single crowns get one near their middle)
-  const out = [], STEP = 3;
+  const out = [], loose = [], STEP = 3;
   const x0 = Math.ceil(minX / STEP) * STEP, z1 = Math.floor(maxZ / STEP) * STEP;
   for (let gz = z1; gz > maxZ - h * res; gz -= STEP) for (let gx = x0; gx < minX + w * res; gx += STEP) {
     const x = gx + (hash(gx, gz, 2.3) - 0.5) * STEP * 0.6, z = gz + (hash(gx, gz, 4.1) - 0.5) * STEP * 0.6;
     // Well inside crown cover: the spot and most of a ring 2 m around it
     let n = at(x, z) * 2;
     for (const [dx, dz] of [[2, 0], [-2, 0], [0, 2], [0, -2], [1.4, 1.4], [-1.4, 1.4], [1.4, -1.4], [-1.4, -1.4]]) n += at(x + dx, z + dz);
-    if (n < 7 || near(x, z, 4) || !shaded(x, z) || !standing(x, z) || !allowed(x, z)) continue;
+    // (blob candidates: see below)
+    if (heightAt) blob(x, z);
+    if (n < 7 || near(x, z, 4) || !shaded(x, z)) continue;
+    if (standing(x, z) !== 2 || !allowed(x, z)) continue;
     const canopy = heightAt?.(x, z) || 0, k = hash(x, z, 8.8);
     const t = { x, z, h: canopy >= 4 ? canopy : 9 + k * 8, r: 2.6 + hash(x, z, 9.9) * 1.6, kind: null, photo: true };
     out.push(t); put(t);
   }
+  // The ones only the photo knows: darkest first
+  loose.sort((a, b) => a[2] - b[2]);
+  for (const [x, z] of loose) {
+    if (near(x, z, 5) || !allowed(x, z)) continue;
+    const k = hash(x, z, 8.8);
+    const t = { x, z, h: 9 + k * 8, r: 2.2 + hash(x, z, 9.9) * 1.4, kind: null, photo: true };
+    out.push(t); put(t);
+  }
   return out;
+}
+
+// How far out from the holes trees are planted on their own. The canopy map and the photo find
+// trees across the whole map - kilometres of forest up the mountainsides - but past a couple of
+// hundred metres from any hole nobody plays among them, and the photo draped over the ground
+// already shows them as forest. All the trees within NEAR of a hole (its line from the back tee
+// through the aim points to the green) stay; beyond that they thin out, gone by FAR.
+export const TREES_NEAR = 160, TREES_FAR = 340;
+// holes: [[{ x, z }, ...], ...] each hole's line. Returns (x, z) -> metres to the nearest hole
+// (read from a 10 m grid), or null without holes.
+export function holeDistance(holes) {
+  const segs = [];
+  for (const line of holes || []) for (let i = 1; i < line.length; i++) if (line[i - 1] && line[i]) segs.push([line[i - 1], line[i]]);
+  if (!segs.length) return null;
+  let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+  for (const [a, b] of segs) for (const p of [a, b]) { x0 = Math.min(x0, p.x); x1 = Math.max(x1, p.x); z0 = Math.min(z0, p.z); z1 = Math.max(z1, p.z); }
+  const C = 10, pad = TREES_FAR + C;
+  x0 -= pad; z0 -= pad;
+  const w = Math.ceil((x1 + pad - x0) / C) + 1, h = Math.ceil((z1 + pad - z0) / C) + 1;
+  const D = new Float32Array(w * h);
+  for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) {
+    const x = x0 + i * C, z = z0 + j * C;
+    let best = Infinity;
+    for (const [a, b] of segs) {
+      const dx = b.x - a.x, dz = b.z - a.z, l2 = dx * dx + dz * dz || 1;
+      const t = Math.max(0, Math.min(1, ((x - a.x) * dx + (z - a.z) * dz) / l2));
+      best = Math.min(best, Math.hypot(x - a.x - dx * t, z - a.z - dz * t));
+    }
+    D[j * w + i] = best;
+  }
+  return (x, z) => {
+    const fi = (x - x0) / C, fj = (z - z0) / C;
+    if (fi < 0 || fj < 0 || fi >= w - 1 || fj >= h - 1) return Infinity;
+    const i = Math.floor(fi), j = Math.floor(fj), u = fi - i, v = fj - j, k = j * w + i;
+    return (D[k] * (1 - u) + D[k + 1] * u) * (1 - v) + (D[k + w] * (1 - u) + D[k + w + 1] * u) * v;
+  };
+}
+// The trees found on their own (canopy map, photo) that stay, given holeDistance's function;
+// mapped trees and the player's always stay
+export function nearHoles(trees, dist) {
+  if (!dist) return trees;
+  return trees.filter((t) => {
+    if (t.user || t.mapped) return true;
+    const d = dist(t.x, t.z);
+    return d <= TREES_NEAR || (d < TREES_FAR && hash(t.x, t.z, 13.7) < (TREES_FAR - d) / (TREES_FAR - TREES_NEAR));
+  });
 }
 
 // Trees taken out in the course editor: [[x, z], ...]. A tree found automatically (canopy map,
