@@ -25,20 +25,23 @@ export const AERO = {
 
 // Ground behaviour per surface. e = restitution scale (on Penner's speed-dependent curve),
 // fric = Coulomb friction on impact, roll = rolling friction coefficient,
-// drag = extra grass drag per m/s above 2 m/s.
+// drag = extra grass drag per m/s above 2 m/s,
+// bite = how hard backspin grips on landing (a soft, closely mown green takes the spin best: the
+// ball digs in; grass between ball and ground in the rough cushions it, so spin hardly bites),
+// back = the fastest (m/s) backspin can pull the ball back the way it came.
 export const SURFACES = {
-  green:   { e: 1.08, fric: 1.05, roll: null, drag: 0.35 },
-  fringe:  { e: 1.00, fric: 1.05, roll: 0.10, drag: 1.8 },
-  fairway: { e: 1.20, fric: 1.00, roll: 0.10, drag: 1.5 },
-  tee:     { e: 1.20, fric: 1.00, roll: 0.10, drag: 1.5 },
-  firstcut:  { e: 1.00, fric: 1.10, roll: 0.16, drag: 2.2 },
-  rough:     { e: 0.60, fric: 1.30, roll: 0.35, drag: 4.0 },
-  deeprough: { e: 0.35, fric: 1.50, roll: 0.70, drag: 6.0 },
-  native:    { e: 0.30, fric: 1.55, roll: 0.80, drag: 6.5 },
-  path:      { e: 3.00, fric: 0.30, roll: 0.035, drag: 0.15 }, // pavement: lively bounce, rolls a long way
-  sand:      { e: 0.08, fric: 1.60, roll: 1.40, drag: 5.0 },
-  oob:       { e: 0.60, fric: 1.30, roll: 0.35, drag: 4.0 },
-  water:   { e: 0, fric: 1, roll: 5, drag: 5 },
+  green:   { e: 1.08, fric: 1.05, roll: null, drag: 0.35, bite: 2.6, back: 1.9 },
+  fringe:  { e: 1.00, fric: 1.05, roll: 0.10, drag: 1.8, bite: 2.3, back: 1.2 },
+  fairway: { e: 1.20, fric: 1.00, roll: 0.10, drag: 1.5, bite: 2.2, back: 1.0 },
+  tee:     { e: 1.20, fric: 1.00, roll: 0.10, drag: 1.5, bite: 2.2, back: 1.0 },
+  firstcut:  { e: 1.00, fric: 1.10, roll: 0.16, drag: 2.2, bite: 1.8, back: 0.6 },
+  rough:     { e: 0.60, fric: 1.30, roll: 0.35, drag: 4.0, bite: 1.1, back: 0.3 },
+  deeprough: { e: 0.35, fric: 1.50, roll: 0.70, drag: 6.0, bite: 0.8, back: 0.2 },
+  native:    { e: 0.30, fric: 1.55, roll: 0.80, drag: 6.5, bite: 0.8, back: 0.2 },
+  path:      { e: 3.00, fric: 0.30, roll: 0.035, drag: 0.15, bite: 0.6, back: 0.3 }, // pavement: lively bounce, rolls a long way
+  sand:      { e: 0.08, fric: 1.60, roll: 1.40, drag: 5.0, bite: 1.0, back: 0.2 },
+  oob:       { e: 0.60, fric: 1.30, roll: 0.35, drag: 4.0, bite: 1.1, back: 0.3 },
+  water:   { e: 0, fric: 1, roll: 5, drag: 5, bite: 1, back: 0 },
 };
 
 // Solid objects (Jolt collision world): restitution e (+ up to eVar at random), share of speed
@@ -49,7 +52,8 @@ export const OBSTACLES = {
   pole:     { e: 0.2, eVar: 0.1, keep: 0.5, spin: 0.5 },
 };
 
-// Turf lets backspin bite harder than a rigid surface would (the ball digs in).
+// Turf lets backspin bite harder than a rigid surface would (the ball digs in). Surfaces set their
+// own (SURFACES.bite); this is for any without one.
 export const GROUND = { spinBite: 2.0 };
 
 const restitution = (vn) => {
@@ -136,7 +140,8 @@ export function simulateShot(course, origin, shot, opts) {
   const greenRoll = stimpToRoll(Math.max(6, (opts.stimp ?? 10) - 1.8 * wet));
   const surfaceParams = (surf) => {
     const sp = SURFACES[surf] || SURFACES.rough;
-    return wet ? { ...sp, e: sp.e * (1 - 0.35 * wet), fric: sp.fric * (1 + 0.15 * wet), roll: sp.roll == null ? null : sp.roll * (1 + 1.0 * wet), drag: sp.drag * (1 + 0.8 * wet) } : sp;
+    // (wet, softer turf also takes spin better)
+    return wet ? { ...sp, e: sp.e * (1 - 0.35 * wet), fric: sp.fric * (1 + 0.15 * wet), roll: sp.roll == null ? null : sp.roll * (1 + 1.0 * wet), drag: sp.drag * (1 + 0.8 * wet), bite: (sp.bite ?? GROUND.spinBite) * (1 + 0.15 * wet) } : sp;
   };
   const windH = [0, 0, 0];
   const heading = opts.heading + (shot.hla * Math.PI) / 180;
@@ -258,13 +263,13 @@ export function simulateShot(course, origin, shot, opts) {
         const backRad = spin * Math.cos(tilt);
         const e = Math.min(0.78, sp.e * restitution(vn));
         const sliding = tl - sp.fric * (1 + e) * -vn;
-        const rolling = (5 * tl - 2 * GROUND.spinBite * BALL_RADIUS * backRad) / 7;
+        const rolling = (5 * tl - 2 * (sp.bite ?? GROUND.spinBite) * BALL_RADIUS * backRad) / 7;
         let newT;
         if (sliding > rolling) {
           newT = sliding;
           spin = Math.max(0, spin - (2.5 * (tl - newT)) / BALL_RADIUS);
         } else {
-          newT = Math.max(rolling, -1.5);                     // limited spin-back
+          newT = Math.max(rolling, -(sp.back ?? 1));             // spin-back, as far as the surface allows
           spin = 0;
         }
         const scale = tl > 1e-6 ? newT / tl : 0;
