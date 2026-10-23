@@ -3,7 +3,7 @@
 import { makeCourseData, TEE_ORDER, PIN_DAYS } from './coursefile.js';
 import { smoothPoly } from './course.js';
 import { treesFromCanopy, treesFromPhoto, removeTrees, addMappedTrees, addTreeAreas, TREE_SIZES, TREE_SPECIES, TREE_MIXES, AREA_HEIGHTS, holeDistance, nearHoles } from './treeplace.js';
-import { MOW_PATTERNS, MOW_WIDTH, courseMowing, mowShade, GRASS_HEIGHTS, courseGrass, SURFACE_LOOKS, courseSurface } from './mowing.js';
+import { MOW_PATTERNS, MOW_WIDTH, courseMowing, mowShade, GRASS_HEIGHTS, courseGrass, SURFACE_PARTS, courseSurface } from './mowing.js';
 import { BUILDING_TYPES, classifyBuildings, footprintInfo } from './buildingtypes.js';
 
 const $ = (id) => document.getElementById(id);
@@ -41,7 +41,7 @@ const treeOpts = { size: 'medium', density: 'medium', kind: 'auto', areaKind: 'a
 const SPECIES_COLOR = { oak: '#5f9e3c', maple: '#c86b2d', ash: '#9fcf5a', birch: '#f2f0dc', aspen: '#e8d74a', poplar: '#3fb5a3', willow: '#a7e07a', pine: '#2f6b4a', spruce: '#3d6f9e', palm: '#d9b44a',
   liveoak: '#4b5e2f', magnolia: '#1f4d2b', sycamore: '#c9c3a3', cypress: '#22433a', baldcypress: '#b5653a', mesquite: '#8a7a52', paloverde: '#a4c43c', saguaro: '#3f8f5f' };
 const speciesOptions = (sel) => [...TREE_MIXES, ...TREE_SPECIES].map((o) => `<option value="${o.id}" ${o.id === (sel || 'auto') ? 'selected' : ''}>${esc(o.label)}</option>`).join('');
-const course = { name: '', location: '', stimp: 10, mowing: courseMowing(null), grass: courseGrass(null), surface: 'game' };
+const course = { name: '', location: '', stimp: 10, mowing: courseMowing(null), grass: courseGrass(null), surface: courseSurface(null) };
 const sel = { hole: 0, shape: -1, tree: -1, found: null, removed: -1, many: [], building: -1 }; // many: found trees picked with Shift
 const view = { cx: 0, cz: 0, scale: 1 };
 let mode = null;   // { type: 'place', kind, key } | { type: 'draw', kind, pts }
@@ -119,7 +119,8 @@ async function load() {
   course.name = g.CourseName || ''; course.location = g.Location || ''; course.stimp = g.DefaultStimp || 10;
   course.mowing = courseMowing(g);
   course.grass = courseGrass(g);
-  course.surface = courseSurface(g); $('c-surface').value = course.surface;
+  course.surface = courseSurface(g);
+  for (const p of SURFACE_PARTS) $(`c-surface-${p.id}`).value = course.surface[p.id];
   $('c-rough-h').value = course.grass.rough; $('c-native-h').value = course.grass.native;
   holes = g.Holes.map((h) => {
     const tees = {}, aims = [];
@@ -1276,8 +1277,12 @@ function autoPins(h) {
 
 $('c-name').oninput = () => { course.name = $('c-name').value; setDirty(true); };
 $('c-location').oninput = () => { course.location = $('c-location').value; setDirty(true); };
-$('c-surface').innerHTML = SURFACE_LOOKS.map((o) => `<option value="${o.id}">${o.label}</option>`).join('');
-$('c-surface').onchange = () => { change(); course.surface = $('c-surface').value; setDirty(true); };
+// (each part: the game's even, groomed colours, or the photo's own)
+for (const p of SURFACE_PARTS) {
+  const el = $(`c-surface-${p.id}`);
+  el.innerHTML = '<option value="game">Game colours</option><option value="photo">Aerial photo</option>';
+  el.onchange = () => { change(); course.surface = { ...course.surface, [p.id]: el.value }; setDirty(true); };
+}
 // Rough and tall grass heights
 for (const [kind, id] of [['rough', 'c-rough-h'], ['native', 'c-native-h']]) {
   $(id).innerHTML = GRASS_HEIGHTS[kind].map((o) => `<option value="${o.id}">${o.label}</option>`).join('');

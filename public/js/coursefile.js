@@ -5,6 +5,8 @@
 //           pins: {Thursday: {x,y,z}, ...} }]
 // hazards: [{ coords: [{x,y,z}], innerOOB }], oob: [{x,y,z}]
 
+import { courseSurface, surfaceData } from './mowing.js';
+
 export const TEE_ORDER = ['Black', 'Blue', 'White', 'Green', 'Yellow', 'Red', 'Junior', 'Par3'];
 export const PIN_DAYS = ['Thursday', 'Friday', 'Saturday', 'Sunday'];
 
@@ -36,7 +38,7 @@ export function makeCourseData({ name, location = '', lat = 0, lon = 0, altitude
     DefaultStimp: stimp,
     ...(mowing ? { Mowing: mowing } : {}),
     ...(grass ? { Grass: { rough: grass.rough, native: grass.native } } : {}),
-    ...(surface === 'photo' ? { Surface: 'photo' } : {}),
+    ...(surfaceData(typeof surface === 'string' ? courseSurface({ Surface: surface }) : surface) ? { Surface: surfaceData(typeof surface === 'string' ? courseSurface({ Surface: surface }) : surface) } : {}),
     altitudeV2: Math.round(altitudeM * 3.28084),
     pOOB: { pointCount: oob.length, coords: oob },
     Holes,

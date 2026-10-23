@@ -34,7 +34,24 @@ export const SURFACE_LOOKS = [
   { id: 'game', label: 'Game colours (even, groomed)' },
   { id: 'photo', label: 'Aerial photo colours' },
 ];
-export const courseSurface = (courseData) => (SURFACE_LOOKS.some((o) => o.id === courseData?.Surface) ? courseData.Surface : 'game');
+// Each part of the course can take its colours from the game or the photo: { fairway, green,
+// rough } ('game' | 'photo'). Saved as 'photo' when every part is, as older versions read it.
+export const SURFACE_PARTS = [
+  { id: 'fairway', label: 'Fairways & tees' },
+  { id: 'green', label: 'Greens' },
+  { id: 'rough', label: 'Rough' },
+];
+export const courseSurface = (courseData) => {
+  const s = courseData?.Surface, all = (v) => Object.fromEntries(SURFACE_PARTS.map((p) => [p.id, v]));
+  if (s === 'photo') return all('photo');
+  if (s && typeof s === 'object') return Object.fromEntries(SURFACE_PARTS.map((p) => [p.id, s[p.id] === 'photo' ? 'photo' : 'game']));
+  return all('game');
+};
+// How to save it (null: all the game's, the default)
+export const surfaceData = (surface) => {
+  const v = SURFACE_PARTS.map((p) => surface?.[p.id] === 'photo');
+  return v.every(Boolean) ? 'photo' : v.some(Boolean) ? Object.fromEntries(SURFACE_PARTS.map((p, i) => [p.id, v[i] ? 'photo' : 'game'])) : null;
+};
 
 export const courseMowing = (courseData) => ({
   fairway: MOW_PATTERNS.some((p) => p.id === courseData?.Mowing?.fairway) ? courseData.Mowing.fairway : MOW_DEFAULTS.fairway,
