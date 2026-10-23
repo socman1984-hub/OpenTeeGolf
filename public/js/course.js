@@ -282,7 +282,8 @@ export function buildCourse(courseData, real = null) {
       for (const f of kind === 'water' ? prepareStreams(list) : list) {
         // Mapped outlines are often a few straight segments; real turf edges are curved
         // (river pieces are already smooth; smoothing them again would pull their ends apart)
-        const poly = f.flow ? f.pts : surface === 'sand' ? roundOutline(f.pts) : smoothPoly(f.pts);
+        // (exact: drawn precisely already, e.g. the putt-putt lanes, whose walls stand on the outline)
+        const poly = f.flow || f.exact ? f.pts : surface === 'sand' ? roundOutline(f.pts) : smoothPoly(f.pts);
         const xs = poly.map((p) => p[0]), zs = poly.map((p) => p[1]);
         feats.push({ surface, poly, raw: f.pts, inner: !!f.hole, flow: !!f.flow, sea: !!f.sea, ribbon: f.ribbon || null, bbox: [Math.min(...xs), Math.min(...zs), Math.max(...xs), Math.max(...zs)] });
       }
@@ -454,14 +455,33 @@ export function buildCourse(courseData, real = null) {
   }
 
   // ---- heightfield
-  const heights = real ? decodeF32(real.grid.heights) : new Float32Array(nx * nz);
+  // (generated places, see practice.js, hand over their heights as numbers already)
+  const heights = real ? (real.grid.heights instanceof Float32Array ? real.grid.heights : decodeF32(real.grid.heights)) : new Float32Array(nx * nz);
   if (real) {
+    // Creeks mapped as water areas rather than a line (common on desert courses): long and only a
+    // few metres wide on average, with banks falling more than 1.5 m along them. They run
+    // downhill like a stream instead of lying flat as a pond, which over a drop would leave the
+    // flat surface hanging in the air.
+    for (const f of feats) {
+      if (f.surface !== 'water' || f.inner || f.flow || f.sea || f.poly.length < 4) continue;
+      let A = 0, P = 0;
+      for (let i = 0, j = f.poly.length - 1; i < f.poly.length; j = i++) {
+        A += f.poly[j][0] * f.poly[i][1] - f.poly[i][0] * f.poly[j][1];
+        P += Math.hypot(f.poly[i][0] - f.poly[j][0], f.poly[i][1] - f.poly[j][1]);
+      }
+      const width = Math.abs(A) / P; // (the shoelace sum is twice the area: this is the mean width)
+      if (width > 14 || P < 80) continue;
+      const hs = f.poly.map(([x, z]) => sampleGrid(x, z)).filter((v) => v !== null).sort((a, b) => a - b);
+      if (hs.length < 4 || hs[Math.floor(hs.length * 0.9)] - hs[Math.floor(hs.length * 0.1)] < 1.5) continue;
+      f.flow = true; f.creek = true;
+    }
     // Sit mapped water below its banks so the water surface covers it. Ponds and lakes lie flat;
-    // rivers and streams slope: their level at any point comes from the banks within 40 m.
+    // rivers and streams slope: their level at any point comes from the banks within 40 m (16 m
+    // for a creek, so a drop stays a short, steep fall rather than a long smear).
     const flowing = feats.filter((f) => f.surface === 'water' && !f.inner && f.flow);
     const bankPts = flowing.flatMap((f) => f.poly.map(([x, z]) => [x, z, sampleGrid(x, z)]).filter((p) => p[2] !== null));
-    const bankLevel = (x, z) => {
-      let hs = bankPts.filter((p) => Math.abs(p[0] - x) < 40 && Math.abs(p[1] - z) < 40 && Math.hypot(p[0] - x, p[1] - z) < 40).map((p) => p[2]);
+    const bankLevel = (x, z, R = 40) => {
+      let hs = bankPts.filter((p) => Math.abs(p[0] - x) < R && Math.abs(p[1] - z) < R && Math.hypot(p[0] - x, p[1] - z) < R).map((p) => p[2]);
       if (hs.length < 3) hs = bankPts.map((p) => [Math.hypot(p[0] - x, p[1] - z), p[2]]).sort((a, b) => a[0] - b[0]).slice(0, 6).map((p) => p[1]);
       hs.sort((a, b) => a - b);
       return hs.length ? hs[Math.floor(hs.length * 0.2)] - 0.1 : 0;
@@ -469,7 +489,7 @@ export function buildCourse(courseData, real = null) {
     for (const f of feats) {
       if (f.surface !== 'water' || f.inner) continue;
       if (f.flow && bankPts.length) {
-        f.levelAt = coarseLevels(f.bbox, bankLevel);
+        f.levelAt = coarseLevels(f.bbox, f.creek ? (x, z) => bankLevel(x, z, 16) : bankLevel);
         const ls = f.poly.map(([x, z]) => f.levelAt(x, z));
         f.level = ls.reduce((a, b) => a + b, 0) / ls.length;
         carveShore(f.poly, f.bbox, f.levelAt, f);
@@ -609,7 +629,8 @@ export function buildCourse(courseData, real = null) {
     return u + v <= 1 ? a + (b - a) * u + (c - a) * v : d + (c - d) * (1 - u) + (b - d) * (1 - v);
   }
   function normalAt(x, z) {
-    const e = 1;
+    // (1 m apart, or one cell on the fine grid of the putt-putt course, whose ramps are short)
+    const e = Math.min(1, cell);
     const hl = heightAt(x - e, z), hr = heightAt(x + e, z), hd = heightAt(x, z - e), hu = heightAt(x, z + e);
     if (hl === null || hr === null || hd === null || hu === null) return [0, 1, 0];
     const nxv = hl - hr, nzv = hd - hu, ny = 2 * e;
