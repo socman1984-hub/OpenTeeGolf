@@ -19,7 +19,8 @@ const TERRAIN = 0, OBSTACLE = 1, LAYERS = 2;
 const POLE_RADIUS = 0.0125, POLE_HEIGHT = 2.3;
 
 export class CollisionWorld {
-  // course: from course.js; trees: [{ x, z, trunkR, trunkTop }]; buildings: [{ h, pts: [[x, z]] }]
+  // course: from course.js; trees: [{ x, z, trunkR, trunkTop }]; buildings: [{ h, pts: [[x, z]], kind? }]
+  // (kind: how the ball bounces off it, physics.js OBSTACLES; 'building' unless given)
   constructor(Jolt, course, { trees = [], buildings = [] } = {}) {
     this.J = Jolt;
     this.course = course;
@@ -131,7 +132,7 @@ export class CollisionWorld {
     const res = hull.Create();
     J.destroy(hull);
     if (!res.IsValid()) return;
-    this.addBody(res.Get(), [0, 0, 0], OBSTACLE, { kind: 'building', ref: b });
+    this.addBody(res.Get(), [0, 0, 0], OBSTACLE, { kind: b.kind || 'building', ref: b });
   }
 
   // Move the flagstick to this hole's pin (or out of the way when there is none)

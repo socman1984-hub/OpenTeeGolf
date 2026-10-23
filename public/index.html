@@ -14,16 +14,30 @@
 
   <!-- Course / round setup -->
   <div id="menu" class="overlay">
-    <div class="menu-card">
-      <div class="menu-title">
-        <h1>OpenTeeGolf</h1>
-        <span class="beta-badge" title="OpenTeeGolf is in alpha: expect bugs and rough edges">Alpha</span>
-        <a class="discord-link" href="https://discord.gg/YNsyWkCayd" target="_blank" rel="noopener" title="Join the OpenTeeGolf Discord: questions, setups, course requests">
-          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M20.3 4.4A19.8 19.8 0 0 0 15.4 3l-.6 1.3a18.4 18.4 0 0 0-5.6 0L8.6 3a19.7 19.7 0 0 0-4.9 1.5C.6 9.1-.3 13.6.1 18.1a19.9 19.9 0 0 0 6 3l1.3-2.1a12.9 12.9 0 0 1-2-1l.5-.4a14.2 14.2 0 0 0 12.2 0l.5.4c-.6.4-1.3.7-2 1l1.3 2.1a19.8 19.8 0 0 0 6-3c.5-5.2-.8-9.7-3.6-13.7ZM8 15.3c-1.2 0-2.2-1.1-2.2-2.4S6.8 10.5 8 10.5s2.2 1.1 2.2 2.4-1 2.4-2.2 2.4Zm8 0c-1.2 0-2.2-1.1-2.2-2.4s1-2.4 2.2-2.4 2.2 1.1 2.2 2.4-1 2.4-2.2 2.4Z"/></svg>
-          Join the Discord
-        </a>
-      </div>
-      <p class="sub" id="courses-dir">Free, open-source golf simulator for the Mevo+</p>
+    <div class="menu-shell">
+      <header class="menu-head">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 32 32"><circle cx="16" cy="16" r="15" fill="#2f8f4e"/><path d="M12 25V7l10 4-10 4" fill="none" stroke="#fff" stroke-width="2.2" stroke-linejoin="round"/><circle cx="20.5" cy="23.5" r="2.6" fill="#fff"/></svg>
+          </span>
+          <div class="brand-text">
+            <div class="menu-title">
+              <h1>OpenTeeGolf</h1>
+              <span class="beta-badge" title="OpenTeeGolf is in alpha: expect bugs and rough edges">Alpha</span>
+            </div>
+            <p class="sub" id="courses-dir">Free, open-source golf simulator for the Mevo+</p>
+          </div>
+        </div>
+        <nav class="head-links">
+          <a href="/builder.html" class="head-link">+ Build a course</a>
+          <a href="/mevo.html" class="head-link">Mevo+ setup</a>
+          <a class="discord-link" href="https://discord.gg/YNsyWkCayd" target="_blank" rel="noopener" title="Join the OpenTeeGolf Discord: questions, setups, course requests">
+            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M20.3 4.4A19.8 19.8 0 0 0 15.4 3l-.6 1.3a18.4 18.4 0 0 0-5.6 0L8.6 3a19.7 19.7 0 0 0-4.9 1.5C.6 9.1-.3 13.6.1 18.1a19.9 19.9 0 0 0 6 3l1.3-2.1a12.9 12.9 0 0 1-2-1l.5-.4a14.2 14.2 0 0 0 12.2 0l.5.4c-.6.4-1.3.7-2 1l1.3 2.1a19.8 19.8 0 0 0 6-3c.5-5.2-.8-9.7-3.6-13.7ZM8 15.3c-1.2 0-2.2-1.1-2.2-2.4S6.8 10.5 8 10.5s2.2 1.1 2.2 2.4-1 2.4-2.2 2.4Zm8 0c-1.2 0-2.2-1.1-2.2-2.4s1-2.4 2.2-2.4 2.2 1.1 2.2 2.4-1 2.4-2.2 2.4Z"/></svg>
+            Join the Discord
+          </a>
+        </nav>
+      </header>
+
       <p class="beta-note"><b>Alpha.</b> Expect bugs and rough edges, and things may change between versions. Please report problems on the <a href="https://discord.gg/YNsyWkCayd" target="_blank" rel="noopener">Discord</a> or <a href="https://github.com/socman1984-hub/OpenTeeGolf/issues" target="_blank" rel="noopener">GitHub</a>.</p>
       <div id="update-bar" class="update-bar hidden" role="status">
         <div class="update-head"><b id="update-title"></b><span id="update-sub" class="muted"></span></div>
@@ -35,66 +49,133 @@
           <button id="update-later">Later</button>
         </div>
       </div>
-      <div id="course-tools" class="course-tools hidden">
-        <input id="course-search" type="search" placeholder="Search your courses by name or place…" autocomplete="off">
-        <select id="course-sort" title="Sort">
-          <option value="played">Recently played</option><option value="name">Name A–Z</option>
-          <option value="built">Newest built</option><option value="location">Location</option>
-        </select>
-        <button id="fav-filter" class="chip" title="Show favorites only">★ Favorites</button>
-        <span id="course-count" class="muted"></span>
+
+      <div class="menu-body">
+        <div class="menu-main">
+        <!-- Practice areas: generated places, not courses -->
+        <section class="menu-panel practice-panel">
+          <div class="panel-head">
+            <h2><span class="step" aria-hidden="true">◎</span>Practice</h2>
+            <span class="muted practice-note">No course needed · works offline</span>
+          </div>
+          <div class="practice-list">
+            <button class="practice-card" data-practice="range" type="button">
+              <svg class="pc-art" viewBox="0 0 120 64" aria-hidden="true"><defs><linearGradient id="sky1" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#8ec3ea"/><stop offset="1" stop-color="#d8ecf7"/></linearGradient></defs><rect width="120" height="64" fill="url(#sky1)"/><path d="M0 34 18 18 30 28 46 10 62 26 76 14 94 30 108 20 120 28V64H0Z" fill="#7d8796"/><path d="M40 16 46 10 52 16 48 15 46 17ZM70 19 76 14 82 19 78 18ZM14 22 18 18 22 22Z" fill="#f4f7fa"/><path d="M0 38Q60 30 120 38V64H0Z" fill="#4f8f3c"/><path d="M34 64 52 38H68L86 64Z" fill="#66ab47"/><g stroke="#fff" stroke-width=".8"><path d="M57 46V40M64 42V37M60 52V44"/></g><path d="M57 40h3l-3 1.6ZM64 37h3l-3 1.6ZM60 44h4l-4 2Z" fill="#e53935"/><rect x="44" y="58" width="32" height="6" fill="#8cc06c"/></svg>
+              <span class="pc-text"><b>Driving range</b><small>Open range below the mountains. Carry, total and launch data on every shot.</small></span>
+            </button>
+            <button class="practice-card" data-practice="targets" type="button">
+              <svg class="pc-art" viewBox="0 0 120 64" aria-hidden="true"><rect width="120" height="64" fill="#b9dcf0"/><path d="M0 30 20 20 40 27 62 14 86 26 104 18 120 24V64H0Z" fill="#8a93a0"/><path d="M0 32Q60 26 120 32V64H0Z" fill="#477f35"/><ellipse cx="30" cy="38" rx="10" ry="3" fill="#7cc35a"/><ellipse cx="78" cy="36" rx="8" ry="2.4" fill="#7cc35a"/><ellipse cx="56" cy="46" rx="14" ry="4.5" fill="#7cc35a"/><ellipse cx="92" cy="48" rx="7" ry="2.5" fill="#e3d29d"/><g stroke="#fff" stroke-width=".8"><path d="M30 38V30M78 36V30M56 46V35"/></g><path d="M30 30h4l-4 2ZM78 30h3l-3 1.6ZM56 35h5l-5 2.4Z" fill="#fdd835"/><path d="M56 35h5l-5 2.4Z" fill="#1e88e5"/></svg>
+              <span class="pc-text"><b>Target greens</b><small>Seven greens from wedge to long iron, all from one tee.</small></span>
+            </button>
+            <button class="practice-card" data-practice="putt" type="button">
+              <svg class="pc-art" viewBox="0 0 120 64" aria-hidden="true"><rect width="120" height="64" fill="#bfe0f2"/><path d="M0 40Q60 34 120 40V64H0Z" fill="#5b9a45"/><path d="M14 62 40 44H80L106 62Z" fill="#2e9e4a" stroke="#d84a3a" stroke-width="1.6"/><rect x="51" y="24" width="18" height="22" fill="#ece0c8"/><path d="M48 25 60 14 72 25Z" fill="#b8402e"/><rect x="57" y="38" width="6" height="8" fill="#2a3a2a"/><g transform="translate(60 27)" fill="#f6f3ea" stroke="#7a4a2a" stroke-width=".6"><path d="M-1.6 0h3.2v-13h-3.2Z" transform="rotate(20)"/><path d="M-1.6 0h3.2v-13h-3.2Z" transform="rotate(110)"/><path d="M-1.6 0h3.2v-13h-3.2Z" transform="rotate(200)"/><path d="M-1.6 0h3.2v-13h-3.2Z" transform="rotate(290)"/></g><circle cx="38" cy="56" r="1.6" fill="#fff"/><circle cx="82" cy="52" r="1.3" fill="#111"/></svg>
+              <span class="pc-text"><b>Putt-putt</b><small>Six holes of mini golf: ramps, a tunnel and a windmill.</small></span>
+            </button>
+          </div>
+        </section>
+
+        <!-- Course picking -->
+        <section class="menu-panel courses-panel">
+          <div class="panel-head">
+            <h2><span class="step">1</span>Choose a course</h2>
+            <span id="course-count" class="muted"></span>
+          </div>
+          <div id="course-tools" class="course-tools hidden">
+            <input id="course-search" type="search" placeholder="Search your courses by name or place…" autocomplete="off">
+            <select id="course-sort" title="Sort">
+              <option value="played">Recently played</option><option value="name">Name A–Z</option>
+              <option value="built">Newest built</option><option value="location">Location</option>
+            </select>
+            <button id="fav-filter" class="chip" title="Show favorites only">★ Favorites</button>
+          </div>
+          <div id="course-list" class="course-list"><div class="muted">Loading courses…</div></div>
+        </section>
+        </div>
+
+        <!-- Round setup, settings and launch monitor, with Tee off pinned at the bottom -->
+        <aside class="menu-panel setup-panel">
+          <div class="setup-scroll">
+            <div class="panel-head">
+              <h2><span class="step">2</span>Set up your round</h2>
+            </div>
+            <h3 class="round-title"><i id="round-label">Round at</i><span id="selected-name">…</span></h3>
+
+            <div class="opt-group" id="opt-course-group">
+              <h4>Course</h4>
+              <div class="settings">
+                <label class="course-only">Tees <select id="opt-tee"></select></label>
+                <label class="course-only">Pins <select id="opt-pin">
+                  <option>Thursday</option><option>Friday</option><option selected>Saturday</option><option>Sunday</option>
+                </select></label>
+                <label class="course-only">Start hole <select id="opt-start"></select></label>
+                <label id="opt-stimp-wrap">Green speed (stimp) <input id="opt-stimp" type="number" min="6" max="14" step="0.5" value="10"></label>
+                <label id="opt-terrain-wrap" class="span2 hidden">Terrain <select id="opt-terrain">
+                  <option value="real">Real (USGS lidar + OpenStreetMap)</option><option value="gen">Simplified (no terrain data)</option>
+                </select></label>
+              </div>
+            </div>
+
+            <div class="opt-group">
+              <h4>Weather</h4>
+              <div class="settings">
+                <label class="span2">Conditions <select id="opt-weather">
+                  <option value="live" selected>Live (real weather at the course)</option>
+                  <option value="calm">Calm and sunny</option><option value="breezy">Breezy</option>
+                  <option value="windy">Windy</option><option value="rain">Rain</option><option value="custom">Custom</option>
+                </select></label>
+                <label class="custom-wx">Wind (mph) <input id="opt-wind" type="number" min="0" max="40" value="8"></label>
+                <label class="custom-wx">Wind from <select id="opt-winddir">
+                  <option value="0">Into you</option><option value="180">Behind you</option>
+                  <option value="90">Right → left</option><option value="270">Left → right</option><option value="rand">Random</option>
+                </select></label>
+              </div>
+            </div>
+
+            <div class="opt-group course-only">
+              <h4>Putting</h4>
+              <div class="settings">
+                <label class="span2">Putting <select id="opt-putting">
+                  <option value="normal">Normal (putt everything)</option><option value="auto">Auto-putt (hole ends on the green)</option>
+                </select></label>
+                <label>Gimme <select id="opt-gimme">
+                  <option value="0" selected>Off</option><option value="0.9144">3 ft</option><option value="1.8288">6 ft</option><option value="3.048">10 ft</option>
+                </select></label>
+                <label class="autoputt-opt">Auto-putt circle <select id="opt-autoputt-r">
+                  <option value="1.8288">6 ft</option><option value="3.048" selected>10 ft</option><option value="4.572">15 ft</option><option value="6.096">20 ft</option>
+                </select></label>
+              </div>
+            </div>
+
+            <div class="opt-group">
+              <h4>Display</h4>
+              <div class="settings">
+                <label>Units <select id="opt-units"><option value="yd">Yards</option><option value="m">Meters</option></select></label>
+                <label>Graphics <select id="opt-quality">
+                  <option value="high">High</option><option value="balanced" selected>Balanced</option><option value="performance">Performance</option>
+                </select></label>
+                <label class="check"><input id="opt-fps" type="checkbox"> Show FPS <kbd>P</kbd></label>
+                <label class="check"><input id="opt-traces" type="checkbox" checked> Shot traces <kbd>H</kbd></label>
+              </div>
+            </div>
+
+            <div class="opt-group lm-setup">
+              <h4>Launch monitor</h4>
+              <label>Connection <select id="opt-lm">
+                <option value="fsgolf">Mevo+ through the FS Golf app</option>
+                <option value="direct">Mevo+ direct (no FS Golf, experimental)</option>
+              </select></label>
+              <div id="lm-help" class="muted"></div>
+              <a href="/mevo.html" class="menu-link">Mevo+ setup: live camera, level, battery, distance →</a>
+            </div>
+          </div>
+
+          <div class="menu-actions">
+            <button id="btn-start" class="primary" disabled>Tee off</button>
+          </div>
+        </aside>
       </div>
-      <div id="course-list" class="course-list"><div class="muted">Loading courses…</div></div>
-      <h2 class="round-title">Round at <span id="selected-name">…</span></h2>
-      <div class="settings">
-        <label>Tees <select id="opt-tee"></select></label>
-        <label>Pins <select id="opt-pin">
-          <option>Thursday</option><option>Friday</option><option selected>Saturday</option><option>Sunday</option>
-        </select></label>
-        <label>Units <select id="opt-units"><option value="yd">Yards</option><option value="m">Meters</option></select></label>
-        <label>Green speed (stimp) <input id="opt-stimp" type="number" min="6" max="14" step="0.5" value="10"></label>
-        <label>Weather <select id="opt-weather">
-          <option value="live" selected>Live (real weather at the course)</option>
-          <option value="calm">Calm and sunny</option><option value="breezy">Breezy</option>
-          <option value="windy">Windy</option><option value="rain">Rain</option><option value="custom">Custom</option>
-        </select></label>
-        <label class="custom-wx">Wind (mph) <input id="opt-wind" type="number" min="0" max="40" value="8"></label>
-        <label class="custom-wx">Wind from <select id="opt-winddir">
-          <option value="0">Into you</option><option value="180">Behind you</option>
-          <option value="90">Right → left</option><option value="270">Left → right</option><option value="rand">Random</option>
-        </select></label>
-        <label>Gimme <select id="opt-gimme">
-          <option value="0" selected>Off</option><option value="0.9144">3 ft</option><option value="1.8288">6 ft</option><option value="3.048">10 ft</option>
-        </select></label>
-        <label>Putting <select id="opt-putting">
-          <option value="normal">Normal (putt everything)</option><option value="auto">Auto-putt (hole ends on the green)</option>
-        </select></label>
-        <label class="autoputt-opt">Auto-putt 1-putt circle <select id="opt-autoputt-r">
-          <option value="1.8288">6 ft</option><option value="3.048" selected>10 ft</option><option value="4.572">15 ft</option><option value="6.096">20 ft</option>
-        </select></label>
-        <label>Start hole <select id="opt-start"></select></label>
-        <label>Graphics <select id="opt-quality">
-          <option value="high">High</option><option value="balanced" selected>Balanced</option><option value="performance">Performance</option>
-        </select></label>
-        <label class="check"><input id="opt-fps" type="checkbox"> Show FPS (P)</label>
-        <label class="check"><input id="opt-traces" type="checkbox" checked> Previous shot traces (H)</label>
-        <label id="opt-terrain-wrap" class="hidden">Terrain <select id="opt-terrain">
-          <option value="real">Real (USGS lidar + OpenStreetMap)</option><option value="gen">Simplified (no terrain data)</option>
-        </select></label>
-      </div>
-      <div class="lm-setup">
-        <label>Launch monitor <select id="opt-lm">
-          <option value="fsgolf">Mevo+ through the FS Golf app</option>
-          <option value="direct">Mevo+ direct (no FS Golf, experimental)</option>
-        </select></label>
-        <div id="lm-help" class="muted"></div>
-        <a href="/mevo.html" class="menu-link">Mevo+ setup: live camera, level, battery, distance →</a>
-      </div>
-      <div class="menu-actions">
-        <button id="btn-start" class="primary" disabled>Tee off</button>
-        <a href="/builder.html" class="menu-link">+ Build a course from OpenStreetMap</a>
-      </div>
-      <div class="menu-foot muted"><span id="app-version"></span> · <a href="#" id="check-updates">Check for updates</a> · <a href="https://socman1984-hub.github.io/OpenTeeGolf/" target="_blank" rel="noopener">Website</a> · <a href="https://discord.gg/YNsyWkCayd" target="_blank" rel="noopener">Discord</a></div>
+
+      <footer class="menu-foot muted"><span id="app-version"></span> · <a href="#" id="check-updates">Check for updates</a> · <a href="https://socman1984-hub.github.io/OpenTeeGolf/" target="_blank" rel="noopener">Website</a> · <a href="https://discord.gg/YNsyWkCayd" target="_blank" rel="noopener">Discord</a> · <a href="https://github.com/socman1984-hub/OpenTeeGolf" target="_blank" rel="noopener">GitHub</a></footer>
     </div>
   </div>
 
@@ -108,6 +189,12 @@
 
   <!-- HUD -->
   <div id="hud" class="hidden">
+    <div id="practice-card" class="panel hidden">
+      <div class="pc-title"><span id="pc-title">Practice</span><span class="beta-badge" title="OpenTeeGolf is in alpha: expect bugs and rough edges">Alpha</span></div>
+      <div id="pc-sub" class="pc-sub"></div>
+      <div id="pc-stats" class="hole-play"></div>
+      <table id="pc-shots" class="pc-shots"></table>
+    </div>
     <div id="hole-card" class="panel">
       <div class="hole-num">Hole <span id="h-num">1</span><span class="beta-badge" title="OpenTeeGolf is in alpha: expect bugs and rough edges">Alpha</span></div>
       <div class="hole-meta"><span>Par <b id="h-par">4</b></span><span id="h-len"></span><span>HCP <b id="h-hcp"></b></span></div>

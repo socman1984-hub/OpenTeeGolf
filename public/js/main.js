@@ -6,6 +6,7 @@ import { CourseScene } from './scene.js';
 import { simulateShot, LIE_EFFECT, stimpToRoll, SURFACE_NAMES } from './physics.js';
 import { loadJolt, CollisionWorld } from './collision.js';
 import { PRESETS as WEATHER, fetchLiveWeather, wetness, gustFor } from './weather.js';
+import { PRACTICE_AREAS, makePractice } from './practice.js';
 
 const $ = (id) => document.getElementById(id);
 const M_TO_YD = 1.09361, M_TO_FT = 3.28084;
@@ -34,6 +35,8 @@ const S = {
   lastShot: null,
   undo: null,
   windRel: [],
+  practice: null, // in a practice area: { kind: 'range' | 'targets' | 'putt', clock, shots, ... }
+  spot: null,     // the practice area's own parts (practice.js)
 };
 
 const scene = new CourseScene($('view'));
@@ -309,6 +312,8 @@ $('fav-filter').onclick = () => { menu.favOnly = !menu.favOnly; renderCourses();
 let selectToken = 0;
 async function selectCourse(c) {
   menu.cards.forEach((n, id) => n.classList.toggle('sel', id === c.id));
+  document.querySelectorAll('.practice-card').forEach((b) => b.classList.remove('sel'));
+  setupFor(null);
   S.selected = c;
   $('selected-name').textContent = c.name;
   $('btn-start').disabled = true;
@@ -328,6 +333,32 @@ async function selectCourse(c) {
   $('opt-terrain').value = c.hasReal ? 'real' : 'gen';
   $('btn-start').disabled = false;
 }
+
+// Practice areas (their own section of the menu): picking one sets up the right-hand panel for
+// practice; Start practice (or a double click) goes
+function selectPractice(kind) {
+  menu.cards.forEach((n) => n.classList.remove('sel'));
+  document.querySelectorAll('.practice-card').forEach((b) => b.classList.toggle('sel', b.dataset.practice === kind));
+  selectToken++; // (a course whose details are still loading is no longer wanted)
+  S.selected = { practice: kind, id: `practice-${kind}`, name: PRACTICE_AREAS[kind].name };
+  setupFor(kind);
+  $('btn-start').disabled = false;
+}
+// The setup panel for a round (kind null) or a practice area: practice has no tees, pins, start
+// hole or terrain to choose, and only the putt-putt course has a green speed
+function setupFor(kind) {
+  $('round-label').textContent = kind ? 'Practice at' : 'Round at';
+  if (kind) $('selected-name').textContent = PRACTICE_AREAS[kind].name;
+  document.querySelectorAll('.course-only').forEach((el) => el.classList.toggle('hidden', !!kind));
+  $('opt-stimp-wrap').classList.toggle('hidden', !!kind && kind !== 'putt');
+  $('opt-course-group').classList.toggle('hidden', !!kind && kind !== 'putt');
+  if (kind) $('opt-terrain-wrap').classList.add('hidden');
+  $('btn-start').textContent = kind ? 'Start practice' : 'Tee off';
+}
+document.querySelectorAll('.practice-card').forEach((b) => {
+  b.onclick = () => selectPractice(b.dataset.practice);
+  b.ondblclick = () => { selectPractice(b.dataset.practice); $('btn-start').click(); };
+});
 
 // ------------------------------------------------------------------ loading screen
 
@@ -437,14 +468,9 @@ const mb = (n) => `${(n / 1048576).toFixed(1)} MB`;
 // Lets the page repaint between heavy steps
 const breathe = () => new Promise((r) => setTimeout(r, 16));
 
-$('btn-start').onclick = async () => {
-  menu.played[S.selected.id] = Date.now();
-  store.set('golfsim.played', menu.played);
-  $('menu').classList.add('hidden');
-  loader.open(`Loading ${S.selected.name}`);
-  loader.course = S.selected.id;
-  await breathe();
-  S.settings = {
+// The round's settings from the menu
+function readSettings() {
+  return {
     tee: $('opt-tee').value,
     pin: $('opt-pin').value,
     units: $('opt-units').value,
@@ -457,6 +483,46 @@ $('btn-start').onclick = async () => {
     autoPutt: $('opt-putting').value === 'auto',
     autoPuttR: +$('opt-autoputt-r').value,
   };
+}
+
+// The scene for a course, reporting its own steps (photos, painting, trees, graphics)
+async function buildScene(course, assets) {
+  let current = null;
+  await scene.build(course, assets, async (stepId, label, done = null, total = null, msg = '') => {
+    if (current && current !== stepId) loader.finish(current);
+    current = stepId;
+    loader.step(stepId, label, { done, total, msg });
+    await breathe();
+  });
+  if (current) loader.finish(current);
+}
+
+// Solid things the ball can hit (Jolt): terrain, trunks, buildings, the flagstick
+async function buildCollisions(buildings) {
+  S.collider?.dispose();
+  S.collider = null;
+  loader.step('collisions', 'Collisions');
+  await breathe();
+  try {
+    S.collider = new CollisionWorld(await loadJolt(), S.course, { trees: scene.trees?.all || [], buildings });
+    loader.finish('collisions');
+  } catch (err) {
+    loader.fail('collisions', 'Using the simpler built-in checks');
+    console.warn('Jolt collisions unavailable, using the built-in checks', err);
+  }
+}
+
+$('btn-start').onclick = async () => {
+  if (S.selected?.practice) return startPractice(S.selected.practice);
+  menu.played[S.selected.id] = Date.now();
+  store.set('golfsim.played', menu.played);
+  $('menu').classList.add('hidden');
+  loader.open(`Loading ${S.selected.name}`);
+  loader.course = S.selected.id;
+  await breathe();
+  S.settings = readSettings();
+  S.practice = null;
+  S.spot = null;
   const useReal = S.selected.hasReal && $('opt-terrain').value === 'real';
   // Graphics quality changes vegetation density, so a change rebuilds the course
   if (scene.quality?.name !== S.settings.quality) { scene.setQuality(S.settings.quality); S.courseId = null; }
@@ -531,32 +597,13 @@ $('btn-start').onclick = async () => {
     S.courseId = key;
     S.geo = real?.geo || null;
     loader.finish('course');
-    // The scene reports its own steps (photos, painting, trees, graphics)
-    let current = null;
-    await scene.build(S.course, { imagery, buildings, canopy, farland, buildingTypes: real?.buildingTypes || {} }, async (stepId, label, done = null, total = null, msg = '') => {
-      if (current && current !== stepId) loader.finish(current);
-      current = stepId;
-      loader.step(stepId, label, { done, total, msg });
-      await breathe();
-    });
-    if (current) loader.finish(current);
+    await buildScene(S.course, { imagery, buildings, canopy, farland, buildingTypes: real?.buildingTypes || {} });
     // (the trees seen in the aerial photo, kept with the course so the editor shows the same ones)
     if (scene.photoTreeList) {
       fetch(`/api/courses/${id}/phototrees`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ trees: scene.photoTreeList }) }).catch(() => {});
       scene.photoTreeList = null;
     }
-    // Solid things the ball can hit (Jolt): terrain, trunks, buildings, the flagstick
-    S.collider?.dispose();
-    S.collider = null;
-    loader.step('collisions', 'Collisions');
-    await breathe();
-    try {
-      S.collider = new CollisionWorld(await loadJolt(), S.course, { trees: scene.trees?.all || [], buildings: buildings.concat(scene.carBoxes || []) });
-      loader.finish('collisions');
-    } catch (err) {
-      loader.fail('collisions', 'Using the simpler built-in checks');
-      console.warn('Jolt collisions unavailable, using the built-in checks', err);
-    }
+    await buildCollisions(buildings.concat(scene.carBoxes || []));
     $('credits').textContent = [
       scene.imagery?.attribution,
       real ? 'Map data © OpenStreetMap contributors' : '',
@@ -572,9 +619,185 @@ $('btn-start').onclick = async () => {
   S.scores = S.course.holes.map(() => null);
   loader.close();
   $('hud').classList.remove('hidden');
+  $('keys').textContent = KEYS_HELP.round;
   document.querySelectorAll('.unit').forEach((n) => (n.textContent = S.settings.units));
   startHole(+$('opt-start').value);
 };
+
+// ------------------------------------------------------------------ practice areas
+
+const practiceKind = () => S.practice?.kind || null;
+const KEYS_HELP = {
+  round: $('keys').textContent,
+  range: 'Click ground or minimap to aim · ←/→ fine aim · pick a club top right · T test shot · F free view · H traces · V overview · Space skip · U full screen · Esc menu',
+  targets: 'Click a green or 1–7 to pick a target · [ ] previous / next · ←/→ fine aim · T test shot · F free view · H traces · Space skip · U full screen · Esc menu',
+  putt: 'Click to aim · ←/→ fine aim · G slope grid · T test shot · F free view · V overview · M mulligan · C scorecard · N next hole · U full screen · Esc menu',
+};
+
+async function startPractice(kind) {
+  $('menu').classList.add('hidden');
+  loader.open(`Loading the ${PRACTICE_AREAS[kind].name.toLowerCase()}`);
+  loader.course = null;
+  await breathe();
+  // (no auto-putt or gimmes: the range and targets have no putting, the putt-putt is all putting)
+  S.settings = { ...readSettings(), tee: 'White', pin: 'Saturday', autoPutt: false, gimme: 0 };
+  if (scene.quality?.name !== S.settings.quality) { scene.setQuality(S.settings.quality); S.courseId = null; }
+  savePrefs();
+  // (the range's flags and boards are at round numbers in the units chosen)
+  const key = `practice:${kind}|${kind === 'putt' ? '' : S.settings.units}`;
+  if (!S.course || S.courseId !== key) {
+    loader.step('course', 'Laying out the practice area');
+    await breathe();
+    const spot = await makePractice(kind, { units: S.settings.units });
+    S.course = buildCourse(spot.data, spot.real);
+    S.course.teeMarkers = false; // (balls lying on the tee would look like markers, and vice versa)
+    S.course.autoTrees = false; // (its trees are placed with it, clear of the shots)
+    S.courseId = key;
+    S.geo = null;
+    S.selectedData = spot.data;
+    S.spot = spot;
+    loader.finish('course');
+    await buildScene(S.course, { farland: spot.farland });
+    spot.decorate(scene, S.course);
+    await buildCollisions(spot.solids);
+    $('credits').textContent = 'A practice area made by OpenTeeGolf · the mountains are made up';
+  }
+  S.practice = { kind, clock: 0, shots: [], club: kind === 'range' ? 'DR' : null };
+  // One wind for the whole area, set against the line down the range
+  const rel = S.settings.windDir === 'rand' ? Math.random() * 360 : +S.settings.windDir;
+  S.windRel = S.course.holes.map(() => rel);
+  if (S.settings.weather === 'live') loader.step('weather', 'Weather');
+  await setupWeather();
+  loader.finish('weather');
+  S.scores = S.course.holes.map(() => null);
+  loader.close();
+  $('hud').classList.remove('hidden');
+  $('keys').textContent = KEYS_HELP[kind];
+  document.querySelectorAll('.unit').forEach((n) => (n.textContent = S.settings.units));
+  const last = Math.min(S.course.holes.length - 1, Math.max(0, store.get('golfsim.practice.target', 2)));
+  startHole(kind === 'targets' ? last : 0);
+}
+
+// Targets: the green whose line from the tee is nearest the aim (and nearest its distance)
+function pickTarget() {
+  let best = -1, bd = Infinity;
+  S.course.holes.forEach((h, i) => {
+    const p = h.pins.Saturday, d = dist(S.ball, p), a = headingTo(S.ball, p) - S.heading;
+    if (Math.cos(a) <= 0) return;
+    const score = Math.abs(Math.sin(a)) * d + 0.15 * Math.abs(S.aimDist - d);
+    if (score < bd) { bd = score; best = i; }
+  });
+  if (best < 0 || best === S.hole) return;
+  S.hole = best;
+  scene.setPin(pin());
+  S.spot.setActive?.(best);
+  S.aimDist = dist(S.ball, pin());
+  autoClub();
+}
+
+// Targets: aim straight at green i (number keys, [ and ])
+function selectTarget(i) {
+  if (practiceKind() !== 'targets' || S.phase !== 'ready' || i < 0 || i >= S.course.holes.length) return;
+  S.hole = i;
+  scene.setPin(pin());
+  S.spot.setActive?.(i);
+  S.heading = headingTo(S.ball, pin());
+  S.aimDist = dist(S.ball, pin());
+  autoClub();
+  refreshAim();
+  addressView();
+}
+
+// Range and targets: the ball has stopped. Say how far (and how close), note it, and put a new
+// ball on the tee
+function practiceShotDone(res) {
+  const P = S.practice, rest = res.rest;
+  S.phase = 'result';
+  const entry = { club: $('club').value, carry: res.carry, total: res.total, offline: res.offline };
+  const side = (m) => (Math.abs(m) < 0.5 ? 'dead straight' : `${fmtLen(Math.abs(m))} ${m > 0 ? 'right' : 'left'}`);
+  if (P.kind === 'range') {
+    let near = null;
+    for (const t of S.spot.targets) {
+      const d = Math.hypot(rest.x - t.x, rest.z - t.z);
+      if (d < t.r + 12 && (!near || d < near.d)) near = { t, d };
+    }
+    banner(`${fmtLen(res.carry)} carry<small>${fmtLen(res.total)} total · ${side(res.offline)}${near ? ` · ${fmtNear(near.d)} from the ${near.t.label} flag` : ''}</small>`, 3200);
+  } else {
+    const t = S.spot.targets[P.aimed], p = S.course.holes[P.aimed].pins.Saturday;
+    const holed = res.result === 'holed', d = holed ? 0 : dist(rest, p);
+    const green = holed || (S.course.surfaceAt(rest.x, rest.z) === 'green' && Math.hypot(rest.x - t.x, rest.z - t.z) < t.r * 1.3);
+    Object.assign(entry, { target: P.aimed, toPin: d, green });
+    banner(holed ? `In the hole!<small>${t.label} · ${fmtLen(res.carry)} carry</small>`
+      : `${fmtNear(d)} from the pin<small>${t.label} · ${green ? 'on the green' : 'missed the green'} · ${fmtLen(res.carry)} carry</small>`, 3200);
+  }
+  P.shots.push(entry);
+  updateHud();
+  P.resetTimer = setTimeout(practiceReset, S.pendingShot ? 0 : 2400);
+}
+// Short distances in feet (or metres to the decimetre), longer ones in yards
+const fmtNear = (m) => (m < 15 ? fmtPutt(m) : fmtLen(m));
+
+function practiceReset() {
+  const P = S.practice;
+  clearTimeout(P?.resetTimer);
+  if (!P || S.phase !== 'result') return;
+  if (P.kind === 'targets') {
+    // The next shot starts aimed at the green this one was aimed at
+    S.hole = P.aimed;
+    store.set('golfsim.practice.target', S.hole);
+    scene.setPin(pin());
+    S.spot.setActive?.(S.hole);
+  }
+  const t = teePosition(hole());
+  S.ball = { x: t.x, y: S.course.heightAt(t.x, t.z) ?? t.y, z: t.z };
+  S.prevBall = { ...S.ball };
+  S.lie = 'tee';
+  S.strokes = 0;
+  S.undo = null;
+  S.phase = 'ready';
+  // (the last dozen shots stay drawn, to see the spread)
+  scene.keepTrailAsGhost();
+  while (scene.ghostTrails.length > 12) { const g = scene.ghostTrails.shift(); scene.dynamic.remove(g); g.geometry.dispose(); }
+  scene.setGhostsVisible(S.showTraces !== false);
+  if (P.kind === 'targets') {
+    S.heading = headingTo(S.ball, pin());
+    S.aimDist = dist(S.ball, pin());
+    autoClub();
+  }
+  refreshAim();
+  addressView();
+  const pending = S.pendingShot;
+  S.pendingShot = null;
+  if (pending) onShot(pending);
+}
+
+// The practice panel (top left on the range and targets): the last shots and how they're going
+function updatePracticeCard() {
+  const P = S.practice, shots = P.shots;
+  const f = (m) => Math.round(fmtNum(m));
+  const lr = (m) => `${Math.abs(f(m))}${m > 0.5 ? 'R' : m < -0.5 ? 'L' : ''}`;
+  const stat = (label, v) => `<div><small>${label}</small><b>${v}</b></div>`;
+  let stats, head, rows;
+  if (P.kind === 'range') {
+    const club = $('club').value, mine = shots.filter((s) => s.club === club);
+    const avg = (k) => (mine.length ? f(mine.reduce((a, s) => a + s[k], 0) / mine.length) : '—');
+    $('pc-title').textContent = 'Driving range';
+    $('pc-sub').textContent = `${shots.length} shot${shots.length === 1 ? '' : 's'} · ${CLUBS.find((c) => c[0] === club)?.[1] || club}: ${mine.length ? `${mine.length} hit` : 'none yet'}`;
+    stats = stat('Avg carry', avg('carry')) + stat('Avg total', avg('total')) + stat('Longest', mine.length ? f(Math.max(...mine.map((s) => s.total))) : '—');
+    head = '<tr><th>Club</th><th>Carry</th><th>Total</th><th>Side</th></tr>';
+    rows = shots.slice(-6).reverse().map((s) => `<tr><td>${s.club}</td><td>${f(s.carry)}</td><td>${f(s.total)}</td><td>${lr(s.offline)}</td></tr>`).join('');
+  } else {
+    const t = S.spot.targets[S.hole], here = shots.filter((s) => s.target === S.hole);
+    $('pc-title').textContent = 'Target greens';
+    $('pc-sub').innerHTML = `Aiming at the <b style="color:${t.colour}">${t.label}</b> green · ${S.hole + 1} of ${S.course.holes.length}`;
+    const pct = here.length ? `${Math.round((100 * here.filter((s) => s.green).length) / here.length)}%` : '—';
+    stats = stat('Shots here', here.length) + stat('Greens hit', pct) + stat('Avg to pin', here.length ? fmtNear(here.reduce((a, s) => a + s.toPin, 0) / here.length) : '—');
+    head = '<tr><th>Target</th><th>Carry</th><th>To pin</th><th>Green</th></tr>';
+    rows = shots.slice(-6).reverse().map((s) => `<tr><td>${S.spot.targets[s.target].label}</td><td>${f(s.carry)}</td><td>${fmtNear(s.toPin)}</td><td>${s.green ? '✓' : '—'}</td></tr>`).join('');
+  }
+  $('pc-stats').innerHTML = stats;
+  $('pc-shots').innerHTML = shots.length ? head + rows : '';
+}
 
 // ------------------------------------------------------------------ helpers
 
@@ -604,6 +827,7 @@ function teePosition(h) {
 
 // Where the course is and which way north points in course space (0° = course +z)
 function courseLocation() {
+  if (S.practice) return { lat: null, lon: null, northDeg: 0 }; // (made-up places)
   const g = S.geo, b = S.course.bounds;
   if (g) {
     const cx = (b.minX + b.maxX) / 2, cz = (b.minZ + b.maxZ) / 2;
@@ -621,7 +845,7 @@ async function setupWeather() {
   const loc = courseLocation();
   let w;
   if (mode === 'live') {
-    if (loc.lat == null) { toast('This course has no location — using breezy weather'); }
+    if (loc.lat == null) { toast(S.practice ? 'Practice areas aren’t real places — using breezy weather' : 'This course has no location — using breezy weather'); }
     else {
       try { w = await fetchLiveWeather(loc.lat, loc.lon); } catch (err) { toast(`Live weather unavailable (${err.message}) — using breezy weather`, 4000); }
     }
@@ -643,7 +867,9 @@ function wind() {
   let fromDeg;
   if (w.relative) {
     const h = hole();
-    fromDeg = (headingTo(teePosition(h), h.greenCenter) * 180) / Math.PI + S.windRel[S.hole];
+    // (on the range and targets: against the line down the middle, whichever green is aimed at)
+    const ref = S.practice && S.practice.kind !== 'putt' ? 0 : headingTo(teePosition(h), h.greenCenter);
+    fromDeg = (ref * 180) / Math.PI + S.windRel[S.hole];
   } else fromDeg = w.windFromMet + w.northDeg;
   return { mps: w.windMph * 0.44704, fromDeg };
 }
@@ -689,7 +915,8 @@ function startHole(i) {
   S.hole = i;
   const h = hole();
   S.strokes = 0;
-  S.lie = 'tee';
+  // (putt-putt: the tee is a mat on the felt, and every shot is a putt)
+  S.lie = practiceKind() === 'putt' ? 'green' : 'tee';
   const t = teePosition(h);
   // Sit the ball on the terrain (real terrain can differ from the stored tee height)
   S.ball = { x: t.x, y: S.course.heightAt(t.x, t.z) ?? t.y, z: t.z };
@@ -698,15 +925,20 @@ function startHole(i) {
   S.phase = 'ready';
   scene.clearTrails();
   scene.setPin(pin());
+  S.spot?.setActive?.(i);
   applyWeatherToScene();
   S.tween = null;
   scene.setPuttCircle(S.settings.autoPutt ? pin() : null, S.settings.autoPuttR);
   resetAim();
-  scene.viewOverview(S.ball, pin());
+  scene.viewOverview(S.ball, pin(), practiceKind() === 'putt' ? 5 : 40);
   scene.snapCamera();
   setTimeout(() => { if (S.phase === 'ready' && S.strokes === 0 && scene.mode === 'overview') addressView(); }, 1800);
   const len = t.distance ?? dist(t, pin());
-  banner(`Hole ${h.number}<small>Par ${h.par} · ${fmtLen(len)}</small>`);
+  const kind = practiceKind();
+  if (kind === 'range') banner('Driving range<small>Hit away: a new ball is teed up after every shot</small>', 3200);
+  else if (kind === 'targets') banner('Target greens<small>Aim at any green; the next ball starts aimed at the same one</small>', 3600);
+  else if (kind === 'putt') banner(`Hole ${h.number} · ${S.spot.holes[i].name}<small>Par ${h.par} · ${fmtPutt(len)}</small>`);
+  else banner(`Hole ${h.number}<small>Par ${h.par} · ${fmtLen(len)}</small>`);
   updateHud();
 }
 
@@ -716,6 +948,9 @@ function resetAim() {
   let target = p;
   // From the tee on long holes aim down the fairway (first aim point within reach)
   if (S.strokes === 0 && h.par >= 4 && h.aims.length) target = h.aims[0];
+  // (the range: straight down the middle; a putt-putt hole that turns: at the wall to bank off)
+  if (practiceKind() === 'range') target = { x: S.ball.x, z: p.z };
+  if (practiceKind() === 'putt' && S.strokes === 0 && S.spot.holes[S.hole].aim) target = S.spot.holes[S.hole].aim;
   S.heading = headingTo(S.ball, target);
   S.aimDist = dist(S.ball, target);
   autoClub();
@@ -737,6 +972,7 @@ function aimPoint() {
 }
 
 function refreshAim() {
+  if (practiceKind() === 'targets' && S.phase === 'ready') pickTarget();
   const d = dist(S.ball, pin());
   if (!S.aimDist) S.aimDist = d;
   const len = onGreen() ? d + 1 : S.aimDist;
@@ -759,7 +995,7 @@ function refreshAim() {
   }
   // Slope grid on the green (G toggles it)
   const nearGreen = S.lie === 'green' || S.lie === 'fringe' || (S.lie === 'firstcut' && dist(S.ball, pin()) < 25);
-  if (nearGreen && S.phase === 'ready' && S.showGrid !== false) {
+  if (nearGreen && S.phase === 'ready' && gridOn()) {
     const key = `${S.hole}|${S.ball.x.toFixed(2)}|${S.ball.z.toFixed(2)}`;
     if (S.gridKey !== key) { scene.showPuttGrid(S.ball, pin()); S.gridKey = key; }
   } else if (S.gridKey) { scene.hidePuttGrid(); S.gridKey = null; }
@@ -768,11 +1004,22 @@ function refreshAim() {
   drawMinimap();
 }
 
+// The slope grid (G): on unless turned off, but off on the putt-putt course unless turned on there
+const gridOn = () => (practiceKind() === 'putt' ? S.puttGrid === true : S.showGrid !== false);
+
 function addressView() {
+  if (practiceKind() === 'putt') {
+    // (looking down the line of the putt, not at a hole that may be round a corner)
+    const x = S.ball.x + Math.sin(S.heading) * 4, z = S.ball.z + Math.cos(S.heading) * 4;
+    return scene.viewAddress(S.ball, S.heading, true, { x, y: S.course.heightAt(x, z) ?? S.ball.y, z });
+  }
   scene.viewAddress(S.ball, S.heading, onGreen(), pin());
 }
 
 function autoClub() {
+  if (practiceKind() === 'putt') return setClub('PT');
+  // (the range keeps the club the player picked)
+  if (practiceKind() === 'range') return setClub(S.practice.club || 'DR');
   const d = dist(S.ball, pin()) * M_TO_YD;
   let club = 'PT';
   if (!onGreen()) {
@@ -803,6 +1050,12 @@ function onShot(shot) {
     toast('New shot — skipping to where the last ball stopped');
     return;
   }
+  // (range and targets: a swing while the last result shows plays from the tee at once)
+  if (S.phase === 'result') {
+    S.pendingShot = shot;
+    practiceReset();
+    return;
+  }
   if (S.phase !== 'ready') {
     toast('Not ready for a shot');
     return;
@@ -827,7 +1080,9 @@ function onShot(shot) {
     pin: pin(),
     trees: scene.trees,
     collider: S.collider,
+    movers: S.spot?.movers?.(S.practice.clock),
   });
+  if (practiceKind() === 'targets') S.practice.aimed = S.hole;
   S.undo = { ball: { ...S.ball }, strokes: S.strokes, lie: S.lie, heading: S.heading };
   S.prevBall = { ...S.ball };
   S.strokes++;
@@ -840,12 +1095,16 @@ function onShot(shot) {
   S.gridKey = null;
   scene.keepTrailAsGhost();
   if (scene.mode === 'free') setFreeView(false);
-  if (res.points.length > 2 && !(onGreen() && shot.vla < 6)) scene.followBall(res.carryPoint || res.rest, res.rest, pin());
+  // (putt-putt: up above the hole to watch it)
+  if (practiceKind() === 'putt') scene.viewOverview(S.ball, pin(), 4);
+  else if (res.points.length > 2 && !(onGreen() && shot.vla < 6)) scene.followBall(res.carryPoint || res.rest, res.rest, pin());
   if (S.lie !== 'tee' && lieFx.speed < 1) toast(`From the ${(SURFACE_NAMES[S.lie] || S.lie).toLowerCase()}: −${Math.round((1 - lieFx.speed) * 100)}% ball speed, −${Math.round((1 - lieFx.spin) * 100)}% spin`);
   updateHud();
 }
 
 function tick(dt) {
+  // (the practice clock turns the windmill, and the physics knows where its sails are by it)
+  if (S.practice) { S.practice.clock += dt; S.spot?.update?.(S.practice.clock); }
   if (S.tween) {
     const tw = S.tween;
     tw.t = Math.min(1, tw.t + dt / tw.dur);
@@ -879,6 +1138,7 @@ function skipAnimation() {
 function finishShot(res) {
   S.anim = null;
   showShotData(S.lastShot.shot, res);
+  if (S.practice && S.practice.kind !== 'putt') return practiceShotDone(res);
   const h = hole();
   let surface = S.course.surfaceAt(res.rest.x, res.rest.z);
   let msg = null;
@@ -887,10 +1147,12 @@ function finishShot(res) {
     S.ball = { ...res.rest };
     return holeOut();
   }
-  if (res.result === 'oob' || surface === 'oob' || surface == null) {
+  // (putt-putt: anywhere off the felt is out)
+  const offLane = practiceKind() === 'putt' && surface !== 'green';
+  if (res.result === 'oob' || surface === 'oob' || surface == null || offLane) {
     S.strokes++; // stroke and distance
     S.ball = { ...S.prevBall };
-    msg = 'Out of bounds<small>Stroke and distance — replay from previous spot</small>';
+    msg = offLane ? 'Off the course<small>+1 stroke — play again from where you were</small>' : 'Out of bounds<small>Stroke and distance — replay from previous spot</small>';
   } else if (res.result === 'water' || surface === 'water') {
     S.strokes++;
     S.ball = waterDrop(res);
@@ -913,7 +1175,8 @@ function finishShot(res) {
     const tree = hits.includes('pole') ? 'Off the flagstick! ' : hits.includes('building') ? 'Off the building! ' : hits.includes('trunk') ? 'Off the trunk! ' : hits.includes('branch') ? 'Hit a branch! ' : hits.includes('leaves') ? 'Clipped the leaves. ' : '';
     const relief = S.reliefNote ? ` · ${S.reliefNote}` : '';
     S.reliefNote = null;
-    if (relief) toast(`${tree}Free relief from the cart path — dropped in the ${name(S.lie).toLowerCase()}`, 4000);
+    if (practiceKind() === 'putt') { /* (always on the felt) */ }
+    else if (relief) toast(`${tree}Free relief from the cart path — dropped in the ${name(S.lie).toLowerCase()}`, 4000);
     else if (landed && landed !== S.lie) toast(`${tree}Landed: ${name(landed)} → finished: ${name(S.lie)}`, 3500);
     else toast(`${tree}In the ${name(S.lie).toLowerCase()}`, tree ? 3500 : 2500);
   }
@@ -929,7 +1192,7 @@ function finishShot(res) {
     S.strokes++;
     return holeOut(false, `Gimme from ${fmtPutt(d)} — counts as 1 putt`);
   }
-  if (S.strokes >= h.par + 5) {
+  if (S.strokes >= maxStrokes(h)) {
     return holeOut(true, 'Maximum strokes reached — picked up');
   }
   const next = () => {
@@ -1000,23 +1263,28 @@ function waterDrop(res) {
   return { ...S.prevBall };
 }
 
+// Most strokes a hole takes before the ball is picked up (putt-putt: 6, as on most mini courses)
+const maxStrokes = (h) => (practiceKind() === 'putt' ? 6 : h.par + 5);
+
 // note: why the hole ended without the ball physically dropping (gimme, auto-putt, pick-up)
 function holeOut(pickedUp = false, note = '') {
   const h = hole();
   S.phase = 'holed';
   if (S.pendingShot) { S.pendingShot = null; toast('Hole finished — the next swing was not played'); }
-  S.scores[S.hole] = pickedUp ? h.par + 5 : S.strokes;
+  S.scores[S.hole] = pickedUp ? maxStrokes(h) : S.strokes;
   scene.hidePuttGrid(); S.gridKey = null;
   if (note && !pickedUp) {
     // Show the ball rolling into the cup so what you see matches the score
     const p = pin(), from = { ...S.ball };
     S.tween = { from, to: { x: p.x, y: p.y - 0.03, z: p.z }, t: 0, dur: Math.min(1.2, 0.3 + dist(from, p) * 0.15) };
   } else scene.setBall(S.ball);
-  const total = pickedUp ? h.par + 5 : S.strokes;
+  const total = pickedUp ? maxStrokes(h) : S.strokes;
   const toPar = total === h.par ? 'E' : (total > h.par ? '+' : '') + (total - h.par);
   banner(`${pickedUp ? 'Picked up' : scoreName(total, h.par)}<small>Hole ${h.number}: ${total} (${toPar})${note ? ` · ${note}` : ''}</small>`, 3800);
   updateHud();
-  setTimeout(() => showScorecard(true), 2600);
+  // (unless the player has already moved on)
+  const holed = S.hole;
+  setTimeout(() => { if (S.phase === 'holed' && S.hole === holed) showScorecard(true); }, 2600);
 }
 
 function nextHole() {
@@ -1042,12 +1310,17 @@ function mulligan() {
 
 function updateHud() {
   if (!S.course) return;
+  const panel = !!S.practice && S.practice.kind !== 'putt';
+  $('hole-card').classList.toggle('hidden', panel);
+  $('practice-card').classList.toggle('hidden', !panel);
+  if (panel) updatePracticeCard();
+  if (S.showFps) placePerf();
   const h = hole();
   $('h-num').textContent = h.number;
   $('h-par').textContent = h.par;
   $('h-hcp').textContent = h.index;
   const len = teePosition(h)?.distance;
-  $('h-len').textContent = len ? fmtLen(len) : '';
+  $('h-len').textContent = len ? (practiceKind() === 'putt' ? fmtPutt(len) : fmtLen(len)) : '';
   $('h-stroke').textContent = S.phase === 'holed' ? S.strokes : S.strokes + 1;
   const d = dist(S.ball, pin());
   $('h-topin').textContent = onGreen() ? fmtPutt(d) : fmtLen(d);
@@ -1129,6 +1402,17 @@ function drawMinimap() {
     for (const wb of S.course.waterBodies) { trace(wb.poly); ctx.fill(); }
   }
   const dotR = 3 / s;
+  // Putt-putt: the lanes (too fine for the painted map); range and targets: every flag
+  if (practiceKind() === 'putt') {
+    ctx.fillStyle = '#2e8b3e'; ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.2 / s;
+    for (const lane of S.spot.holes.map((x) => x.lane)) { trace(lane); ctx.fill(); ctx.stroke(); }
+  } else if (S.practice) {
+    for (const t of S.spot.targets) {
+      const [fx, fy] = px(t);
+      ctx.fillStyle = t.colour; ctx.strokeStyle = '#000'; ctx.lineWidth = 1 / s;
+      ctx.beginPath(); ctx.arc(fx, fy, dotR, 0, 7); ctx.fill(); ctx.stroke();
+    }
+  }
   // Aim line to the aim point
   const [bx, by] = px(S.ball);
   const [ax, ay] = px(aimPoint());
@@ -1296,10 +1580,14 @@ function showScorecard(afterHole = false, final = false) {
   $('scorecard').classList.remove('hidden');
 }
 
-$('sc-close').onclick = () => {
+// Closing the scorecard however it's done (button, Esc, C) after holing out goes on to the next
+// hole, so the player can never be left on a finished hole with nothing to hit
+function closeScorecard() {
   $('scorecard').classList.add('hidden');
-  if (S.phase === 'done') openMenu();
-};
+  if (S.phase === 'holed') nextHole();
+  else if (S.phase === 'done') openMenu();
+}
+$('sc-close').onclick = closeScorecard;
 $('sc-next').onclick = nextHole;
 
 function openMenu() {
@@ -1313,7 +1601,11 @@ function openMenu() {
 // ------------------------------------------------------------------ club / test shot UI
 
 $('club').innerHTML = CLUBS.map(([code, name]) => `<option value="${code}">${name}</option>`).join('');
-$('club').onchange = () => setClub($('club').value);
+$('club').onchange = () => {
+  if (S.practice) S.practice.club = $('club').value;
+  setClub($('club').value);
+  if (practiceKind() === 'range') updateHud();
+};
 
 const PRESETS = {
   driver: { speed: 150, vla: 12, hla: 0, spin: 2700, axis: 0 },
@@ -1357,17 +1649,25 @@ window.addEventListener('keydown', (e) => {
   // Free view: WASD to move, Q/E down/up (Space up too), Shift faster
   if (scene.mode === 'free' && FREE_KEYS[e.key.toLowerCase()]) { scene.freeKeys.add(FREE_KEYS[e.key.toLowerCase()]); e.preventDefault(); return; }
   const step = (e.shiftKey ? 0.2 : 1) * (onGreen() ? 0.5 : 1) * (Math.PI / 180);
+  // Targets: 1-9 aim at that green, [ and ] the one before / after
+  if (practiceKind() === 'targets') {
+    if (/^[1-9]$/.test(e.key)) { selectTarget(+e.key - 1); return; }
+    if (e.key === '[' || e.key === ']') { selectTarget(S.hole + (e.key === ']' ? 1 : -1)); return; }
+    if (e.key === 'n' || e.key === 'N') { selectTarget((S.hole + 1) % S.course.holes.length); return; }
+  }
+  // (no scorecard, mulligans or next hole on the range and targets)
+  if (S.practice && S.practice.kind !== 'putt' && 'cCmMnN'.includes(e.key)) { toast('Your shots are listed top left', 1500); return; }
   switch (e.key) {
     case 'f': case 'F': setFreeView(scene.mode !== 'free'); break;
     case 'u': case 'U': toggleFullscreen(); break;
     case 'p': case 'P': setFps(!S.showFps); break;
     case 'h': case 'H': setTraces(S.showTraces === false); toast(S.showTraces ? 'Previous shot traces on' : 'Previous shot traces off', 1500); break;
     case 'g': case 'G':
-      S.showGrid = S.showGrid === false;
+      if (practiceKind() === 'putt') S.puttGrid = !S.puttGrid; else S.showGrid = S.showGrid === false;
       S.gridKey = null;
-      if (!S.showGrid) scene.hidePuttGrid();
+      if (!gridOn()) scene.hidePuttGrid();
       refreshAim();
-      toast(S.showGrid ? 'Green grid on' : 'Green grid off', 1500);
+      toast(gridOn() ? 'Green grid on' : 'Green grid off', 1500);
       break;
     case 'ArrowLeft': if (S.phase === 'ready') { S.heading -= step; refreshAim(); } e.preventDefault(); break;
     case 'ArrowRight': if (S.phase === 'ready') { S.heading += step; refreshAim(); } e.preventDefault(); break;
@@ -1380,7 +1680,7 @@ window.addEventListener('keydown', (e) => {
     case 't': case 'T': $('test-panel').classList.toggle('hidden'); break;
     case 'c': case 'C':
       if ($('scorecard').classList.contains('hidden')) showScorecard(S.phase === 'holed');
-      else $('scorecard').classList.add('hidden');
+      else closeScorecard();
       break;
     case 'n': case 'N':
       if (S.phase === 'holed') nextHole();
@@ -1391,8 +1691,9 @@ window.addEventListener('keydown', (e) => {
       // (Esc that just took the page out of full screen does nothing else)
       if (document.fullscreenElement || performance.now() - fsChanged < 500) break;
       if (scene.mode === 'free') setFreeView(false);
-      else if (!$('scorecard').classList.contains('hidden')) $('scorecard').classList.add('hidden');
-      else if (confirm('Quit this round and return to the menu?')) openMenu();
+      else if (!$('scorecard').classList.contains('hidden')) closeScorecard();
+      else if (S.phase === 'holed') nextHole();
+      else if (confirm(S.practice ? 'Leave practice and return to the menu?' : 'Quit this round and return to the menu?')) openMenu();
       break;
   }
 });
@@ -1555,7 +1856,14 @@ scene.stats.onUpdate = ({ fps, worstMs, calls, triangles, backend }) => {
   const tri = triangles > 1e6 ? `${(triangles / 1e6).toFixed(1)}M` : `${Math.round(triangles / 1e3)}k`;
   $('perf').innerHTML = `<b>${Math.round(fps)} FPS</b> · ${(1000 / Math.max(1, fps)).toFixed(1)} ms<br>slowest frame ${Math.round(worstMs)} ms<br>${calls} draws · ${tri} triangles<br>graphics: ${scene.quality?.name} · ${backend || ""}`;
   $('perf').classList.toggle('slow', fps < 30 || worstMs > 100);
+  placePerf();
 };
+// The FPS box sits just below whichever panel is top left (the practice panel grows with its shots)
+function placePerf() {
+  const card = [$('practice-card'), $('hole-card')].find((el) => !el.classList.contains('hidden'));
+  const bottom = card?.getBoundingClientRect().bottom || 0;
+  $('perf').style.top = bottom > 0 ? `${Math.round(bottom + 10)}px` : '';
+}
 $('opt-fps').addEventListener('change', () => setFps($('opt-fps').checked));
 
 // Remember graphics choices between visits

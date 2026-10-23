@@ -50,6 +50,8 @@ export const OBSTACLES = {
   trunk:    { e: 0.3, eVar: 0.15, keep: 0.6, spin: 0.3 },
   building: { e: 0.45, eVar: 0.1, keep: 0.75, spin: 0.5 },
   pole:     { e: 0.2, eVar: 0.1, keep: 0.5, spin: 0.5 },
+  bumper:   { e: 0.62, eVar: 0.06, keep: 0.86, spin: 0.6 }, // putt-putt walls and posts: lively
+  blade:    { e: 0.35, eVar: 0.1, keep: 0.7, spin: 0.5 },   // a windmill's sail
 };
 
 // Turf lets backspin bite harder than a rigid surface would (the ball digs in). Surfaces set their
@@ -131,7 +133,10 @@ function aero(v, rho, spinRadS, tiltRad, wind, out) {
  *
  * course: { heightAt(x,z), normalAt(x,z), surfaceAt(x,z) }
  * shot:   { speedMph, vla, hla, backSpin, sideSpin }  (deg / rpm, hla & sideSpin positive = right)
- * opts:   { heading (rad), altitudeM, wind: {mps, fromDeg}, stimp, pin:{x,y,z} }
+ * opts:   { heading (rad), altitudeM, wind: {mps, fromDeg}, stimp, pin:{x,y,z},
+ *           movers: [(from, to, t) -> hit | null] }
+ * movers are things that move while the ball does (the putt-putt windmill): each is asked about
+ * every step, with the time since the strike, and answers like the collision world does.
  */
 export function simulateShot(course, origin, shot, opts) {
   const rho = airDensity(opts.altitudeM ?? 0, opts.tempC ?? 20, opts.humidity ?? 0.5, opts.pressureHpa ?? null);
@@ -180,6 +185,8 @@ export function simulateShot(course, origin, shot, opts) {
   // Collision world (optional, Jolt): terrain contact points, trunks, buildings and the flagstick
   const collider = opts.collider || null;
   if (collider) collider.setPin(pin || null);
+  const movers = opts.movers?.length ? opts.movers : null;
+  const moverHit = () => { for (const m of movers) { const h = m(prev, p, t); if (h) return h; } return null; };
   const prev = [0, 0, 0];
   const treeState = { spinMul: 1, inCrown: new Set(), hits: [] };
   const treeStep = () => {
@@ -237,6 +244,7 @@ export function simulateShot(course, origin, shot, opts) {
           if (v[0] * n[0] + v[1] * n[1] + v[2] * n[2] < 0) { p[0] = hit.point[0]; p[1] = hit.point[1]; p[2] = hit.point[2]; landed = true; }
         }
       }
+      if (movers) { const mh = moverHit(); if (mh) { hitObstacle(mh); push(); continue; } }
       treeStep();
       apex = Math.max(apex, p[1]);
       const ground = course.heightAt(p[0], p[2]);
@@ -318,12 +326,20 @@ export function simulateShot(course, origin, shot, opts) {
       if (collider && (v[0] || v[2])) {
         const hit = collider.cast(prev, p, 'obstacle');
         if (hit) {
-          // Rolling into the flagstick: a gentle one drops, a firm one bounces off it
-          if (hit.kind === 'pole' && Math.hypot(v[0], v[2]) < 2.4) { dropIntoCup(); result = 'holed'; break; }
+          // Rolling into the flagstick: it takes some pace off, so a firm putt hitting it square
+          // can still drop (up to about 1.6 m/s), less the further off-centre; harder, it bounces off
+          if (hit.kind === 'pole' && pin) {
+            const sp = Math.hypot(v[0], v[2]), off = Math.abs((prev[0] - pin.x) * v[2] - (prev[2] - pin.z) * v[0]) / (sp || 1);
+            if (sp < 1.6 - 1.4 * Math.min(1, off / CUP_RADIUS)) { dropIntoCup(); result = 'holed'; break; }
+          }
           hitObstacle(hit);
           v[1] = 0;
           p[1] = course.heightAt(p[0], p[2]) ?? p[1];
         }
+      }
+      if (movers && (v[0] || v[2])) {
+        const mh = moverHit();
+        if (mh) { hitObstacle(mh); v[1] = 0; p[1] = course.heightAt(p[0], p[2]) ?? p[1]; }
       }
       t += dt;
       // The cup: capture, lip-outs and balls curling around the rim
@@ -424,8 +440,11 @@ function treeInteract(trees, p, v, dt, st, trunks = true) {
 
 // One rolling step near the cup. Returns 'holed' when the ball drops.
 //  - Over the hole, the ball drops if it falls far enough before reaching the far edge
-//    (time over the hole = remaining chord / speed); otherwise it catches the far lip and
-//    lips out: slowed, and deflected away from the centre the more off-centre it was.
+//    (time over the hole = remaining chord / speed): over its own radius and a bit, so it meets
+//    the far wall below its middle. Dead centre that's up to about 1.35 m/s, a putt that would
+//    have finished 4-5 ft past at stimp 10 (Holmes' measured limit is about 1.3 m/s), and less
+//    the further off-centre. Otherwise it catches the far lip and lips out: slowed, and
+//    deflected away from the centre the more off-centre it was.
 //  - Hanging over the rim, gravity pulls it towards the hole, so slow putts curl in or
 //    roll around the lip.
 function cup(p, v, pin, state, dt) {
@@ -451,7 +470,7 @@ function cup(p, v, pin, state, dt) {
   const chord = -along + Math.sqrt(Math.max(0, CUP_RADIUS * CUP_RADIUS - b * b)) - BALL_RADIUS * 0.5;
   const tOver = Math.max(0, chord) / speed;
   const drop = 0.5 * G * tOver * tOver;
-  if (drop >= BALL_RADIUS * 0.75) return 'holed';
+  if (drop >= BALL_RADIUS * 1.2) return 'holed';
   // Lip-out: lose speed on the far lip and spin off away from the centre
   const side = Math.sign(dx * uz - dz * ux) || 1;
   const turn = side * (0.25 + 0.9 * (b / CUP_RADIUS)) * (0.6 + 0.4 * Math.random());
