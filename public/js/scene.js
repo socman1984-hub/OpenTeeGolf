@@ -7,8 +7,10 @@ import {
   Fn, texture, uv, vec2, vec3, float, mix, clamp, smoothstep, dot, distance, normalize, sin, cos, abs, atan,
   positionWorld, cameraPosition, instancedBufferAttribute, PI, normalMap, time, reflector, normalView, positionViewDirection, pow,
   uniform, select, fwidth, normalWorld, attribute, fract, floor, step, max, length, positionLocal, transformNormalToView,
-  output, exp, vec4, fog, positionView,
+  output, exp, vec4, fog, positionView, pass, mrt, screenUV,
 } from 'three/tsl';
+import { bloom } from 'three/addons/tsl/display/BloomNode.js';
+import { radialBlur } from 'three/addons/tsl/display/radialBlur.js';
 import { SkyMesh } from 'three/addons/objects/SkyMesh.js';
 import { Line2 } from 'three/addons/lines/webgpu/Line2.js';
 import { LineGeometry } from 'three/addons/lines/LineGeometry.js';
@@ -17,13 +19,14 @@ import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometr
 import { noise, pointInPoly } from './course.js';
 import { Forest, treesFromCanopy, assignSpecies, addMappedTrees, addTreeAreas, fade, impostorLight } from './trees.js';
 import { treesFromPhoto, removeTrees, treeRegion, holeDistance, nearHoles } from './treeplace.js';
-import { tuftGeometry, reedGeometry, grassMaterial, grassMesh, grassWind, addBend, NATIVE_KINDS, nativeClumpGeometry } from './grass.js';
+import { tuftGeometry, reedGeometry, grassMaterial, grassMesh, grassWind, addBend, NATIVE_KINDS, nativeClumpGeometry, SHARED_INSTANCES } from './grass.js';
 import { MOW_WIDTH, mowIndex } from './mowing.js';
 import { layoutParking, bayCorners, carColour } from './parking.js';
 import { roadLines, roadSamples, stripTriangles, onRoad } from './roads.js';
 import { buildBuildings } from './buildings.js';
 import { MIN_HW } from './streams.js';
 import { removeShadows } from './deshadow.js';
+import { cloudAlpha, cloudAlphaNode, shadowDir, shadowDirCPU } from './clouds.js';
 
 // The course's mowing patterns (pattern numbers from mowing.js), read by the terrain shader
 const mowPattern = { fairway: uniform(1), green: uniform(3) };
@@ -49,7 +52,14 @@ const photoSurfaces = { fairway: uniform(0), green: uniform(0), rough: uniform(0
 const FOG_BASE = 0.00018;
 const haze = {
   color: uniform(new THREE.Color(0xc4d8e6)), k: uniform(FOG_BASE * FOG_BASE * 1000),
-  center: uniform(new THREE.Vector2()), half: uniform(1e9),
+  center: uniform(new THREE.Vector2()), half: uniform(1e9), sunDir: uniform(new THREE.Vector3(0, 1, 0)),
+};
+// The haze's colour along each line of sight: looking towards the sun the air glows with the
+// sunlight it scatters - brighter and warmer, as on a real summer day - and elsewhere it has the
+// sky's cool blue-grey
+const hazeColour = () => {
+  const toward = pow(clamp(dot(normalize(positionWorld.sub(cameraPosition)), haze.sunDir), 0, 1), 6);
+  return mix(vec3(haze.color), vec3(haze.color).mul(vec3(1.3, 1.18, 0.98)), toward.mul(0.85));
 };
 function hazed(material) {
   material.fog = false;
@@ -57,7 +67,7 @@ function hazed(material) {
     const d = distance(positionWorld, cameraPosition);
     const edge = max(abs(positionWorld.x.sub(haze.center.x)), abs(positionWorld.z.sub(haze.center.y)));
     const f = max(float(1).sub(exp(d.mul(haze.k).negate())), smoothstep(haze.half.mul(0.8), haze.half, edge));
-    return vec4(mix(output.rgb, haze.color, f), output.a);
+    return vec4(mix(output.rgb, hazeColour(), f), output.a);
   })();
   return material;
 }
@@ -82,14 +92,23 @@ const ROUGH = new Set(['rough', 'deeprough', 'native', 'oob']);
 // A steady 0..1 value for a spot on the course
 const hash01 = (x, z) => { const s = Math.sin(x * 12.9898 + z * 78.233) * 43758.5453; return s - Math.floor(s); };
 const TEE_COLORS = { Black: 0x222222, Blue: 0x2255dd, White: 0xffffff, Green: 0x22aa33, Yellow: 0xeecc22, Red: 0xdd2222, Junior: 0xff8800, Par3: 0x999999 };
+// Towards the sun (scene space): mid-afternoon until the time of day is set (setSun)
 const SUN_DIR = new THREE.Vector3().setFromSphericalCoords(1, THREE.MathUtils.degToRad(48), THREE.MathUtils.degToRad(215));
+const _lightColour = new THREE.Color();
+// Clouds and the sun on screen, for the finishing pass (see setupPost): the middle of the course
+// (where cloud shadows are worked out from), how much cloud covers the sun where you're looking
+// (0..1), and where the sun is in the picture (uv; on: 1 when it's in front of you)
+const clouds = { origin: uniform(new THREE.Vector3()), veil: uniform(0), sunUv: uniform(new THREE.Vector2(0.5, 0.5)), sunOn: uniform(0) };
+const _sunPoint = new THREE.Vector3();
 
 export class CourseScene {
   constructor(container) {
     this.container = container;
     const forceWebGL = new URLSearchParams(location.search).has('webgl');
+    // (?gputime: measure how long the graphics card takes over each frame, shown in the FPS overlay)
+    this.gpuTime = new URLSearchParams(location.search).has('gputime');
     // (reversed depth: precise from the ball at your feet to mountains tens of kilometres away)
-    this.renderer = new THREE.WebGPURenderer({ antialias: true, powerPreference: 'high-performance', forceWebGL, reversedDepthBuffer: true });
+    this.renderer = new THREE.WebGPURenderer({ antialias: true, powerPreference: 'high-performance', forceWebGL, reversedDepthBuffer: true, trackTimestamp: this.gpuTime });
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 0.75;
@@ -101,7 +120,8 @@ export class CourseScene {
     this.scene.fog = new THREE.FogExp2(0xc4d8e6, FOG_BASE);
     // (drawn as the same gentle haze as the distant land - one curve for the course and the land
     // around it, so neither looks foggier than the other; the weather sets fog.density)
-    this.scene.fogNode = fog(haze.color, float(1).sub(exp(positionView.length().mul(haze.k).negate())));
+    this.scene.fogNode = fog(hazeColour(), float(1).sub(exp(positionView.length().mul(haze.k).negate())));
+    haze.sunDir.value.copy(SUN_DIR).normalize();
     // (near at 25 cm: the camera never comes closer to anything, and every bit nearer costs depth
     // precision far away - surfaces that nearly touch there, roofs and walls, flicker without it)
     this.camera = new THREE.PerspectiveCamera(55, 1, 0.25, 200000); // (the distant land reaches 57 km)
@@ -185,12 +205,17 @@ export class CourseScene {
       // (WebGL without EXT_clip_control falls back to the usual depth buffer)
       depthSign = this.renderer.reversedDepthBuffer ? 1 : -1;
       if (this.renderer.reversedDepthBuffer) skyAtFarPlane(this.sky);
-      const skyScene = new THREE.Scene();
-      const envSky = makeSky();
-      envSky.cloudCoverage.value = 0;
-      envSky.showSunDisc.value = 0; // the sun is the directional light; baked in, it floods everything with light
-      skyScene.add(envSky);
-      this.scene.environment = new THREE.PMREMGenerator(this.renderer).fromScene(skyScene).texture;
+      // The sky's light reflected in everything (made again into the same picture when the sun
+      // moves: materials keep hold of it)
+      this.envScene = new THREE.Scene();
+      this.envSky = makeSky();
+      this.envSky.cloudCoverage.value = 0;
+      this.envSky.showSunDisc.value = 0; // the sun is the directional light; baked in, it floods everything with light
+      this.envScene.add(this.envSky);
+      this.pmrem = new THREE.PMREMGenerator(this.renderer);
+      this.envTarget = this.pmrem.fromScene(this.envScene);
+      this.scene.environment = this.envTarget.texture;
+      this.setupPost();
       this.renderer.setAnimationLoop(() => this.frame());
     });
   }
@@ -215,6 +240,35 @@ export class CourseScene {
     if (this.lieGrass) { this.dynamic.remove(this.lieGrass); this.lieGrass = null; this.lieKey = null; }
     this.lastSize = null; // water reflection detail follows the setting too
     this.resize?.();
+    if (this.backend) this.setupPost();
+  }
+
+  // ---- the finishing pass (High only): the scene is drawn into a picture first, then the
+  // brightest surfaces - the sun's glints off water, sunlit leaves against the light - glow softly
+  // into their surroundings. The sky is left out: near the sun it is bright enough to veil the
+  // whole tree line. Balanced and Performance draw straight to the screen.
+  setupPost() {
+    this.post?.dispose();
+    this.post = null;
+    if (this.quality.name !== 'high') return;
+    // (where each pixel is, drawn beside the picture: x, y, z in the scene and its distance from
+    // the camera in km - the sky is far beyond anything else)
+    const scenePass = pass(this.scene, this.camera);
+    scenePass.setMRT(mrt({ output, where: vec4(positionWorld, positionView.z.negate().div(1000)) }));
+    const color = scenePass.getTextureNode('output'), where = scenePass.getTextureNode('where');
+    const ground = step(where.w, 150);
+    // Cloud shadows drifting over the course: darker than where you're looking under a cloud,
+    // brighter in a gap when the cloud is over you (the sun's own strength follows the cloud
+    // over the spot you're looking at, see frame)
+    const shade = cloudAlphaNode(this.sky, shadowDir(where.xyz, haze.sunDir, clouds.origin), time);
+    let out = color.rgb.mul(float(1).add(clouds.veil.sub(shade).mul(0.6).mul(ground)));
+    out = out.add(bloom(color.rgb.mul(ground), 0.35, 0.25, 4).rgb);
+    // Sun rays: the bright sky round the sun streaked out from it, so trees and cloud edges
+    // in front of it cast shafts of light (only the sky near the sun takes part)
+    const nearSun = smoothstep(0.3, 0.0, distance(screenUV, clouds.sunUv)).mul(ground.oneMinus());
+    const rays = radialBlur(vec4(color.rgb.sub(1).max(0).min(3).mul(nearSun), 1), { center: clouds.sunUv, weight: 0.35, decay: 0.94, count: 40, exposure: 0.07 });
+    out = out.add(rays.rgb.mul(clouds.sunOn));
+    this.post = new THREE.RenderPipeline(this.renderer, vec4(out, 1));
   }
 
   // How far around the view the sun's shadows reach (m): the whole hole as usual, or a small
@@ -586,6 +640,44 @@ export class CourseScene {
     canvas.toBlob((blob) => {
       if (blob) fetch(sat.url(sat.cleanFile), { method: 'PUT', headers: { 'Content-Type': 'image/jpeg' }, body: blob }).catch(() => {});
     }, 'image/jpeg', 0.92);
+  }
+
+  // The tree canopy's cover of the ground, in the fourth channel of the shore picture: a faint soft
+  // disc the size of each crown, overlapping crowns adding up. Read through canopyCover, which only
+  // counts it where crowns overlap all round - inside real woods - so a lone tree or a clump
+  // casts no dark ring round its foot (just its own shadow)
+  paintCanopy(trees, course) {
+    const t = this.surfaceTex?.shoreTex;
+    if (!t) return;
+    const { minX, maxX, minZ, maxZ } = course.bounds, { width: w, height: h, data } = t.image;
+    const sx = w / (maxX - minX), sz = h / (maxZ - minZ);
+    const c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    const ctx = c.getContext('2d');
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.fillStyle = 'rgba(255,255,255,0.3)';
+    for (const tr of trees) {
+      ctx.beginPath();
+      ctx.arc((tr.x - minX) * sx, (maxZ - tr.z) * sz, Math.max(1, (tr.r || 3) * 0.95 * sx), 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // (softened over about eight metres: a clump of trees never adds up to a wood)
+    const soft = document.createElement('canvas');
+    soft.width = w; soft.height = h;
+    const sctx = soft.getContext('2d', { willReadFrequently: true });
+    sctx.filter = `blur(${Math.max(1, 8 * sx)}px)`;
+    sctx.drawImage(c, 0, 0);
+    const a = sctx.getImageData(0, 0, w, h).data;
+    // (the texture's rows run bottom first, see shoreTexture)
+    for (let j = 0; j < h; j++) {
+      const src = j * w * 4, dst = (h - 1 - j) * w * 4;
+      for (let i = 0; i < w; i++) data[dst + i * 4 + 3] = a[src + i * 4 + 3]; // (the coverage is the canvas's alpha: its colour reads white wherever anything was drawn)
+    }
+    t.needsUpdate = true;
+    // (the shade read about 8 m towards the sun, so it falls where the trees' shadows would; course x
+    // is the scene's mirrored; updateLighting moves it with the sun)
+    this.canopyBounds = course.bounds;
+    canopyOffset.value.set((-SUN_DIR.x * 8) / (maxX - minX), (SUN_DIR.z * 8) / (maxZ - minZ));
   }
 
   // ---- public roads (OpenStreetMap)
@@ -2089,6 +2181,7 @@ export class CourseScene {
     const osm = extra.length ? ` (${extra.join(', ')})` : '';
     await progress('trees-place', 'Planting trees', 0, 0, `${trees.length.toLocaleString()} trees${osm}`);
     this.forest.build(trees, (x, z) => course.heightAt(x, z), (m) => this.applyEnvIntensity(m));
+    this.paintCanopy(trees, course);
     // (undergrowth along the edges of dense woods: in the rough, clear of paths and mown grass)
     this.forest.buildShrubs((x, z) => course.heightAt(x, z), (x, z) => ROUGH.has(this.fastSurface(x, z)) && !this.nearPath(x, z, 1.5) && !this.nearMown(x, z, 2) && !this.nearSand(x, z, 1.5), (m) => this.applyEnvIntensity(m));
     this.forest.update(this.camera, true);
@@ -2263,21 +2356,89 @@ export class CourseScene {
 
   // ---- weather: flag in the wind, rain, cloud cover
 
-  // windFromDeg is the course-space direction the wind blows from (0 = from +z)
-  setWeather({ windMps = 0, windFromDeg = 0, rainMm = 0, cloud = 0.2 }) {
-    this.weather = { windMps, windFromDeg, rainMm, cloud };
-    // Cloudier = hazier sky, weaker sun, softer light, more haze in the distance
-    const sky = this.sky;
-    sky.turbidity.value = 3.5 + 9 * cloud; sky.rayleigh.value = 1.1 + 1.6 * cloud; sky.mieCoefficient.value = 0.004 + 0.01 * cloud;
-    sky.cloudCoverage.value = 0.15 + 0.7 * cloud; sky.cloudDensity.value = 0.3 + 0.5 * cloud;
-    this.sun.intensity = 3.0 * (1 - 0.72 * cloud);
-    this.hemi.intensity = 0.7 + 0.45 * cloud;
-    this.renderer.toneMappingExposure = 0.75 - 0.08 * cloud;
-    this.scene.fog.density = FOG_BASE * (1 + 1.5 * cloud + Math.min(3, rainMm * 1.2));
+  // windFromDeg is the course-space direction the wind blows from (0 = from +z); fog 0 clear .. 1
+  // thick (about 200 m to see)
+  setWeather({ windMps = 0, windFromDeg = 0, rainMm = 0, cloud = 0.2, fog = 0 }) {
+    this.weather = { windMps, windFromDeg, rainMm, cloud, fog };
     this.terrain && (this.terrain.material.roughness = rainMm > 0.05 ? 0.7 : 0.92); // wet sheen
     grassWind.value = windMps;
     this.setRain(rainMm);
+    this.updateLighting();
+  }
+
+  // The time of day: [x, y, z] points from the course towards the sun (scene space)
+  setSun([x, y, z]) {
+    SUN_DIR.set(x, y, z).normalize();
+    this.updateLighting();
+  }
+
+  // Light, sky and haze from the sun's height and the weather together.
+  //   low sun:  warm golden light and long shadows, the haze glowing warm, the picture a little
+  //             brighter (as eyes adjust), the light fading as the sun sets
+  //   cloud:    a hazier sky, a weaker sun and softer light from the whole sky
+  //   fog:      the distance closes in, pale and grey
+  updateLighting() {
+    const { cloud = 0.2, rainMm = 0, fog = 0 } = this.weather;
+    const S = THREE.MathUtils.smoothstep, c = _lightColour;
+    const elev = THREE.MathUtils.radToDeg(Math.asin(Math.max(-1, Math.min(1, SUN_DIR.y))));
+    const low = 1 - S(elev, 3, 32), dim = S(elev, -1, 12);
+    const sky = this.sky;
+    sky.sunPosition.value.copy(SUN_DIR);
+    sky.turbidity.value = 3.5 + 9 * cloud; sky.rayleigh.value = 1.1 + 1.6 * cloud; sky.mieCoefficient.value = 0.004 + 0.01 * cloud;
+    // (a few fair-weather clouds even on a clear day, scattered, broken, then a full cover; they
+    // drift faster in more wind)
+    sky.cloudCoverage.value = 0.3 + 0.62 * cloud + 0.3 * THREE.MathUtils.smoothstep(cloud, 0.8, 1); sky.cloudDensity.value = 0.55 + 0.45 * cloud;
+    sky.cloudSpeed.value = 0.00002 * (0.6 + Math.min(4, (this.weather.windMps || 0) / 4));
+    this.sun.color.setRGB(1, 0.945, 0.86).lerp(c.setRGB(1, 0.6, 0.34), low * 0.85);
+    // (fair-weather cloud is drawn in the sky and dims the sun as it passes, see frame; this is
+    // the general haze and overcast)
+    this.sunBase = 3.0 * (1 - 0.6 * Math.max(0, cloud - 0.3) / 0.7) * (0.35 + 0.65 * dim) * (1 - 0.6 * fog);
+    this.sun.intensity = this.sunBase * (1 - 0.75 * clouds.veil.value);
+    this.hemi.color.set(0xdcecff).lerp(c.setRGB(0.96, 0.82, 0.72), low * 0.45);
+    this.hemi.intensity = (0.7 + 0.45 * cloud) * (0.62 + 0.38 * S(elev, 0, 25));
+    // (eyes adjust to the evening, so it stays playable; heavy cloud and rain darken the day)
+    const storm = Math.min(1, rainMm / 6);
+    this.renderer.toneMappingExposure = (0.75 - 0.12 * cloud) * (1 + 0.6 * low) * (1 - 0.3 * storm);
+    const fc = this.scene.fog.color.set(0xc4d8e6);
+    fc.lerp(c.setRGB(0.94, 0.8, 0.66), low * 0.6 * (1 - cloud));
+    fc.lerp(c.set(0xc9cdd0), cloud * 0.5).lerp(c.set(0xd6dadc), fog * 0.85);
+    fc.multiplyScalar(0.55 + 0.45 * dim);
+    this.scene.fog.density = FOG_BASE * (1 + 1.5 * cloud + Math.min(3, rainMm * 1.2)) + fog * 0.0023;
+    haze.sunDir.value.copy(SUN_DIR);
+    if (this.canopyBounds) { const b = this.canopyBounds; canopyOffset.value.set((-SUN_DIR.x * 8) / (b.maxX - b.minX), (SUN_DIR.z * 8) / (b.maxZ - b.minZ)); }
     this.updateImpostorLight();
+    this.refreshEnvironment();
+  }
+
+  // Each frame: how much cloud is in front of the sun from where you're looking (the sunlight
+  // fading and coming back as clouds drift across it), and where the sun is on screen
+  updateClouds(dt) {
+    if (this.sunBase == null) return;
+    const b = this.course?.bounds;
+    if (b) clouds.origin.value.set(-(b.minX + b.maxX) / 2, this.course.heightAt?.((b.minX + b.maxX) / 2, (b.minZ + b.maxZ) / 2) ?? 0, (b.minZ + b.maxZ) / 2);
+    const focus = this.mode === 'free' ? this.controls.target : this.camLook, o = clouds.origin.value;
+    const t = this.renderer._nodes?.nodeFrame?.time ?? 0;
+    const a = cloudAlpha(this.sky, shadowDirCPU([focus.x, focus.y, focus.z], [SUN_DIR.x, SUN_DIR.y, SUN_DIR.z], [o.x, o.y, o.z]), t);
+    const v = clouds.veil.value + (a - clouds.veil.value) * Math.min(1, (dt || 0.016) * 2.5);
+    clouds.veil.value = v;
+    this.sun.intensity = this.sunBase * (1 - 0.75 * v);
+    // (the sun's place in the picture, for the sun rays; none once it's behind you)
+    _sunPoint.copy(this.camera.position).addScaledVector(SUN_DIR, 1000).project(this.camera);
+    clouds.sunUv.value.set(_sunPoint.x * 0.5 + 0.5, 0.5 - _sunPoint.y * 0.5);
+    const ahead = this.camera.getWorldDirection(_sunPoint).dot(SUN_DIR);
+    clouds.sunOn.value = THREE.MathUtils.smoothstep(ahead, 0.2, 0.6);
+  }
+
+  // The sky's reflected light, made again (after a moment: not on every step of a slider)
+  refreshEnvironment() {
+    if (!this.envTarget) return;
+    clearTimeout(this.envTimer);
+    this.envTimer = setTimeout(() => {
+      const e = this.envSky, s = this.sky;
+      e.sunPosition.value.copy(SUN_DIR);
+      e.turbidity.value = s.turbidity.value; e.rayleigh.value = s.rayleigh.value; e.mieCoefficient.value = s.mieCoefficient.value;
+      this.pmrem.fromScene(this.envScene, 0, 0.1, 100, { renderTarget: this.envTarget });
+    }, 120);
   }
 
   // The sun and sky for the trees' own touches (the glow of leaves with the sun behind them) kept
@@ -2531,7 +2692,8 @@ export class CourseScene {
     for (const lists of farTiles.values()) NATIVE_KINDS.forEach((kind, i) => {
       const list = lists[i], count = list.length / 2;
       if (!count) return;
-      const mesh = grassMesh(liteGeos[i], this.nativeMat, count);
+      const mesh = grassMesh(liteGeos[i], this.nativeMat, Math.max(SHARED_INSTANCES, count)); // (see SHARED_INSTANCES)
+      mesh.count = count;
       for (let j = 0; j < count; j++) { mesh.setMatrixAt(j, list[j * 2]); mesh.setColorAt(j, list[j * 2 + 1]); }
       mesh.instanceMatrix.needsUpdate = true; mesh.instanceColor.needsUpdate = true;
       mesh.computeBoundingSphere();
@@ -3327,14 +3489,17 @@ export class CourseScene {
     this.animateFlag();
     this.updateRain(dt);
     this.updatePuttGrid(dt);
-    this.renderer.render(this.scene, this.camera);
+    this.updateClouds(raw);
+    if (this.post) this.post.render(); else this.renderer.render(this.scene, this.camera);
     // Frame stats for the FPS overlay: average FPS and the slowest frame in each half second
     const st = this.stats, now = performance.now();
     st.frames++; st.worst = Math.max(st.worst, raw * 1000);
     if (now - st.last >= 500) {
       st.fps = (st.frames * 1000) / (now - st.last);
       const info = this.renderer.info.render;
-      st.onUpdate?.({ fps: st.fps, worstMs: st.worst, calls: info.drawCalls, triangles: info.triangles, backend: this.backend });
+      st.onUpdate?.({ fps: st.fps, worstMs: st.worst, calls: info.drawCalls, triangles: info.triangles, backend: this.backend, gpuMs: st.gpuMs });
+      // (graphics card time: the frames since the last reading, averaged)
+      if (this.gpuTime) { const n = st.frames; this.renderer.resolveTimestampsAsync('render').then((ms) => { if (ms) st.gpuMs = ms / n; }); }
       st.frames = 0; st.worst = 0; st.last = now;
     }
   }
@@ -3782,11 +3947,32 @@ function makeSky() {
 // so small things in the photo (trees, shadows, carts, bare patches) never show on them.
 // shore: how close to water each spot is (red) and the greens with their collars (green), see
 // buildShore: for the muddy bank at the waterline and plain-mown collars.
+// The shore picture (see buildShore) as raw data rather than a canvas, so its fourth channel can
+// carry the tree canopy's cover (paintCanopy; a canvas's own alpha would spoil its colours). Rows
+// bottom first, as a canvas texture is flipped.
+function shoreTexture(canvas) {
+  const { width: w, height: h } = canvas;
+  const src = canvas.getContext('2d').getImageData(0, 0, w, h).data, data = new Uint8Array(w * h * 4);
+  for (let j = 0; j < h; j++) data.set(src.subarray((h - 1 - j) * w * 4, (h - j) * w * 4), j * w * 4);
+  for (let i = 3; i < data.length; i += 4) data[i] = 0;
+  const t = new THREE.DataTexture(data, w, h, THREE.RGBAFormat);
+  t.colorSpace = THREE.NoColorSpace;
+  t.generateMipmaps = true;
+  t.minFilter = THREE.LinearMipmapLinearFilter;
+  t.magFilter = THREE.LinearFilter;
+  t.needsUpdate = true;
+  return t;
+}
+// How closed the canopy is overhead (0 open .. 1 deep in a wood), from paintCanopy's picture
+const canopyCover = (a) => smoothstep(0.8, 1, a);
+// (where the woods' shade falls: away from the sun, as their shadows would - in the ground's
+// picture coordinates, set by paintCanopy)
+const canopyOffset = uniform(new THREE.Vector2());
+
 function terrainMaterial(map, soft, mask, mowDirs, strength, shore, hasSand = false, hasGreens = false) {
   const maskTex = new THREE.CanvasTexture(mask);
   maskTex.colorSpace = THREE.NoColorSpace;
-  const shoreTex = new THREE.CanvasTexture(shore);
-  shoreTex.colorSpace = THREE.NoColorSpace;
+  const shoreTex = shoreTexture(shore);
   // Bunkers: where the smooth blurred bunker field crosses one half, softened over about a screen
   // pixel (crisp and smooth at any distance). Courses without mapped bunkers use the surface mask.
   const sandWeight = (sm, vUv) => {
@@ -3809,6 +3995,10 @@ function terrainMaterial(map, soft, mask, mowDirs, strength, shore, hasSand = fa
   const material = new THREE.MeshStandardNodeMaterial({ roughness: 0.92, metalness: 0 });
   material.envMapIntensity = 0.4;
   material.userData.surfaceTex = { maskTex, shoreTex, hasSand, hasGreens };
+  // Woods beyond about 100 m - where trees are drawn as pictures, which cast no shadows - sit in
+  // their own shade (the canopy's cover, see paintCanopy). Nearer, the trees' real shadows do it.
+  const cover = canopyCover(texture(shoreTex, uv().add(canopyOffset)).a);
+  const farShade = cover.mul(0.4).mul(smoothstep(90, 160, distance(cameraPosition, positionWorld)));
   const softLevel = float(Math.max(0, Math.log2(Math.max(map.image?.width || 1024, map.image?.height || 1024) / 1024)) + 1);
   material.colorNode = Fn(() => {
     const vUv = uv();
@@ -3980,6 +4170,7 @@ function terrainMaterial(map, soft, mask, mowDirs, strength, shore, hasSand = fa
     const bank = smoothstep(0.08, 0.25, sh).mul(smoothstep(0.82, 0.97, sh).oneMinus());
     return normalMap(mix(vec3(0.5, 0.5, 1), nb, near.mul(float(0.9).sub(wg.mul(0.4)).sub(ws.mul(0.5))).mul(bank.mul(0.6).oneMinus())), vec2(0.7));
   })();
+  material.colorNode = material.colorNode.mul(farShade.oneMinus());
   return material;
 }
 

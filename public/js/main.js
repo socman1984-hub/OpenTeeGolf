@@ -5,7 +5,7 @@ import { fitRiverBanks, riverPhoto, needsBanks } from './riverbanks.js';
 import { CourseScene } from './scene.js';
 import { simulateShot, LIE_EFFECT, stimpToRoll, SURFACE_NAMES } from './physics.js';
 import { loadJolt, CollisionWorld } from './collision.js';
-import { PRESETS as WEATHER, fetchLiveWeather, wetness, gustFor } from './weather.js';
+import { PRESETS as WEATHER, fetchLiveWeather, wetness, gustFor, TIMES, timeHour, sunAt, daylight, dayOfYear, clockText } from './weather.js';
 import { PRACTICE_AREAS, makePractice } from './practice.js';
 
 const $ = (id) => document.getElementById(id);
@@ -385,7 +385,7 @@ const loader = {
       el.innerHTML = '<span class="licon"></span><span class="llabel"></span><span class="ltime"></span><div class="lbar"><i></i></div><div class="ldetail"></div>';
       el.querySelector('.llabel').textContent = label;
       $('loading-steps').appendChild(el);
-      r = { el, t0: Date.now(), last: Date.now(), stallAfter, state: 'run' };
+      r = { id, el, t0: Date.now(), last: Date.now(), stallAfter, state: 'run' };
       this.rows.set(id, r);
     }
     return r;
@@ -432,8 +432,11 @@ const loader = {
     }
     $('loading-stall').classList.toggle('hidden', !stalled);
     if (stalled) {
+      // (steps that fetch from the internet can stall on a slow server; the rest run on this computer)
+      const online = DOWNLOAD_STEPS.has(stalled.r.id);
       $('loading-stall-text').textContent = `${stalled.r.el.querySelector('.llabel').textContent}: no progress for ${this.fmt(stalled.quiet)}. `
-        + 'The map and imagery servers can be slow; it may still finish. You can also go back and try again later.';
+        + (online ? 'The map and imagery servers can be slow; it may still finish. You can also go back and try again later.'
+          : 'This step runs on your computer and can take a minute or two, longer the first time after an update. It should finish.');
     }
   },
   // Messages from the server's downloads (aerial imagery, buildings, paths, tree heights)
@@ -476,6 +479,7 @@ function readSettings() {
     units: $('opt-units').value,
     stimp: +$('opt-stimp').value || 10,
     weather: $('opt-weather').value,
+    time: $('opt-time').value,
     quality: $('opt-quality').value,
     windMph: +$('opt-wind').value || 0,
     windDir: $('opt-winddir').value,
@@ -615,6 +619,7 @@ $('btn-start').onclick = async () => {
   S.windRel = S.course.holes.map(() => (S.settings.windDir === 'rand' ? Math.random() * 360 : +S.settings.windDir));
   if (S.settings.weather === 'live') loader.step('weather', 'Weather at the course');
   await setupWeather();
+  setupSun();
   loader.finish('weather');
   S.scores = S.course.holes.map(() => null);
   loader.close();
@@ -627,11 +632,15 @@ $('btn-start').onclick = async () => {
 // ------------------------------------------------------------------ practice areas
 
 const practiceKind = () => S.practice?.kind || null;
+// Loading steps that download (from this game's server, or through it from the map, imagery and
+// weather services); the others are worked out on this computer
+const DOWNLOAD_STEPS = new Set(['terrain-data', 'canopy-file', 'farland-file', 'imagery', 'buildings', 'paths', 'parking', 'roads', 'canopy', 'farland', 'weather', 'riverbanks']);
+
 const KEYS_HELP = {
   round: $('keys').textContent,
-  range: 'Click ground or minimap to aim · ←/→ fine aim · pick a club top right · T test shot · F free view · H traces · V overview · Space skip · U full screen · Esc menu',
-  targets: 'Click a green or 1–7 to pick a target · [ ] previous / next · ←/→ fine aim · T test shot · F free view · H traces · Space skip · U full screen · Esc menu',
-  putt: 'Click to aim · ←/→ fine aim · G slope grid · T test shot · F free view · V overview · M mulligan · C scorecard · N next hole · U full screen · Esc menu',
+  range: 'Click ground or minimap to aim · ←/→ fine aim · pick a club top right · T test shot · F free view · H traces · V overview · Space skip · U full screen · L conditions · Esc menu',
+  targets: 'Click a green or 1–7 to pick a target · [ ] previous / next · ←/→ fine aim · T test shot · F free view · H traces · Space skip · U full screen · L conditions · Esc menu',
+  putt: 'Click to aim · ←/→ fine aim · G slope grid · T test shot · F free view · V overview · M mulligan · C scorecard · N next hole · U full screen · L conditions · Esc menu',
 };
 
 async function startPractice(kind) {
@@ -668,6 +677,7 @@ async function startPractice(kind) {
   S.windRel = S.course.holes.map(() => rel);
   if (S.settings.weather === 'live') loader.step('weather', 'Weather');
   await setupWeather();
+  setupSun();
   loader.finish('weather');
   S.scores = S.course.holes.map(() => null);
   loader.close();
@@ -860,6 +870,63 @@ async function setupWeather() {
   S.shotWind = null;
 }
 
+// ---- the time of day: where the sun stands, from the course's latitude, today's date and the
+// chosen time (solar time; the game keeps to daylight)
+function setupSun() {
+  const loc = courseLocation();
+  const lat = loc.lat ?? 40, day = dayOfYear();
+  S.sun = { lat, lon: loc.lon, northDeg: loc.northDeg, day, day0: daylight(lat, day) };
+  S.sun.hour = timeHour(S.settings.time || 'midday', lat, loc.lon, day);
+  applySun();
+}
+function applySun() {
+  const s = S.sun;
+  if (!s) return;
+  const { elevation, azimuth } = sunAt(s.lat, s.day, s.hour);
+  // (compass bearing to course space as the wind's: clockwise from the course's north; course x
+  // is the scene's mirrored)
+  const e = (Math.max(1.5, elevation) * Math.PI) / 180, th = ((s.northDeg + azimuth) * Math.PI) / 180;
+  scene.setSun([-Math.sin(th) * Math.cos(e), Math.sin(e), Math.cos(th) * Math.cos(e)]);
+  syncConditionsPanel();
+}
+
+// ---- the Conditions panel: time of day and weather while playing (L)
+const wxRange = () => { const [rise, set] = S.sun?.day0 || [6, 20]; return [rise + 0.3, set - 0.3]; };
+function syncConditionsPanel() {
+  if (!S.sun) return;
+  const [a, b] = wxRange();
+  $('wx-time').value = (S.sun.hour - a) / (b - a);
+  $('wx-clock').textContent = clockText(S.sun.hour);
+  $('wx-weather').value = S.settings.weather;
+}
+function toggleConditions(show = $('wx-panel').classList.contains('hidden')) {
+  $('wx-panel').classList.toggle('hidden', !show);
+  $('wx-btn').classList.toggle('active', show);
+  if (show) syncConditionsPanel();
+}
+$('wx-weather').innerHTML = $('opt-weather').innerHTML;
+$('wx-times').innerHTML = Object.entries(TIMES).map(([id, t]) => `<button type="button" data-time="${id}">${t.label}</button>`).join('');
+$('wx-btn').onclick = (e) => { e.currentTarget.blur(); toggleConditions(); };
+$('wx-time').oninput = () => {
+  const [a, b] = wxRange();
+  S.sun.hour = a + (b - a) * +$('wx-time').value;
+  applySun();
+};
+$('wx-times').onclick = (e) => {
+  const id = e.target.dataset?.time;
+  if (!id || !S.sun) return;
+  S.sun.hour = timeHour(id, S.sun.lat, S.sun.lon, S.sun.day);
+  applySun();
+};
+$('wx-weather').onchange = async (e) => {
+  e.currentTarget.blur();
+  S.settings.weather = $('wx-weather').value;
+  await setupWeather();
+  applyWeatherToScene();
+  updateHud();
+  toast(`Weather: ${S.weather.label}`, 1500);
+};
+
 // The steady wind for the current hole, in course space
 function wind() {
   const w = S.weather;
@@ -884,7 +951,7 @@ function shotWind() {
 
 function applyWeatherToScene() {
   const w = S.weather, wd = wind();
-  scene.setWeather({ windMps: wd.mps, windFromDeg: wd.fromDeg, rainMm: w.rainMm, cloud: w.cloud });
+  scene.setWeather({ windMps: wd.mps, windFromDeg: wd.fromDeg, rainMm: w.rainMm, cloud: w.cloud, fog: w.fog || 0 });
 }
 
 function toast(msg, ms = 2500) {
@@ -1660,6 +1727,7 @@ window.addEventListener('keydown', (e) => {
   switch (e.key) {
     case 'f': case 'F': setFreeView(scene.mode !== 'free'); break;
     case 'u': case 'U': toggleFullscreen(); break;
+    case 'l': case 'L': toggleConditions(); break;
     case 'p': case 'P': setFps(!S.showFps); break;
     case 'h': case 'H': setTraces(S.showTraces === false); toast(S.showTraces ? 'Previous shot traces on' : 'Previous shot traces off', 1500); break;
     case 'g': case 'G':
@@ -1851,10 +1919,10 @@ function setFps(on) {
   $('perf').classList.toggle('hidden', !on);
   savePrefs();
 }
-scene.stats.onUpdate = ({ fps, worstMs, calls, triangles, backend }) => {
+scene.stats.onUpdate = ({ fps, worstMs, calls, triangles, backend, gpuMs }) => {
   if (!S.showFps) return;
   const tri = triangles > 1e6 ? `${(triangles / 1e6).toFixed(1)}M` : `${Math.round(triangles / 1e3)}k`;
-  $('perf').innerHTML = `<b>${Math.round(fps)} FPS</b> · ${(1000 / Math.max(1, fps)).toFixed(1)} ms<br>slowest frame ${Math.round(worstMs)} ms<br>${calls} draws · ${tri} triangles<br>graphics: ${scene.quality?.name} · ${backend || ""}`;
+  $('perf').innerHTML = `<b>${Math.round(fps)} FPS</b> · ${(1000 / Math.max(1, fps)).toFixed(1)} ms<br>slowest frame ${Math.round(worstMs)} ms<br>${calls} draws · ${tri} triangles<br>graphics: ${scene.quality?.name} · ${backend || ""}${gpuMs ? `<br>graphics card ${gpuMs.toFixed(1)} ms` : ''}`;
   $('perf').classList.toggle('slow', fps < 30 || worstMs > 100);
   placePerf();
 };

@@ -121,7 +121,12 @@
                 <label class="span2">Conditions <select id="opt-weather">
                   <option value="live" selected>Live (real weather at the course)</option>
                   <option value="calm">Calm and sunny</option><option value="breezy">Breezy</option>
-                  <option value="windy">Windy</option><option value="rain">Rain</option><option value="custom">Custom</option>
+                  <option value="windy">Windy</option><option value="overcast">Overcast</option><option value="fog">Fog</option>
+                  <option value="rain">Rain</option><option value="storm">Storm</option><option value="custom">Custom</option>
+                </select></label>
+                <label class="span2">Time of day <select id="opt-time">
+                  <option value="live">Now at the course</option><option value="early">Early morning</option><option value="morning">Morning</option>
+                  <option value="midday" selected>Midday</option><option value="afternoon">Afternoon</option><option value="golden">Golden hour</option><option value="sunset">Sunset</option>
                 </select></label>
                 <label class="custom-wx">Wind (mph) <input id="opt-wind" type="number" min="0" max="40" value="8"></label>
                 <label class="custom-wx">Wind from <select id="opt-winddir">
@@ -212,6 +217,14 @@
     <canvas id="minimap" width="440" height="640"></canvas>
     <button id="free-btn" class="free-btn">Free view (F)</button>
     <button id="fs-btn" class="free-btn fs-btn" title="Fill the whole screen (U, or Esc to leave)">⛶ Full screen (U)</button>
+    <button id="wx-btn" class="free-btn wx-btn" title="Change the time of day and the weather as you play (L)">☀ Conditions (L)</button>
+    <div id="wx-panel" class="panel hidden">
+      <h3>Conditions <small>(L to close)</small></h3>
+      <label>Time of day <b id="wx-clock"></b><input id="wx-time" type="range" min="0" max="1" step="0.002"></label>
+      <div id="wx-times" class="wx-times"></div>
+      <label>Weather <select id="wx-weather"></select></label>
+      <p class="muted">Changes the wind too. Times are local solar time at the course.</p>
+    </div>
     <div id="free-help" class="free-help panel hidden"><b>Free view</b> · drag to move · right-drag to turn · scroll to zoom · WASD fly, Q/E down/up (Space up), Shift faster · click the ground or the minimap to aim · F or Esc to return</div>
     <div id="credits"></div>
     <div id="perf" class="panel hidden"></div>
@@ -232,7 +245,7 @@
     <div id="banner" class="hidden"></div>
     <div id="toast" class="hidden"></div>
 
-    <div id="keys">Click ground or minimap to aim · ←/→ fine aim · F free view · G green grid · P FPS · H traces · R reset aim · V overview · Space skip · M mulligan · T test shot · C scorecard · N next hole · U full screen · Esc menu</div>
+    <div id="keys">Click ground or minimap to aim · ←/→ fine aim · F free view · G green grid · P FPS · H traces · R reset aim · V overview · Space skip · M mulligan · T test shot · C scorecard · N next hole · U full screen · L conditions · Esc menu</div>
   </div>
 
   <!-- Test shot panel -->
