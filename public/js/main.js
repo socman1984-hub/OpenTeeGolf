@@ -2,6 +2,7 @@
 import { buildCourse, TEE_TYPES } from './course.js';
 import { smoothLine } from './roads.js';
 import { fitRiverBanks, riverPhoto, needsBanks } from './riverbanks.js';
+import { exportForUnreal } from './export-unreal.js';
 import { CourseScene } from './scene.js';
 import { simulateShot, LIE_EFFECT, stimpToRoll, SURFACE_NAMES } from './physics.js';
 import { loadJolt, CollisionWorld } from './collision.js';
@@ -1713,6 +1714,14 @@ window.addEventListener('blur', () => scene.freeKeys.clear());
 window.addEventListener('keydown', (e) => {
   if (e.target.matches('input, select')) return;
   if (S.phase === 'menu') return;
+  // Ctrl+Shift+U: export this course for the Unreal Engine prototype (see unreal/README.md)
+  if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'u') {
+    e.preventDefault();
+    if (practiceKind()) { toast('Export works on real courses, not the practice areas', 3000); return; }
+    exportForUnreal({ course: S.course, scene, id: S.selected.id, status: (m) => toast(m, 4000) })
+      .catch((err) => toast(`Export failed: ${err.message}`, 5000));
+    return;
+  }
   // Free view: WASD to move, Q/E down/up (Space up too), Shift faster
   if (scene.mode === 'free' && FREE_KEYS[e.key.toLowerCase()]) { scene.freeKeys.add(FREE_KEYS[e.key.toLowerCase()]); e.preventDefault(); return; }
   const step = (e.shiftKey ? 0.2 : 1) * (onGreen() ? 0.5 : 1) * (Math.PI / 180);

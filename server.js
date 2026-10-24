@@ -409,6 +409,7 @@ const readRaw = (req, limit) => new Promise((resolve, reject) => {
 });
 
 const PUBLIC = path.join(ROOT, 'public');
+const EXPORTS = path.join(ROOT, 'exports'); // (courses exported for Unreal Engine)
 const THREE = path.join(ROOT, 'node_modules', 'three');
 const JOLT = path.join(ROOT, 'node_modules', 'jolt-physics', 'dist');
 const EZTREE = path.join(ROOT, 'node_modules', '@dgreenheck', 'ez-tree', 'build');
@@ -469,6 +470,16 @@ const httpServer = http.createServer(async (req, res) => {
       }
       if (!fs.existsSync(file)) return json(res, { trees: null });
       return json(res, JSON.parse(fs.readFileSync(file, 'utf8')));
+    }
+    if ((m = p.match(/^\/api\/export\/([\w-]+)\/(heightmap\.png|photo\.jpg|layer_[a-z]+\.png|trees\.json|holes\.json|course\.json|tree_\d+\.glb|tree_\d+_leaves\.png|tree_\d+_bark\.jpg|tree_\d+_bark_n\.jpg|tree_models\.json|grass_tuft\.glb|water\.glb|water\.json|water_bodies\.json|props_[a-z_]+\.glb|props\.json)$/)) && req.method === 'PUT') {
+      // A course exported for Unreal Engine (public/js/export-unreal.js), written to exports/<id>/
+      if (!courseFile(m[1])) return json(res, { error: 'No such course' }, 404);
+      const body = await readRaw(req, 300e6).catch(() => null);
+      if (!body) return json(res, { error: 'Too big' }, 413);
+      const dir = path.join(EXPORTS, m[1]);
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, m[2]), body);
+      return json(res, { ok: true, path: path.join(dir, m[2]) });
     }
     if ((m = p.match(/^\/api\/courses\/([\w-]+)\/riverbanks$/)) && req.method === 'PUT') {
       // Rivers fitted to the aerial photo by the game (public/js/riverbanks.js): the course's water

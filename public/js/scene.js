@@ -397,6 +397,9 @@ export class CourseScene {
     if (this.farField) await this.addFarLand(course, farland, sat, progress);
 
     this.addWater(course);
+    // (the course's built things - paths, bridges, buildings, cars - noted for exporting:
+    // export-unreal.js)
+    this.exportProps = [];
     this.addPathStrips(course);
     this.addBridges(course);
     this.addBankGrass(course, shore);
@@ -794,6 +797,7 @@ export class CourseScene {
     const mesh = new THREE.Mesh(mergeGeometries(parts), mat);
     mesh.castShadow = mesh.receiveShadow = true;
     this.courseGroup.add(mesh);
+    this.exportProps?.push({ kind: 'bridge', mesh });
     this.bridgeCount = decks.length;
   }
 
@@ -834,6 +838,7 @@ export class CourseScene {
       this.applyEnvIntensity(mesh.material);
       mesh.receiveShadow = true;
       this.courseGroup.add(mesh);
+      this.exportProps?.push({ kind: kind === 'paved' ? 'path' : 'path_gravel', mesh });
     }
   }
 
@@ -1030,6 +1035,7 @@ export class CourseScene {
       });
       mesh.instanceMatrix.needsUpdate = true; mesh.instanceColor.needsUpdate = true;
       this.courseGroup.add(mesh);
+      this.exportProps?.push({ kind: 'car', mesh });
     }
     this.applyEnvIntensity(mat);
   }
@@ -1362,6 +1368,7 @@ export class CourseScene {
     mesh.receiveShadow = true;
     this.courseGroup.add(mesh);
     this.surroundRect = [x0, z0, x1, z1];
+    this.surroundCanvas = canvas; // (kept for exporting: export-unreal.js)
   }
 
   // Esri's imagery is a patchwork of photos taken at different times (a green one beside a
@@ -2069,7 +2076,7 @@ export class CourseScene {
     const h = course.holes || [], tee = (k) => h[k] && Object.values(h[k].tees || {})[0], green = (k) => h[k]?.greenCenter;
     const start = [tee(0), green(8), tee(9), green(17)].filter((p) => p && Number.isFinite(p.x));
     const { meshes, count, types } = buildBuildings(buildings, (x, z) => course.heightAt(x, z), this.photoAt(), { start, types: buildingTypes });
-    for (const m of meshes) { this.applyEnvIntensity(m.material); this.courseGroup.add(m); }
+    for (const m of meshes) { this.applyEnvIntensity(m.material); this.courseGroup.add(m); this.exportProps?.push({ kind: 'building', mesh: m }); }
     this.buildingCount = count; this.buildingTypes = types;
   }
 

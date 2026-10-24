@@ -13,6 +13,7 @@ data/
 *.gspcrse
 
 # Local-only files
+exports/
 local/
 .claude/
 *.log
