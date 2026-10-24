@@ -18,7 +18,7 @@ import {
   smoothstep, step, fract, floor, screenCoordinate, sin, cos, atan, asin, normalize, cross, max, texture,
   time, instanceIndex, instancedBufferAttribute, normalView, attribute, normalViewGeometry, pow, positionGeometry, log2, fwidth, cameraViewMatrix,
 } from 'three/tsl';
-import { grassWind } from './grass.js';
+import { grassWind, SHARED_INSTANCES } from './grass.js';
 import { Tree } from 'ez-tree';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { hash, fract1, TREE_REGIONS, pickFrom } from './treeplace.js';
@@ -648,14 +648,17 @@ export class Forest {
       const barkM = barkMaterial(near.barkMat), leafM = leafMaterial(near.leafMat, v);
       envApply(barkM); envApply(leafM);
       const make = (model, cap) => {
-        const b = new THREE.InstancedMesh(model.bark, barkM, Math.max(1, cap));
-        const l = new THREE.InstancedMesh(model.leaves, leafM, Math.max(1, cap));
+        // (room for SHARED_INSTANCES at least, see there; how many are used is limited by cap)
+        const room = Math.max(SHARED_INSTANCES, cap);
+        const b = new THREE.InstancedMesh(model.bark, barkM, room);
+        const l = new THREE.InstancedMesh(model.leaves, leafM, room);
         for (const im of [b, l]) { im.count = 0; im.castShadow = true; im.receiveShadow = true; im.frustumCulled = false; this.group.add(im); }
-        l.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(Math.max(1, cap) * 3), 3);
+        l.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(room * 3), 3);
+        b.userData.cap = cap;
         return { bark: b, leaves: l };
       };
       const lim = LIMITS[this.quality] || LIMITS.balanced;
-      return { list, mats, tints, near: make(near, Math.min(list.length, lim.near)), mid: make(mid, Math.min(list.length, lim.mid)) };
+      return { list, mats, tints, near: make(near, Math.max(1, Math.min(list.length, lim.near))), mid: make(mid, Math.max(1, Math.min(list.length, lim.mid))) };
     });
     trees.forEach((t, i) => {
       this.imp.center.set(t.center, i * 3);
@@ -711,8 +714,8 @@ export class Forest {
     for (const V of this.variants) { V.nearUsed = 0; V.midUsed = 0; }
     for (const [e, i] of scored) {
       const vi = this.trees[i].variant, V = this.variants[vi];
-      if (e < lim.nearR && nNear < lim.near && V.nearUsed < V.near.bark.instanceMatrix.count) { lod[i] = 2; nNear++; V.nearUsed++; }
-      else if (nMid < lim.mid && V.midUsed < V.mid.bark.instanceMatrix.count) { lod[i] = 1; nMid++; V.midUsed++; }
+      if (e < lim.nearR && nNear < lim.near && V.nearUsed < V.near.bark.userData.cap) { lod[i] = 2; nNear++; V.nearUsed++; }
+      else if (nMid < lim.mid && V.midUsed < V.mid.bark.userData.cap) { lod[i] = 1; nMid++; V.midUsed++; }
     }
     // Write the instances
     for (const V of this.variants) { V.cn = 0; V.cm = 0; }
@@ -861,8 +864,10 @@ export class Forest {
     if (!sources.length) return;
     for (const [ck, list] of chunks) {
       const [cx, cz, edge, si] = ck.split(',').map(Number);
-      const mesh = new THREE.InstancedMesh(edge ? geos.edge : geos.interior, mats[si], list.length);
-      mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(list.length * 3), 3);
+      const room = Math.max(SHARED_INSTANCES, list.length); // (see SHARED_INSTANCES)
+      const mesh = new THREE.InstancedMesh(edge ? geos.edge : geos.interior, mats[si], room);
+      mesh.count = list.length;
+      mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(room * 3), 3);
       list.forEach((p, i) => {
         q.setFromAxisAngle(up, p.rot);
         m.compose(T(p.x, p.y - 0.1, p.z), q, sc.set(p.w, p.h, p.w * (0.8 + p.tint * 0.4)));

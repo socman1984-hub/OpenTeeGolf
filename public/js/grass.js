@@ -107,6 +107,12 @@ export function addBend(geo) {
 
 // An instanced mesh of tufts with its per-tuft colours in place from the start (a mesh first drawn
 // without them, e.g. while empty, keeps a shader that ignores them and shows bare grey-white blades)
+// Room for at least this many copies in instanced meshes that come in hundreds (trees, shrubs,
+// distant grass): with fewer, three.js keeps their positions in a buffer written into the shader
+// itself, so every such mesh needs its own copy of the shader compiled - some 500 of them, half a
+// minute of "Preparing graphics". With more they share one. (Costs about 65 kB a mesh.)
+export const SHARED_INSTANCES = 1025;
+
 export function grassMesh(geo, mat, count) {
   const mesh = new THREE.InstancedMesh(geo, mat, count);
   mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(count * 3), 3);
