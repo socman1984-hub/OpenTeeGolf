@@ -13,9 +13,11 @@
 //   saguaro      - the cactus: a ribbed column, usually with arms that bend up, flowers on top
 // The output has the same form as an ez-tree model (see sugarmaple.js, which this generalizes):
 // bark (position, normal, uv already tiled) and leaves (cards), foot at y = 0, about 60 units
-// tall. Pictures: public/textures/trees/<kind>_leaves.png and _bark_*.jpg (made by
-// scripts/tree-textures.py), whose leaf picture has four quarters: foliage in the bottom two,
-// extras (moss, flowers) in the top two. bark.tint darkens a species' bark picture.
+// tall. Pictures: public/textures/trees/<kind>_leaves.png and _bark_*.jpg (laid out by
+// scripts/tree-textures.py; real leaves put in by scripts/scan-leaves.py), whose leaf picture has four quarters: foliage in the bottom two,
+// extras (moss, flowers) in the top two. bark.tint darkens a species' bark picture. Bark u, v: the
+// metres the picture covers round and along a branch - most are photo scans (see NOTICE.md), some
+// twice as tall as wide.
 //
 // lod 'mid' is the same tree (everything random is drawn before the level matters): fewer sides
 // and rings on each branch, the finest twigs' bark left out, and about a third as many leaf
@@ -55,7 +57,7 @@ export const SPECIES = {
     branch: sp({ step: 0.8, up: [0, 0.004, 0.012, 0.02, 0.02, 0.01, 0], jit: [0, 0.1, 0.14, 0.15, 0.15, 0.15, 0.15], lat: [0, 0.5, 0.35, 0.18, 0, 0, 0], latLen: [0.45, 0.6], forkAng: [0.35, 0.65], forkLen: [0.6, 0.76], twigFrom: 4, cover: 0.6, budget: 3600 }),
     leaves: { mode: 'twig', size: 1.0, cards: 5600 },
     moss: { from: 2, to: 4, p: 0.17, len: [1.2, 2.8] },
-    bark: { u: 1.0, v: 1.4, tint: 0.3 },
+    bark: { u: 1.0, v: 2.0, tint: 0.6 },
   },
   cypress: {
     trunk: { h: [1.8, 3.0], r: 0.55, flare: 0.4, lean: 0.15 },
@@ -63,7 +65,7 @@ export const SPECIES = {
     crown: { cy: 8.5, rx: 9, ry: 3.8, flat: 0.55, shear: [1.8, 3.0] },
     branch: sp({ step: 0.7, up: [0, 0.03, 0.02, 0.01, 0, 0, 0], jit: [0, 0.12, 0.14, 0.14, 0.14, 0.14], out: 0.05, lat: [0, 0.4, 0.3, 0.15, 0, 0], maxDepth: 5, twigFrom: 4, barkDepth: 4, droopFrom: 9 }),
     leaves: { mode: 'pad', size: 1.25, cards: 3000 },
-    bark: { u: 0.9, v: 1.6 },
+    bark: { u: 0.9, v: 1.8 },
   },
   baldcypress: {
     central: { h: [17, 23], r: 0.5, flare: 1.0, lobes: 6, lobe: 0.3, from: 0.2, every: 0.45, p: 0.9, len: [1.2, 4.4], tilt: [1.15, 1.45], rad: [0.12, 0.04] },
@@ -71,14 +73,14 @@ export const SPECIES = {
     branch: sp({ step: 0.6, up: [0, 0, 0, 0.01, 0, 0], jit: [0, 0.08, 0.08, 0.1, 0.1, 0.1], lat: [0, 0, 0.35, 0.2, 0, 0], droop: 0.03, droopFrom: 3, out: 0.02, maxDepth: 5, twigFrom: 4, barkDepth: 4, forkAng: [0.3, 0.55], forkLen: [0.6, 0.75] }),
     leaves: { mode: 'twig', size: 0.95, cards: 3200 },
     knees: { n: [6, 12], r: [1.3, 3.8], h: [0.25, 0.7] },
-    bark: { u: 0.9, v: 1.6 },
+    bark: { u: 1.0, v: 1.0 },
   },
   mesquite: {
     stems: { n: [2, 4], tilt: [0.55, 0.95], len: [2.4, 3.4], rad: 0.18 },
     crown: { cy: 3.9, rx: 6, ry: 2.2 },
     branch: sp({ step: 0.5, up: [0, 0.02, 0.03, 0.02, 0, 0, 0], jit: [0, 0.2, 0.22, 0.2, 0.2, 0.2, 0.2], lat: [0, 0.5, 0.35, 0.2, 0, 0, 0], droop: 0.04, forkLen: [0.6, 0.75], budget: 2600 }),
     leaves: { mode: 'twig', size: 0.75, cards: 2600 },
-    bark: { u: 0.8, v: 1.2 },
+    bark: { u: 0.8, v: 0.8 },
   },
   paloverde: {
     stems: { n: [2, 3], tilt: [0.3, 0.65], len: [2.0, 2.8], rad: 0.16 },
@@ -93,14 +95,14 @@ export const SPECIES = {
     crown: { cy: 15, rx: 10, ry: 9 },
     branch: sp({ up: [0, 0.04, 0.03, 0.012, 0.01, 0.01, 0.01], jit: [0, 0.1, 0.16, 0.16, 0.16, 0.16, 0.16], lat: [0, 0.4, 0.3, 0.15, 0, 0, 0], step: 0.85, budget: 3400 }),
     leaves: { mode: 'twig', size: 1.35, cards: 2600 },
-    bark: { u: 1.6, v: 2.0 },
+    bark: { u: 1.6, v: 1.6 },
   },
   magnolia: {
     central: { h: [11, 16], r: 0.32, flare: 0.4, from: 0.08, every: 0.4, p: 0.95, len: [1.0, 4.0], tilt: [0.75, 1.15], rad: [0.1, 0.04] },
     crown: { oval: true },
     branch: sp({ step: 0.55, up: [0, 0, 0.03, 0.02, 0.01, 0, 0], jit: [0, 0.08, 0.1, 0.1, 0.1, 0.1], lat: [0, 0, 0.35, 0.2, 0, 0], maxDepth: 5, twigFrom: 4, barkDepth: 4, droopFrom: 9 }),
     leaves: { mode: 'twig', size: 1.1, cards: 3000, flowers: 0.035 },
-    bark: { u: 1.0, v: 1.5 },
+    bark: { u: 1.0, v: 2.0 },
   },
   saguaro: { cactus: { h: [7, 11], r: 0.3, arms: [1, 4] }, bark: { u: 1, v: 1.0 } },
 };

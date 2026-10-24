@@ -9,6 +9,10 @@
 #   <kind>_bark_normal.jpg
 # Leaf colours are the real ones (grow.js's trees draw them as they are; see `raw` in trees.js).
 # grow.js maps its cards onto these quarters, so keep the layout if you redraw them.
+# In the game, most of these have since been replaced by photo scans: the barks of live oak,
+# cypress, bald cypress, mesquite, sycamore and magnolia (Poly Haven, see NOTICE.md), and the
+# foliage of live oak, magnolia, sycamore and both cypresses (scripts/scan-leaves.py, run after
+# this). Running this again draws them all afresh.
 #   python scripts/tree-textures.py public/textures/trees [kind ...]
 # Kinds: liveoak cypress baldcypress mesquite paloverde saguaro sycamore magnolia
 # Needs Python 3 with Pillow and NumPy.
