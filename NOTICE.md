@@ -12,7 +12,7 @@ OpenTeeGolf is free software under the GNU General Public License v3 (see `LICEN
 | [geotiff.js](https://github.com/geotiffjs/geotiff.js) 3.0 (reading tree-height maps) | MIT |
 | [ironsight](https://github.com/divotmaker/ironsight) (Copyright 2026 Eric Thill): the Mevo+ protocol, ported to JavaScript in `lib/mevo.js` | MIT OR Apache-2.0 (used under MIT) |
 | [Creek Water Studio](https://github.com/bjlin-meshy/creek-water-studio) (bjlin-meshy): the ideas behind the clear creek water, its stony bed, the foam and leaves drifting on it and the creek sounds (`public/js/flotsam.js`, `public/js/creek-sound.js`, stream water in `public/js/scene.js`) | MIT |
-| [Koi Pond Garden](https://github.com/souranyp-stack/koi-pond-garden) (Copyright 2026 Sourany Phomhome): the ideas behind the clear ponds, their lily pads, koi and ripples (`public/js/pond.js`, pond water in `public/js/scene.js`) | MIT |
+| [Koi Pond Garden](https://github.com/souranyp-stack/koi-pond-garden) (Copyright 2026 Sourany Phomhome): the ideas behind the ponds you see into, their lily pads, fish and ripples (`public/js/pond.js`, pond water in `public/js/scene.js`) | MIT |
 | [Node.js](https://nodejs.org) (bundled in the Windows release zip) | MIT and others, see `node/LICENSE` in the zip |
 
 ## Textures (in `public/textures/`)
