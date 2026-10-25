@@ -6,6 +6,8 @@
   <title>Course Builder · OpenTeeGolf</title>
   <link rel="stylesheet" href="/style.css">
   <link rel="stylesheet" href="/tools.css">
+  <link rel="stylesheet" href="/vendor/leaflet/leaflet.css">
+  <link rel="stylesheet" href="/vendor/markercluster/MarkerCluster.css">
 </head>
 <body class="page">
   <header class="topbar">
@@ -18,9 +20,20 @@
     <section class="card">
       <h2>1. Find a course</h2>
       <form id="search-form" class="search">
-        <input id="q" type="search" placeholder="Course name, e.g. Pebble Beach Golf Links" autocomplete="off" required minlength="3">
+        <input id="q" type="search" placeholder="Course name or town, e.g. Pebble Beach Golf Links (or pick one on the map)" autocomplete="off" required minlength="3">
         <button class="primary" id="search-btn">Search</button>
       </form>
+      <div class="map-box">
+        <div id="course-map" class="course-map"></div>
+        <div class="map-bar">
+          <span class="map-key" title="Show or hide each kind of course on the map">
+            <label><input type="checkbox" id="show-built" checked><i class="course-pin built"></i>Your courses</label>
+            <label><input type="checkbox" id="show-found" checked><i class="course-pin found"></i>Search results</label>
+            <label><input type="checkbox" id="show-world" checked><i class="course-pin world"></i>Every other course</label>
+          </span>
+          <span id="map-note" class="muted small"></span>
+        </div>
+      </div>
       <div id="results" class="results"></div>
     </section>
 
@@ -47,6 +60,8 @@
     <p class="credit muted">Course data © OpenStreetMap contributors (ODbL). Elevation: USGS 3DEP (US) or Terrarium tiles from AWS Open Data (elsewhere).</p>
   </main>
 
+  <script src="/vendor/leaflet/leaflet.js"></script>
+  <script src="/vendor/markercluster/leaflet.markercluster.js"></script>
   <script type="module" src="/js/builder.js"></script>
 </body>
 </html>

@@ -15,7 +15,136 @@ async function api(url, opts) {
   return body;
 }
 
+// ------------------------------------------------------------------ map
+// Every golf course in OpenStreetMap (blue, gathered into numbered clusters until you zoom in), the
+// ones you've built (green, yellow-ringed) and the ones a search finds (orange), on a street map or
+// the satellite view. Click a course to check and build it; a search zooms the map to what it
+// found. A pin's popup has the same buttons as its row in the list; hovering a row lights up its pin.
+
+const map = L.map('course-map', { worldCopyJump: true, zoomControl: true }).setView([38, -40], 2);
+const streets = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap contributors' });
+const satellite = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19, attribution: 'Imagery © Esri, Maxar, Earthstar Geographics' });
+streets.addTo(map);
+L.control.layers({ Map: streets, Satellite: satellite }, null, { position: 'topright' }).addTo(map);
+const worldLayer = L.markerClusterGroup({
+  chunkedLoading: true, showCoverageOnHover: false, maxClusterRadius: 60, disableClusteringAtZoom: 12,
+  iconCreateFunction: (c) => { const n = c.getChildCount(), s = n < 100 ? 30 : n < 1000 ? 38 : 46; return L.divIcon({ className: '', html: `<div class="world-cluster" style="width:${s}px;height:${s}px">${n < 1000 ? n : `${Math.round(n / 100) / 10}k`}</div>`, iconSize: [s, s] }); },
+}).addTo(map);
+const builtLayer = L.layerGroup().addTo(map), foundLayer = L.layerGroup().addTo(map);
+const pin = (built) => L.divIcon({ className: '', html: `<div class="course-pin${built ? ' built' : ' found'}"></div>`, iconSize: built ? [18, 18] : [14, 14], iconAnchor: built ? [9, 9] : [7, 7] });
+// (a 14 px dot in a 28 px target, so it's easy to click)
+const worldPin = L.divIcon({ className: 'world-hit', html: '<div class="course-pin world"></div>', iconSize: [28, 28], iconAnchor: [14, 14] });
+const actionsHtml = (r) => r.built
+  ? `<a class="button" href="${playUrl(r.built)}">Play</a><a class="button" href="${editUrl(r.built)}">Edit</a>${r.osmId ? '<button class="primary">Rebuild…</button>' : ''}`
+  : '<button class="primary">Check</button>';
+function addPin(layer, r) {
+  const m = L.marker([r.lat, r.lon], { icon: pin(!!r.built), title: r.name, zIndexOffset: r.built ? 500 : 0 });
+  const el = document.createElement('div');
+  el.className = 'course-pop';
+  el.innerHTML = `<b>${esc(r.name)}</b><small>${esc(r.location || '')}${r.built ? ' · built' : ''}</small><div class="actions">${actionsHtml(r)}</div>`;
+  el.querySelector('button')?.addEventListener('click', () => { map.closePopup(); check(r); });
+  m.bindPopup(el);
+  m.on('click', () => rows.get(r.osmId)?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }));
+  layer.addLayer(m);
+  return m;
+}
+const pins = new Map(), rows = new Map(); // (by OpenStreetMap id: the found courses' pins and list rows)
+const hot = (id, on) => { pins.get(id)?.getElement()?.firstChild?.classList.toggle('hot', on); rows.get(id)?.classList.toggle('hot', on); };
+
+let builtIds = new Set();
+async function loadBuiltPins() {
+  const { courses } = await api('/api/courses');
+  builtLayer.clearLayers();
+  const mine = courses.filter((c) => c.lat || c.lon);
+  builtIds = new Set(courses.map((c) => c.osmId).filter(Boolean));
+  for (const c of mine) addPin(builtLayer, { ...c, built: c.id });
+}
+
+// Every course in the world: a small popup, made when it's opened, with the Check button
+const TYPES = { n: 'node', w: 'way', r: 'relation' };
+async function loadWorld() {
+  await builtReady;
+  let have = 0;
+  for (;;) {
+    try {
+      const w = await api(`/api/builder/world?from=${have}`);
+      have += w.courses.length;
+      const markers = [];
+      for (const [lat, lon, t, id, name] of w.courses) {
+        if (builtIds.has(id)) continue;
+        const m = L.marker([lat, lon], { icon: worldPin, title: name || 'Unnamed golf course' });
+        m.course = { name: name || 'Unnamed golf course', location: '', lat, lon, osmType: TYPES[t], osmId: id };
+        markers.push(m);
+      }
+      if (markers.length) worldLayer.addLayers(markers);
+      $('map-note').textContent = w.done
+        ? `${have.toLocaleString()} courses · click one to build it, or search to narrow it down`
+        : `Gathering every golf course in OpenStreetMap: ${have.toLocaleString()} so far (${Math.round(w.progress * 100)}% of the world; the first time takes a few minutes)`;
+      if (w.done) return;
+    } catch (err) {
+      $('map-note').textContent = `Couldn't load the world's golf courses (${err.message}); search still works.`;
+      return;
+    }
+    await new Promise((r) => setTimeout(r, 4000));
+  }
+}
+worldLayer.on('click', (e) => {
+  const r = e.layer.course;
+  if (!r) return;
+  const el = document.createElement('div');
+  el.className = 'course-pop';
+  el.innerHTML = `<b>${esc(r.name)}</b><small class="where">&nbsp;</small><div class="actions"><button class="primary">Check</button></div>`;
+  el.querySelector('button').onclick = () => { map.closePopup(); check(r); };
+  e.layer.bindPopup(el).openPopup();
+  // (where it is, for the popup and the course's location)
+  if (!r.location) api(`/api/builder/where?lat=${r.lat}&lon=${r.lon}`).then(({ location }) => { r.location = location; el.querySelector('.where').textContent = location; }).catch(() => {});
+  else el.querySelector('.where').textContent = r.location;
+});
+const builtReady = loadBuiltPins().catch(() => {});
+// (each kind of course can be hidden: just your own, say)
+for (const [id, layer] of [['show-built', builtLayer], ['show-found', foundLayer], ['show-world', worldLayer]]) {
+  $(id).onchange = () => { if ($(id).checked) map.addLayer(layer); else map.removeLayer(layer); };
+}
+loadWorld();
+
+function showFound(results, { fit = true } = {}) {
+  foundLayer.clearLayers(); pins.clear();
+  // (a course you've built is shown by its own pin)
+  for (const r of results) if (!r.built && Number.isFinite(r.lat)) pins.set(r.osmId, addPin(foundLayer, r));
+  const pts = results.filter((r) => Number.isFinite(r.lat)).map((r) => [r.lat, r.lon]);
+  if (fit && pts.length) map.fitBounds(L.latLngBounds(pts).pad(0.25), { maxZoom: 13 });
+}
+
 // ------------------------------------------------------------------ search
+
+function renderResults(results, empty) {
+  const box = $('results');
+  rows.clear();
+  if (!results.length) { box.innerHTML = `<div class="muted">${empty}</div>`; return; }
+  box.innerHTML = '';
+  for (const r of results) {
+    const el = document.createElement('div');
+    el.className = 'result';
+    el.innerHTML = `<div class="info"><b>${esc(r.name)}${r.built ? '<span class="badge good">built</span>' : ''}</b><small>${esc(r.location)}</small></div>
+      <div class="actions">
+        <button class="show" title="Show it on the map">Map</button>
+        ${r.built ? `<a class="button" href="${playUrl(r.built)}">Play</a><a class="button" href="${editUrl(r.built)}">Edit</a>` : ''}
+        <button class="primary">${r.built ? 'Rebuild…' : 'Check'}</button>
+      </div>`;
+    el.querySelector('.primary').onclick = () => check(r);
+    el.querySelector('.show').onclick = () => {
+      if (!Number.isFinite(r.lat)) return;
+      map.setView([r.lat, r.lon], 15);
+      $('course-map').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      const m = pins.get(r.osmId) || builtLayer.getLayers().find((x) => x.options.title === r.name);
+      m?.openPopup();
+    };
+    el.onmouseenter = () => hot(r.osmId, true);
+    el.onmouseleave = () => hot(r.osmId, false);
+    rows.set(r.osmId, el);
+    box.appendChild(el);
+  }
+}
 
 $('search-form').onsubmit = async (e) => {
   e.preventDefault();
@@ -25,22 +154,8 @@ $('search-form').onsubmit = async (e) => {
   $('search-btn').disabled = true;
   try {
     const { results } = await api(`/api/builder/search?q=${encodeURIComponent(q)}`);
-    if (!results.length) {
-      box.innerHTML = `<div class="muted">No golf course called “${esc(q)}” was found in OpenStreetMap. Try the club's full name, or add the town (e.g. “Muirfield Village Dublin Ohio”).</div>`;
-      return;
-    }
-    box.innerHTML = '';
-    for (const r of results) {
-      const el = document.createElement('div');
-      el.className = 'result';
-      el.innerHTML = `<div class="info"><b>${esc(r.name)}${r.built ? '<span class="badge good">built</span>' : ''}</b><small>${esc(r.location)}</small></div>
-        <div class="actions">
-          ${r.built ? `<a class="button" href="${playUrl(r.built)}">Play</a><a class="button" href="${editUrl(r.built)}">Edit</a>` : ''}
-          <button class="primary">${r.built ? 'Rebuild…' : 'Check'}</button>
-        </div>`;
-      el.querySelector('button').onclick = () => check(r);
-      box.appendChild(el);
-    }
+    showFound(results);
+    renderResults(results, `No golf course called “${esc(q)}” was found in OpenStreetMap. Try the club's full name, or add the town (e.g. “Muirfield Village Dublin Ohio”), or find it on the map.`);
   } catch (err) {
     box.innerHTML = `<div class="muted">Search failed: ${esc(err.message)}</div>`;
   } finally {
@@ -239,6 +354,7 @@ function onBuild(m) {
     $('build-done').classList.remove('hidden');
     if ($('b-build')) $('b-build').disabled = false;
     loadMine();
+    loadBuiltPins().catch(() => {});
     // A new course: straight on to the editor to check the trees found automatically that stand
     // in the line of play (and the holes, if any were guessed)
     if (jobKind === 'build') {
@@ -267,6 +383,7 @@ async function loadMine() {
       if (!confirm(`Delete ${c.name}? This removes the built course files.`)) return;
       await api(`/api/courses/${c.id}`, { method: 'DELETE' });
       loadMine();
+      loadBuiltPins().catch(() => {});
     };
     box.appendChild(el);
   }

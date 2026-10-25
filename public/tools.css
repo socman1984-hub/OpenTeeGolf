@@ -12,6 +12,29 @@ a.button.primary { background: #2f8f4e; border-color: #3fae63; font-weight: 600;
 .search { display: flex; gap: 8px; }
 .search input { flex: 1; min-width: 0; }
 .results { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+/* The builder's map of courses (Leaflet) */
+.map-box { margin-top: 12px; }
+.course-map { height: 380px; border-radius: 10px; border: 1px solid var(--line); background: #0f1810; z-index: 0; }
+.map-bar { display: flex; align-items: center; gap: 12px; margin-top: 8px; flex-wrap: wrap; }
+.map-bar button { padding: 5px 10px; font-size: 13px; }
+.map-key { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+.map-key .course-pin { position: static; display: inline-block; margin: 0 5px 0 2px; }
+.map-key label { display: inline-flex; align-items: center; gap: 2px; cursor: pointer; margin-right: 8px; }
+.map-key input { margin: 0 2px 0 0; }
+.course-pin { width: 14px; height: 14px; border-radius: 50%; background: #ff9d2e; border: 2px solid #fff; box-shadow: 0 1px 4px rgba(0,0,0,0.6); box-sizing: border-box; }
+.course-pin.built { background: #2fae4f; border-color: #ffd84a; width: 18px; height: 18px; }
+.course-pin.world { width: 14px; height: 14px; background: #2f8be6; border-width: 2px; transition: transform 0.1s; }
+.world-hit { display: grid; place-items: center; cursor: pointer; }
+.world-hit:hover .course-pin.world { transform: scale(1.35); }
+.map-key .course-pin.world { width: 12px; height: 12px; }
+/* clusters of courses on the map: a count in a blue disc, bigger for more */
+.world-cluster { display: grid; place-items: center; border-radius: 50%; background: rgba(59,143,217,0.85); border: 2px solid rgba(255,255,255,0.9); color: #fff; font: 700 11px system-ui, sans-serif; box-shadow: 0 1px 5px rgba(0,0,0,0.5); }
+.course-pin.hot { transform: scale(1.5); }
+.course-pop b { display: block; font-size: 14px; }
+.course-pop small { display: block; color: #555; margin: 2px 0 8px; }
+.course-pop .actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.course-pop .actions a, .course-pop .actions button { padding: 4px 9px; font-size: 12px; }
+.result.hot { border-color: var(--accent); }
 .result { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: #0f1810; flex-wrap: wrap; }
 .result .info { flex: 1; min-width: 200px; }
 .result .info b { display: block; }

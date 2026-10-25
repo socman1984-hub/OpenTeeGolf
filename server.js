@@ -17,7 +17,7 @@ import { fileURLToPath } from 'node:url';
 import { normalizeSpin } from './public/js/physics.js';
 import { TREE_SPECIES, TREE_MIXES } from './public/js/treeplace.js';
 import { BUILDING_TYPES } from './public/js/buildingtypes.js';
-import { searchCourses, withFreshOsm } from './lib/realdata.js';
+import { searchCourses, worldCourses, placeName, withFreshOsm } from './lib/realdata.js';
 import { VERSION, checkForUpdate, installUpdate, canInstall, cleanUpAfterUpdate } from './lib/updater.js';
 import { checkCourse, buildCourse, BUILT_DIR } from './lib/builder.js';
 import { geoFor, ensureSatellite, recheckSatellite } from './lib/imagery.js';
@@ -413,6 +413,8 @@ const EXPORTS = path.join(ROOT, 'exports'); // (courses exported for Unreal Engi
 const THREE = path.join(ROOT, 'node_modules', 'three');
 const JOLT = path.join(ROOT, 'node_modules', 'jolt-physics', 'dist');
 const EZTREE = path.join(ROOT, 'node_modules', '@dgreenheck', 'ez-tree', 'build');
+const LEAFLET = path.join(ROOT, 'node_modules', 'leaflet', 'dist');
+const MARKERCLUSTER = path.join(ROOT, 'node_modules', 'leaflet.markercluster', 'dist');
 
 const httpServer = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
@@ -756,6 +758,16 @@ const httpServer = http.createServer(async (req, res) => {
       for (const r of results) r.built = built.find((c) => c.osmId === r.osmId)?.id || null;
       return json(res, { results });
     }
+    if (p === '/api/builder/where') {
+      const lat = +url.searchParams.get('lat'), lon = +url.searchParams.get('lon');
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) return json(res, { error: 'Bad position' }, 400);
+      return json(res, { location: await placeName(lat, lon).catch(() => '') });
+    }
+    if (p === '/api/builder/world') {
+      // Every golf course in OpenStreetMap, for the builder's map ([[lat, lon, n/w/r, id, name]]),
+      // gathered in the background: the ones after the first `from`, and how far it has got
+      return json(res, worldCourses(Math.max(0, +url.searchParams.get('from') || 0)));
+    }
     if (p === '/api/builder/check') {
       const id = url.searchParams.get('id');
       return json(res, await checkCourse(url.searchParams.get('type'), id, (msg) => broadcast('check', { osmId: +id, msg })));
@@ -874,6 +886,8 @@ const httpServer = http.createServer(async (req, res) => {
     if (p.startsWith('/vendor/three/')) return serveFile(res, THREE, p.slice('/vendor/three/'.length));
     if (p.startsWith('/vendor/jolt/')) return serveFile(res, JOLT, p.slice('/vendor/jolt/'.length));
     if (p.startsWith('/vendor/ez-tree/')) return serveFile(res, EZTREE, p.slice('/vendor/ez-tree/'.length));
+    if (p.startsWith('/vendor/leaflet/')) return serveFile(res, LEAFLET, p.slice('/vendor/leaflet/'.length));
+    if (p.startsWith('/vendor/markercluster/')) return serveFile(res, MARKERCLUSTER, p.slice('/vendor/markercluster/'.length));
     return serveFile(res, PUBLIC, p === '/' ? 'index.html' : p.slice(1));
   } catch (err) {
     console.error(err);

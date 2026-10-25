@@ -43,6 +43,19 @@ New-Item -ItemType Directory -Force (Join-Path $ezOut 'build') | Out-Null
 Copy-Item (Join-Path $ez 'build\ez-tree.es.js') (Join-Path $ezOut 'build')
 Copy-Item (Join-Path $ez 'package.json'), (Join-Path $ez 'LICENSE') $ezOut
 
+# Leaflet and its marker clustering (the builder's map of courses): the browser builds, stylesheets
+# and marker images
+$leaflet = Join-Path $root 'node_modules\leaflet'
+$leafletOut = Join-Path $stage 'node_modules\leaflet'
+New-Item -ItemType Directory -Force $leafletOut | Out-Null
+Copy-Item -Recurse (Join-Path $leaflet 'dist') $leafletOut
+Copy-Item (Join-Path $leaflet 'package.json'), (Join-Path $leaflet 'LICENSE') $leafletOut
+$cluster = Join-Path $root 'node_modules\leaflet.markercluster'
+$clusterOut = Join-Path $stage 'node_modules\leaflet.markercluster'
+New-Item -ItemType Directory -Force $clusterOut | Out-Null
+Copy-Item -Recurse (Join-Path $cluster 'dist') $clusterOut
+Copy-Item (Join-Path $cluster 'package.json'), (Join-Path $cluster 'MIT-LICENCE.txt') $clusterOut
+
 # geotiff and its dependencies (the server reads tree-height maps with it)
 foreach ($dep in 'geotiff', '@petamoriken\float16', 'lerc', 'pako', 'parse-headers', 'quick-lru', 'web-worker', 'xml-utils', 'zstddec') {
   $dst = Join-Path $stage "node_modules\$dep"
