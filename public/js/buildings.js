@@ -16,7 +16,7 @@
 // shingles are drawn by the shaders, so a building costs only a few dozen triangles.
 import * as THREE from 'three/webgpu';
 import {
-  attribute, uv, vec2, vec3, float, floor, fract, abs, step, smoothstep, select, mix, max, min, sin, dot, Fn,
+  attribute, uv, vec2, vec3, vec4, float, floor, fract, abs, step, smoothstep, select, mix, max, min, sin, dot, Fn,
 } from 'three/tsl';
 
 import { classifyBuildings } from './buildingtypes.js';
@@ -92,8 +92,10 @@ function orientedBox(pts) {
 
 // ------------------------------------------------------------------ geometry builder
 
-// Geometry for one mesh: positions, normals, colours, uvs, a (vec4) and b (float) per vertex
-function makeMesh() { return { pos: [], nrm: [], col: [], uv: [], a: [], b: [] }; }
+// Geometry for one mesh: positions, normals, colours, uvs, a (vec4) and b (float) per vertex, and
+// the windows of the wall being drawn (c, d: see windowLayout; zeros, no windows, unless set)
+const NO_WINDOWS = [[0, 0, 0, 0], [0, 0, 0, 0]];
+function makeMesh() { return { pos: [], nrm: [], col: [], uv: [], a: [], b: [], c: [], d: [], win: NO_WINDOWS }; }
 function pushTri(g, P, UV, n, col, a, b) {
   // P: three course-space points; UV: three [u, v]; n: course-space normal
   const W = (p) => [-p[0], p[1], p[2]];
@@ -104,7 +106,7 @@ function pushTri(g, P, UV, n, col, a, b) {
   if (fn[0] * N[0] + fn[1] * N[1] + fn[2] * N[2] < 0) { [p1, p2] = [p2, p1]; [t1, t2] = [t2, t1]; }
   g.pos.push(...p0, ...p1, ...p2);
   g.uv.push(...t0, ...t1, ...t2);
-  for (let i = 0; i < 3; i++) { g.nrm.push(...N); g.col.push(col.r, col.g, col.b); g.a.push(...a); g.b.push(b); }
+  for (let i = 0; i < 3; i++) { g.nrm.push(...N); g.col.push(col.r, col.g, col.b); g.a.push(...a); g.b.push(b); g.c.push(...g.win[0]); g.d.push(...g.win[1]); }
 }
 const quad = (g, P, UV, n, col, a, b) => { pushTri(g, [P[0], P[1], P[2]], [UV[0], UV[1], UV[2]], n, col, a, b); pushTri(g, [P[0], P[2], P[3]], [UV[0], UV[2], UV[3]], n, col, a, b); };
 const norm = (v) => { const l = Math.hypot(...v) || 1; return v.map((x) => x / l); };
@@ -181,12 +183,60 @@ function plan(b, kind, photo) {
   if (!roofCol) roofCol = srgb(pick(roofKind === ROOF.flat ? PALETTE.flat : roofKind === ROOF.metal ? PALETTE.metal : PALETTE.roof, r(8)));
   // Doors on the longest wall: a front door, a garage door, a plank door, big barn doors
   const door = { house: 1, club: 1, large: 1, garage: 2, shed: 3, barn: 4, porch: 0 }[type];
-  return { fp, box, rect, type, wallH, roof, pitch, style, wallCol, roofCol, roofKind, door, seed: r(9), chimney: type === 'house' && roof !== 'flat' && r(10) < 0.45, doorCol: srgb(pick(PALETTE.door, r(11))) };
+  // Windows: each house has its own kind (see windowLayout), from its size and storeys
+  const storeys = Math.max(1, Math.round((wallH - 0.2) / 2.8));
+  const shapeR = r(12);
+  const shape = type !== 'house' ? 'plain'
+    : storeys > 1 ? (shapeR < 0.6 ? 'tall' : shapeR < 0.85 ? 'square' : 'wide')
+    : (shapeR < 0.45 ? 'wide' : shapeR < 0.75 ? 'square' : 'tall');
+  const win = {
+    shape,
+    // (windows side by side in each opening: big houses group them in twos and threes, with
+    // plain wall between the groups, rather than a long even row)
+    group: fp.area > 220 ? (r(13) < 0.5 ? 3 : 2) : fp.area > 120 ? (r(13) < 0.6 ? 2 : 1) : r(13) < 0.25 ? 2 : 1,
+    // (how far apart the groups are: further on bigger houses)
+    spread: 3.2 + Math.min(2.6, Math.max(0, fp.area - 110) / 70) + r(14) * 0.8,
+    picture: type === 'house' && fp.area > 85 && r(15) < 0.65,
+    shutters: type === 'house' && shape !== 'wide' && style !== STYLE.stucco && r(16) < 0.35,
+  };
+  return { fp, box, rect, type, wallH, roof, pitch, style, wallCol, roofCol, roofKind, door, seed: r(9), chimney: type === 'house' && roof !== 'flat' && r(10) < 0.45, doorCol: srgb(pick(PALETTE.door, r(11))), win };
 }
 
 function parseColour(s) {
   if (!s) return null;
   try { const c = new THREE.Color(); c.setStyle(String(s).trim()); return c; } catch { return null; }
+}
+
+// The windows on one wall, for the wall shader: c = [groups along the wall, panes per group on
+// the ground floor, panes per group upstairs, pane width], d = [pane height on the ground floor,
+// upstairs, shutters (0/1), which group is a picture window (1-based, 0 none)]. Groups are spread
+// evenly along the wall; the panes of a group stand side by side. Houses vary:
+//   tall    - narrow, tall sash windows (two-storey houses mostly), often in pairs
+//   square  - medium casements
+//   wide    - long, low windows (ranch houses), single
+// End walls get one or two; the longest wall of a bigger house has a picture window by the door;
+// upstairs windows are a little smaller; some houses have shutters. Large buildings and the
+// clubhouse keep their even bands of big windows.
+function windowLayout(P, len, end, doorWall) {
+  const { type, style, win, seed } = P;
+  if (style === STYLE.shed || len < 2.2 || type === 'porch' || type === 'barn' || type === 'shed') return NO_WINDOWS;
+  if (style === STYLE.large) { const g = Math.max(1, Math.floor(len / 2.4)); return [[g, 1, 1, 1.9 * Math.min(1, len / g / 2.4)], [2.1, 2.1, 0, 0]]; }
+  if (type === 'garage') return len > 5 ? [[1, 1, 1, 0.9], [0.9, 0.9, 0, 0]] : NO_WINDOWS;
+  const S = { tall: [0.82, 1.55], square: [1.05, 1.25], wide: [1.7, 1.05], plain: [1.05, 1.35] }[win.shape];
+  let [w, h] = S;
+  let n = win.group;
+  if (win.shape === 'wide') n = 1;
+  let groups;
+  if (end) { groups = len < 7 ? 1 : 2; n = Math.min(n, 2); }
+  else groups = Math.max(1, Math.floor((len - 1.6) / win.spread));
+  // (never more panes than fit with a little wall between the groups)
+  const room = len / groups - 0.8;
+  while (n > 1 && n * w + (n - 1) * 0.14 > room) n--;
+  if (w > room) w = Math.max(0.6, room);
+  // (a picture window on the front, a group or so to one side of the door in the middle)
+  const pic = win.picture && doorWall && groups >= 3 ? Math.max(0, Math.floor(groups / 2) - 2 + (groups % 2)) : -1;
+  const nUp = win.shape === 'tall' ? n : Math.max(1, n - (hash(seed, len) < 0.5 ? 1 : 0));
+  return [[groups, n, nUp, w], [h, h * 0.88, win.shutters ? 1 : 0, pic + 1]];
 }
 
 function addBuilding(W, R, P, groundAt) {
@@ -235,7 +285,11 @@ function addBuilding(W, R, P, groundAt) {
     const n = [dz / len, 0, -dx / len];
     const f = [len, style, seed + i * 0.137, wallH];
     const v0 = base - floorY, v1 = top - floorY;
+    // (an end wall: across the house's short side)
+    const end = Math.abs((dx * ux + dz * uz) / len) < 0.5 && box.A > box.B * 1.15;
+    W.win = windowLayout(P, len, end, i === doorWall);
     quad(W, [[a[0], base, a[1]], [c[0], base, c[1]], [c[0], top, c[1]], [a[0], top, a[1]]], [[0, v0], [len, v0], [len, v1], [0, v1]], n, wallCol, f, i === doorWall ? doorKind : 0);
+    W.win = NO_WINDOWS;
   }
   // Roof
   if (roof === 'flat') {
@@ -331,29 +385,51 @@ function wallMaterial() {
   const a = attribute('a', 'vec4'), len = a.x, style = a.y, seed = floor(a.z.mul(256).add(0.5)).div(256), wallH = a.w, door = attribute('b', 'float');
   const is = (s) => step(abs(style.sub(s)), 0.5);
   const isLarge = is(STYLE.large), isShed = is(STYLE.shed);
-  // Windows: evenly along each wall (one every ~3 m on houses, ~2.4 m on large buildings), on every
-  // floor, a few left out at random; none on sheds, short walls, or above the eaves
+  // Windows, as planned for each wall (windowLayout): groups spread evenly along the wall, the
+  // panes of each group side by side, on every floor (smaller upstairs), a group left out here and
+  // there; a picture window by the door on bigger houses; shutters on some. None above the eaves.
+  // (rounded: the same at every corner of a wall, but blended across its triangles they differ in
+  // the last digits, which turned whole panes to speckle)
+  const q = (v, k) => floor(v.mul(k).add(0.5)).div(k);
+  const rawLay = attribute('c', 'vec4'), rawLay2 = attribute('d', 'vec4');
+  const lay = vec4(q(rawLay.x, 1), q(rawLay.y, 1), q(rawLay.z, 1), q(rawLay.w, 100)), lay2 = vec4(q(rawLay2.x, 100), q(rawLay2.y, 100), q(rawLay2.z, 1), q(rawLay2.w, 1));
+  const groups = lay.x, paneW = lay.w;
   const floorH = mix(float(2.8), float(3.6), isLarge);
-  const target = mix(float(3.2), float(2.4), isLarge);
-  const nWin = max(floor(len.div(target)), 1), spacing = len.div(nWin);
-  const wi = floor(u.div(spacing)), du = fract(u.div(spacing)).sub(0.5).mul(spacing);
-  const fi = floor(v.div(floorH)), fv = v.sub(fi.mul(floorH));
-  const winW = mix(float(1.05), float(1.9), isLarge).mul(min(spacing.div(target), 1)), winH = mix(float(1.35), float(2.1), isLarge), sill = mix(float(0.95), float(0.55), isLarge);
-  const keep = step(0.14, h21(vec2(wi.add(seed.mul(91)), fi.add(seed.mul(17)))));
-  const inside = (hw, y0, y1) => step(abs(du), hw).mul(step(y0, fv)).mul(step(fv, y1));
-  const allowed = keep.mul(step(2.2, len)).mul(isShed.oneMinus()).mul(step(0, v)).mul(step(v, wallH.sub(0.35)));
+  const fi = floor(v.div(floorH)), fv = v.sub(fi.mul(floorH)), upstairs = step(0.5, fi);
+  const panes = mix(lay.y, lay.z, upstairs), winH = mix(lay2.x, lay2.y, upstairs);
+  const gs = len.div(max(groups, 1)), wi = floor(u.div(gs)), du = fract(u.div(gs)).sub(0.5).mul(gs);
+  const GAP = 0.14, total = panes.mul(paneW).add(panes.sub(1).mul(GAP));
+  // (which pane of the group, and where in it)
+  const lx = du.add(total.mul(0.5)), k = floor(lx.div(paneW.add(GAP))), ox = lx.sub(k.mul(paneW.add(GAP))).sub(paneW.mul(0.5));
+  const inGroup = step(0, k).mul(step(k, panes.sub(1)));
+  const picture = upstairs.oneMinus().mul(step(0.5, lay2.w)).mul(step(abs(wi.sub(lay2.w.sub(1))), 0.5));
+  const x = mix(ox, du, picture), hw = mix(paneW.mul(0.5), total.mul(0.5).max(1.1), picture);
+  const sill = mix(mix(float(0.95), float(0.55), isLarge), float(0.6), picture);
+  const winTop = sill.add(mix(winH, min(winH.mul(1.3), floorH.sub(0.85)), picture));
+  const keep = step(0.1, h21(vec2(wi.add(seed.mul(91)), fi.add(seed.mul(17))))).max(picture);
+  const inside = (ext, y0, y1) => step(abs(x), hw.add(ext)).mul(step(y0, fv)).mul(step(fv, y1)).mul(max(inGroup, picture));
+  const allowed = keep.mul(step(0.5, groups)).mul(isShed.oneMinus()).mul(step(0, v)).mul(step(v, wallH.sub(0.35)));
   // (not over the front door)
   const doorZone = step(0.5, door).mul(step(abs(u.sub(len.mul(0.5))), 1.3)).mul(step(fi, 0.5));
   const win = allowed.mul(doorZone.oneMinus());
-  const glass = inside(winW.mul(0.5), sill, sill.add(winH)).mul(win);
-  const frame = inside(winW.mul(0.5).add(0.09), sill.sub(0.09), sill.add(winH).add(0.09)).mul(win).sub(glass).max(0);
-  // muntins on house windows: a cross; big windows are split like storefront glazing: a mullion
-  // down the middle and a transom with a short top light, in thicker bars
+  const glass = inside(0, sill, winTop).mul(win);
+  const frame = inside(0.09, sill.sub(0.09), winTop.add(0.09)).mul(win).sub(glass).max(0);
+  // shutters: a louvred panel either side of each pane (not the picture window)
+  const sx2 = abs(x).sub(hw.add(0.12));
+  const shutter = step(0, sx2).mul(step(sx2, hw.mul(0.55))).mul(step(sill, fv)).mul(step(fv, winTop)).mul(inGroup).mul(picture.oneMinus())
+    .mul(step(0.5, lay2.z)).mul(win);
+  const louvre = smoothstep(0, 0.02, fract(fv.div(0.06))).mul(0.25).add(0.75);
+  // muntins on house windows: a cross (wide ones: just the upright, a slider); a picture window
+  // in three lights; big windows are split like storefront glazing: a mullion down the middle and
+  // a transom with a short top light
   const mid = sill.add(winH.mul(0.5));
-  const houseBars = step(abs(du), 0.025).max(step(abs(fv.sub(mid)), 0.025));
+  const wideBars = step(abs(x), 0.03);
+  const crossBars = step(abs(x), 0.025).max(step(abs(fv.sub(mid)), 0.025));
+  const houseBars = mix(crossBars, wideBars, step(1.5, paneW));
+  const picBars = step(abs(abs(x).sub(hw.div(3))), 0.035);
   const transom = sill.add(winH.mul(0.78));
-  const bigBars = step(abs(du), 0.05).max(step(abs(fv.sub(transom)), 0.05));
-  const muntin = glass.mul(mix(houseBars, bigBars, isLarge));
+  const bigBars = step(abs(x), 0.05).max(step(abs(fv.sub(transom)), 0.05));
+  const muntin = glass.mul(mix(mix(houseBars, picBars, picture), bigBars, isLarge));
   // Doors
   const front = step(abs(door.sub(1)), 0.5).mul(step(abs(u.sub(len.mul(0.5))), 0.48)).mul(step(0, v)).mul(step(v, 2.1));
   const gw = min(float(1.4), len.mul(0.38));
@@ -400,7 +476,9 @@ function wallMaterial() {
   const trim = mix(mix(vec3(0.8, 0.8, 0.78), vec3(0.06, 0.06, 0.06), step(0.7, seed.fract())), mix(vec3(0.07, 0.055, 0.045), vec3(0.78, 0.78, 0.76), step(0.6, seed.fract())), isLarge);
   // glass: dark, a little lighter towards the top of each pane where it catches the sky
   const up = clampT(fv.sub(sill).div(winH));
-  const glassCol = mix(vec3(0.02, 0.028, 0.036), vec3(0.09, 0.12, 0.15), up.mul(up)).mul(h21(vec2(wi, fi.add(seed))).mul(0.4).add(0.8));
+  const glassCol = mix(vec3(0.02, 0.028, 0.036), vec3(0.09, 0.12, 0.15), up.mul(up)).mul(h21(vec2(wi.add(k.mul(0.37)), fi.add(seed))).mul(0.4).add(0.8));
+  const shutterCol = mix(mix(vec3(0.05, 0.12, 0.07), vec3(0.03, 0.03, 0.035), step(0.4, fract(seed.mul(7)))), vec3(0.07, 0.1, 0.18), step(0.75, fract(seed.mul(7))));
+  wall = mix(wall, shutterCol.mul(louvre), shutter);
   wall = mix(wall, trim, frame.max(muntin));
   wall = mix(wall, glassCol, glass.sub(muntin).max(0));
   const doorCol = vec3(0.12, 0.05, 0.035).mul(h21(vec2(seed, 3.1)).mul(0.8).add(0.6));
@@ -470,6 +548,7 @@ export function buildBuildings(buildings, groundAt, photo, { start = [], types =
     geo.setAttribute('uv', new THREE.Float32BufferAttribute(g.uv, 2));
     geo.setAttribute('a', new THREE.Float32BufferAttribute(g.a, 4));
     geo.setAttribute('b', new THREE.Float32BufferAttribute(g.b, 1));
+    if (g === W) { geo.setAttribute('c', new THREE.Float32BufferAttribute(g.c, 4)); geo.setAttribute('d', new THREE.Float32BufferAttribute(g.d, 4)); }
     const mesh = new THREE.Mesh(geo, mat);
     mesh.castShadow = true; mesh.receiveShadow = true;
     meshes.push(mesh);
