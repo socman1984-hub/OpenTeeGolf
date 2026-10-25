@@ -8,7 +8,7 @@
 // These drive both the physics (heightAt / normalAt / surfaceAt) and the rendering.
 
 import { courseMowing, courseGrass, courseSurface } from './mowing.js';
-import { prepareStreams, streamFlow } from './streams.js';
+import { prepareStreams, streamFlow, streamDepth } from './streams.js';
 
 export const TEE_TYPES = ['Black', 'Blue', 'White', 'Green', 'Yellow', 'Red', 'Junior', 'Par3'];
 export const PIN_DAYS = ['Thursday', 'Friday', 'Saturday', 'Sunday'];
@@ -555,7 +555,8 @@ export function buildCourse(courseData, real = null) {
       const L = levelAt(x, z);
       if (stream) {
         const sd = inside ? -e : e, even = L + 0.06 + 0.35 * sd;
-        if (inside) heights[k] = Math.min(heights[k], Math.max(L - 1.2, even));
+        // (down to the bed's depth there: shallow over riffles, deep in the pools between)
+        if (inside) heights[k] = Math.min(heights[k], Math.max(L - streamDepth(x, z), even));
         else if (inOther(x, z)) continue;
         else if (e <= 2) heights[k] = even;
         else heights[k] = Math.max(L + 0.76 + 0.05 * (e - 2), Math.min(heights[k], even));

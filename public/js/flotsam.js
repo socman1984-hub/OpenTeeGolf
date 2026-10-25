@@ -41,7 +41,15 @@ function foamTexture() {
 }
 
 export class Flotsam {
-  constructor(chains, { foam = 400, leaves = 60 } = {}) {
+  // rocks: boulders standing out of the water ({ x, z, r }, course coordinates), which what floats
+  // down slides round rather than through
+  constructor(chains, { foam = 400, leaves = 60 } = {}, rocks = []) {
+    this.rocks = new Map();
+    for (const rk of rocks) {
+      const key = `${Math.floor(rk.x / 4)},${Math.floor(rk.z / 4)}`;
+      if (!this.rocks.has(key)) this.rocks.set(key, []);
+      this.rocks.get(key).push(rk);
+    }
     this.chains = chains.filter((c) => c.level && c.speed && c.pts.length > 3);
     // (which way along each stream is downstream, in samples)
     for (const c of this.chains) c.dirI = c.down[c.down.length - 1] > c.down[0] ? 1 : -1;
@@ -101,7 +109,16 @@ export class Flotsam {
       const i = Math.max(0, Math.min(c.pts.length - 2, Math.floor(it.f))), u = it.f - i;
       const [ax, az] = c.pts[i], [bx, bz] = c.pts[i + 1], [nx, nz] = c.nrm[i];
       const hw = Math.max(1.9, this.at(c, it.f, c.hw));
-      const x = ax + (bx - ax) * u + nx * hw * it.t, z = az + (bz - az) * u + nz * hw * it.t;
+      let x = ax + (bx - ax) * u + nx * hw * it.t, z = az + (bz - az) * u + nz * hw * it.t;
+      // (round any rock in the way: pushed out across the stream to its edge, to whichever side
+      // it's already on, and held back a little as it squeezes past)
+      const hit = this.rockAt(x, z);
+      if (hit) {
+        const side = Math.sign((x - hit.x) * nx + (z - hit.z) * nz) || (it.t >= 0 ? 1 : -1);
+        it.t = Math.max(-0.95, Math.min(0.95, it.t + side * (hit.r + 0.06 - hit.d) / hw));
+        it.f -= (c.dirI * v * dt) / 2 * 0.6;
+        x = ax + (bx - ax) * u + nx * hw * it.t; z = az + (bz - az) * u + nz * hw * it.t;
+      }
       if (Math.hypot(x - cx, z - cz) > REACH + 10) { it.alive = false; continue; }
       const y = this.at(c, it.f, c.level) + 0.03 + Math.sin(now * 2 + it.bob) * 0.008;
       // (foam drawn out along the current, faster water longer streaks; fades in as it appears)
@@ -122,6 +139,18 @@ export class Flotsam {
     this.foam.instanceMatrix.needsUpdate = true;
     this.leaves.instanceMatrix.needsUpdate = true;
     if (this.leaves.instanceColor) this.leaves.instanceColor.needsUpdate = true;
+  }
+
+  // The rock (with how far from its middle) a point is inside, if any
+  rockAt(x, z) {
+    const bi = Math.floor(x / 4), bj = Math.floor(z / 4);
+    for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) {
+      for (const rk of this.rocks.get(`${bi + di},${bj + dj}`) || []) {
+        const d = Math.hypot(x - rk.x, z - rk.z);
+        if (d < rk.r + 0.05) return { ...rk, d };
+      }
+    }
+    return null;
   }
 
   dispose() {

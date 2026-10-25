@@ -19,6 +19,24 @@ export const MIN_HW = 1.9;
 export const flowSpeed = (slope) => Math.min(4.5, 0.16 + Math.max(0, slope) * 72);
 const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
 
+// Pools and riffles: a creek's bed isn't one depth all along. It shallows over riffles, where the
+// water runs quick and broken over the stones, and deepens into slow pools between them, a few
+// tens of metres apart. riffle(x, z): 1 over a riffle .. 0 in a pool (smooth value noise, so it
+// comes and goes along the stream); streamDepth(x, z): how far below the water the bed goes there
+// (course.js carves the channel to it); the current runs faster over the riffles (streamFlow).
+const hash = (i, j) => { const s = Math.sin(i * 127.1 + j * 311.7) * 43758.5453; return s - Math.floor(s); };
+function wobble(x, z) {
+  const i = Math.floor(x), j = Math.floor(z), u = x - i, v = z - j, su = u * u * (3 - 2 * u), sv = v * v * (3 - 2 * v);
+  const a = hash(i, j), b = hash(i + 1, j), c = hash(i, j + 1), d = hash(i + 1, j + 1);
+  return a + (b - a) * su + (c - a) * sv + (a - b - c + d) * su * sv;
+}
+export function riffle(x, z) {
+  const n = wobble(x * 0.045 + 13.7, z * 0.045 - 5.1);
+  const t = Math.min(1, Math.max(0, (0.48 - n) / 0.22));
+  return t * t * (3 - 2 * t);
+}
+export const streamDepth = (x, z) => 1.3 - 0.95 * riffle(x, z);
+
 // A ribbon's centre line and half widths, or null if the outline isn't one (any width will do
 // for one fitted to the photo; a mapped one is the same width all along)
 function asRibbon(pts, banks = false) {
@@ -171,7 +189,8 @@ export function streamFlow(pieces) {
     for (let i = 0; i < n; i++) {
       const a = Math.max(0, i - K), b = Math.min(n - 1, i + K);
       const slope = b > a ? ((c.level[a] - c.level[b]) * dir) / (c.s[b] - c.s[a]) : 0;
-      raw.push(flowSpeed(slope));
+      // (and quicker over the riffles, where the same water squeezes through less depth)
+      raw.push(flowSpeed(slope) + 1.3 * riffle(...c.pts[i]));
       const fa = Math.max(0, i - 1), fb = Math.min(n - 1, i + 1);
       falls.push(fb > fa ? Math.abs(c.level[fa] - c.level[fb]) / (c.s[fb] - c.s[fa]) : 0);
     }

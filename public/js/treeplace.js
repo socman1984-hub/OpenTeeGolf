@@ -528,7 +528,7 @@ export function addTreeAreas(trees, single, areas, { heightAt = () => 0, allowed
       if (near(x, z, gap) || !allowed(x, z)) continue;
       const canopy = heightAt(x, z) || 0;
       const h = ranged ? lo + (hi - lo) * hash(x, z, 6.2) : canopy >= 4 ? canopy : 10 + hash(x, z, 6.2) * 8;
-      plant(x, z, h, { kind: pickSpecies(a.kind, x, z), user: true });
+      plant(x, z, h, { kind: pickSpecies(a.kind, x, z), user: true, area: true });
     }
   }
   return added;
