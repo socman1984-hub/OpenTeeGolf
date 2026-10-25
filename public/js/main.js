@@ -1247,7 +1247,10 @@ function tick(dt) {
     a.carryShown = true;
     showShotData(S.lastShot.shot, { ...a.res, total: null });
   }
-  if (n >= pts.length) finishShot(a.res);
+  if (n >= pts.length) {
+    if (a.res.result === 'water') scene.splash(p.x, p.z);
+    finishShot(a.res);
+  }
 }
 
 function skipAnimation() {

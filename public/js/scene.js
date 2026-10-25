@@ -30,6 +30,7 @@ import { removeShadows } from './deshadow.js';
 import { cloudAlpha, cloudAlphaNode, shadowDir, shadowDirCPU } from './clouds.js';
 import { Flotsam } from './flotsam.js';
 import { CreekSound } from './creek-sound.js';
+import { pondDepthMap, depthUv, ripples, rippleSlope, addRipple, PondLife } from './pond.js';
 import { OceanWaves } from './ocean.js';
 
 // The course's mowing patterns (pattern numbers from mowing.js), read by the terrain shader
@@ -1719,7 +1720,7 @@ export class CourseScene {
       if (old) this.reflection.target.position.copy(old.target.position);
       this.scene.add(this.reflection.target);
     }
-    this.waterMat = waterMaterial(this.scene.environment, this.reflection, this.pondWaves);
+    this.waterMat = waterMaterial(this.scene.environment, this.reflection, this.pondWaves, this.pondDepth);
     for (const m of this.waterMeshes || []) if (!m.userData.flowing) m.material = this.waterMat;
     // Let go of the old ones after the next frame has stopped using them
     if (old || oldMat) setTimeout(() => { oldMat?.dispose(); old?.dispose?.(); }, 500);
@@ -1735,6 +1736,16 @@ export class CourseScene {
       this.setSeaState();
     }
     this.waterMeshes = [];
+    // How deep each pond is, for its clear water; and the lily pads and koi in them (pond.js)
+    const ponds = course.waterBodies.filter((wb) => !wb.sea && !wb.levelAt);
+    this.pondDepth?.tex.dispose();
+    this.pondDepth = pondDepthMap(ponds, meshGroundAt(course));
+    this.pondLife?.dispose(); if (this.pondLife) this.courseGroup.remove(this.pondLife.group); this.pondLife = null;
+    if (this.pondDepth) {
+      const q = this.quality?.name;
+      this.pondLife = new PondLife(ponds, this.pondDepth, q === 'performance' ? { koi: 30, pads: 1200 } : q === 'high' ? { koi: 100, pads: 4000 } : { koi: 60, pads: 2500 });
+      this.courseGroup.add(this.pondLife.group);
+    }
     this.makeWaterMaterial();
     this.flowMat?.dispose(); this.streamMat?.dispose();
     this.flowMat = course.waterBodies.some((wb) => wb.levelAt && !wb.ribbon) ? flowingWaterMaterial(this.scene.environment) : null;
@@ -1797,6 +1808,9 @@ export class CourseScene {
       m.userData.flowing = !!wb.levelAt;
       m.position.y = wb.level;
       m.receiveShadow = true;
+      // (ponds see through to their beds, from a copy of the picture: kept out of the mirror, as
+      // the streams are)
+      if (!wb.levelAt) m.layers.set(1);
       this.waterMeshes.push(m);
       this.courseGroup.add(m);
     }
@@ -3301,6 +3315,12 @@ export class CourseScene {
     this.flag.position.copy(T(pin.x, this.course.heightAt(pin.x, pin.z) ?? pin.y, pin.z));
   }
 
+  // A ball landing in a pond: rings spreading from where it went in (course x, z)
+  splash(x, z) {
+    addRipple(x, z, 1);
+    setTimeout(() => addRipple(x, z, 0.5), 350);
+  }
+
   setBall(p) {
     // p is the ball's contact point; its centre is set each frame from the drawn size
     // (and how far it sits down in the grass, see settleBall)
@@ -3650,6 +3670,8 @@ export class CourseScene {
     this.updatePuttGrid(dt);
     this.updateClouds(raw);
     this.flotsam?.update(this.camera, raw);
+    ripples.now.value = this.clock.elapsedTime;
+    this.pondLife?.update(this.camera, raw);
     this.creekSound?.update(this.camera, raw);
     this.oceanWaves?.update(this.clock.elapsedTime, dt);
     this.pondWaves?.update(this.clock.elapsedTime, dt);
@@ -3722,11 +3744,16 @@ function pathMaterial(paved) {
 // reflection: a reflector() node, or null for sky reflections only (performance setting).
 // waves: an OceanWaves of wind ripples (ocean.js, WebGPU only) to use instead of the ripple
 // texture: ripples that grow with the wind, coming and going in gusts that drift across the pond.
-function waterMaterial(env, reflection, waves = null) {
-  const m = new THREE.MeshPhysicalNodeMaterial({ roughness: 0.06, metalness: 0, ior: 1.33 });
+// Ponds and lakes. depth: the ponds' depth map (pond.js), for water you see into: the bed below,
+// fading into the water's own colour with depth (more so in murky ponds and after rain), with
+// sunlight dancing on it, and the mirror image of the banks, trees and sky on top, strongest at a
+// low angle. Rings spread where a ball splashes in or a fish rises.
+function waterMaterial(env, reflection, waves = null, depth = null) {
+  const m = new THREE.MeshPhysicalNodeMaterial({ roughness: 0.06, metalness: 0, ior: 1.33, transparent: !!depth });
   if (env) { m.envMap = env; m.envMapIntensity = reflection ? 0.12 : 0.85; }
   const ripples = loadTexture('water_normal.jpg', false);
   const w = uv();
+  const ring = rippleSlope(positionWorld.xz);
   let n;
   if (waves) {
     const L = waves.tiles[0], q = positionWorld.xz;
@@ -3736,25 +3763,46 @@ function waterMaterial(env, reflection, waves = null) {
     const s2 = texture(waves.slope[0], vec2(q.x.mul(0.8).sub(q.y.mul(0.6)), q.x.mul(0.6).add(q.y.mul(0.8))).div(L * 2.3).add(0.37)).xy.div(2.3);
     const s2w = vec2(s2.x.mul(0.8).add(s2.y.mul(0.6)), s2.y.mul(0.8).sub(s2.x.mul(0.6)));
     const gust = smoothstep(-0.6, 0.8, texture(ripples, w.mul(0.05).add(time.mul(vec2(0.004, 0.0025)))).x.mul(2).sub(1)).mul(0.75).add(0.25);
-    const s = s1.add(s2w).mul(gust);
+    const s = s1.add(s2w).mul(gust).add(ring);
     m.normalNode = normalize(transformNormalToView(normalize(vec3(s.x.negate(), 1, s.y.negate()))));
     n = vec3(s.x, s.y.negate(), 1); // (for the mirror's wobble, as the texture's normals)
   } else {
     const a = texture(ripples, w.mul(1.0).add(time.mul(vec2(0.012, 0.007)))).xyz.mul(2).sub(1);
     const b = texture(ripples, w.mul(0.37).add(time.mul(vec2(-0.009, 0.011)))).xyz.mul(2).sub(1);
     const c = texture(ripples, w.mul(3.1).add(time.mul(vec2(0.02, -0.015)))).xyz.mul(2).sub(1);
-    n = normalize(vec3(a.xy.add(b.xy).add(c.xy.mul(0.5)), a.z.mul(b.z)));
-    m.normalNode = normalMap(n.mul(0.5).add(0.5), vec2(0.22));
+    n = normalize(vec3(a.xy.add(b.xy).add(c.xy.mul(0.5)).mul(0.22).add(vec2(ring.x.negate(), ring.y)), a.z.mul(b.z)));
+    m.normalNode = normalMap(n.mul(0.5).add(0.5));
   }
-  // Deep water colour: greener close up, darker further away
-  const dist = distance(cameraPosition, positionWorld);
-  const deep = mix(vec3(0.035, 0.08, 0.06), vec3(0.018, 0.045, 0.038), smoothstep(10, 120, dist));
-  if (!reflection) { m.colorNode = deep; return m; }
-  reflection.uvNode = reflection.uvNode.add(n.xy.mul(0.018));
   const facing = clamp(dot(normalView, positionViewDirection), 0, 1);
-  const fresnel = float(0.04).add(float(0.96).mul(pow(facing.oneMinus(), 4)));
-  m.colorNode = deep.mul(fresnel.oneMinus());
-  m.emissiveNode = reflection.rgb.mul(fresnel).mul(0.92);
+  const fresnel = float(0.02).add(float(0.98).mul(pow(facing.oneMinus(), 5)));
+  const mirror = reflection ? (reflection.uvNode = reflection.uvNode.add(n.xy.mul(0.018)), reflection.rgb.mul(0.92)) : null;
+  if (!depth) {
+    // (no depth map: deep water colour, greener close up, darker further away)
+    const dist = distance(cameraPosition, positionWorld);
+    const deepCol = mix(vec3(0.035, 0.08, 0.06), vec3(0.018, 0.045, 0.038), smoothstep(10, 120, dist));
+    if (!mirror) { m.colorNode = deepCol; return m; }
+    m.colorNode = deepCol.mul(fresnel.oneMinus());
+    m.emissiveNode = mirror.mul(fresnel);
+    return m;
+  }
+  // The bed through the water, bent a little by the ripples (more where it's deeper). How far the
+  // light travels in the water: the depth there, longer when looking in at a slant
+  const dm = texture(depth.tex, depthUv(depth, positionWorld)), deep = dm.r, murk = dm.g.add(creek.murk.sub(0.22).max(0)).min(1);
+  const toEye = normalize(cameraPosition.sub(positionWorld));
+  const path = deep.div(toEye.y.max(0.25)).clamp(0, 8);
+  const bed = viewportSharedTexture(screenUV.add(n.xy.mul(0.014).mul(deep.min(1)))).rgb;
+  // (per metre: clear pond water takes out red first, leaving it green-blue; silt and algae
+  // take out everything and glow a dull green)
+  const absorb = mix(vec3(0.3, 0.06, 0.09), vec3(0.8, 0.48, 0.7), murk);
+  const through = exp(absorb.mul(path).negate());
+  const glow = mix(vec3(0.012, 0.04, 0.038), vec3(0.04, 0.055, 0.025), murk).mul(creek.sun.mul(0.6).add(0.4));
+  const bedAt = positionWorld.sub(toEye.mul(path)).xz.mul(0.7);
+  const dancing = caustic(bedAt, time.mul(0.45)).add(caustic(bedAt.mul(1.6).add(15), time.mul(0.33)).mul(0.45))
+    .mul(smoothstep(0.05, 0.4, deep)).mul(smoothstep(60, 15, distance(cameraPosition, positionWorld)))
+    .mul(murk.oneMinus()).mul(creek.sun).mul(0.4);
+  const water = bed.mul(through).mul(dancing.add(1)).add(glow.mul(through.oneMinus()));
+  m.colorNode = vec3(0);
+  m.emissiveNode = mirror ? water.mul(fresnel.oneMinus()).add(mirror.mul(fresnel)) : water.mul(fresnel.oneMinus());
   return m;
 }
 
@@ -4103,6 +4151,16 @@ function streamGeometry(wb, groundAt) {
 //   - the sun's light dancing on the bed (caustics) where it's shallow and the water clear
 //   - the sky and the sun reflected off the top, more at a glancing angle (the material's own
 //     lighting), and white water in streaks and riffles where it runs fast, and below falls
+// Sunlight focused by the ripples into a dancing net of bright lines on the bed below (q: where on
+// the bed, in metres; t: time, faster for livelier water)
+const caustic = (q, t) => {
+  const w = q.add(vec2(sin(q.y.mul(2.1).add(t.mul(0.9))), cos(q.x.mul(1.9).sub(t.mul(0.7)))).mul(0.22));
+  const a = sin(w.x.mul(9).add(sin(w.y.mul(7).add(t)).mul(1.7)).add(t.mul(2.1)));
+  const b = sin(w.y.mul(10).add(sin(w.x.mul(6).sub(t)).mul(1.3)).sub(t.mul(1.8)));
+  const c = sin(w.x.add(w.y).mul(7).add(t.mul(1.1)));
+  return pow(float(1).sub(abs(a.add(b.mul(0.65)).add(c.mul(0.25)))).max(0), 8);
+};
+
 function streamMaterial(env) {
   const m = new THREE.MeshPhysicalNodeMaterial({ roughness: 0.07, metalness: 0, ior: 1.33, transparent: true });
   // (the sky's reflection, weaker than open sky: a stream lies between banks and trees)
@@ -4159,13 +4217,6 @@ function streamMaterial(env) {
   // through the water at the depth it is)
   const bedAt = positionWorld.sub(toEye.mul(path)).xz.mul(0.85);
   const ct = time.mul(st.x.mul(0.6).add(0.7));
-  const caustic = (q, t) => {
-    const w = q.add(vec2(sin(q.y.mul(2.1).add(t.mul(0.9))), cos(q.x.mul(1.9).sub(t.mul(0.7)))).mul(0.22));
-    const a = sin(w.x.mul(9).add(sin(w.y.mul(7).add(t)).mul(1.7)).add(t.mul(2.1)));
-    const b = sin(w.y.mul(10).add(sin(w.x.mul(6).sub(t)).mul(1.3)).sub(t.mul(1.8)));
-    const c = sin(w.x.add(w.y).mul(7).add(t.mul(1.1)));
-    return pow(float(1).sub(abs(a.add(b.mul(0.65)).add(c.mul(0.25)))).max(0), 8);
-  };
   const dancing = caustic(bedAt, ct).add(caustic(bedAt.mul(1.6).add(15), ct.mul(0.73)).mul(0.45))
     .mul(smoothstep(0.02, 0.2, path)).mul(smoothstep(60, 15, distance(cameraPosition, positionWorld)))
     .mul(creek.murk.oneMinus()).mul(creek.sun).mul(0.35);

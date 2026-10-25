@@ -305,8 +305,11 @@ Built courses look like the real place:
   the horizon.
 * **Close-up ground:** photo-scanned grass, sand and asphalt textures (CC0, from ambientCG) with
   normal maps, blended over the aerial photo near the camera.
-* **Water:** solid, with drifting ripples and a live mirror image of the trees, sky and clouds
-  that gets stronger at low viewing angles. The Performance setting turns the mirror off.
+* **Water:** clear ponds you see into, over a bed of stones and gravel, darker where deeper
+  (murkier in reedy ponds and after rain), with drifting ripples and a live mirror image of the
+  trees, sky and clouds that gets stronger at low viewing angles (the Performance setting turns
+  the mirror off). Lily pads and water lilies grow in patches near the shore, koi glide about
+  under the surface, and rings spread where a ball splashes in or a fish rises.
   Streams and rivers run downhill: their surface follows the slope of the banks, the ripples are
   carried downstream, and the steeper the stretch, the faster it flows (with streaks of foam on
   fast water). Creeks are clear: you see their bed of stones, pebbles and gravel through the
