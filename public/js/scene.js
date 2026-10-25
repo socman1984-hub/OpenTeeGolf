@@ -18,7 +18,7 @@ import { MapControls } from 'three/addons/controls/MapControls.js';
 import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 import { noise, pointInPoly } from './course.js';
 import { Forest, treesFromCanopy, assignSpecies, addMappedTrees, addTreeAreas, fade, impostorLight } from './trees.js';
-import { treesFromPhoto, removeTrees, treeRegion, holeDistance, nearHoles } from './treeplace.js';
+import { treesFromPhoto, removeTrees, treeRegion, holeDistance, nearHoles, replaceOffSpecies } from './treeplace.js';
 import { tuftGeometry, reedGeometry, grassMaterial, grassMesh, grassWind, addBend, NATIVE_KINDS, nativeClumpGeometry, SHARED_INSTANCES } from './grass.js';
 import { MOW_WIDTH, mowIndex } from './mowing.js';
 import { layoutParking, bayCorners, carColour } from './parking.js';
@@ -1166,6 +1166,28 @@ export class CourseScene {
     }
     majority(codes, w, h, 3, 3, 30);
     removeSmall(codes, w, h, 3, 300);
+    // (kept for the course editor, which shows it: runs of tall grass, row by row)
+    const runs = [];
+    for (let k = 0; k < N; k++) if (codes[k] === 3) { const s0 = k; while (k < N && codes[k] === 3) k++; runs.push(s0, k - s0); }
+    this.heatherMap = { minX, maxZ, res, w, h, runs };
+    // Then the tall grass painted in the editor: brush strokes add it (on rough or under trees),
+    // eraser strokes take it away, in the order painted. Each stroke covers everything within its
+    // radius of its line.
+    for (const a of course.tallGrass || []) {
+      if (!a.r) continue;
+      const set = (k) => { if (a.clear ? codes[k] === 3 : codes[k] === 0 || codes[k] === 2) codes[k] = a.clear ? 0 : 3; };
+      for (let s = 0; s < a.pts.length; s++) {
+        const [ax, az] = a.pts[s], [bx, bz] = a.pts[Math.min(s + 1, a.pts.length - 1)];
+        if (s && s === a.pts.length - 1) break;
+        const [i0, j0] = at(Math.min(ax, bx) - a.r, Math.max(az, bz) + a.r), [i1, j1] = at(Math.max(ax, bx) + a.r, Math.min(az, bz) - a.r);
+        const dx = bx - ax, dz = bz - az, l2 = dx * dx + dz * dz;
+        for (let j = Math.max(0, j0); j <= Math.min(h - 1, j1); j++) for (let i = Math.max(0, i0); i <= Math.min(w - 1, i1); i++) {
+          const x = minX + (i + 0.5) * res, z = maxZ - (j + 0.5) * res;
+          const t = l2 ? Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / l2)) : 0;
+          if ((x - ax - dx * t) ** 2 + (z - az - dz * t) ** 2 <= a.r * a.r) set(j * w + i);
+        }
+      }
+    }
     sat.overlay = { minX, maxZ, res, w, h, codes };
     course.setOverlay(sat.overlay);
     sat.detectedHoles = detected;
@@ -2180,6 +2202,8 @@ export class CourseScene {
   }
 
   async plantForest(course, trees, progress = async () => {}) {
+    // (species turned off in the course editor become others)
+    replaceOffSpecies(trees, course.treesOff, this.treeRegion);
     // Very wooded courses: keep the trees nearest the holes
     const max = Math.round(40000 * (this.quality?.trees ?? 1));
     if (trees.length > max) {

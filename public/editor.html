@@ -82,11 +82,22 @@
           <label>Shortest (m) <input id="t-hmin" type="number" min="2" max="40" step="1"></label>
           <label>Tallest (m) <input id="t-hmax" type="number" min="2" max="40" step="1"></label>
         </div>
-        <details class="species-list">
-          <summary>Tree species</summary>
+        <details class="species-list" open>
+          <summary>Tree species on this course</summary>
+          <label class="check"><input id="t-colour" type="checkbox"> Colour every tree by its species</label>
+          <div class="muted small">Click a species to pick its trees out on the map. Untick one to stop using it: its trees become another species that grows here (yours too).</div>
           <ul id="species-list"></ul>
         </details>
         <div class="muted small">Add trees: click the map once per tree. Tree area: click its outline, double-click or Enter to finish; it fills with trees (not on fairways, greens, tees, bunkers or water). Your trees are the bright ones: drag to move, Delete to remove.</div>
+      </details>
+
+      <details open>
+        <summary>Tall grass</summary>
+        <label class="check"><input id="n-show" type="checkbox" checked> Show tall grass on the map</label>
+        <div id="n-info" class="muted small"></div>
+        <div class="btn-row tall-grass"><button id="n-add" title="Paint tall grass (heather, native grass) onto the map"><span class="sw" style="background:rgba(245,150,30,0.85);border:1px solid #ffc061"></span>Brush</button><button id="n-clear" title="Rub tall grass out (it plays as ordinary rough)"><span class="sw" style="background:#e9e4dc;border:1px dashed #ff5a48"></span>Eraser</button></div>
+        <label class="brush-size">Size <input id="n-size" type="range" min="1" max="60" step="1" value="8"> <span id="n-size-v">8 m</span></label>
+        <div class="muted small">Amber is the tall grass (heather, native grass): what the game sees in the aerial photo plus your changes. Pick the brush or the eraser and drag over the map; right-drag moves the map, Ctrl+Z undoes a stroke. Tall grass never grows on fairways, greens, tees, bunkers or water.</div>
       </details>
 
       <details>

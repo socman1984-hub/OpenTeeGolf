@@ -455,6 +455,26 @@ const httpServer = http.createServer(async (req, res) => {
       const oob = (cd.pOOB?.coords || []).map((c) => [c.x, c.z]);
       return json(res, await ensurePaths(rf.replace(/\.real\.json$/i, '.sat'), geo, real.grid, oob, reporter(m[1], 'paths')));
     }
+    if ((m = p.match(/^\/api\/courses\/([\w-]+)\/heather$/))) {
+      // The tall grass the game found in the aerial photo, saved by the game so the editor can show
+      // it ({ minX, maxZ, res, w, h, runs: [start, length, ...] over the grid, row by row })
+      const f = courseFile(m[1]);
+      const rf = f && realFile(f);
+      if (!rf || !fs.existsSync(rf)) return json(res, { runs: null });
+      const satDir = rf.replace(/\.real\.json$/i, '.sat'), file = path.join(satDir, 'heather.json');
+      if (req.method === 'PUT') {
+        const b = await readBody(req, 2e7).catch(() => null);
+        const fin = (v) => Number.isFinite(v) && Math.abs(v) < 1e6;
+        const ok = b && ['minX', 'maxZ', 'res'].every((k) => fin(b[k])) && b.res > 0 && Number.isInteger(b.w) && Number.isInteger(b.h) && b.w > 0 && b.h > 0 && b.w * b.h < 6e7
+          && Array.isArray(b.runs) && b.runs.length % 2 === 0 && b.runs.length < 4e6 && b.runs.every((v) => Number.isInteger(v) && v >= 0 && v <= b.w * b.h);
+        if (!ok) return json(res, { error: 'Bad tall grass map' }, 400);
+        fs.mkdirSync(satDir, { recursive: true });
+        fs.writeFileSync(file, JSON.stringify({ minX: b.minX, maxZ: b.maxZ, res: b.res, w: b.w, h: b.h, runs: b.runs }));
+        return json(res, { ok: true });
+      }
+      if (!fs.existsSync(file)) return json(res, { runs: null });
+      return json(res, JSON.parse(fs.readFileSync(file, 'utf8')));
+    }
     if ((m = p.match(/^\/api\/courses\/([\w-]+)\/phototrees$/))) {
       // Trees the game saw in the aerial photo, saved by the game so the editor shows the same ones
       // ({ trees: [[x, z, height, radius], ...] })
@@ -483,6 +503,22 @@ const httpServer = http.createServer(async (req, res) => {
       fs.mkdirSync(dir, { recursive: true });
       fs.writeFileSync(path.join(dir, m[2]), body);
       return json(res, { ok: true, path: path.join(dir, m[2]) });
+    }
+    if ((m = p.match(/^\/api\/courses\/([\w-]+)\/bunkers$/)) && req.method === 'PUT') {
+      // Bunkers lined up with the aerial photo (public/js/bunkerfit.js): the course's bunker list
+      // ({ bunker: [{ pts, hole, fit? }] })
+      const f = courseFile(m[1]);
+      const rf = f && realFile(f);
+      if (!rf || !fs.existsSync(rf)) return json(res, { error: 'No map data' }, 404);
+      const b = await readBody(req, 20e6).catch(() => null);
+      const fin = Number.isFinite, r2 = (v) => Math.round(v * 100) / 100;
+      const list = Array.isArray(b?.bunker) && b.bunker.length < 20000 && b.bunker.every((w) => Array.isArray(w?.pts) && w.pts.length >= 3 && w.pts.every((q) => fin(q?.[0]) && fin(q?.[1])))
+        ? b.bunker.map((w) => ({ hole: !!w.hole, pts: w.pts.map((q) => [r2(q[0]), r2(q[1])]), ...(w.fit ? { fit: true } : {}) })) : null;
+      if (!list) return json(res, { error: 'Bad bunker list' }, 400);
+      const real = JSON.parse(fs.readFileSync(rf, 'utf8'));
+      real.features = { ...(real.features || {}), bunker: list };
+      fs.writeFileSync(rf, JSON.stringify(real));
+      return json(res, { ok: true });
     }
     if ((m = p.match(/^\/api\/courses\/([\w-]+)\/riverbanks$/)) && req.method === 'PUT') {
       // Rivers fitted to the aerial photo by the game (public/js/riverbanks.js): the course's water
@@ -799,25 +835,26 @@ const httpServer = http.createServer(async (req, res) => {
       const log = (msg, extra) => { if (msg) console.log(`[update] ${msg}`); broadcast('build', { jobId, msg, ...extra }); };
       // (trees added in the editor are the player's own: they carry over)
       let keep = {};
-      try { const old = JSON.parse(fs.readFileSync(realFile(f), 'utf8')); keep = { userTrees: old.userTrees, treeAreas: old.treeAreas, removedTrees: old.removedTrees, buildingTypes: old.buildingTypes }; } catch { /* none */ }
+      try { const old = JSON.parse(fs.readFileSync(realFile(f), 'utf8')); keep = { userTrees: old.userTrees, treeAreas: old.treeAreas, tallGrass: old.tallGrass, removedTrees: old.removedTrees, buildingTypes: old.buildingTypes }; } catch { /* none */ }
       withFreshOsm(async () => {
         const r = await buildCourse({ osmType: b.osmType, osmId: b.osmId, group: b.group ?? null, name: cd.CourseName, location: cd.Location || '', id }, log);
-        if (keep.userTrees?.length || keep.treeAreas?.length || keep.removedTrees?.length || Object.keys(keep.buildingTypes || {}).length) {
+        if (keep.userTrees?.length || keep.treeAreas?.length || keep.tallGrass?.length || keep.removedTrees?.length || Object.keys(keep.buildingTypes || {}).length) {
           const rfNew = realFile(r.dataFile), nr = JSON.parse(fs.readFileSync(rfNew, 'utf8'));
-          Object.assign(nr, { userTrees: keep.userTrees || [], treeAreas: keep.treeAreas || [], removedTrees: keep.removedTrees || [], buildingTypes: keep.buildingTypes || {} });
+          Object.assign(nr, { userTrees: keep.userTrees || [], treeAreas: keep.treeAreas || [], tallGrass: keep.tallGrass || [], removedTrees: keep.removedTrees || [], buildingTypes: keep.buildingTypes || {} });
           fs.writeFileSync(rfNew, JSON.stringify(nr));
           log('Kept the trees added in the editor.');
         }
         // (and the course's look chosen in the editor: mowing patterns, grass heights)
-        if (cd.Mowing || cd.Grass || cd.Surface) {
+        if (cd.Mowing || cd.Grass || cd.Surface || cd.TreesOff) {
           const nd0 = readCourseData(r.dataFile);
+          if (cd.TreesOff) nd0.TreesOff = cd.TreesOff;
           if (cd.Mowing) nd0.Mowing = cd.Mowing;
           if (cd.Grass) nd0.Grass = cd.Grass;
           if (cd.Surface) nd0.Surface = cd.Surface;
           fs.writeFileSync(r.dataFile, JSON.stringify(nd0, null, 1));
         }
         const sat = satDir(r.dataFile);
-        for (const name of ['paths.json', 'buildings.json', 'parking.json', 'roads.json', 'phototrees.json']) fs.rmSync(path.join(sat, name), { force: true });
+        for (const name of ['paths.json', 'buildings.json', 'parking.json', 'roads.json', 'phototrees.json', 'heather.json']) fs.rmSync(path.join(sat, name), { force: true });
         summaries.delete(r.dataFile);
         const real = JSON.parse(fs.readFileSync(realFile(r.dataFile), 'utf8'));
         const nd = readCourseData(r.dataFile), geo = geoFor(nd, real);
@@ -867,6 +904,11 @@ const httpServer = http.createServer(async (req, res) => {
               ...(kindOk(a.kind) ? { kind: a.kind } : {}),
               ...(ht(a.hMin) !== undefined && ht(a.hMax) !== undefined ? { hMin: ht(a.hMin), hMax: ht(a.hMax) } : {}),
             }));
+        }
+        // (tall grass painted in the editor: brush and eraser strokes { pts, r, clear })
+        if (Array.isArray(b.tallGrass)) {
+          real.tallGrass = b.tallGrass.filter((a) => Array.isArray(a?.pts) && a.pts.length >= 1 && a.pts.length <= 20000 && a.pts.every((p) => fin(p?.[0]) && fin(p?.[1])) && fin(a.r) && a.r > 0 && a.r <= 50).slice(0, 5000)
+            .map((a) => ({ pts: a.pts.map((p) => [r2(p[0]), r2(p[1])]), r: r2(a.r), ...(a.clear ? { clear: true } : {}) }));
         }
         // (building types picked in the editor: { "x,z": type })
         if (b.buildingTypes && typeof b.buildingTypes === 'object') {

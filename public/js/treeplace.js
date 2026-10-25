@@ -404,6 +404,49 @@ export function pickFrom(list, n) {
   return entries[entries.length - 1][0];
 }
 
+// Species (the game's, and the course editor's when it colours trees by species): narrow crowns or dark blue-green canopy in the photo read as conifers; the rest is a
+// deterministic mix of broadleaf trees. photo(x, z) -> [r, g, b] or null.
+// region: the course's region (treeplace.js treeRegion): the trees that grow there. Species
+// come in patches, as they'd be planted or grow wild (a 40 m patch leans to one species), with
+// single trees of others mixed in.
+export function assignSpecies(trees, photo, region = 'temperate') {
+  const R = TREE_REGIONS[region] || TREE_REGIONS.temperate;
+  for (const t of trees) {
+    if (t.kind) continue;
+    const c = photo?.(t.x, t.z);
+    const lum = c ? (c[0] + c[1] + c[2]) / 3 : 100;
+    const bluish = c ? c[2] > c[0] * 0.95 && lum < 80 : false;
+    const n = hash(t.x, t.z), patch = hash(Math.floor(t.x / 40), Math.floor(t.z / 40), 5.5);
+    // (mostly the patch's species, a third of trees picked on their own)
+    const pick = hash(t.x, t.z, 2.9) < 0.66 ? patch : n;
+    // Conifer-looking crowns: the region's conifers (willows only where the editor plants them)
+    if (t.r / t.h < 0.16 || bluish || n < 0.07) t.kind = pickFrom(R.conifer, pick);
+    else t.kind = pickFrom(R.other, pick);
+  }
+  return trees;
+}
+
+// Species the player has turned off for a course (the course editor): each tree of one gets another,
+// the same every time - one of the region's of the same kind (conifer for conifer...), else any of
+// the region's, else any of the same kind, else any at all that's still on
+const GROUP = Object.fromEntries(TREE_SPECIES.map((s) => [s.id, s.group]));
+export function swapSpecies(kind, off, region, x, z) {
+  if (!off?.size || !off.has(kind)) return kind;
+  const R = TREE_REGIONS[region] || TREE_REGIONS.temperate, g = GROUP[kind], n = hash(x, z, 8.3);
+  const regional = {};
+  for (const list of [R.conifer, R.other]) for (const [id, w] of Object.entries(list)) regional[id] = (regional[id] || 0) + w;
+  const all = Object.fromEntries(TREE_SPECIES.map((s) => [s.id, 1]));
+  const usable = (list, sameKind) => Object.fromEntries(Object.entries(list).filter(([id, w]) => w > 0 && !off.has(id) && (!sameKind || GROUP[id] === g)));
+  for (const list of [usable(regional, true), usable(regional, false), usable(all, true), usable(all, false)]) if (Object.keys(list).length) return pickFrom(list, n);
+  return kind;
+}
+export function replaceOffSpecies(trees, off, region) {
+  if (!off?.length) return trees;
+  const set = new Set(off);
+  for (const t of trees) if (t.kind) t.kind = swapSpecies(t.kind, set, region, t.x, t.z);
+  return trees;
+}
+
 // Choices for a tree area or a tree: a mix, or one species
 export const TREE_MIXES = [
   { id: 'auto', label: 'Automatic (from the photo)' },

@@ -647,6 +647,8 @@ export function buildCourse(courseData, real = null) {
     mowing: courseMowing(courseData),
     lat: courseData.CourseLat, lon: courseData.CourseLong,
     grass: courseGrass(courseData),
+    // Tree species turned off in the course editor (their trees are replaced: treeplace.js swapSpecies)
+    treesOff: Array.isArray(courseData.TreesOff) ? courseData.TreesOff : [],
     surface: courseSurface(courseData),
     holes,
     hazards,
@@ -663,6 +665,9 @@ export function buildCourse(courseData, real = null) {
     // Trees added in the course editor: single trees ({ x, z, size }) and tree areas ({ pts, density })
     userTrees: real?.userTrees || [],
     treeAreas: real?.treeAreas || [],
+    // Tall grass painted in the course editor: brush strokes [{ pts, r, clear }] (a line of points,
+    // the brush's radius in metres; clear: the eraser)
+    tallGrass: real?.tallGrass || [],
     // Trees found automatically that were taken out in the course editor: [[x, z]]
     removedTrees: real?.removedTrees || [],
     // Mapped surface polygons ({ surface, poly, inner }) for painting the terrain

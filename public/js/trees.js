@@ -21,40 +21,18 @@ import {
 import { grassWind, SHARED_INSTANCES } from './grass.js';
 import { Tree } from 'ez-tree';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { hash, fract1, TREE_REGIONS, pickFrom } from './treeplace.js';
+import { hash, fract1 } from './treeplace.js';
 import { buildSugarMaple } from './sugarmaple.js';
 import { buildPalm } from './palm.js';
 import { buildGrown } from './grow.js';
 // Where trees stand (shared with the course editor, which has no 3D)
-export { treesFromCanopy, addMappedTrees, treesInArea, addTreeAreas } from './treeplace.js';
+export { treesFromCanopy, addMappedTrees, treesInArea, addTreeAreas, assignSpecies } from './treeplace.js';
 
 const T = (x, y, z) => new THREE.Vector3(-x, y, z);
 // Shrubs inside woods are drawn out to about this far from the camera (see buildShrubs)
 const SHRUB_NEAR = 70;
 
 // ------------------------------------------------------------------ where trees stand
-
-// Species: narrow crowns or dark blue-green canopy in the photo read as conifers; the rest is a
-// deterministic mix of broadleaf trees. photo(x, z) -> [r, g, b] or null.
-// region: the course's region (treeplace.js treeRegion): the trees that grow there. Species
-// come in patches, as they'd be planted or grow wild (a 40 m patch leans to one species), with
-// single trees of others mixed in.
-export function assignSpecies(trees, photo, region = 'temperate') {
-  const R = TREE_REGIONS[region] || TREE_REGIONS.temperate;
-  for (const t of trees) {
-    if (t.kind) continue;
-    const c = photo?.(t.x, t.z);
-    const lum = c ? (c[0] + c[1] + c[2]) / 3 : 100;
-    const bluish = c ? c[2] > c[0] * 0.95 && lum < 80 : false;
-    const n = hash(t.x, t.z), patch = hash(Math.floor(t.x / 40), Math.floor(t.z / 40), 5.5);
-    // (mostly the patch's species, a third of trees picked on their own)
-    const pick = hash(t.x, t.z, 2.9) < 0.66 ? patch : n;
-    // Conifer-looking crowns: the region's conifers (willows only where the editor plants them)
-    if (t.r / t.h < 0.16 || bluish || n < 0.07) t.kind = pickFrom(R.conifer, pick);
-    else t.kind = pickFrom(R.other, pick);
-  }
-  return trees;
-}
 
 // Trees without a canopy map: an edge tree has an empty side (no neighbour within 14 m in some
 // eighth of the circle)

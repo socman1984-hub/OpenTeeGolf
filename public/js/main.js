@@ -1,7 +1,8 @@
 // OpenTeeGolf game loop: course setup, receiving shots, rules and HUD.
 import { buildCourse, TEE_TYPES } from './course.js';
 import { smoothLine } from './roads.js';
-import { fitRiverBanks, riverPhoto, needsBanks } from './riverbanks.js';
+import { fitRiverBanks, riverPhoto, needsBanks, photoAround } from './riverbanks.js';
+import { fitBunkers, needsBunkerFit } from './bunkerfit.js';
 import { exportForUnreal } from './export-unreal.js';
 import { CourseScene } from './scene.js';
 import { simulateShot, LIE_EFFECT, stimpToRoll, SURFACE_NAMES } from './physics.js';
@@ -626,6 +627,22 @@ $('btn-start').onclick = async () => {
       } catch (err) { console.warn('River banks', err); }
       loader.finish('riverbanks');
     }
+    // Bunkers lined up with the sand in the aerial photo, the first time (kept with the course's
+    // map data, so the editor shows them too)
+    if (real && imagery && needsBunkerFit(real.features?.bunker)) {
+      loader.step('bunkers', 'Bunkers');
+      await breathe();
+      try {
+        const photo = await photoAround(imagery, real.features.bunker.filter((f) => !f.hole), 16);
+        if (photo) {
+          const fit = fitBunkers(real.features.bunker, photo);
+          real.features.bunker = fit.bunkers;
+          console.log(`Bunkers lined up with the photo: ${fit.moved} moved, ${fit.traced} traced`);
+          fetch(`/api/courses/${id}/bunkers`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ bunker: fit.bunkers }) }).catch(() => {});
+        }
+      } catch (err) { console.warn('Bunkers', err); }
+      loader.finish('bunkers');
+    }
     loader.step('course', 'Course layout');
     await breathe();
     S.course = buildCourse(S.selectedData, real);
@@ -637,6 +654,11 @@ $('btn-start').onclick = async () => {
     if (scene.photoTreeList) {
       fetch(`/api/courses/${id}/phototrees`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ trees: scene.photoTreeList }) }).catch(() => {});
       scene.photoTreeList = null;
+    }
+    // (and the tall grass seen in it, which the editor shows too)
+    if (scene.heatherMap) {
+      fetch(`/api/courses/${id}/heather`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(scene.heatherMap) }).catch(() => {});
+      scene.heatherMap = null;
     }
     await buildCollisions(buildings.concat(scene.carBoxes || []));
     $('credits').textContent = [

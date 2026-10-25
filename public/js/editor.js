@@ -2,7 +2,8 @@
 // pins) and shapes (greens, fairways, bunkers, tee boxes, water, penalty areas, OOB) can be edited.
 import { makeCourseData, TEE_ORDER, PIN_DAYS } from './coursefile.js';
 import { smoothPoly } from './course.js';
-import { treesFromCanopy, treesFromPhoto, removeTrees, addMappedTrees, addTreeAreas, TREE_SIZES, TREE_SPECIES, TREE_MIXES, AREA_HEIGHTS, holeDistance, nearHoles } from './treeplace.js';
+import { fitBunkers, needsBunkerFit } from './bunkerfit.js';
+import { treesFromCanopy, treesFromPhoto, removeTrees, addMappedTrees, addTreeAreas, TREE_SIZES, TREE_SPECIES, TREE_MIXES, AREA_HEIGHTS, holeDistance, nearHoles, assignSpecies, swapSpecies, treeRegion } from './treeplace.js';
 import { MOW_PATTERNS, MOW_WIDTH, courseMowing, mowShade, GRASS_HEIGHTS, courseGrass, SURFACE_PARTS, courseSurface } from './mowing.js';
 import { BUILDING_TYPES, classifyBuildings, footprintInfo } from './buildingtypes.js';
 
@@ -36,6 +37,17 @@ let showTrees = true;
 // Buildings around the course (OpenStreetMap), what each is (the player's choices: { "x,z": type }),
 // and whether they're shown
 let buildings = [], buildingTypes = {}, showBuildings = true, buildingKinds = null, kindsKey = '';
+// Tall grass (heather, native grass): what the game found in the aerial photo the last time it
+// loaded the course ({ img, minX, maxZ, res, w, h, area }), and the player's brush and eraser
+// strokes on top ([{ pts, r, erase }]: a line of points and the brush's radius in metres), in the
+// order painted. paint: the two together, drawn in amber; brush: the size the next stroke gets.
+let heather = null, showNative = true, grassStrokes = [], paint = null;
+// Tree species: the ones turned off for this course (their trees become others: treeplace.js
+// swapSpecies), whether every tree is drawn in its species' colour, the one picked out, the
+// course's region, and the aerial photo's colour under a point (for the species the game guesses)
+let treesOff = new Set(), colourBySpecies = false, pickedSpecies = null, region = 'temperate', speciesPhoto = null;
+let speciesCache = new WeakMap();
+const brush = { r: 4 };
 const treeOpts = { size: 'medium', density: 'medium', kind: 'auto', areaKind: 'auto', hMin: AREA_HEIGHTS.min, hMax: AREA_HEIGHTS.max };
 // Map colours for each species (planted trees are drawn in them; 'auto' ones in the usual green)
 const SPECIES_COLOR = { oak: '#5f9e3c', maple: '#c86b2d', ash: '#9fcf5a', birch: '#f2f0dc', aspen: '#e8d74a', poplar: '#3fb5a3', willow: '#a7e07a', pine: '#2f6b4a', spruce: '#3d6f9e', palm: '#d9b44a',
@@ -120,6 +132,8 @@ async function load() {
   course.mowing = courseMowing(g);
   course.grass = courseGrass(g);
   course.surface = courseSurface(g);
+  treesOff = new Set(Array.isArray(g.TreesOff) ? g.TreesOff : []);
+  region = treeRegion(+g.CourseLat, +g.CourseLong);
   for (const p of SURFACE_PARTS) $(`c-surface-${p.id}`).value = course.surface[p.id];
   $('c-rough-h').value = course.grass.rough; $('c-native-h').value = course.grass.native;
   holes = g.Holes.map((h) => {
@@ -141,10 +155,11 @@ async function load() {
   shapes = [];
   if (r?.features) {
     for (const [kind, list2] of Object.entries(r.features)) {
-      if (FEATURE_KINDS.includes(kind)) list2.forEach((f) => shapes.push({ kind, pts: f.pts.map((p) => [...p]), inner: !!f.hole, ...(f.flow ? { flow: true } : {}), ...(f.banks ? { banks: true } : {}) }));
+      if (FEATURE_KINDS.includes(kind)) list2.forEach((f) => shapes.push({ kind, pts: f.pts.map((p) => [...p]), inner: !!f.hole, ...(f.flow ? { flow: true } : {}), ...(f.banks ? { banks: true } : {}), ...(f.fit ? { fit: true } : {}) }));
       else passthrough[kind] = list2;
     }
   }
+  grassStrokes = (r?.tallGrass || []).filter((a) => a.r).map((a) => ({ pts: a.pts.map((p) => [...p]), r: a.r, erase: !!a.clear }));
   for (const a of r?.treeAreas || []) shapes.push({ kind: 'trees', pts: a.pts.map((p) => [...p]), density: a.density || 'medium', species: a.kind || 'auto', hMin: a.hMin, hMax: a.hMax });
   userTrees = (r?.userTrees || []).map((t) => ({ x: t.x, z: t.z, size: t.size || 'medium', kind: t.kind || 'auto' }));
   removedTrees = (r?.removedTrees || []).map(([x, z]) => [x, z]);
@@ -170,6 +185,86 @@ async function load() {
   fitHole();
   photoReady = grid ? loadPhoto() : Promise.resolve(null);
   loadTrees();
+  fitBunkersToPhoto();
+  // (the photo's colours, for the species the game guesses for trees that have none)
+  photoReady.then((r) => {
+    if (r) speciesPhoto = (x, z) => { const i = Math.floor(x - r.minX), j = Math.floor(r.maxZ - z); if (i < 0 || j < 0 || i >= r.w || j >= r.h) return null; const o = (j * r.w + i) * 4; return [r.data[o], r.data[o + 1], r.data[o + 2]]; };
+    speciesCache = new WeakMap();
+    renderSpeciesList(); draw();
+  });
+  loadHeather();
+}
+
+// Bunkers not yet lined up with the aerial photo (a course not played since it was built): lined
+// up here as the game would, and kept with the course straight away
+async function fitBunkersToPhoto() {
+  const list = shapes.filter((s) => s.kind === 'bunker').map((s) => ({ s, hole: s.inner, pts: s.pts, fit: s.fit }));
+  if (!needsBunkerFit(list)) return;
+  const raster = await photoReady;
+  if (!raster) return;
+  const fit = fitBunkers(list, raster);
+  fit.bunkers.forEach((b, i) => { if (!list[i].hole) { list[i].s.pts = b.pts; list[i].s.fit = true; } });
+  fetch(`/api/courses/${courseId}/bunkers`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ bunker: fit.bunkers.map(({ s, ...b }) => b) }) }).catch(() => {});
+  if (fit.moved || fit.traced) setStatus(`Bunkers lined up with the aerial photo: ${fit.moved} moved, ${fit.traced} redrawn from it.`);
+  draw();
+}
+
+// The tall grass the game found in the aerial photo (saved by the game each time it loads the
+// course: runs [start, length] over a 1 m grid, row by row)
+async function loadHeather() {
+  const m = await fetch(`/api/courses/${courseId}/heather`).then((x) => (x.ok ? x.json() : null)).catch(() => null);
+  heather = null;
+  if (m?.runs) {
+    const c = document.createElement('canvas');
+    c.width = m.w; c.height = m.h;
+    const x = c.getContext('2d'), img = x.createImageData(m.w, m.h);
+    let cells = 0;
+    for (let k = 0; k < m.runs.length; k += 2) {
+      for (let i = m.runs[k], e = i + m.runs[k + 1]; i < e; i++) { const o = i * 4; img.data[o] = 245; img.data[o + 1] = 150; img.data[o + 2] = 30; img.data[o + 3] = 255; }
+      cells += m.runs[k + 1];
+    }
+    x.putImageData(img, 0, 0);
+    heather = { img: c, minX: m.minX, maxZ: m.maxZ, res: m.res, w: m.w, h: m.h, area: cells * m.res * m.res };
+  }
+  repaint();
+  renderNativeInfo();
+  draw();
+}
+
+// The tall grass as the game will have it, in a 1 m picture of the course: what it found, then
+// each stroke painted on or rubbed out in turn (drawn see-through over the map)
+function repaint() {
+  const b = heather || (grid && { minX: grid.minX, maxZ: grid.minZ + (grid.nz - 1) * grid.cell, res: 1, w: Math.ceil((grid.nx - 1) * grid.cell), h: Math.ceil((grid.nz - 1) * grid.cell) });
+  if (!b) { paint = null; return; }
+  if (!paint || paint.w !== b.w || paint.h !== b.h) {
+    const c = document.createElement('canvas');
+    c.width = b.w; c.height = b.h;
+    paint = { c, x: c.getContext('2d'), minX: b.minX, maxZ: b.maxZ, res: b.res, w: b.w, h: b.h };
+  }
+  paint.x.clearRect(0, 0, paint.w, paint.h);
+  if (heather) paint.x.drawImage(heather.img, 0, 0);
+  for (const s of grassStrokes) paintStroke(s, 0);
+}
+// Paint (or rub out) a stroke from its point `from` on
+function paintStroke(s, from) {
+  if (!paint) return;
+  const x = paint.x, px = ([wx, wz]) => [(wx - paint.minX) / paint.res, (paint.maxZ - wz) / paint.res];
+  x.save();
+  x.globalCompositeOperation = s.erase ? 'destination-out' : 'source-over';
+  x.strokeStyle = x.fillStyle = 'rgb(245,150,30)';
+  x.lineWidth = (2 * s.r) / paint.res; x.lineCap = x.lineJoin = 'round';
+  x.beginPath();
+  const pts = s.pts.slice(Math.max(0, from - 1)).map(px);
+  if (pts.length === 1) { x.arc(pts[0][0], pts[0][1], s.r / paint.res, 0, 7); x.fill(); }
+  else { pts.forEach(([a, b], i) => (i ? x.lineTo(a, b) : x.moveTo(a, b))); x.stroke(); }
+  x.restore();
+}
+
+function renderNativeInfo() {
+  const ha = (m2) => `${(m2 / 10000).toFixed(m2 < 100000 ? 1 : 0)} ha`;
+  const painted = grassStrokes.filter((s) => !s.erase).length, erased = grassStrokes.length - painted;
+  $('n-info').textContent = (heather ? `Found in the aerial photo: ${ha(heather.area)}.` : 'The game finds tall grass in the aerial photo when it loads the course: play it once to see that here.')
+    + (grassStrokes.length ? ` Your changes: ${painted} brush and ${erased} eraser stroke${erased === 1 ? '' : 's'}.` : '');
 }
 
 // The trees the game will plant: from the canopy height map (if the course has one) and
@@ -351,6 +446,7 @@ function plannedTrees() {
     const found = removeTrees(baseTrees, removedTrees).filter((t) => !t.photo || !mine.length || !near(t));
     shownTrees = found.concat(mine);
     shownKey = key;
+    setTimeout(renderSpeciesList);
     const photo = found.filter((t) => t.photo).length;
     setTreeInfo(`${shownTrees.length.toLocaleString()} trees · ${photo.toLocaleString()} guessed from the aerial photo · ${mine.length.toLocaleString()} added by you`
       + `${removedTrees.length ? ` · ${removedTrees.length.toLocaleString()} removed` : ''}${treeEnv.note}`);
@@ -429,7 +525,7 @@ async function save() {
   const P = (p) => ({ x: r2(p.x), y: Math.round(heightAt(p.x, p.z) * 1000) / 1000, z: r2(p.z) });
   const sorted = [...holes].sort((a, b) => a.number - b.number);
   const out = makeCourseData({
-    name: course.name, location: course.location, stimp: course.stimp, mowing: { ...course.mowing }, grass: { rough: course.grass.rough, native: course.grass.native }, surface: course.surface,
+    name: course.name, location: course.location, stimp: course.stimp, mowing: { ...course.mowing }, grass: { rough: course.grass.rough, native: course.grass.native }, surface: course.surface, treesOff: [...treesOff],
     lat: courseData.CourseLat, lon: courseData.CourseLong, altitudeM: (courseData.altitudeV2 || 0) * 0.3048,
     designer: courseData.Designer || 'OpenTeeGolf course builder',
     holes: sorted.map((h) => ({
@@ -443,11 +539,13 @@ async function save() {
     builder: { ...(courseData.GolfSimBuilder || {}), needsReview: false, edited: new Date().toISOString() },
   });
   const features = { ...passthrough };
-  for (const k of FEATURE_KINDS) features[k] = shapes.filter((s) => s.kind === k).map((s) => ({ hole: !!s.inner, pts: s.pts.map(([x, z]) => [r2(x), r2(z)]), ...(k === 'water' && s.flow ? { flow: true } : {}), ...(k === 'water' && s.flow && s.banks ? { banks: true } : {}) }));
+  // (bunkers saved from the editor are the player's: the game never moves them to the photo again)
+  for (const k of FEATURE_KINDS) features[k] = shapes.filter((s) => s.kind === k).map((s) => ({ hole: !!s.inner, pts: s.pts.map(([x, z]) => [r2(x), r2(z)]), ...(k === 'water' && s.flow ? { flow: true } : {}), ...(k === 'water' && s.flow && s.banks ? { banks: true } : {}), ...(k === 'bunker' && !s.inner ? { fit: true } : {}) }));
   const treeAreas = shapes.filter((s) => s.kind === 'trees').map((s) => ({ ...areaData(s), pts: s.pts.map(([x, z]) => [r2(x), r2(z)]) }));
+  const tallGrass = grassStrokes.map((s) => ({ pts: s.pts.map(([x, z]) => [r2(x), r2(z)]), r: s.r, ...(s.erase ? { clear: true } : {}) }));
   setStatus('Saving…');
   const res = await fetch(`/api/courses/${courseId}`, {
-    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ course: out, features, userTrees, treeAreas, removedTrees, buildingTypes }),
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ course: out, features, userTrees, treeAreas, tallGrass, removedTrees, buildingTypes }),
   });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) return setStatus(`Save failed: ${body.error || res.status}`);
@@ -461,7 +559,7 @@ function setDirty(d) { dirty = d; $('dirty').textContent = d ? '● unsaved chan
 
 // ------------------------------------------------------------------ undo
 
-const snapshot = () => JSON.stringify({ holes, shapes, course, userTrees, removedTrees, buildingTypes });
+const snapshot = () => JSON.stringify({ holes, shapes, course, userTrees, removedTrees, buildingTypes, grassStrokes, treesOff: [...treesOff] });
 function change() {
   undoStack.push(snapshot());
   if (undoStack.length > 100) undoStack.shift();
@@ -472,6 +570,8 @@ function undo() {
   if (!s) return;
   const o = JSON.parse(s);
   holes = o.holes; shapes = o.shapes; Object.assign(course, o.course); userTrees = o.userTrees || []; removedTrees = o.removedTrees || []; buildingTypes = o.buildingTypes || {};
+  grassStrokes = o.grassStrokes || []; repaint();
+  treesOff = new Set(o.treesOff || []); renderSpeciesList();
   sel.hole = Math.min(sel.hole, holes.length - 1); sel.shape = -1; sel.tree = -1; sel.found = null; sel.removed = -1;
   setDirty(true);
   renderHoles(); renderShapePanel(); showMowing(); draw();
@@ -504,6 +604,14 @@ function draw() {
     const [sx, sy] = toScreen(grid.minX, grid.minZ + (grid.nz - 1) * grid.cell);
     ctx.imageSmoothingEnabled = true;
     ctx.drawImage(bg, sx, sy, (grid.nx - 1) * grid.cell * view.scale, (grid.nz - 1) * grid.cell * view.scale);
+  }
+  // Tall grass: found in the photo, painted and rubbed out
+  if (paint && showNative) {
+    const [sx, sy] = toScreen(paint.minX, paint.maxZ);
+    ctx.globalAlpha = 0.6;
+    ctx.imageSmoothingEnabled = view.scale < 2;
+    ctx.drawImage(paint.c, sx, sy, paint.w * paint.res * view.scale, paint.h * paint.res * view.scale);
+    ctx.globalAlpha = 1;
   }
   // Over the aerial photo, shapes are see-through so real features can be traced
   ctx.globalAlpha = photo && showPhoto ? 0.45 : 1;
@@ -549,15 +657,89 @@ function draw() {
     ctx.stroke(); ctx.setLineDash([]);
     mode.pts.forEach(([x, z]) => { const [sx, sy] = toScreen(x, z); ctx.fillStyle = '#fff'; ctx.fillRect(sx - 3, sy - 3, 6, 6); });
   }
+  // The brush or eraser under the cursor: its size on the map
+  if (mode?.type === 'brush' && hover) {
+    ctx.lineWidth = 1.5; ctx.strokeStyle = mode.erase ? '#ff5a48' : '#ffc061'; ctx.setLineDash(mode.erase ? [4, 3] : []);
+    ctx.beginPath(); ctx.arc(hover[0], hover[1], Math.max(2, brush.r * view.scale), 0, 7); ctx.stroke(); ctx.setLineDash([]);
+  }
   // Scale bar
   const m = [10, 25, 50, 100, 200, 500].find((v) => v * view.scale > 70) || 1000;
   ctx.fillStyle = '#fff'; ctx.fillRect(16, H() - 22, m * view.scale, 3);
   ctx.font = '12px system-ui'; ctx.fillText(`${m} m`, 16, H() - 28);
 }
 
+// The species a tree will be in the game: its own (the player's choice, or the map's), else the
+// one the game guesses from its shape and the photo, then swapped if that species is turned off
+function speciesOf(t) {
+  let k = SPECIES_COLOR[t.kind] ? t.kind : speciesCache.get(t);
+  if (!k) { k = assignSpecies([{ x: t.x, z: t.z, r: t.r, h: t.h }], speciesPhoto, region)[0].kind; speciesCache.set(t, k); }
+  return swapSpecies(k, treesOff, region, t.x, t.z);
+}
+
+// Every tree in its species' colour; the picked species bright and outlined, the rest faint
+function drawSpeciesTrees(list) {
+  const w = W(), h = H(), paths = {}, dots = {};
+  for (const t of list) {
+    const [sx, sy] = toScreen(t.x, t.z), r = t.r * view.scale;
+    if (sx < -r || sy < -r || sx > w + r || sy > h + r) continue;
+    const k = speciesOf(t);
+    if (r < 2) { (dots[k] ||= []).push(sx, sy); continue; }
+    const p = (paths[k] ||= new Path2D());
+    p.moveTo(sx + r, sy); p.arc(sx, sy, r, 0, 6.2832);
+  }
+  const order = Object.keys({ ...paths, ...dots }).sort((a, b) => (a === pickedSpecies) - (b === pickedSpecies));
+  for (const k of order) {
+    const hot = k === pickedSpecies, dim = pickedSpecies && !hot;
+    ctx.globalAlpha = dim ? 0.18 : hot ? 0.95 : 0.75;
+    ctx.fillStyle = SPECIES_COLOR[k] || '#5f9e3c';
+    if (paths[k]) {
+      ctx.fill(paths[k]);
+      ctx.lineWidth = hot ? 2.5 : 1; ctx.strokeStyle = hot ? '#ffffff' : 'rgba(0,0,0,0.35)';
+      ctx.stroke(paths[k]);
+    }
+    const d = dots[k] || [], s = hot ? 5 : 3;
+    for (let i = 0; i < d.length; i += 2) ctx.fillRect(d[i] - s / 2, d[i + 1] - s / 2, s, s);
+  }
+  ctx.globalAlpha = 1;
+}
+
+// The course's trees by species: how many of each (with a bar for its share), a box to use it or
+// not, and a click to pick it out on the map. Species the course doesn't have come last, faint.
+function renderSpeciesList() {
+  const list = shownTrees, count = {};
+  for (const t of list) { const k = speciesOf(t); count[k] = (count[k] || 0) + 1; }
+  const total = list.length || 1;
+  const rows = [...TREE_SPECIES].sort((a, b) => (count[b.id] || 0) - (count[a.id] || 0));
+  $('species-list').innerHTML = rows.map((sp) => {
+    const n = count[sp.id] || 0, pct = (n / total) * 100;
+    return `<li data-id="${sp.id}" class="${n ? '' : 'none'} ${treesOff.has(sp.id) ? 'off' : ''} ${pickedSpecies === sp.id ? 'hot' : ''}" title="${esc(sp.about)}">
+      <input type="checkbox" ${treesOff.has(sp.id) ? '' : 'checked'} title="Use this species on this course">
+      <i style="background:${SPECIES_COLOR[sp.id]}"></i><b>${esc(sp.label)}</b>
+      <span>${n ? `${n.toLocaleString()} · ${pct < 1 ? '<1' : Math.round(pct)}%` : treesOff.has(sp.id) ? 'off' : ''}</span>
+      ${n ? `<div class="bar"><em style="width:${pct.toFixed(1)}%;background:${SPECIES_COLOR[sp.id]}"></em></div>` : ''}</li>`;
+  }).join('');
+  for (const li of $('species-list').children) {
+    const id = li.dataset.id;
+    li.querySelector('input').onclick = (e) => {
+      e.stopPropagation();
+      change();
+      if (e.target.checked) treesOff.delete(id); else treesOff.add(id);
+      // (never all of them)
+      if (treesOff.size >= TREE_SPECIES.length) { treesOff.delete(id); e.target.checked = true; }
+      renderSpeciesList(); draw();
+    };
+    li.onclick = () => {
+      pickedSpecies = pickedSpecies === id ? null : id;
+      if (pickedSpecies) { colourBySpecies = true; $('t-colour').checked = true; if (!showTrees) { showTrees = true; $('t-show').checked = true; } }
+      renderSpeciesList(); draw();
+    };
+  }
+}
+
 // Trees as crowns seen from above: found ones dark, the player's brighter, the selected one ringed
 function drawTrees() {
   const list = plannedTrees();
+  if (colourBySpecies) return drawSpeciesTrees(list);
   const w = W(), h = H();
   // (all crowns of a kind in one path: far quicker than a path per tree)
   // (planted trees of a chosen species in that species' colour)
@@ -811,6 +993,15 @@ canvas.addEventListener('mousedown', (e) => {
     if (e.detail > 1) return finishDraw(); // double-click
     mode.pts.push([x, z]); draw(); return;
   }
+  if (mode?.type === 'brush') {
+    // (one stroke per press: painted as the mouse moves, one undo step)
+    change();
+    const s = { pts: [[x, z]], r: brush.r, erase: !!mode.erase };
+    grassStrokes.push(s);
+    paintStroke(s, 0);
+    drag = { type: 'brush', s };
+    draw(); return;
+  }
   // Shift: pick many found trees - click one to add or drop it, or drag a box round several
   if (e.shiftKey && showTrees) {
     drag = { type: 'box', sx, sy, ex: sx, ey: sy, found: hitFoundTree(sx, sy) };
@@ -861,7 +1052,7 @@ window.addEventListener('mousemove', (e) => {
   const sx = e.clientX - r.left, sy = e.clientY - r.top;
   hover = [sx, sy];
   if (!drag) {
-    if (mode?.type === 'draw') draw();
+    if (mode?.type === 'draw' || mode?.type === 'brush') draw();
     // (a move cursor over the selected shape: it can be dragged as a whole)
     else if (!mode && e.target === canvas) canvas.style.cursor = sel.shape >= 0 && insideShape(shapes[sel.shape], sx, sy) ? 'move' : 'grab';
     return;
@@ -886,6 +1077,12 @@ window.addEventListener('mousemove', (e) => {
     userTrees[drag.i].x = x; userTrees[drag.i].z = z;
   } else if (drag.type === 'box') {
     drag.ex = sx; drag.ey = sy;
+  } else if (drag.type === 'brush') {
+    // (a point every third of the brush's width or so)
+    const s = drag.s, last = s.pts[s.pts.length - 1];
+    if (Math.hypot(x - last[0], z - last[1]) < Math.max(0.5, s.r / 3)) { draw(); return; }
+    s.pts.push([x, z]);
+    paintStroke(s, s.pts.length - 1);
   }
   draw();
 });
@@ -924,6 +1121,7 @@ window.addEventListener('mouseup', (e) => {
     renderShapePanel();
     draw();
   }
+  if (drag?.type === 'brush') renderNativeInfo();
   drag = null;
   canvas.style.cursor = mode ? 'crosshair' : 'grab';
 });
@@ -972,12 +1170,15 @@ function setMode(m) {
     hint.textContent = m.type === 'place'
       ? `Click the map to place: ${m.label}  (Esc to cancel)`
       : m.type === 'tree' ? `Click the map to add ${treeOpts.size} trees, one per click · Esc when done`
+      : m.type === 'brush' ? `${m.erase ? 'Rub out' : 'Paint'} tall grass: hold the mouse button and drag · ${brush.r * 2} m wide (change it in the panel) · right-drag moves the map · Esc when done`
       : `Drawing ${SHAPES[m.kind].label.toLowerCase()}: click to add points · double-click or Enter to finish · Esc to cancel`;
   }
   canvas.style.cursor = m ? 'crosshair' : 'grab';
   document.querySelectorAll('.draw-buttons button').forEach((b) => b.classList.toggle('active', m?.type === 'draw' && b.dataset.kind === m.kind));
   $('t-add').classList.toggle('active', m?.type === 'tree');
   $('t-area').classList.toggle('active', m?.type === 'draw' && m.kind === 'trees');
+  $('n-add').classList.toggle('active', m?.type === 'brush' && !m.erase);
+  $('n-clear').classList.toggle('active', m?.type === 'brush' && !!m.erase);
   renderHolePanel();
   draw();
 }
@@ -1073,6 +1274,7 @@ function renderDrawButtons() {
 }
 
 function renderShapePanel() {
+  renderNativeInfo();
   const box = $('shape-panel');
   const s = shapes[sel.shape];
   const t = userTrees[sel.tree];
@@ -1343,10 +1545,14 @@ $('t-area-kind').onchange = () => { treeOpts.areaKind = $('t-area-kind').value; 
 $('t-hmin').value = treeOpts.hMin; $('t-hmax').value = treeOpts.hMax;
 $('t-hmin').onchange = () => { treeOpts.hMin = Math.min(40, Math.max(2, +$('t-hmin').value || AREA_HEIGHTS.min)); };
 $('t-hmax').onchange = () => { treeOpts.hMax = Math.min(40, Math.max(2, +$('t-hmax').value || AREA_HEIGHTS.max)); };
-$('species-list').innerHTML = TREE_SPECIES.map((sp) => `<li><i style="background:${SPECIES_COLOR[sp.id]}"></i><b>${esc(sp.label)}</b><span>${esc(sp.about)}</span></li>`).join('')
-  + `<li><i style="background:rgba(80,175,70,0.9)"></i><b>Automatic</b><span>chosen from the aerial photo</span></li>`;
 $('t-review').onclick = () => { if (!showTrees) { showTrees = true; $('t-show').checked = true; } startReview(); };
+$('n-show').onchange = () => { showNative = $('n-show').checked; draw(); };
+for (const [id, erase] of [['n-add', false], ['n-clear', true]]) {
+  $(id).onclick = () => { if (!showNative) { showNative = true; $('n-show').checked = true; } setMode(mode?.type === 'brush' && mode.erase === erase ? null : { type: 'brush', erase }); };
+}
+$('n-size').oninput = () => { brush.r = +$('n-size').value / 2; $('n-size-v').textContent = `${$('n-size').value} m`; draw(); };
 $('b-show').onchange = () => { showBuildings = $('b-show').checked; if (!showBuildings && sel.building >= 0) { sel.building = -1; renderShapePanel(); } draw(); };
+$('t-colour').onchange = () => { colourBySpecies = $('t-colour').checked; if (!colourBySpecies) pickedSpecies = null; renderSpeciesList(); draw(); };
 $('t-show').onchange = () => { showTrees = $('t-show').checked; if (!showTrees && (sel.tree >= 0 || sel.found || sel.removed >= 0)) { clearTreeSel(); renderShapePanel(); } draw(); };
 $('save').onclick = save;
 $('play').onclick = async (e) => {

@@ -206,13 +206,15 @@ const r2 = (v) => Math.round(v * 100) / 100;
 
 // The aerial photo (1 m a pixel) over the course's streams and as far out as a bank is looked for.
 // imagery: { manifest, url(file) } as the game loads it. Null without streams or photos.
-export async function riverPhoto(imagery, water) {
+export const riverPhoto = (imagery, water) => photoAround(imagery, (water || []).filter((f) => f.flow && !f.hole), MAX_OUT + 10);
+
+// The aerial photo (1 m a pixel) round some shapes ({ pts }), pad metres beyond them
+export async function photoAround(imagery, shapes, pad) {
   const m = imagery?.manifest;
   if (!m?.chunks?.length || !m.geo) return null;
   let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
-  for (const f of water || []) if (f.flow && !f.hole) for (const [x, z] of f.pts) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); z0 = Math.min(z0, z); z1 = Math.max(z1, z); }
+  for (const f of shapes) for (const [x, z] of f.pts) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); z0 = Math.min(z0, z); z1 = Math.max(z1, z); }
   if (!(x1 > x0)) return null;
-  const pad = MAX_OUT + 10;
   const minX = Math.floor(x0 - pad), maxZ = Math.ceil(z1 + pad), w = Math.ceil(x1 + pad - minX), h = Math.ceil(maxZ - (z0 - pad));
   if (w * h > 40e6) return null; // (a river kilometres long beside a small course: too big a picture)
   const [a0, a1, a2] = m.geo.lat, [b0, b1, b2] = m.geo.lon, det = a1 * b2 - a2 * b1;
