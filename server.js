@@ -25,7 +25,7 @@ import { ensureBuildings } from './lib/buildings.js';
 import { ensurePaths } from './lib/paths.js';
 import { ensureParking } from './lib/parking.js';
 import { ensureRoads } from './lib/roads.js';
-import { ensurePhoto, photoMeta, savePhoto } from './lib/coursephoto.js';
+import { ensurePhoto, photoMeta, photoStale, savePhoto } from './lib/coursephoto.js';
 import { ensureCanopy } from './lib/canopy.js';
 import { ensureFarLand } from './lib/farland.js';
 import { MevoClient, DEFAULT_SETUP } from './lib/mevo.js';
@@ -74,8 +74,9 @@ function findCourses() {
         editable: true,
         hasReal: fs.existsSync(realFile(full)),
         hasAerial: fs.existsSync(path.join(satDir(full), 'manifest.json')),
-        photo: photo ? (photo.file ? 'yes' : 'none') : 'unknown',
+        photo: photo ? (photo.file ? 'yes' : photoStale(photo) ? 'unknown' : 'none') : 'unknown',
         photoCredit: photo?.credit || '',
+        photoKind: photo?.kind || 'photo',
       });
     } catch (err) {
       console.warn(`Skipping ${full}: ${err.message}`);
@@ -102,7 +103,7 @@ const isEditable = (file) => !!file;
 
 function photoInfo(file) {
   const cd = readCourseData(file);
-  return { name: cd.CourseName, lat: +cd.CourseLat, lon: +cd.CourseLong, osmType: cd.GolfSimBuilder?.osmType, osmId: cd.GolfSimBuilder?.osmId };
+  return { name: cd.CourseName, location: cd.Location || '', lat: +cd.CourseLat, lon: +cd.CourseLong, osmType: cd.GolfSimBuilder?.osmType, osmId: cd.GolfSimBuilder?.osmId };
 }
 
 // ---------------------------------------------------------------- browser events (SSE)
@@ -598,7 +599,7 @@ const httpServer = http.createServer(async (req, res) => {
       }
       const force = req.method === 'POST'; // look it up again
       const meta = await ensurePhoto(dir, photoInfo(f), { force, log: (msg) => console.log(`[photo] ${msg}`) });
-      if (force) return json(res, meta);
+      if (force || url.searchParams.has('meta')) return json(res, meta || { file: null });
       return meta?.file ? serveFile(res, dir, meta.file) : notFound(res);
     }
     if ((m = p.match(/^\/api\/courses\/([\w-]+)\/aerial$/))) {

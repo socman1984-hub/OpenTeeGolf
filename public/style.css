@@ -249,6 +249,11 @@ table.sc td.cur { outline: 2px solid var(--accent); }
 .course.sel .info b { color: var(--accent); }
 .course .pic { position: relative; flex: none; height: 124px; background: linear-gradient(135deg, #22351f, #1a2a1c); overflow: hidden; }
 .course .pic img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
+.course .pic.logo { background: #f1ede3; }
+.course .pic.logo.light-logo { background: linear-gradient(135deg, #2b4430, #1b2c1e); }
+.course .pic.logo img { object-fit: contain; padding: 12px 16px 16px; box-sizing: border-box; }
+.course .pic.logo .credit { color: #555; background: rgba(255,255,255,0.6); }
+.course .pic.logo.light-logo .credit { color: #ddd; background: rgba(0,0,0,0.5); }
 .course .pic .noimg { position: absolute; inset: 0; display: grid; place-items: center; font-size: 30px; opacity: 0.35; }
 .course .pic.has-img .noimg { display: none; }
 .course .pic.busy::after { content: 'Searching…'; position: absolute; inset: 0; display: grid; place-items: center; background: rgba(0,0,0,0.55); font-size: 13px; }

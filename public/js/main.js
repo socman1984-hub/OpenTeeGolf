@@ -239,21 +239,50 @@ function cardFor(c) {
   }
 }
 
-// Photo (found online or chosen by the player), else the course's aerial imagery, else a plain tile
+// Photo (found online or chosen by the player), else the course's aerial imagery, else a plain tile.
+// A logo from the course's website is shown whole, on a dark backing if it's light (white logos are
+// made for dark headers) or a light one if it's dark.
 function loadCardImage(pic, c, bust = '') {
   const srcs = [];
   if (c.photo !== 'none') srcs.push(`/api/courses/${c.id}/photo${bust}`);
   if (c.hasAerial) srcs.push(`/api/courses/${c.id}/aerial`);
   pic.querySelector('img')?.remove();
-  pic.classList.remove('has-img');
+  pic.classList.remove('has-img', 'logo', 'light-logo');
   if (!srcs.length) return;
   const img = new Image();
   img.loading = 'lazy';
   img.alt = '';
-  img.onload = () => pic.classList.add('has-img');
+  img.onload = async () => {
+    pic.classList.add('has-img');
+    if (!/\/photo/.test(img.src)) return;
+    // (a picture just found: is it a photo or a logo?)
+    if (c.photo === 'unknown') {
+      const meta = await fetch(`/api/courses/${c.id}/photo?meta=1`).then((r) => r.json()).catch(() => null);
+      c.photo = 'yes'; c.photoKind = meta?.kind || 'photo'; c.photoCredit = meta?.credit || '';
+      const credit = pic.querySelector('.credit');
+      if (credit) credit.textContent = credit.title = c.photoCredit;
+    }
+    const isLogo = c.photoKind === 'logo';
+    pic.classList.toggle('logo', isLogo);
+    if (isLogo) pic.classList.toggle('light-logo', logoBrightness(img) > 0.62);
+  };
   img.onerror = () => { const next = srcs.shift(); if (next) img.src = next; else img.remove(); };
   img.src = srcs.shift();
   pic.prepend(img);
+}
+
+// How bright a logo is (0-1), over its visible pixels
+function logoBrightness(img) {
+  try {
+    const cv = document.createElement('canvas');
+    cv.width = cv.height = 48;
+    const x = cv.getContext('2d', { willReadFrequently: true });
+    x.drawImage(img, 0, 0, 48, 48);
+    const d = x.getImageData(0, 0, 48, 48).data;
+    let sum = 0, n = 0;
+    for (let i = 0; i < d.length; i += 4) if (d[i + 3] > 128) { sum += (0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2]) / 255; n++; }
+    return n ? sum / n : 0.5;
+  } catch { return 0.5; }
 }
 
 function photoMenu(c, anchor) {
@@ -273,6 +302,7 @@ function photoMenu(c, anchor) {
     if (!meta || meta.error) { if (meta?.error) alert(meta.error); return; }
     c.photo = meta.file ? 'yes' : 'none';
     c.photoCredit = meta.credit || '';
+    c.photoKind = meta.kind || 'photo';
     const el = card();
     if (!el) return;
     el.querySelector('.credit').textContent = c.photoCredit;
