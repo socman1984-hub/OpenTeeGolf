@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GolfSim tree preview</title>
+  <style>
+    :root { color-scheme: dark; font: 16px/1.45 system-ui, sans-serif; background: #101913; color: #edf1e7; }
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 28px; }
+    header { max-width: 1100px; margin: 0 auto 22px; }
+    h1 { margin: 0 0 4px; font-size: clamp(1.5rem, 3vw, 2rem); }
+    p { margin: 0; color: #b7c4b4; }
+    main { max-width: 1100px; margin: auto; }
+    #view { display: block; width: 100%; aspect-ratio: 1.32; border-radius: 14px; touch-action: none; cursor: grab; background: #1a281e; }
+    #view:active { cursor: grabbing; }
+    #status { padding: 12px 2px; color: #c3d2bd; min-height: 46px; }
+    @media (max-width: 650px) { body { padding: 16px; } #view { aspect-ratio: 0.75; } }
+  </style>
+  <script type="importmap">
+    { "imports": { "three": "/vendor/three/build/three.module.js", "three/webgpu": "/vendor/three/build/three.webgpu.js" } }
+  </script>
+</head>
+<body>
+  <header>
+    <h1>New tree species</h1>
+    <p>Procedural previews from GolfSim’s tree models. Drag a panel to rotate its tree; scroll over it to zoom.</p>
+  </header>
+  <main>
+    <div id="stage">
+      <canvas id="view" aria-label="Interactive 3D preview of eastern redcedar, Douglas-fir, ponderosa pine, and American beech"></canvas>
+    </div>
+    <div id="status" role="status">Growing the models…</div>
+  </main>
+  <script type="module" src="/js/tree-preview.js"></script>
+</body>
+</html>

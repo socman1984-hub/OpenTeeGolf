@@ -44,7 +44,7 @@ TURF = {"fairway": (0.06, 0.112, 0.022), "green": (0.074, 0.136, 0.026), "rough"
         "water": (0.03, 0.03, 0.018)}   # (the pond floor under Unreal's water: dark silt, not the photo's pale water)
 TURF_AMOUNT = 0.88        # how much of the turf colour over the photo's (the rest the photo's own)
 TREE_CULL_CM = (90000, 130000)   # trees fade out between 900 and 1300 m
-CONIFERS = {"pine", "spruce", "cypress", "baldcypress"}
+CONIFERS = {"pine", "loblolly", "redcedar", "douglasfir", "ponderosa", "spruce", "cypress", "baldcypress"}
 
 # Unreal's own trees (from Fab), used in place of the game's broadleaf trees: every whole-tree mesh
 # in these folders (the wind-animated ones). Each game tree gets the one closest to its height, so
@@ -608,7 +608,7 @@ def plant_trees():
         pines = [c for c in cones if "pine" in c[0].get_name().lower()]
         spruces = [c for c in cones if "pine" not in c[0].get_name().lower()]
         for want, pool in (("pine", pines or spruces), (None, spruces or pines)):
-            group = [t for t in trees if (t.get("kind") == "pine") == (want == "pine")]
+            group = [t for t in trees if (t.get("kind") in {"pine", "loblolly", "redcedar", "douglasfir", "ponderosa"}) == (want == "pine")]
             if group:
                 planted += plant_ue_broadleaf(actor, group, pool)
         trees = []

@@ -50,7 +50,7 @@ let speciesCache = new WeakMap();
 const brush = { r: 4 };
 const treeOpts = { size: 'medium', density: 'medium', kind: 'auto', areaKind: 'auto', hMin: AREA_HEIGHTS.min, hMax: AREA_HEIGHTS.max };
 // Map colours for each species (planted trees are drawn in them; 'auto' ones in the usual green)
-const SPECIES_COLOR = { oak: '#5f9e3c', maple: '#c86b2d', ash: '#9fcf5a', birch: '#f2f0dc', aspen: '#e8d74a', poplar: '#3fb5a3', willow: '#a7e07a', pine: '#2f6b4a', spruce: '#3d6f9e', palm: '#d9b44a',
+const SPECIES_COLOR = { oak: '#5f9e3c', maple: '#c86b2d', redmaple: '#b44b35', tuliptree: '#6a9f43', beech: '#9aa58a', ash: '#9fcf5a', birch: '#f2f0dc', aspen: '#e8d74a', poplar: '#3fb5a3', willow: '#a7e07a', pine: '#2f6b4a', loblolly: '#285b3a', redcedar: '#40654b', douglasfir: '#315b42', ponderosa: '#567746', spruce: '#3d6f9e', palm: '#d9b44a',
   liveoak: '#4b5e2f', magnolia: '#1f4d2b', sycamore: '#c9c3a3', cypress: '#22433a', baldcypress: '#b5653a', mesquite: '#8a7a52', paloverde: '#a4c43c', saguaro: '#3f8f5f' };
 const speciesOptions = (sel) => [...TREE_MIXES, ...TREE_SPECIES].map((o) => `<option value="${o.id}" ${o.id === (sel || 'auto') ? 'selected' : ''}>${esc(o.label)}</option>`).join('');
 const course = { name: '', location: '', stimp: 10, mowing: courseMowing(null), grass: courseGrass(null), surface: courseSurface(null) };

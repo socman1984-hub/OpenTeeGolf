@@ -2,7 +2,7 @@
 // they're drawn (procedural trees from ez-tree with bark and leaf textures: its own, plus ours for
 // the species it has none for).
 //
-// Every tree is one of 46 variants (different species, presets, seeds and branching), turned,
+// Every tree is one of the variants (different species, presets, seeds and branching), turned,
 // stretched and tinted on its own so no two look alike. Each variant is drawn three ways:
 //   near     - the full tree (leaves, branches, bark) close to the camera
 //   mid      - a lighter build of the same tree further out (same trunk and limbs)
@@ -134,6 +134,13 @@ const VARIANTS = [
   { kind: 'saguaro', grow: 'grow', seed: 3601, raw: true }, { kind: 'saguaro', grow: 'grow', seed: 3602, raw: true },
   { kind: 'sycamore', grow: 'grow', seed: 3701, raw: true }, { kind: 'sycamore', grow: 'grow', seed: 3702, raw: true, big: true },
   { kind: 'magnolia', grow: 'grow', seed: 3801, raw: true }, { kind: 'magnolia', grow: 'grow', seed: 3802, raw: true },
+  { kind: 'redmaple', grow: 'grow', seed: 3901, raw: true }, { kind: 'redmaple', grow: 'grow', seed: 3902, raw: true }, { kind: 'redmaple', grow: 'grow', seed: 3903, raw: true, big: true },
+  { kind: 'tuliptree', grow: 'grow', seed: 4001, raw: true }, { kind: 'tuliptree', grow: 'grow', seed: 4002, raw: true, big: true },
+  { kind: 'loblolly', grow: 'grow', seed: 4101, raw: true }, { kind: 'loblolly', grow: 'grow', seed: 4102, raw: true }, { kind: 'loblolly', grow: 'grow', seed: 4103, raw: true, big: true },
+  { kind: 'redcedar', grow: 'grow', seed: 4201, raw: true }, { kind: 'redcedar', grow: 'grow', seed: 4202, raw: true, big: true },
+  { kind: 'douglasfir', grow: 'grow', seed: 4301, raw: true }, { kind: 'douglasfir', grow: 'grow', seed: 4302, raw: true }, { kind: 'douglasfir', grow: 'grow', seed: 4303, raw: true, big: true },
+  { kind: 'ponderosa', grow: 'grow', seed: 4401, raw: true }, { kind: 'ponderosa', grow: 'grow', seed: 4402, raw: true }, { kind: 'ponderosa', grow: 'grow', seed: 4403, raw: true, big: true },
+  { kind: 'beech', grow: 'grow', seed: 4501, raw: true }, { kind: 'beech', grow: 'grow', seed: 4502, raw: true, big: true },
 ];
 
 function tweakOptions(o, seed, lod) {
@@ -163,7 +170,7 @@ function tweakOptions(o, seed, lod) {
 // poplar, pine and spruce, palm fronds and trunks (drawn by scripts/palm-textures.py), and the
 // leaves and bark of the species grown by grow.js (drawn by scripts/tree-textures.py). The
 // other species keep ez-tree's own.
-const GROWN = ['liveoak', 'cypress', 'baldcypress', 'mesquite', 'paloverde', 'saguaro', 'sycamore', 'magnolia'];
+const GROWN = ['liveoak', 'cypress', 'baldcypress', 'mesquite', 'paloverde', 'saguaro', 'sycamore', 'magnolia', 'redmaple', 'tuliptree', 'loblolly', 'redcedar', 'douglasfir', 'ponderosa', 'beech'];
 const OWN = { leaves: ['maple', 'willow', 'birch', 'palm', ...GROWN], bark: ['ash', 'maple', 'poplar', 'pine', 'spruce', 'palm', ...GROWN] };
 let own = null;
 async function loadOwnTextures() {
@@ -620,7 +627,7 @@ export class Forest {
         // Collision shape for the ball, matching what's drawn
         t.trunkR = Math.max(0.12, near.trunk * sxz);
         const crownBase = y + near.crownBase * t.h;
-        if (v.kind === 'pine' || v.kind === 'spruce' || v.kind === 'baldcypress') Object.assign(t, { trunkTop: crownBase + 0.6, coneBase: crownBase, coneH: t.h - near.crownBase * t.h, coneR: near.crown * sxz });
+      if (v.kind === 'pine' || v.kind === 'loblolly' || v.kind === 'redcedar' || v.kind === 'douglasfir' || v.kind === 'ponderosa' || v.kind === 'spruce' || v.kind === 'baldcypress') Object.assign(t, { trunkTop: crownBase + 0.6, coneBase: crownBase, coneH: t.h - near.crownBase * t.h, coneR: near.crown * sxz });
         else Object.assign(t, { trunkTop: crownBase + 0.3, cy: (crownBase + y + t.h) / 2, rh: near.crown * sxz, rv: (y + t.h - crownBase) / 2 });
       });
       const barkM = barkMaterial(near.barkMat), leafM = leafMaterial(near.leafMat, v);

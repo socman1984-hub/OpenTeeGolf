@@ -340,12 +340,19 @@ export const TREE_SIZES = { small: 8, medium: 13, large: 20 };
 export const TREE_SPECIES = [
   { id: 'oak', label: 'Oak', group: 'broadleaf', about: 'broad, spreading crown' },
   { id: 'maple', label: 'Maple', group: 'broadleaf', about: 'dense, rounded crown' },
+  { id: 'redmaple', label: 'Red maple', group: 'broadleaf', about: 'rounded crown, five-lobed leaves' },
+  { id: 'tuliptree', label: 'Tulip tree', group: 'broadleaf', about: 'tall straight trunk, distinctive leaves' },
+  { id: 'beech', label: 'American beech', group: 'broadleaf', about: 'smooth gray bark, dense rounded crown' },
   { id: 'ash', label: 'Ash', group: 'broadleaf', about: 'open, airy crown' },
   { id: 'birch', label: 'Birch', group: 'broadleaf', about: 'slender, white bark' },
   { id: 'aspen', label: 'Aspen', group: 'broadleaf', about: 'pale bark, light leaves' },
   { id: 'poplar', label: 'Lombardy poplar', group: 'broadleaf', about: 'tall and narrow (windbreaks)' },
   { id: 'willow', label: 'Weeping willow', group: 'broadleaf', about: 'drooping branches, by water' },
   { id: 'pine', label: 'Pine', group: 'conifer', about: 'tall trunk, crown up top' },
+  { id: 'loblolly', label: 'Loblolly pine', group: 'conifer', about: 'tall southeastern pine, long needles' },
+  { id: 'redcedar', label: 'Eastern redcedar', group: 'conifer', about: 'narrow evergreen crown, scale-like foliage' },
+  { id: 'douglasfir', label: 'Douglas-fir', group: 'conifer', about: 'tall western conifer, layered drooping limbs' },
+  { id: 'ponderosa', label: 'Ponderosa pine', group: 'conifer', about: 'open western pine, orange plated bark' },
   { id: 'spruce', label: 'Spruce', group: 'conifer', about: 'dense, dark cone' },
   { id: 'palm', label: 'Palm', group: 'palm', about: 'fronds on a tall trunk (warm climates)' },
   { id: 'liveoak', label: 'Live oak', group: 'broadleaf', about: 'low, very wide, with Spanish moss (the South)' },
@@ -362,15 +369,15 @@ export const TREE_SPECIES = [
 // the photo or the height map: narrow, dark blue-green) and the rest, with weights. Species from
 // the wrong part of the world never appear: no palms in Ohio, no spruce in Phoenix.
 export const TREE_REGIONS = {
-  temperate: { label: 'Temperate (northern US, Canada, Europe)', conifer: { pine: 6, spruce: 4 }, other: { oak: 30, maple: 20, ash: 20, birch: 10, aspen: 9, poplar: 2, sycamore: 4 } },
-  southeast: { label: 'Southeastern US', conifer: { pine: 10, baldcypress: 1 }, other: { oak: 28, maple: 12, liveoak: 14, magnolia: 12, sycamore: 8, ash: 8, pine: 18 } },
-  subtropical: { label: 'Subtropical (Florida, Gulf coast)', conifer: { pine: 7, baldcypress: 3 }, other: { palm: 30, liveoak: 30, magnolia: 10, oak: 8, pine: 22 } },
+  temperate: { label: 'Temperate (northern US, Canada, Europe)', conifer: { pine: 6, spruce: 4, redcedar: 3 }, other: { oak: 30, maple: 20, redmaple: 14, tuliptree: 10, beech: 12, ash: 20, birch: 10, aspen: 9, poplar: 2, sycamore: 4 } },
+  southeast: { label: 'Southeastern US', conifer: { pine: 10, loblolly: 12, redcedar: 4, baldcypress: 1 }, other: { oak: 28, maple: 12, redmaple: 10, tuliptree: 12, beech: 4, liveoak: 14, magnolia: 12, sycamore: 8, ash: 8, pine: 18 } },
+  subtropical: { label: 'Subtropical (Florida, Gulf coast)', conifer: { pine: 7, loblolly: 6, redcedar: 3, baldcypress: 3 }, other: { palm: 30, liveoak: 30, magnolia: 10, oak: 8, pine: 22, redmaple: 4, tuliptree: 3 } },
   desert: { label: 'Desert Southwest', conifer: { pine: 1 }, other: { mesquite: 32, paloverde: 24, palm: 18, pine: 12, saguaro: 0 } },
   sonoran: { label: 'Sonoran Desert (Arizona)', conifer: { pine: 1 }, other: { mesquite: 30, paloverde: 26, saguaro: 14, palm: 18, pine: 12 } },
-  calcoast: { label: 'California coast', conifer: { cypress: 6, pine: 4 }, other: { cypress: 30, pine: 25, oak: 25, sycamore: 8, palm: 6, ash: 6 } },
-  socal: { label: 'Southern California', conifer: { pine: 6, cypress: 3 }, other: { palm: 30, oak: 20, sycamore: 12, pine: 20, cypress: 10, ash: 8 } },
-  mountain: { label: 'Mountain West', conifer: { pine: 6, spruce: 5 }, other: { aspen: 35, pine: 25, spruce: 20, poplar: 10, birch: 10 } },
-  pacificnw: { label: 'Pacific Northwest', conifer: { spruce: 6, pine: 4 }, other: { spruce: 30, pine: 20, maple: 20, ash: 10, birch: 10, oak: 10 } },
+  calcoast: { label: 'California coast', conifer: { cypress: 6, pine: 4, douglasfir: 5, ponderosa: 2 }, other: { cypress: 30, pine: 25, oak: 25, sycamore: 8, palm: 6, ash: 6 } },
+  socal: { label: 'Southern California', conifer: { pine: 6, ponderosa: 3, douglasfir: 1, cypress: 3 }, other: { palm: 30, oak: 20, sycamore: 12, pine: 20, cypress: 10, ash: 8 } },
+  mountain: { label: 'Mountain West', conifer: { pine: 6, ponderosa: 8, douglasfir: 7, redcedar: 1, spruce: 5 }, other: { aspen: 35, pine: 25, spruce: 20, poplar: 10, birch: 10 } },
+  pacificnw: { label: 'Pacific Northwest', conifer: { spruce: 6, pine: 4, douglasfir: 10, ponderosa: 3, redcedar: 2 }, other: { spruce: 30, pine: 20, maple: 20, ash: 10, birch: 10, oak: 10 } },
   mediterranean: { label: 'Mediterranean', conifer: { pine: 7, cypress: 3 }, other: { pine: 35, cypress: 20, oak: 30, palm: 10, ash: 5 } },
   tropical: { label: 'Tropical', conifer: { pine: 1 }, other: { palm: 55, liveoak: 15, magnolia: 15, oak: 15 } },
 };
@@ -455,7 +462,7 @@ export const TREE_MIXES = [
   { id: 'desert', label: 'Desert (mesquite, palo verde, saguaro)' },
 ];
 // Species for a planted tree from a choice (null = the game decides from the photo)
-const BROADLEAF = ['oak', 'oak', 'maple', 'maple', 'ash', 'birch', 'aspen'], CONIFER = ['pine', 'spruce'];
+const BROADLEAF = ['oak', 'oak', 'maple', 'maple', 'redmaple', 'tuliptree', 'beech', 'ash', 'birch', 'aspen'], CONIFER = ['pine', 'pine', 'loblolly', 'redcedar', 'douglasfir', 'ponderosa', 'spruce'];
 const DESERT = ['mesquite', 'mesquite', 'paloverde', 'paloverde', 'saguaro'];
 export function pickSpecies(choice, x, z) {
   if (!choice || choice === 'auto') return null;
@@ -504,7 +511,7 @@ export function addTreeAreas(trees, single, areas, { heightAt = () => 0, allowed
     const n = hash(x, z, 9.1);
     // (crown width: narrow for poplars, conifers, palms and cacti, wide for willows, live oaks
     // and desert trees)
-    const shape = { poplar: 0.14, pine: 0.2, spruce: 0.22, palm: 0.22, baldcypress: 0.22, saguaro: 0.12, willow: 0.45, mesquite: 0.7, paloverde: 0.65, cypress: 0.6, liveoak: 0.95 }[extra.kind] ?? 0.33;
+    const shape = { poplar: 0.14, redcedar: 0.18, pine: 0.2, loblolly: 0.22, douglasfir: 0.24, ponderosa: 0.3, spruce: 0.22, palm: 0.22, baldcypress: 0.22, saguaro: 0.12, tuliptree: 0.3, redmaple: 0.42, beech: 0.4, willow: 0.45, mesquite: 0.7, paloverde: 0.65, cypress: 0.6, liveoak: 0.95 }[extra.kind] ?? 0.33;
     const t = { x, z, h, r: Math.min(extra.kind === 'liveoak' ? 15 : 7, Math.max(1.2, h * shape)) * (0.85 + 0.3 * n), kind: null, mapped: true, ...extra };
     trees.push(t); put(t); added++;
   };

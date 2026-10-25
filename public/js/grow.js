@@ -10,6 +10,13 @@
 //                  camouflage bark
 //   magnolia     - southern magnolia: branched from near the ground in a dense evergreen oval of
 //                  big glossy leaves, with white flowers
+//   redmaple     - a rounded, layered crown with five-lobed leaves and fine twigs
+//   tuliptree    - a tall, straight trunk under an upright crown of distinctive four-lobed leaves
+//   loblolly     - a straight southern pine with long, open limbs and needle sprays
+//   redcedar     - eastern redcedar: a narrow evergreen crown with dense scale-like sprays
+//   douglasfir   - tall western fir with a straight bole, layered limbs and drooping sprays
+//   ponderosa    - open western pine with long, spaced limbs and orange plated bark
+//   beech        - American beech: a smooth gray trunk under a dense, rounded crown
 //   saguaro      - the cactus: a ribbed column, usually with arms that bend up, flowers on top
 // The output has the same form as an ez-tree model (see sugarmaple.js, which this generalizes):
 // bark (position, normal, uv already tiled) and leaves (cards), foot at y = 0, about 60 units
@@ -104,6 +111,58 @@ export const SPECIES = {
     leaves: { mode: 'twig', size: 1.1, cards: 3000, flowers: 0.035 },
     bark: { u: 1.0, v: 2.0 },
   },
+  redmaple: {
+    trunk: { h: [5.5, 8], r: 0.48, flare: 0.28, lean: 0.07 },
+    leaders: { n: [3, 5], tilt: [0.55, 0.95], len: [7.5, 10], rad: 0.4 },
+    crown: { cy: 15, rx: 8.5, ry: 7.2 },
+    branch: sp({ step: 0.75, up: [0, 0.04, 0.04, 0.02, 0.01, 0, 0], jit: [0, 0.09, 0.14, 0.14, 0.14, 0.14, 0.14], lat: [0, 0.45, 0.32, 0.16, 0, 0, 0], twigFrom: 4, cover: 0.55, budget: 3300 }),
+    leaves: { mode: 'twig', size: 0.8, cards: 4800 },
+    bark: { u: 1.0, v: 1.8 },
+  },
+  tuliptree: {
+    trunk: { h: [11, 16], r: 0.72, flare: 0.3, lean: 0.045 },
+    leaders: { n: [3, 5], tilt: [0.48, 0.85], len: [7, 10], rad: 0.46 },
+    crown: { cy: 24, rx: 8, ry: 12 },
+    branch: sp({ step: 0.9, up: [0, 0.08, 0.06, 0.035, 0.02, 0.01, 0], jit: [0, 0.07, 0.11, 0.13, 0.13, 0.13, 0.13], lat: [0, 0.32, 0.24, 0.12, 0, 0, 0], twigFrom: 4, cover: 0.62, budget: 3100 }),
+    leaves: { mode: 'twig', size: 1.05, cards: 3800 },
+    bark: { u: 1.2, v: 2.2 },
+  },
+  loblolly: {
+    central: { h: [30, 38], r: 0.62, flare: 0.35, from: 0.3, every: 0.16, p: 0.9, len: [2, 8], tilt: [0.92, 1.32], rad: [0.2, 0.055] },
+    crown: { cone: true },
+    branch: sp({ step: 0.7, up: [0, 0, 0.01, 0.015, 0.01, 0, 0], jit: [0, 0.07, 0.09, 0.1, 0.1, 0.1, 0.1], lat: [0, 0, 0.26, 0.16, 0, 0, 0], out: 0.025, maxDepth: 5, twigFrom: 4, barkDepth: 4, forkAng: [0.28, 0.5], forkLen: [0.62, 0.78], budget: 2900 }),
+    leaves: { mode: 'pad', size: 1.0, cards: 3800 },
+    bark: { u: 1.0, v: 1.8 },
+  },
+  redcedar: {
+    central: { h: [18, 25], r: 0.42, flare: 0.22, from: 0.05, every: 0.075, p: 0.94, len: [0.8, 5.5], tilt: [0.72, 1.3], rad: [0.12, 0.025] },
+    crown: { cone: true },
+    branch: sp({ step: 0.55, up: [0, 0.02, 0.02, 0.01, 0, 0], jit: [0, 0.06, 0.1, 0.1, 0.1, 0.1], lat: [0, 0, 0.3, 0.2, 0, 0], out: 0.018, maxDepth: 5, twigFrom: 4, barkDepth: 4, forkAng: [0.3, 0.52], forkLen: [0.62, 0.78], budget: 2800 }),
+    leaves: { mode: 'pad', size: 0.9, cards: 5200 },
+    bark: { u: 0.8, v: 1.2 },
+  },
+    douglasfir: {
+    central: { h: [42, 52], r: 0.72, flare: 0.3, from: 0.06, every: 0.04, p: 0.98, len: [8, 15], tilt: [0.65, 1.18], rad: [0.2, 0.04] },
+    crown: { cone: true, tip: 3.5 },
+    branch: sp({ step: 0.7, up: [0, 0, 0.02, 0.045, 0.065, 0.07], jit: [0, 0.055, 0.08, 0.1, 0.11, 0.11], lat: [0, 0, 0.32, 0.2, 0, 0], droop: 0.035, droopFrom: 2, maxDepth: 5, twigFrom: 4, cover: 0.12, barkDepth: 4, forkAng: [0.27, 0.48], forkLen: [0.64, 0.8], budget: 3600 }),
+    leaves: { mode: 'pad', size: 1.05, cards: 7600, upperBoost: 3 },
+    bark: { u: 1.1, v: 2.2 },
+  },
+  ponderosa: {
+    central: { h: [28, 38], r: 0.68, flare: 0.28, from: 0.38, every: 0.11, p: 0.86, len: [1.8, 9.5], tilt: [0.88, 1.35], rad: [0.2, 0.045] },
+    crown: { oval: true },
+    branch: sp({ step: 0.85, up: [0, 0, 0.015, 0.01, 0, 0], jit: [0, 0.08, 0.12, 0.14, 0.14, 0.14], lat: [0, 0, 0.24, 0.12, 0, 0], out: 0.035, maxDepth: 5, twigFrom: 4, barkDepth: 4, forkAng: [0.3, 0.55], forkLen: [0.62, 0.78], budget: 2500 }),
+    leaves: { mode: 'pad', size: 1.15, cards: 2300 },
+    bark: { u: 1.3, v: 2.4 },
+  },
+  beech: {
+    trunk: { h: [12, 17], r: 0.66, flare: 0.2, lean: 0.035 },
+    leaders: { n: [3, 5], tilt: [0.5, 0.9], len: [7, 10], rad: 0.46 },
+    crown: { cy: 24, rx: 9.5, ry: 9 },
+    branch: sp({ step: 0.8, up: [0, 0.045, 0.04, 0.025, 0.015, 0.01, 0], jit: [0, 0.07, 0.11, 0.12, 0.12, 0.12, 0.12], lat: [0, 0.38, 0.28, 0.13, 0, 0, 0], twigFrom: 4, cover: 0.58, budget: 3000 }),
+    leaves: { mode: 'twig', size: 0.95, cards: 4200 },
+    bark: { u: 1.1, v: 2.1 },
+  },
   saguaro: { cactus: { h: [7, 11], r: 0.3, arms: [1, 4] }, bark: { u: 1, v: 1.0 } },
 };
 
@@ -129,7 +188,7 @@ function growSkeleton(S, seed) {
     centre = new V3(0, Ht * 0.55, 0);
     ell = (p) => {
       const f = Math.min(1, Math.max(0, p.y / Ht));
-      const r = C.cone ? R * Math.min(1, (1 - f) * 1.6) + 0.3 : R * Math.sin(Math.PI * Math.min(1, f * 0.95 + 0.05)) ** 0.7 + 0.3;
+      const r = C.cone ? R * Math.min(1, (1 - f) * 1.6) + (C.tip ?? 0.3) : R * Math.sin(Math.PI * Math.min(1, f * 0.95 + 0.05)) ** 0.7 + 0.3;
       return Math.max(Math.hypot(p.x, p.z) / r, p.y > Ht ? 1 + (p.y - Ht) : 0);
     };
   } else {
@@ -380,12 +439,16 @@ function leafGeometry(S, sk, seed, lod, scale) {
     return b.geometry(scale);
   }
   const Lf = S.leaves, twigs = sk.twigs;
-  const per = (Lf.cards * (mid ? 0.32 : 1)) / Math.max(1, twigs.length), size = Lf.size * (mid ? 1.7 : 1);
+  const upper = Lf.upperBoost || 0;
+  const weights = upper ? twigs.map((t) => 1 + upper * smooth(0.4, 0.95, t.pos.y / Math.max(1, sk.top))) : null;
+  const weightTotal = weights ? weights.reduce((a, b) => a + b, 0) : Math.max(1, twigs.length);
+  const per = Lf.cards * (mid ? 0.32 : 1), size = Lf.size * (mid ? 1.7 : 1);
   let ctr = new V3();
   for (const t of twigs) ctr.add(t.pos);
   ctr = twigs.length ? ctr.multiplyScalar(1 / twigs.length) : ctr;
-  for (const t of twigs) {
-    let k = Math.floor(per) + (rng() < per % 1 ? 1 : 0);
+  for (let ti = 0; ti < twigs.length; ti++) {
+    const t = twigs[ti], each = per * (weights ? weights[ti] : 1) / weightTotal;
+    let k = Math.floor(each) + (rng() < each % 1 ? 1 : 0);
     while (k-- > 0) {
       const p = t.pos.clone().add(new V3(rr(-0.5, 0.5), rr(-0.5, 0.5), rr(-0.5, 0.5)));
       const out = p.clone().sub(ctr).normalize();

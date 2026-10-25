@@ -14,7 +14,7 @@
 # foliage of live oak, magnolia, sycamore and both cypresses (scripts/scan-leaves.py, run after
 # this). Running this again draws them all afresh.
 #   python scripts/tree-textures.py public/textures/trees [kind ...]
-# Kinds: liveoak cypress baldcypress mesquite paloverde saguaro sycamore magnolia
+# Kinds: liveoak cypress baldcypress mesquite paloverde saguaro sycamore magnolia redmaple tuliptree loblolly redcedar douglasfir ponderosa beech
 # Needs Python 3 with Pillow and NumPy.
 import sys, math, random
 import numpy as np
@@ -200,6 +200,23 @@ def flowers_saguaro(d, ox, oy, seed, fruit=False):
 def L_small_oak(rnd, s): return ellipse_leaf(rnd.uniform(60, 80) * s, rnd.uniform(26, 34) * s, 0.6)
 def L_magnolia(rnd, s): return ellipse_leaf(rnd.uniform(230, 300) * s, rnd.uniform(90, 120) * s, 0.7)
 def L_sycamore(rnd, s): return palmate_leaf(rnd.uniform(230, 290) * s)
+def L_redmaple(rnd, s):
+    lobes = ((0, 1.0), (0.92, 0.86), (-0.92, 0.86), (2.05, 0.64), (-2.05, 0.64))
+    return palmate_leaf(rnd.uniform(220, 280) * s, lobes=lobes, notch=0.3, teeth=True)
+
+def L_tuliptree(rnd, s):
+    L, W = rnd.uniform(250, 310) * s, rnd.uniform(190, 240) * s
+    return [(0, 0), (-W*.22, -L*.16), (-W*.47, -L*.2), (-W*.43, -L*.55), (-W*.26, -L*.72), (-W*.17, -L*.57), (-W*.12, -L*.9), (0, -L*.78),
+            (W*.12, -L*.9), (W*.17, -L*.57), (W*.26, -L*.72), (W*.43, -L*.55), (W*.47, -L*.2), (W*.22, -L*.16)]
+
+def L_beech(rnd, s):
+    L, W = rnd.uniform(190, 240) * s, rnd.uniform(95, 130) * s
+    pts = []
+    for i in range(21):
+        t = i / 20
+        tooth = 1 + 0.045 * math.sin(t * math.pi * 18)
+        pts.append((W * 0.5 * math.sin(math.pi * t) ** 0.85 * tooth, -L * t))
+    return pts + [(-x, y) for x, y in reversed(pts)]
 
 LEAVES = {
     'liveoak': lambda d: (
@@ -218,6 +235,13 @@ LEAVES = {
         twig(d, *QUARTERS['br'], L_magnolia, 4, [(42, 76, 38), (38, 68, 34), (50, 84, 42)], stem=(96, 84, 64), side=3, spread=0.9, vein=(92, 122, 70), seed=51),
         flower_magnolia(d, *QUARTERS['tl'], 52),
         twig(d, *QUARTERS['tr'], L_magnolia, 4, [(40, 72, 36), (46, 80, 40)], stem=(96, 84, 64), side=3, spread=0.9, vein=(92, 122, 70), seed=53)),
+    'redmaple': lambda d: [twig(d, *QUARTERS[q], L_redmaple, 5, [(72, 126, 48), (82, 138, 55), (64, 116, 44)], stem=(105, 78, 55), side=4, spread=0.9, vein=(122, 154, 78), seed=70 + i) for i, q in enumerate(QUARTERS)],
+    'tuliptree': lambda d: [twig(d, *QUARTERS[q], L_tuliptree, 4, [(64, 126, 54), (76, 138, 60), (58, 114, 48)], stem=(104, 82, 56), side=3, spread=0.85, vein=(120, 152, 82), seed=80 + i) for i, q in enumerate(QUARTERS)],
+    'loblolly': lambda d: [spray(d, *QUARTERS[q], (55, 94, 52), 90 + i, needle=True) for i, q in enumerate(QUARTERS)],
+    'redcedar': lambda d: [spray(d, *QUARTERS[q], (48, 80, 48), 100 + i) for i, q in enumerate(QUARTERS)],
+    'douglasfir': lambda d: [spray(d, *QUARTERS[q], (42, 82, 48), 110 + i, needle=True) for i, q in enumerate(QUARTERS)],
+    'ponderosa': lambda d: [spray(d, *QUARTERS[q], (76, 112, 56), 120 + i, needle=True) for i, q in enumerate(QUARTERS)],
+    'beech': lambda d: [twig(d, *QUARTERS[q], L_beech, 6, [(64, 112, 52), (76, 124, 58), (88, 132, 62)], stem=(104, 82, 56), side=4, spread=0.8, vein=(128, 150, 82), seed=130 + i) for i, q in enumerate(QUARTERS)],
     'saguaro': lambda d: (flowers_saguaro(d, *QUARTERS['tl'], 60), flowers_saguaro(d, *QUARTERS['tr'], 61, fruit=True),
                           flowers_saguaro(d, *QUARTERS['bl'], 62), flowers_saguaro(d, *QUARTERS['br'], 63, fruit=True)),
 }
@@ -309,6 +333,48 @@ def bark_magnolia():
     c[dots] = c[dots] * 0.8
     return c, h, 3
 
+def bark_redmaple():
+    fibres_ = fibres(24, 81, 0.035) * 0.35 + fbm(18, 28, 82) * 0.65
+    h = 0.58 + 0.16 * fibres_ + 0.06 * fbm(48, 48, 83)
+    c = tint(fibres_, (98, 94, 84), (178, 168, 142))
+    c *= (0.94 + 0.06 * fbm(32, 32, 84))[..., None]
+    return c, h, 2
+
+def bark_tuliptree():
+    f = fibres(10, 85, 0.06) * 0.45 + fibres(31, 86, 0.035) * 0.25 + fbm(9, 13, 87) * 0.3
+    h = 0.35 + 0.45 * f
+    return tint(f, (92, 78, 60), (158, 138, 108)), h, 5
+
+def bark_loblolly():
+    h = plates(7, 13, 88, 0.07) * (0.75 + 0.25 * fbm(12, 18, 89))
+    return tint(h, (62, 34, 25), (150, 91, 60)), h, 8
+
+def bark_redcedar():
+    f = fibres(28, 91, 0.045) * 0.68 + fibres(76, 92, 0.02) * 0.32
+    h = f * (0.8 + 0.2 * fbm(8, 10, 93))
+    return tint(h, (66, 48, 38), (150, 112, 82)), h, 7
+
+def bark_douglasfir():
+    f = fibres(11, 94, 0.1) * 0.55 + fibres(34, 95, 0.045) * 0.45
+    h = f * (0.72 + 0.28 * fbm(7, 14, 96))
+    return tint(h, (52, 34, 27), (128, 79, 58)), h, 9
+
+def bark_ponderosa():
+    h = plates(6, 9, 97, 0.065) * (0.72 + 0.28 * fbm(14, 18, 98))
+    c = tint(h, (104, 61, 38), (198, 139, 83))
+    bands = fbm(4, 38, 99) > 0.73
+    c[bands] = c[bands] * 0.72 + np.array([76, 58, 42]) * 0.28
+    return c, h, 8
+
+def bark_beech():
+    m = fbm(7, 8, 101)
+    fine = fbm(24, 40, 102)
+    streaks = fibres(7, 103, 0.02)
+    h = 0.55 + 0.035 * m + 0.025 * fine + 0.015 * streaks
+    c = tint(m * 0.35 + fine * 0.65, (126, 124, 116), (174, 169, 154))
+    c *= (0.96 + 0.04 * streaks)[..., None]
+    return c, h, 1.5
+
 RIBS = 16
 def bark_saguaro():
     u = (X * RIBS) % 1
@@ -324,7 +390,9 @@ def bark_saguaro():
     return c, h, 7
 
 BARKS = {'liveoak': bark_liveoak, 'cypress': bark_cypress, 'baldcypress': bark_baldcypress, 'mesquite': bark_mesquite,
-         'paloverde': bark_paloverde, 'sycamore': bark_sycamore, 'magnolia': bark_magnolia, 'saguaro': bark_saguaro}
+         'paloverde': bark_paloverde, 'sycamore': bark_sycamore, 'magnolia': bark_magnolia, 'saguaro': bark_saguaro,
+         'redmaple': bark_redmaple, 'tuliptree': bark_tuliptree, 'loblolly': bark_loblolly,
+         'redcedar': bark_redcedar, 'douglasfir': bark_douglasfir, 'ponderosa': bark_ponderosa, 'beech': bark_beech}
 
 def normals(h, k):
     gx = (np.roll(h, -1, 1) - np.roll(h, 1, 1)) * k
