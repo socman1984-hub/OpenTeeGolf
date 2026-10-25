@@ -1,6 +1,6 @@
 {
   "name": "openteegolf",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "private": true,
   "type": "module",
   "description": "Free, open-source golf simulator for the FlightScope Mevo+ (three.js WebGPU + Jolt Physics) that plays any course mapped in OpenStreetMap",
