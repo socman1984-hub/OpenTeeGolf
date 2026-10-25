@@ -11,6 +11,7 @@ OpenTeeGolf is free software under the GNU General Public License v3 (see `LICEN
 | [EZ-Tree](https://github.com/dgreenheck/ez-tree) 1.1 (procedural trees, with its bark and leaf textures) | MIT |
 | [geotiff.js](https://github.com/geotiffjs/geotiff.js) 3.0 (reading tree-height maps) | MIT |
 | [ironsight](https://github.com/divotmaker/ironsight) (Copyright 2026 Eric Thill): the Mevo+ protocol, ported to JavaScript in `lib/mevo.js` | MIT OR Apache-2.0 (used under MIT) |
+| [Creek Water Studio](https://github.com/bjlin-meshy/creek-water-studio) (bjlin-meshy): the ideas behind the clear creek water, its stony bed, the foam and leaves drifting on it and the creek sounds (`public/js/flotsam.js`, `public/js/creek-sound.js`, stream water in `public/js/scene.js`) | MIT |
 | [Node.js](https://nodejs.org) (bundled in the Windows release zip) | MIT and others, see `node/LICENSE` in the zip |
 
 ## Textures (in `public/textures/`)
@@ -30,9 +31,21 @@ OpenTeeGolf is free software under the GNU General Public License v3 (see `LICEN
 | `trees/{liveoak,magnolia,sycamore,cypress,baldcypress}_leaves.png` (foliage) | Twigs made with `scripts/scan-leaves.py` from [ambientCG LeafSet001](https://ambientcg.com/view?id=LeafSet001), [LeafSet022](https://ambientcg.com/view?id=LeafSet022), [LeafSet025](https://ambientcg.com/view?id=LeafSet025) and [LeafSet019](https://ambientcg.com/view?id=LeafSet019); the moss and flowers drawn by `scripts/tree-textures.py` | CC0 1.0 (scans) |
 | `trees/sycamore_bark_*.jpg`, `trees/liveoak_bark_*.jpg`, `trees/baldcypress_bark_*.jpg`, `trees/cypress_bark_*.jpg`, `trees/magnolia_bark_*.jpg`, `trees/mesquite_bark_*.jpg` | [Poly Haven Bark Platanus](https://polyhaven.com/a/bark_platanus), [Jolcham Oak Bark 01](https://polyhaven.com/a/jolcham_oak_bark_01), [Metasequoia Bark](https://polyhaven.com/a/metasequoia_bark), [Japanese Cedar Bark](https://polyhaven.com/a/japanese_cedar_bark), [Chinese Hackberry Bark](https://polyhaven.com/a/chinese_hackberry_bark), [Bark Willow](https://polyhaven.com/a/bark_willow) | CC0 1.0 |
 | `trees/{mesquite,paloverde,saguaro}_leaves.png`, `trees/{paloverde,saguaro}_bark_*.jpg` | Drawn by `scripts/tree-textures.py` (no source images) | Part of OpenTeeGolf (GPL-3.0-or-later) |
+| `trees/{redmaple,tuliptree,loblolly}_{leaves.png,bark_*.jpg}` | Drawn by `scripts/tree-textures.py` (no source images) | Part of OpenTeeGolf (GPL-3.0-or-later) |
+| `trees/{redcedar,douglasfir,ponderosa,beech}_{leaves.png,bark_*.jpg}` | Drawn by `scripts/tree-textures.py` (no source images) | Part of OpenTeeGolf (GPL-3.0-or-later) |
 | `water_normal.jpg` | [three.js](https://github.com/mrdoob/three.js/blob/r186/examples/textures/waternormals.jpg) example textures | MIT |
 
 The ambientCG and Poly Haven textures were resized to 1K and recompressed; CC0 needs no attribution, but credit is given here anyway.
+
+## Sounds (in `public/audio/`)
+
+| File | Source | License |
+|---|---|---|
+| `trickle.mp3` | Trimmed from [Water Trickle](https://freesound.org/people/TheWoodlandNomad/sounds/363120/) by TheWoodlandNomad | CC0 1.0 |
+| `creek.mp3` | Trimmed from [small river in the forest very close sound effect](https://freesound.org/people/Garuda1982/sounds/577837/) by Garuda1982 | CC0 1.0 |
+| `rapids.mp3` | Trimmed from [Mountain River 001.wav](https://freesound.org/people/Auxide_Audio/sounds/588179/) by Auxide_Audio | CC0 1.0 |
+
+The loops were trimmed by [Creek Water Studio](https://github.com/bjlin-meshy/creek-water-studio) and taken from there; CC0 needs no attribution, but credit is given here anyway.
 
 ## Data downloaded at run time
 

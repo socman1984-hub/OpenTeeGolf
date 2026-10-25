@@ -14,6 +14,9 @@ const STEP = 2;
 // narrower channel there's often no ground point inside it, and the ground then spans straight
 // from bank to bank above the water (brown teeth across the stream). 3.8 m always holds some.
 export const MIN_HW = 1.9;
+// Turn the downhill gradient into a visible current. A 1% drop is about 0.9 m/s; steeper runs
+// accelerate quickly, with a practical cap before waterfalls become excessively fast.
+export const flowSpeed = (slope) => Math.min(4.5, 0.16 + Math.max(0, slope) * 72);
 const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
 
 // A ribbon's centre line and half widths, or null if the outline isn't one (any width will do
@@ -149,9 +152,9 @@ export function prepareStreams(list) {
   return out;
 }
 
-// Once each piece knows its water level: which way each stream runs (towards its lower end) and
-// how fast at each sample (from the slope over 50 m: barely moving on the flat, about 0.6 m/s at
-// 1 in 100, up to 2.5 m/s). Adds to each chain: level, down (distance downstream), speed.
+// Once each piece knows its water level: which way each stream runs (towards its lower end), how
+// fast at each sample (from the slope over 50 m), and how sharply it drops over short stretches.
+// Adds to each chain: level, down (distance downstream), speed and fall.
 export function streamFlow(pieces) {
   const chains = new Set();
   for (const f of pieces) {
@@ -164,12 +167,15 @@ export function streamFlow(pieces) {
     const n = c.pts.length, len = c.s[n - 1];
     const dir = c.level[0] >= c.level[n - 1] ? 1 : -1;
     c.down = c.s.map((s) => (dir > 0 ? s : len - s));
-    const K = Math.round(25 / STEP), raw = [];
+    const K = Math.round(25 / STEP), raw = [], falls = [];
     for (let i = 0; i < n; i++) {
       const a = Math.max(0, i - K), b = Math.min(n - 1, i + K);
       const slope = b > a ? ((c.level[a] - c.level[b]) * dir) / (c.s[b] - c.s[a]) : 0;
-      raw.push(Math.min(2.5, 0.12 + Math.max(0, slope) * 48));
+      raw.push(flowSpeed(slope));
+      const fa = Math.max(0, i - 1), fb = Math.min(n - 1, i + 1);
+      falls.push(fb > fa ? Math.abs(c.level[fa] - c.level[fb]) / (c.s[fb] - c.s[fa]) : 0);
     }
     [, c.speed] = smoothLine(c.pts, raw, 5, 1);
+    [, c.fall] = smoothLine(c.pts, falls, 3, 1);
   }
 }

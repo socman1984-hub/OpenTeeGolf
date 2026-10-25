@@ -9,6 +9,7 @@ import { simulateShot, LIE_EFFECT, stimpToRoll, SURFACE_NAMES } from './physics.
 import { loadJolt, CollisionWorld } from './collision.js';
 import { PRESETS as WEATHER, fetchLiveWeather, wetness, gustFor, TIMES, timeHour, sunAt, daylight, dayOfYear, clockText } from './weather.js';
 import { PRACTICE_AREAS, makePractice } from './practice.js';
+import { setVolume } from './creek-sound.js';
 
 const $ = (id) => document.getElementById(id);
 const M_TO_YD = 1.09361, M_TO_FT = 3.28084;
@@ -1995,13 +1996,17 @@ $('opt-fps').addEventListener('change', () => setFps($('opt-fps').checked));
 
 // Remember graphics choices between visits
 function savePrefs() {
-  try { localStorage.setItem('golfsim.prefs', JSON.stringify({ quality: $('opt-quality').value, fps: !!S.showFps, traces: S.showTraces !== false })); } catch { /* storage unavailable */ }
+  try { localStorage.setItem('golfsim.prefs', JSON.stringify({ quality: $('opt-quality').value, fps: !!S.showFps, traces: S.showTraces !== false, volume: +$('opt-volume').value })); } catch { /* storage unavailable */ }
 }
 try {
   const prefs = JSON.parse(localStorage.getItem('golfsim.prefs') || '{}');
   if (prefs.quality) $('opt-quality').value = prefs.quality;
   if (prefs.fps) setFps(true);
+  if (prefs.volume != null) $('opt-volume').value = prefs.volume;
 } catch { /* ignore */ }
+// Sound volume (streams so far)
+setVolume($('opt-volume').value / 100);
+$('opt-volume').addEventListener('input', () => { setVolume($('opt-volume').value / 100); savePrefs(); });
 
 // Previous shot traces on/off (H)
 function setTraces(on) {

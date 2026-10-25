@@ -8,6 +8,7 @@ import {
   positionWorld, cameraPosition, instancedBufferAttribute, PI, normalMap, time, reflector, normalView, positionViewDirection, pow,
   uniform, select, fwidth, normalWorld, attribute, fract, floor, step, max, length, positionLocal, transformNormalToView,
   output, exp, vec4, fog, positionView, pass, mrt, screenUV, positionGeometry, log2,
+  viewportSharedTexture, If, sqrt, min,
 } from 'three/tsl';
 import { bloom } from 'three/addons/tsl/display/BloomNode.js';
 import { radialBlur } from 'three/addons/tsl/display/radialBlur.js';
@@ -24,9 +25,11 @@ import { MOW_WIDTH, mowIndex } from './mowing.js';
 import { layoutParking, bayCorners, carColour } from './parking.js';
 import { roadLines, roadSamples, stripTriangles, onRoad } from './roads.js';
 import { buildBuildings } from './buildings.js';
-import { MIN_HW } from './streams.js';
+import { MIN_HW, flowSpeed } from './streams.js';
 import { removeShadows } from './deshadow.js';
 import { cloudAlpha, cloudAlphaNode, shadowDir, shadowDirCPU } from './clouds.js';
+import { Flotsam } from './flotsam.js';
+import { CreekSound } from './creek-sound.js';
 import { OceanWaves } from './ocean.js';
 
 // The course's mowing patterns (pattern numbers from mowing.js), read by the terrain shader
@@ -101,6 +104,9 @@ const _lightColour = new THREE.Color();
 // (0..1), and where the sun is in the picture (uv; on: 1 when it's in front of you)
 const clouds = { origin: uniform(new THREE.Vector3()), veil: uniform(0), sunUv: uniform(new THREE.Vector2(0.5, 0.5)), sunOn: uniform(0) };
 const _sunPoint = new THREE.Vector3();
+// Streams: how murky the water is (0 clear .. 1 brown; more after rain) and how strong the sun is
+// on their beds (for the dancing light, the caustics), set with the light and the weather
+const creek = { murk: uniform(0.22), sun: uniform(1), reach: uniform(40) };
 
 export class CourseScene {
   constructor(container) {
@@ -108,6 +114,7 @@ export class CourseScene {
     const forceWebGL = new URLSearchParams(location.search).has('webgl');
     // (?gputime: measure how long the graphics card takes over each frame, shown in the FPS overlay)
     this.gpuTime = new URLSearchParams(location.search).has('gputime');
+    this.creek = creek;          // (the stream water's settings, shared by its shaders)
     // (reversed depth: precise from the ball at your feet to mountains tens of kilometres away)
     this.renderer = new THREE.WebGPURenderer({ antialias: true, powerPreference: 'high-performance', forceWebGL, reversedDepthBuffer: true, trackTimestamp: this.gpuTime });
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
@@ -420,12 +427,18 @@ export class CourseScene {
     this.pendingTrees = removeTrees(this.pendingTrees, course.removedTrees);
     // (not kilometres of forest up the mountains: only out to a couple of hundred metres from the holes)
     this.pendingTrees = nearHoles(this.pendingTrees, holeDistance(course.holes.map((hh) => hh.path)));
-    // No trunks on roads or cart paths (mapped, or seen in the photo): crowns found from above
-    // often hang over one. Such a tree moves to the nearest clear spot within 3 m, or goes. (The
-    // player's own trees stay where they were put.)
+    // No trunks on roads or cart paths (mapped, or seen in the photo) or standing in a pond or
+    // stream: crowns found from above often hang over one. Such a tree moves to the nearest clear
+    // spot within 3 m, or goes. (The player's own trees stay where they were put.)
     const lanes = [...(course.roads?.roads || []), ...(course.paths || [])];
     const paved = onRoad(lanes, 0.8);
-    const blocked = (x, z) => paved(x, z) || this.nearPath(x, z, 0.8);
+    const wet = (x, z) => {
+      const i = Math.floor((x - shore.minX) / shore.res), j = Math.floor((shore.maxZ - z) / shore.res);
+      return i >= 0 && j >= 0 && i < shore.w && j < shore.h && shore.inside[(j * shore.w + i) * 4] > 127;
+    };
+    // (the trunk and half a metre round it clear of the water)
+    const inWater = (x, z) => wet(x, z) || wet(x + 0.5, z) || wet(x - 0.5, z) || wet(x, z + 0.5) || wet(x, z - 0.5);
+    const blocked = (x, z) => paved(x, z) || this.nearPath(x, z, 0.8) || inWater(x, z);
     this.pendingTrees = this.pendingTrees.filter((t) => {
       if (t.user || !blocked(t.x, t.z)) return true;
       for (const d of [1, 1.5, 2, 2.5, 3]) for (let k = 0; k < 12; k++) {
@@ -1238,8 +1251,10 @@ export class CourseScene {
       // and greens (green only) from reading as path.
       // (roads too: pavement)
       ctx.strokeStyle = 'rgb(0,40,90)'; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+      // (as wide as the strip laid on top - see addPathStrips - so nothing that keeps off paths
+      // grows up through its edges)
       for (const pth of [...(course.paths || []), ...(course.roads?.roads || [])]) {
-        ctx.lineWidth = pth.width / res;
+        ctx.lineWidth = (pth.width + 0.3) / res;
         ctx.beginPath();
         pth.pts.forEach(([x, z], i) => { const px = (x - minX) / res, py = (maxZ - z) / res; if (i) ctx.lineTo(px, py); else ctx.moveTo(px, py); });
         ctx.stroke();
@@ -1380,13 +1395,13 @@ export class CourseScene {
     tex.colorSpace = THREE.SRGBColorSpace;
     tex.anisotropy = 8;
     const { minX, maxX, minZ, maxZ } = course.bounds;
-    const N = 160;
+    const N = 160, span = Math.max(x1 - x0, z1 - z0) / N;
     const g = new THREE.PlaneGeometry(1, 1, N, N);
     const p = g.attributes.position, uv = g.attributes.uv;
     for (let i = 0; i < p.count; i++) {
       const fu = uv.getX(i), fv = uv.getY(i);
       const x = x0 + fu * (x1 - x0), z = z0 + fv * (z1 - z0);
-      p.setXYZ(i, -x, this.groundBeyond(x, z), z);
+      p.setXYZ(i, -x, this.groundBeyond(x, z, span), z);
     }
     g.computeVertexNormals();
     const mat = new THREE.MeshStandardNodeMaterial({ map: tex, roughness: 1, metalness: 0, side: THREE.DoubleSide, envMapIntensity: 0.3 });
@@ -1542,11 +1557,24 @@ export class CourseScene {
   // Height of the ground drawn beyond the course: under the course's own terrain inside it; just
   // outside, its edge, easing over 600 m into the real land around it (when the distant land is
   // known; otherwise the course's edge carried outward)
-  groundBeyond(x, z) {
+  // span: how far apart the mesh's points are. Under the course the mesh goes below the lowest
+  // ground that far round each point, so a creek's channel between two points on its banks
+  // doesn't have it showing through the bed.
+  groundBeyond(x, z, span = 0) {
     const { minX, maxX, minZ, maxZ } = this.course.bounds;
     const cx = Math.min(maxX - 1, Math.max(minX + 1, x)), cz = Math.min(maxZ - 1, Math.max(minZ + 1, z));
     const edge = this.course.heightAt(cx, cz) ?? this.hmin;
-    if (cx === x && cz === z) return edge - 3;
+    if (cx === x && cz === z) {
+      let low = edge;
+      if (span > 0) {
+        const n = Math.min(4, Math.ceil(span / 2)); // (9 x 9 readings at most: loading time)
+        for (let j = -n; j <= n; j++) for (let i = -n; i <= n; i++) {
+          const h = this.course.heightAt(x + (i / n) * span, z + (j / n) * span);
+          if (h !== null && h < low) low = h;
+        }
+      }
+      return low - 3;
+    }
     if (!this.farField) return edge - 0.4;
     const out = Math.hypot(x - cx, z - cz), t = Math.min(1, out / 600), s = t * t * (3 - 2 * t);
     return edge - 0.4 + (this.farField.at(x, z) - (edge - 0.4)) * s;
@@ -1599,7 +1627,9 @@ export class CourseScene {
     for (let i = 0; i < p.count; i++) {
       const x = F.cx + stretch(uv.getX(i)) * F.half, z = F.cz + stretch(uv.getY(i)) * F.half;
       const covered = x > ax0 + 20 && x < ax1 - 20 && z > az0 + 20 && z < az1 - 20;
-      p.setXYZ(i, -x, this.groundBeyond(x, z) - (covered ? 4 : 0), z);
+      // (the spacing here: stretch() packs points towards the middle)
+      const span = (4 * Math.max(Math.abs(uv.getX(i) * 2 - 1), Math.abs(uv.getY(i) * 2 - 1)) * F.half) / N + 1;
+      p.setXYZ(i, -x, this.groundBeyond(x, z, span) - (covered ? 4 : 0), z);
     }
     g.deleteAttribute('uv');
     g.computeVertexNormals();
@@ -1709,6 +1739,16 @@ export class CourseScene {
     this.flowMat?.dispose(); this.streamMat?.dispose();
     this.flowMat = course.waterBodies.some((wb) => wb.levelAt && !wb.ribbon) ? flowingWaterMaterial(this.scene.environment) : null;
     this.streamMat = course.waterBodies.some((wb) => wb.ribbon) ? streamMaterial(this.scene.environment) : null;
+    // Foam and leaves floating down the streams (see flotsam.js)
+    this.flotsam?.dispose(); if (this.flotsam) this.courseGroup.remove(this.flotsam.group); this.flotsam = null;
+    this.creekSound?.dispose(); this.creekSound = null;
+    const streamChains = [...new Set(course.waterBodies.filter((wb) => wb.ribbon).map((wb) => wb.ribbon.chain))];
+    if (streamChains.length) {
+      const q = this.quality?.name;
+      this.flotsam = new Flotsam(streamChains, q === 'high' ? { foam: 600, leaves: 90 } : q === 'performance' ? { foam: 200, leaves: 30 } : { foam: 400, leaves: 60 });
+      this.courseGroup.add(this.flotsam.group);
+      this.creekSound = new CreekSound(streamChains);
+    }
     // (the mirror follows the ponds; streams run and break up any reflection)
     this.waterCentres = course.waterBodies.filter((wb) => !wb.levelAt && !wb.sea).map((wb) => {
       let x = 0, z = 0;
@@ -1722,6 +1762,9 @@ export class CourseScene {
         m.userData.flowing = true;
         m.position.y = wb.level;
         m.receiveShadow = true;
+        // (layer 1: never drawn into the pond mirror - the see-through water reads a copy of the
+        // picture, and the mirror's own drawing would resize it every frame)
+        m.layers.set(1);
         this.waterMeshes.push(m);
         this.courseGroup.add(m);
         continue;
@@ -2013,14 +2056,18 @@ export class CourseScene {
       const s = shoreSpot();
       // Reed beds, not a continuous ring: in patches on natural ponds, round most of a reedy one,
       // rarely among rocks, never on a mown one
-      const reedLimit = s.wb.sea ? undefined : { natural: 0.2, reedy: -0.45, rocky: 0.55 }[s.wb.style];
-      if (reedLimit === undefined || noise(s.x * 0.035 + 7, s.z * 0.035 - 3) < reedLimit) continue;
+      // (along a stream only short beds now and then, whatever its style: a bank lined with them
+      // for hundreds of metres looks planted)
+      const stream = !!s.wb.levelAt;
+      const reedLimit = s.wb.sea || (stream && s.wb.style === 'manicured') ? undefined : stream ? 0.42 : { natural: 0.2, reedy: -0.45, rocky: 0.55 }[s.wb.style];
+      const f = stream ? 0.09 : 0.035;
+      if (reedLimit === undefined || noise(s.x * f + 7, s.z * f - 3) < reedLimit) continue;
       if (nearPlay(s.x, s.z, s.nx, s.nz)) continue;
       // Mostly just inside the water, some right at the edge (in a stream, only along its banks:
       // the current keeps the channel clear)
       const d = -0.1 - Math.random() ** 1.3 * (s.wb.levelAt ? 0.45 : 1.6), along = (Math.random() - 0.5) * 0.6;
       const x = s.x + s.nx * d + s.tx * along, z = s.z + s.nz * d + s.tz * along;
-      const k = kinds[Math.random() < 0.35 ? 1 : 0];
+      const k = kinds[Math.random() < (stream ? 0.15 : 0.35) ? 1 : 0];
       if (k.n >= k.mesh.instanceMatrix.count) continue;
       const y = baseY(x, z, s.level);
       // Standing 0.9-1.6 m clear of the water (plus whatever is below the surface)
@@ -2465,6 +2512,7 @@ export class CourseScene {
     // the general haze and overcast)
     this.sunBase = 3.0 * (1 - 0.6 * Math.max(0, cloud - 0.3) / 0.7) * (0.35 + 0.65 * dim) * (1 - 0.6 * fog);
     this.sun.intensity = this.sunBase * (1 - 0.75 * clouds.veil.value);
+    creek.murk.value = 0.18 + 0.55 * Math.min(1, rainMm / 4);
     this.hemi.color.set(0xdcecff).lerp(c.setRGB(0.96, 0.82, 0.72), low * 0.45);
     this.hemi.intensity = (0.7 + 0.45 * cloud) * (0.62 + 0.38 * S(elev, 0, 25));
     // (eyes adjust to the evening, so it stays playable; heavy cloud and rain darken the day)
@@ -2493,6 +2541,7 @@ export class CourseScene {
     const v = clouds.veil.value + (a - clouds.veil.value) * Math.min(1, (dt || 0.016) * 2.5);
     clouds.veil.value = v;
     this.sun.intensity = this.sunBase * (1 - 0.75 * v);
+    creek.sun.value = this.sun.intensity / 3;
     // (the sun's place in the picture, for the sun rays; none once it's behind you)
     _sunPoint.copy(this.camera.position).addScaledVector(SUN_DIR, 1000).project(this.camera);
     clouds.sunUv.value.set(_sunPoint.x * 0.5 + 0.5, 0.5 - _sunPoint.y * 0.5);
@@ -3600,6 +3649,8 @@ export class CourseScene {
     this.updateRain(dt);
     this.updatePuttGrid(dt);
     this.updateClouds(raw);
+    this.flotsam?.update(this.camera, raw);
+    this.creekSound?.update(this.camera, raw);
     this.oceanWaves?.update(this.clock.elapsedTime, dt);
     this.pondWaves?.update(this.clock.elapsedTime, dt);
     if (this.post) this.post.render(); else this.renderer.render(this.scene, this.camera);
@@ -3947,7 +3998,8 @@ function roughCarpetMaterial(map, { minX, maxZ, w, h, hmin, SIDE, R = 16, inner 
     if (surf.hasGreens) pathy = pathy.mul(smoothstep(0.03, 0.15, sh.g).oneMinus());
     const sand = surf.hasSand ? sh.b : smoothstep(0.66, 0.76, sm.b);
     // (red 0.42: the first cut round fairways, drawn at about half strength, is mown too)
-    let mown = max(max(step(0.42, sm.r), step(0.5, sm.g)), max(step(0.5, pathy), step(0.5, sand)));
+    // (paths with a little to spare: a tuft rooted right at the edge leans its blades over it)
+    let mown = max(max(step(0.42, sm.r), step(0.5, sm.g)), max(step(0.2, pathy), step(0.5, sand)));
     if (surf.hasGreens) mown = max(mown, step(0.28, sh.g));
     return mown.oneMinus();
   };
@@ -3994,11 +4046,12 @@ function meshGroundAt(course) {
 // A stream laid down its channel (see streams.js): rows across it every 2 m, seven points each,
 // from bank to bank. UVs are metres downstream and across, so the ripples can be drawn out along
 // the current and carried down it; 'stream' holds the speed (m/s), where across the channel the
-// point is (-1 one bank, 1 the other) and the half width.
+// point is (-1 one bank, 1 the other) and the half width; 'deep' how deep the water is there.
 const ACROSS = [-1, -0.7, -0.35, 0, 0.35, 0.7, 1];
 function streamGeometry(wb, groundAt) {
   const { chain, i0, i1 } = wb.ribbon, A = ACROSS.length, rows = i1 - i0 + 1;
-  const pos = new Float32Array(rows * A * 3), uvs = new Float32Array(rows * A * 2), st = new Float32Array(rows * A * 3), nrm = new Float32Array(rows * A * 3);
+  const pos = new Float32Array(rows * A * 3), uvs = new Float32Array(rows * A * 2), st = new Float32Array(rows * A * 3), fall = new Float32Array(rows * A), nrm = new Float32Array(rows * A * 3);
+  const deep = new Float32Array(rows * A); // (how deep the water is there: m to the ground drawn below)
   for (let r = 0; r < rows; r++) {
     const i = i0 + r, [cx, cz] = chain.pts[i], [nx, nz] = chain.nrm[i], hw = Math.max(MIN_HW, chain.hw[i]);
     // (across measured looking downstream, so the two banks keep their sides whichever way it runs)
@@ -4012,9 +4065,11 @@ function streamGeometry(wb, groundAt) {
       let ground = -Infinity;
       if (Math.abs(t) < 1) for (const [dx, dz] of [[0, 0], [0.5, 0], [-0.5, 0], [0, 0.5], [0, -0.5]]) ground = Math.max(ground, groundAt(x + dx, z + dz) ?? -Infinity);
       const y = Math.max(level, ground + 0.04);
+      deep[k] = Math.max(0, y - (groundAt(x, z) ?? y));
       pos[k * 3] = -x; pos[k * 3 + 1] = y - wb.level; pos[k * 3 + 2] = z;
       uvs[k * 2] = chain.down[i]; uvs[k * 2 + 1] = t * hw * side;
       st[k * 3] = chain.speed[i]; st[k * 3 + 1] = t; st[k * 3 + 2] = hw;
+      fall[k] = chain.fall[i];
       nrm[k * 3 + 1] = 1;
     }
   }
@@ -4031,22 +4086,38 @@ function streamGeometry(wb, groundAt) {
   g.setAttribute('normal', new THREE.BufferAttribute(nrm, 3));
   g.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
   g.setAttribute('stream', new THREE.BufferAttribute(st, 3));
+  g.setAttribute('fall', new THREE.BufferAttribute(fall, 1));
+  g.setAttribute('deep', new THREE.BufferAttribute(deep, 1));
   g.setIndex(idx);
   return g;
 }
 
-// Stream water: ripples drawn out along the current and carried down it (two layers half a cycle
-// apart, each faded out as it jumps back), quicker mid-channel than by the banks. The middle is
-// deep and dark; towards the banks it shallows and the bed shows through. Fast water breaks into
-// streaks of white, most of all along the edges.
+// Stream water, as clear running water: you see the bed through it.
+//   - ripples drawn out along the current and carried down it (two layers half a cycle apart, each
+//     faded out as it jumps back), quicker mid-channel than by the banks, the surface rolling a
+//     little downstream
+//   - the picture behind the water (the bed: drawn first) seen through the surface, bent by the
+//     ripples; the water takes out red first and then green with every metre it's deep, and the
+//     murk scatters a green-brown light into it, so the edges show the pebbles clearly and the
+//     deep middle goes dark and green (Beer-Lambert, as in Creek Water Studio by bjlin-meshy, MIT)
+//   - the sun's light dancing on the bed (caustics) where it's shallow and the water clear
+//   - the sky and the sun reflected off the top, more at a glancing angle (the material's own
+//     lighting), and white water in streaks and riffles where it runs fast, and below falls
 function streamMaterial(env) {
-  const m = new THREE.MeshPhysicalNodeMaterial({ roughness: 0.08, metalness: 0, ior: 1.33 });
-  if (env) { m.envMap = env; m.envMapIntensity = 0.9; }
+  const m = new THREE.MeshPhysicalNodeMaterial({ roughness: 0.07, metalness: 0, ior: 1.33, transparent: true });
+  // (the sky's reflection, weaker than open sky: a stream lies between banks and trees)
+  if (env) { m.envMap = env; m.envMapIntensity = 0.28; }
   const ripples = loadTexture('water_normal.jpg', false);
   const st = attribute('stream', 'vec3'), P = uv();
-  const across = abs(st.y), fast = smoothstep(0.45, 2.0, st.x);
-  const v = st.x.mul(float(1).sub(across.mul(across).mul(0.6)));
-  const CYCLE = 1.2;
+  const across = abs(st.y), fast = smoothstep(0.55, 2.5, st.x);
+  const v = st.x.mul(float(1).sub(across.mul(across).mul(0.52)));
+  // Small vertex waves make the water itself roll downstream; the larger normal-map detail below
+  // supplies the fine riffles. Keep the bank edge nearly still so the surface stays tucked in.
+  const wavePhase = P.x.mul(1.1).sub(time.mul(v.mul(1.1)))
+    .add(sin(P.y.mul(1.9).add(time.mul(0.45))).mul(0.28));
+  const wave = sin(wavePhase).mul(float(0.014).add(fast.mul(0.038))).mul(float(1).sub(across.mul(across)));
+  m.positionNode = positionLocal.add(vec3(0, wave, 0));
+  const CYCLE = 0.95;
   const ph0 = fract(time.div(CYCLE)), ph1 = fract(time.div(CYCLE).add(0.5));
   const w0 = abs(ph0.mul(2).sub(1)).oneMinus();
   const layer = (ph, shift) => {
@@ -4057,18 +4128,57 @@ function streamMaterial(env) {
   };
   const l0 = layer(ph0, vec2(0, 0)), l1 = layer(ph1, vec2(3.7, 1.3));
   const n = normalize(mix(l1, l0, w0));
-  m.normalNode = normalMap(n.mul(0.5).add(0.5), vec2(float(0.28).add(fast.mul(0.35))));
-  const dist = distance(cameraPosition, positionWorld);
-  const deep = mix(vec3(0.03, 0.075, 0.062), vec3(0.02, 0.05, 0.044), smoothstep(10, 120, dist));
-  const shallow = vec3(0.11, 0.12, 0.075);
-  const base = mix(deep, shallow, smoothstep(0.45, 1, across).mul(0.8));
+  m.normalNode = normalMap(n.mul(0.5).add(0.5), vec2(float(0.18).add(fast.mul(0.28))));
   const crest = mix(l1.x, l0.x, w0).add(mix(l1.y, l0.y, w0)).mul(0.5);
-  const foam = smoothstep(0.25, 0.7, crest).mul(fast).mul(0.5)
-    .add(smoothstep(0.82, 1, across).mul(smoothstep(0.05, 0.45, crest)).mul(smoothstep(0.3, 1.4, st.x)).mul(0.4)).min(0.8);
+  // A second, stretched sample makes fine bright streaks that travel downstream without the
+  // obvious looping cadence of normal-map waves. Higher slope increases both their coverage and
+  // travel speed; the broad random part keeps them broken up like riffles, not stripes.
+  const streakUV = P.sub(vec2(time.mul(v), 0));
+  const streakA = texture(ripples, streakUV.mul(vec2(0.035, 0.46)).add(vec2(0.13, 0.27))).r;
+  const streakB = texture(ripples, streakUV.mul(vec2(0.09, 1.05)).add(vec2(0.61, 0.08))).g;
+  const streakNoise = streakA.mul(0.62).add(streakB.mul(0.38));
+  const streaks = smoothstep(0.56, 0.69, streakNoise).mul(fast).mul(0.26);
+  const riffles = smoothstep(0.3, 0.62, crest).mul(fast).mul(0.24);
+  const edgeFoam = smoothstep(0.86, 1, across).mul(smoothstep(0.08, 0.4, crest)).mul(fast).mul(0.2);
+  const falls = smoothstep(0.12, 0.5, attribute('fall', 'float'));
+  const foam = streaks.add(riffles).max(edgeFoam).max(falls.mul(0.74)).min(0.58);
+  // The bed through the water: the picture behind, bent a little by the ripples (more where it's
+  // deeper). How far the light travels in the water: the depth there (from the ground below each
+  // point of the surface - the scene's own depth can't be read, being multisampled), longer when
+  // looking in at a slant
+  const toEye = normalize(cameraPosition.sub(positionWorld));
+  const deep = attribute('deep', 'float');
+  const path = deep.div(toEye.y.max(0.3)).clamp(0, 4);
+  const bed = viewportSharedTexture(screenUV.add(n.xy.mul(0.012).mul(deep.min(1)))).rgb;
+  // (per metre: stream water, tinted by what it has run through, takes out blue first, then red;
+  // murk takes out everything and scatters a green-brown light)
+  const absorb = vec3(0.32, 0.22, 0.5).add(vec3(0.8, 0.7, 0.8).mul(creek.murk));
+  const through = exp(absorb.mul(path).negate());
+  const glow = vec3(0.045, 0.05, 0.026).mul(creek.murk.mul(1.5).add(0.5)).mul(creek.sun.mul(0.6).add(0.4));
+  // Sunlight dancing on the bed, carried along by the current (the pattern lies on the bed, seen
+  // through the water at the depth it is)
+  const bedAt = positionWorld.sub(toEye.mul(path)).xz.mul(0.85);
+  const ct = time.mul(st.x.mul(0.6).add(0.7));
+  const caustic = (q, t) => {
+    const w = q.add(vec2(sin(q.y.mul(2.1).add(t.mul(0.9))), cos(q.x.mul(1.9).sub(t.mul(0.7)))).mul(0.22));
+    const a = sin(w.x.mul(9).add(sin(w.y.mul(7).add(t)).mul(1.7)).add(t.mul(2.1)));
+    const b = sin(w.y.mul(10).add(sin(w.x.mul(6).sub(t)).mul(1.3)).sub(t.mul(1.8)));
+    const c = sin(w.x.add(w.y).mul(7).add(t.mul(1.1)));
+    return pow(float(1).sub(abs(a.add(b.mul(0.65)).add(c.mul(0.25)))).max(0), 8);
+  };
+  const dancing = caustic(bedAt, ct).add(caustic(bedAt.mul(1.6).add(15), ct.mul(0.73)).mul(0.45))
+    .mul(smoothstep(0.02, 0.2, path)).mul(smoothstep(60, 15, distance(cameraPosition, positionWorld)))
+    .mul(creek.murk.oneMinus()).mul(creek.sun).mul(0.35);
+  const water = bed.mul(through).mul(dancing.add(1)).add(glow.mul(through.oneMinus()));
   const facing = clamp(dot(normalView, positionViewDirection), 0, 1);
-  const fresnel = float(0.04).add(float(0.96).mul(pow(facing.oneMinus(), 4)));
-  m.colorNode = mix(base.mul(fresnel.oneMinus()), vec3(0.64, 0.68, 0.66), foam);
-  m.roughnessNode = mix(float(0.08), float(0.5), foam);
+  const fresnel = float(0.02).add(float(0.98).mul(pow(facing.oneMinus(), 5)));
+  // (the water's own colour is light that comes through it, not lit again; foam is lit)
+  m.colorNode = vec3(0.34, 0.39, 0.33).mul(foam);
+  m.emissiveNode = water.mul(fresnel.oneMinus()).mul(foam.oneMinus());
+  m.roughnessNode = mix(float(0.07), float(0.52), foam);
+  // (seen at a glancing angle the water would mirror its banks and trees, which the sky's
+  // reflection doesn't hold: less of it there)
+  m.specularIntensityNode = mix(float(0.22), float(1), smoothstep(0.04, 0.4, facing));
   return m;
 }
 
@@ -4108,7 +4218,7 @@ function streamFlow(wb) {
     if (slope < 0) { tx = -tx; tz = -tz; slope = -slope; }
     // (and how steep it is right here, over 4 m: a cascade or waterfall where it drops sharply)
     const fall = Math.abs(wb.levelAt(x - tx * 2, z - tz * 2) - wb.levelAt(x + tx * 2, z + tz * 2)) / 4;
-    return [tx, tz, Math.min(2.5, 0.12 + slope * 48), fall];
+    return [tx, tz, flowSpeed(slope), fall];
   };
 }
 
@@ -4183,6 +4293,28 @@ const canopyCover = (a) => smoothstep(0.8, 1, a);
 // (where the woods' shade falls: away from the sun, as their shadows would - in the ground's
 // picture coordinates, set by paintCanopy)
 const canopyOffset = uniform(new THREE.Vector2());
+
+// Cells round scattered points (Voronoi): for a point p (vec2), the distance to the nearest cell's
+// middle (f1), to the next one's (f2), and a random value for the nearest cell (id, 0..1) - for
+// stones on a stream bed. (Hash without sin(): the same on every graphics card.)
+const hash22 = (p) => {
+  const q = fract(vec3(p.x, p.y, p.x).mul(vec3(0.1031, 0.103, 0.0973)));
+  const r = q.add(dot(q, q.yzx.add(33.33)));
+  return fract(r.xx.add(r.yz).mul(r.zy));
+};
+function voronoi(p, jitter = 0.85) {
+  const i = floor(p), f = fract(p);
+  let f1 = float(8), f2 = float(8), id = float(0);
+  for (let y = -1; y <= 1; y++) for (let x = -1; x <= 1; x++) {
+    const h = hash22(i.add(vec2(x, y)));
+    const r = vec2(x, y).add(h.mul(jitter)).sub(f), d = dot(r, r);
+    const closer = d.lessThan(f1);
+    f2 = select(closer, f1, min(f2, d));
+    id = select(closer, h.x.add(h.y.mul(0.37)).fract(), id);
+    f1 = min(f1, d);
+  }
+  return { f1: sqrt(f1), f2: sqrt(f2), id };
+}
 
 function terrainMaterial(map, soft, mask, mowDirs, strength, shore, hasSand = false, hasGreens = false) {
   const maskTex = new THREE.CanvasTexture(mask);
@@ -4365,7 +4497,34 @@ function terrainMaterial(map, soft, mask, mowDirs, strength, shore, hasSand = fa
     // (warm dark earth, only a hint of the mud texture's grain: more, and its pale grit reads as gaps)
     const soilCol = vec3(0.085, 0.055, 0.03).mul(mix(vec3(1), ratio('mud', 0.9), 0.25));
     const ground = col.mul(mow.add(1)).mul(rake.mul(face.mul(4).oneMinus().max(0)).add(1)).mul(lip.oneMinus()).mul(face.oneMinus());
-    return mix(mix(ground, soilCol, soil).mul(wetLine.oneMinus()), mudCol, mud);
+    // Under water, near the camera: a bed of rounded stones (about 30 cm) and pebbles (about 9 cm)
+    // over gritty gravel, with dark silt in the gaps - greys and browns, each stone lighter in the
+    // middle. It shows through clear streams (ponds and the sea hide it). (Only worked out where
+    // it's needed: it costs more than the rest of the ground.)
+    const underwater = smoothstep(0.9, 0.99, sh).mul(smoothstep(creek.reach.mul(2), creek.reach, camD));
+    const bedCol = vec3(0).toVar();
+    If(underwater.greaterThan(0.001), () => {
+      // (the stones' size and spacing wander: a sparse scatter of cobbles in some places, packed
+      // pebbles in others)
+      const wander = dot(texture(groundTexture('rough'), q.mul(0.07)).rgb, LUMA).div(dot(vec3(...GROUND_MEAN.rough), LUMA));
+      const stones = voronoi(q.mul(mix(float(1.8), float(2.8), smoothstep(0.7, 1.3, wander))));
+      const pebbles = voronoi(q.mul(6.5).add(7.3));
+      // (each stone a rounded top within its cell, lit on top and shaded to its edge, its own size
+      // and colour; f1 is the distance to its middle in cells)
+      const size = smoothstep(0.55, 1.35, wander).mul(0.2).add(0.33).mul(stones.id.mul(0.35).add(0.8));
+      const stoneBody = smoothstep(size, size.sub(0.05), stones.f1).mul(smoothstep(0.0, 0.05, stones.f2.sub(stones.f1)));
+      const dome = float(1).sub(stones.f1.div(size).pow(2)).clamp(0, 1);
+      const pebBody = smoothstep(0.42, 0.34, pebbles.f1).mul(smoothstep(0.0, 0.05, pebbles.f2.sub(pebbles.f1)));
+      const pebDome = float(1).sub(pebbles.f1.div(0.42).pow(2)).clamp(0, 1);
+      const grain = mix(vec3(1), ratio('mud', 0.9), 0.25); // (a hint of the mud picture's grit; more and its streaks swamp the stones)
+      // (wet stones: tans, browns, greys and olive with a film of algae)
+      const stoneCol = mix(mix(vec3(0.38, 0.31, 0.21), vec3(0.2, 0.16, 0.1), stones.id), mix(vec3(0.3, 0.28, 0.23), vec3(0.19, 0.21, 0.11), stones.id), step(0.62, fract(stones.id.mul(7.3))))
+        .mul(grain).mul(dome.mul(0.65).add(0.5));
+      const pebble = mix(vec3(0.3, 0.25, 0.17), vec3(0.17, 0.15, 0.12), pebbles.id).mul(pebDome.mul(0.5).add(0.6));
+      const gravel = vec3(0.16, 0.13, 0.09).mul(grain);
+      bedCol.assign(mix(mix(gravel, pebble, pebBody.mul(0.8)), stoneCol, stoneBody));
+    });
+    return mix(mix(mix(ground, soilCol, soil).mul(wetLine.oneMinus()), mudCol, mud), bedCol, underwater);
   })();
   material.normalNode = Fn(() => {
     const vUv = uv();
@@ -4383,7 +4542,8 @@ function terrainMaterial(map, soft, mask, mowDirs, strength, shore, hasSand = fa
     // (the muddy bank by the water is smoother than turf, and raked sand than wind-rippled sand)
     const sh = texture(shoreTex, vUv).r;
     const bank = smoothstep(0.08, 0.25, sh).mul(smoothstep(0.82, 0.97, sh).oneMinus());
-    return normalMap(mix(vec3(0.5, 0.5, 1), nb, near.mul(float(0.9).sub(wg.mul(0.4)).sub(ws.mul(0.5))).mul(bank.mul(0.6).oneMinus())), vec2(0.7));
+    // (and none of the grass's bumps on the stream bed)
+    return normalMap(mix(vec3(0.5, 0.5, 1), nb, near.mul(float(0.9).sub(wg.mul(0.4)).sub(ws.mul(0.5))).mul(bank.mul(0.6).oneMinus()).mul(smoothstep(0.9, 0.99, sh).oneMinus())), vec2(0.7));
   })();
   material.colorNode = material.colorNode.mul(farShade.oneMinus());
   return material;

@@ -276,11 +276,11 @@ Built courses look like the real place:
   The aerial photo fills the gaps: tree crowns it shows (the darkest, most textured vegetation)
   get a tree too, wherever none stands yet. That catches trees the height map misses or that
   were planted since. Wrong guesses can be removed in the course editor.
-* **Tree models** are procedural in eighteen species: oak, maple, ash, birch, aspen, poplar,
-  willow, pine and spruce (most from EZ-Tree; sugar maples grown by the game itself); palms
+* **Tree models** are procedural in 25 species: oak, maple, red maple, tuliptree, American beech, ash, birch, aspen, poplar,
+  willow, pine, loblolly pine, eastern redcedar, Douglas-fir, ponderosa pine and spruce (most from EZ-Tree; sugar maples grown by the game itself); palms
   (cabbage, Mexican fan, Canary Island date and coconut); live oak with Spanish moss, southern
   magnolia, sycamore, Monterey cypress and bald cypress; and for desert courses mesquite, palo
-  verde and saguaro cactus, in 46 variants. Each tree is turned, stretched, leaned and tinted
+  verde and saguaro cactus, in varied models. Each tree is turned, stretched, leaned and tinted
   on its own, with photo-scanned bark and leaf textures (maple, willow and birch leaves
   and five of the barks are CC0 scans from ambientCG and Poly Haven) and swaying leaves. Crowns
   are lit as a whole: darker inside and underneath, and glowing yellow-green when the sun is
@@ -309,7 +309,10 @@ Built courses look like the real place:
   that gets stronger at low viewing angles. The Performance setting turns the mirror off.
   Streams and rivers run downhill: their surface follows the slope of the banks, the ripples are
   carried downstream, and the steeper the stretch, the faster it flows (with streaks of foam on
-  fast water).
+  fast water). Creeks are clear: you see their bed of stones, pebbles and gravel through the
+  water, tinted with depth and cloudier after rain, with sunlight dancing on the bottom, and
+  fallen leaves and flecks of foam drift down them. Near a stream you hear it: a trickle, a
+  running creek or rapids, by how fast it flows (volume under Options, Display).
 * **Tall grass:** unmown areas seen in the photo are a meadow of four kinds of grass (fine
   bunch grass, taller grass with seed heads, broader leafy grass, and grass flattened by the
   weather), in drifts of green and straw, over tawny ground. It's densest around the camera,
