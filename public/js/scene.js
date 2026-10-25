@@ -7,7 +7,7 @@ import {
   Fn, texture, uv, vec2, vec3, float, mix, clamp, smoothstep, dot, distance, normalize, sin, cos, abs, atan,
   positionWorld, cameraPosition, instancedBufferAttribute, PI, normalMap, time, reflector, normalView, positionViewDirection, pow,
   uniform, select, fwidth, normalWorld, attribute, fract, floor, step, max, length, positionLocal, transformNormalToView,
-  output, exp, vec4, fog, positionView, pass, mrt, screenUV,
+  output, exp, vec4, fog, positionView, pass, mrt, screenUV, positionGeometry, log2,
 } from 'three/tsl';
 import { bloom } from 'three/addons/tsl/display/BloomNode.js';
 import { radialBlur } from 'three/addons/tsl/display/radialBlur.js';
@@ -27,6 +27,7 @@ import { buildBuildings } from './buildings.js';
 import { MIN_HW } from './streams.js';
 import { removeShadows } from './deshadow.js';
 import { cloudAlpha, cloudAlphaNode, shadowDir, shadowDirCPU } from './clouds.js';
+import { OceanWaves } from './ocean.js';
 
 // The course's mowing patterns (pattern numbers from mowing.js), read by the terrain shader
 const mowPattern = { fairway: uniform(1), green: uniform(3) };
@@ -1663,7 +1664,7 @@ export class CourseScene {
       if (old) this.reflection.target.position.copy(old.target.position);
       this.scene.add(this.reflection.target);
     }
-    this.waterMat = waterMaterial(this.scene.environment, this.reflection);
+    this.waterMat = waterMaterial(this.scene.environment, this.reflection, this.pondWaves);
     for (const m of this.waterMeshes || []) if (!m.userData.flowing) m.material = this.waterMat;
     // Let go of the old ones after the next frame has stopped using them
     if (old || oldMat) setTimeout(() => { oldMat?.dispose(); old?.dispose?.(); }, 500);
@@ -1671,6 +1672,13 @@ export class CourseScene {
 
   addWater(course) {
     this.hasWater = course.waterBodies.length > 0;
+    this.oceanWaves?.dispose(); this.oceanWaves = null;
+    this.pondWaves?.dispose(); this.pondWaves = null;
+    // (ponds and lakes ripple in the wind: see POND_RIPPLES)
+    if (this.renderer.backend.isWebGPUBackend && course.waterBodies.some((wb) => !wb.sea && !wb.levelAt)) {
+      this.pondWaves = new OceanWaves(this.renderer, POND_RIPPLES);
+      this.setSeaState();
+    }
     this.waterMeshes = [];
     this.makeWaterMaterial();
     this.flowMat?.dispose(); this.streamMat?.dispose();
@@ -1764,8 +1772,9 @@ export class CourseScene {
       if (j < H - 1) { D[k] = Math.min(D[k], D[k + W] + d1); if (i < W - 1) D[k] = Math.min(D[k], D[k + W + 1] + d2); if (i > 0) D[k] = Math.min(D[k], D[k + W - 1] + d2); }
     }
     const Dc = (i, j) => D[Math.max(0, Math.min(H - 1, j)) * W + Math.max(0, Math.min(W - 1, i))];
-    // vertices (each grid point used by a kept square) and their shore distance and direction
-    const index = new Int32Array(W * H).fill(-1), pos = [], shore = [];
+    // vertices (each grid point used by a kept square), their shore distance and direction, and
+    // how far down the sea bed is (the waves' troughs stay above it)
+    const index = new Int32Array(W * H).fill(-1), pos = [], shore = [], seabed = [], groundAt = meshGroundAt(course);
     const vert = (i, j) => {
       const k = j * W + i;
       if (index[k] < 0) {
@@ -1775,6 +1784,7 @@ export class CourseScene {
         // direction towards the shore: down the distance's slope (in the scene's mirrored x)
         const gx = Dc(i + 1, j) - Dc(i - 1, j), gz = Dc(i, j + 1) - Dc(i, j - 1), gl = Math.hypot(gx, gz) || 1;
         shore.push(Math.min(D[k], 400), gx / gl, -gz / gl);
+        seabed.push(Math.max(-50, (groundAt(x, z) ?? -50) - wb.level));
       }
       return index[k];
     };
@@ -1788,14 +1798,21 @@ export class CourseScene {
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
     g.setAttribute('shore', new THREE.Float32BufferAttribute(shore, 3));
+    g.setAttribute('seabed', new THREE.Float32BufferAttribute(seabed, 1));
     g.setIndex(idx);
     // (swells come in from the open sea: from the middle of the water towards the course)
     let sx = 0, sz = 0;
     for (const [x, z] of wb.poly) { sx += x; sz += z; }
     const cx = (course.bounds.minX + course.bounds.maxX) / 2, cz = (course.bounds.minZ + course.bounds.maxZ) / 2;
     const dirX = cx - sx / wb.poly.length, dirZ = cz - sz / wb.poly.length, dl = Math.hypot(dirX, dirZ) || 1;
+    this.swellDir = [-dirX / dl, dirZ / dl];
+    // (on WebGPU the open sea's waves come from a wave spectrum, worked out on the graphics card)
+    if (this.renderer.backend.isWebGPUBackend) {
+      this.oceanWaves = new OceanWaves(this.renderer, OCEAN_DETAIL[this.quality?.name] || OCEAN_DETAIL.balanced);
+      this.setSeaState();
+    }
     this.oceanMat?.dispose();
-    this.oceanMat = oceanMaterial(this.scene.environment, [-dirX / dl, dirZ / dl]);
+    this.oceanMat = oceanMaterial(this.scene.environment, this.swellDir, this.oceanWaves);
     const m = new THREE.Mesh(g, this.oceanMat);
     m.position.y = wb.level;
     m.receiveShadow = true;
@@ -2369,8 +2386,28 @@ export class CourseScene {
     this.weather = { windMps, windFromDeg, rainMm, cloud, fog };
     this.terrain && (this.terrain.material.roughness = rainMm > 0.05 ? 0.7 : 0.92); // wet sheen
     grassWind.value = windMps;
+    this.setSeaState();
     this.setRain(rainMm);
     this.updateLighting();
+  }
+
+  // The sea follows the weather: a wind sea blowing downwind, rougher the harder it blows, on top
+  // of a swell from the open sea that grows a little in a storm. (Only redone when the wind has
+  // really changed: working out the waves takes a moment.)
+  // Ponds get only ripples: the wind over a few hundred metres of water, a little sheltered by the
+  // banks and trees, so on a still day they're nearly a mirror.
+  setSeaState() {
+    const { windMps = 0, windFromDeg = 0 } = this.weather, wf = (windFromDeg * Math.PI) / 180;
+    const key = `${Math.round(windMps * 2)}|${Math.round(windFromDeg / 10)}`, windDir = [Math.sin(wf), -Math.cos(wf)];
+    const ow = this.oceanWaves, pw = this.pondWaves;
+    if (ow && ow.key !== key) {
+      ow.key = key;
+      ow.setSea({ windMps, windDir, swellDir: this.swellDir, swellHeight: 0.9 + Math.min(1.6, windMps * 0.08), swellPeriod: 12 });
+    }
+    if (pw && pw.key !== key) {
+      pw.key = key;
+      pw.setSea({ windMps: windMps * 0.6, windDir, fetch: 300, swellHeight: 0 });
+    }
   }
 
   // The time of day: [x, y, z] points from the course towards the sun (scene space)
@@ -3497,6 +3534,8 @@ export class CourseScene {
     this.updateRain(dt);
     this.updatePuttGrid(dt);
     this.updateClouds(raw);
+    this.oceanWaves?.update(this.clock.elapsedTime, dt);
+    this.pondWaves?.update(this.clock.elapsedTime, dt);
     if (this.post) this.post.render(); else this.renderer.render(this.scene, this.camera);
     // Frame stats for the FPS overlay: average FPS and the slowest frame in each half second
     const st = this.stats, now = performance.now();
@@ -3564,16 +3603,32 @@ function pathMaterial(paved) {
 // Pond water: opaque, ripples drifting in three directions, and a mirror image of the course
 // (trees, sky, hills) that grows stronger at grazing angles (Fresnel), wobbled by the ripples.
 // reflection: a reflector() node, or null for sky reflections only (performance setting).
-function waterMaterial(env, reflection) {
+// waves: an OceanWaves of wind ripples (ocean.js, WebGPU only) to use instead of the ripple
+// texture: ripples that grow with the wind, coming and going in gusts that drift across the pond.
+function waterMaterial(env, reflection, waves = null) {
   const m = new THREE.MeshPhysicalNodeMaterial({ roughness: 0.06, metalness: 0, ior: 1.33 });
   if (env) { m.envMap = env; m.envMapIntensity = reflection ? 0.12 : 0.85; }
   const ripples = loadTexture('water_normal.jpg', false);
   const w = uv();
-  const a = texture(ripples, w.mul(1.0).add(time.mul(vec2(0.012, 0.007)))).xyz.mul(2).sub(1);
-  const b = texture(ripples, w.mul(0.37).add(time.mul(vec2(-0.009, 0.011)))).xyz.mul(2).sub(1);
-  const c = texture(ripples, w.mul(3.1).add(time.mul(vec2(0.02, -0.015)))).xyz.mul(2).sub(1);
-  const n = normalize(vec3(a.xy.add(b.xy).add(c.xy.mul(0.5)), a.z.mul(b.z)));
-  m.normalNode = normalMap(n.mul(0.5).add(0.5), vec2(0.22));
+  let n;
+  if (waves) {
+    const L = waves.tiles[0], q = positionWorld.xz;
+    // (a second, turned copy at a larger size hides the patch repeating; the gusts from the
+    // ripple texture, much enlarged)
+    const s1 = texture(waves.slope[0], q.div(L)).xy;
+    const s2 = texture(waves.slope[0], vec2(q.x.mul(0.8).sub(q.y.mul(0.6)), q.x.mul(0.6).add(q.y.mul(0.8))).div(L * 2.3).add(0.37)).xy.div(2.3);
+    const s2w = vec2(s2.x.mul(0.8).add(s2.y.mul(0.6)), s2.y.mul(0.8).sub(s2.x.mul(0.6)));
+    const gust = smoothstep(-0.6, 0.8, texture(ripples, w.mul(0.05).add(time.mul(vec2(0.004, 0.0025)))).x.mul(2).sub(1)).mul(0.75).add(0.25);
+    const s = s1.add(s2w).mul(gust);
+    m.normalNode = normalize(transformNormalToView(normalize(vec3(s.x.negate(), 1, s.y.negate()))));
+    n = vec3(s.x, s.y.negate(), 1); // (for the mirror's wobble, as the texture's normals)
+  } else {
+    const a = texture(ripples, w.mul(1.0).add(time.mul(vec2(0.012, 0.007)))).xyz.mul(2).sub(1);
+    const b = texture(ripples, w.mul(0.37).add(time.mul(vec2(-0.009, 0.011)))).xyz.mul(2).sub(1);
+    const c = texture(ripples, w.mul(3.1).add(time.mul(vec2(0.02, -0.015)))).xyz.mul(2).sub(1);
+    n = normalize(vec3(a.xy.add(b.xy).add(c.xy.mul(0.5)), a.z.mul(b.z)));
+    m.normalNode = normalMap(n.mul(0.5).add(0.5), vec2(0.22));
+  }
   // Deep water colour: greener close up, darker further away
   const dist = distance(cameraPosition, positionWorld);
   const deep = mix(vec3(0.035, 0.08, 0.06), vec3(0.018, 0.045, 0.038), smoothstep(10, 120, dist));
@@ -3586,12 +3641,27 @@ function waterMaterial(env, reflection) {
   return m;
 }
 
+// The open sea's wave spectrum for each graphics setting (ocean.js): points across each patch and
+// the patches' sizes (m), each one adding finer waves
+const OCEAN_DETAIL = {
+  high: { size: 256, tiles: [600, 90, 17] },
+  balanced: { size: 256, tiles: [600, 60] },
+  performance: { size: 128, tiles: [350, 40] },
+};
+// Ripples on ponds and lakes from the same kind of spectrum: one 6 m patch of wind ripples only
+// (a few centimetres at most; the surface itself stays flat), on every setting
+const POND_RIPPLES = { size: 64, tiles: [6] };
+
 // The sea: Gerstner swells (the surface moves up and down and the crests sharpen), fading out
 // towards the shore so they never cut into the beach; lines of surf that roll in parallel to the
 // shore and break into white water over the last 50 m, and a band of foam along the waterline.
 // Ripples on top from the water texture. shore attribute: metres to the shore, direction to it.
 // swell: the direction the swells travel (scene x, z).
-function oceanMaterial(env, swell) {
+// waves: an OceanWaves (ocean.js, WebGPU only): the open sea's waves then come from its wave
+// spectrum instead of the swells and ripples here (see fftOceanMaterial); the surf and the foam
+// along the shore are the same either way.
+function oceanMaterial(env, swell, waves = null) {
+  if (waves) return fftOceanMaterial(env, waves);
   const m = new THREE.MeshPhysicalNodeMaterial({ roughness: 0.12, metalness: 0, ior: 1.33 });
   if (env) { m.envMap = env; m.envMapIntensity = 0.9; }
   const sh = attribute('shore', 'vec3'), dShore = sh.x, toShore = vec2(sh.y, sh.z);
@@ -3611,13 +3681,8 @@ function oceanMaterial(env, swell) {
     nx = nx.add(dir.x.mul(cos(ph)).mul(amp.mul(k)));
     nz = nz.add(dir.y.mul(cos(ph)).mul(amp.mul(k)));
   }
-  // Surf: crests a set distance apart that travel in towards the shore; each one lifts a little
-  // and turns to white water as it reaches the shallows
-  // (the spacing wanders a little along the coast, so the lines aren't contour-perfect)
-  const wander = sin(P.x.mul(0.031).add(P.z.mul(0.017))).mul(2.5).add(sin(P.x.mul(0.011).sub(P.z.mul(0.027)).add(1.3)).mul(3));
-  const surfPh = dShore.add(wander).div(15).add(time.mul(0.1)).fract();
-  const crest = smoothstep(0.88, 0.97, surfPh).mul(smoothstep(1, 0.975, surfPh)).mul(smoothstep(45, 10, dShore));
-  const surfLift = smoothstep(0.6, 0.95, surfPh).mul(smoothstep(60, 20, dShore)).mul(smoothstep(2, 10, dShore)).mul(0.18);
+  // Surf: crests a set distance apart that travel in towards the shore
+  const { crest, lift: surfLift } = surfLines(P, dShore);
   m.positionNode = P.add(vec3(dx, dy.add(surfLift), dz));
   // Ripples on top
   const ripples = loadTexture('water_normal.jpg', false);
@@ -3643,6 +3708,83 @@ function oceanMaterial(env, swell) {
   const sky = mix(vec3(0.3, 0.42, 0.55), vec3(0.5, 0.6, 0.68), facing.oneMinus());
   m.emissiveNode = sky.mul(fresnel).mul(foam.oneMinus()).mul(0.5);
   void toShore;
+  return m;
+}
+
+// Surf lines rolling in towards the shore (shared by both seas): each crest lifts a little and
+// turns to white water as it reaches the shallows. P: the surface point, dShore: metres to the shore
+function surfLines(P, dShore) {
+  // (the spacing wanders a little along the coast, so the lines aren't contour-perfect)
+  const wander = sin(P.x.mul(0.031).add(P.z.mul(0.017))).mul(2.5).add(sin(P.x.mul(0.011).sub(P.z.mul(0.027)).add(1.3)).mul(3));
+  const surfPh = dShore.add(wander).div(15).add(time.mul(0.1)).fract();
+  const crest = smoothstep(0.88, 0.97, surfPh).mul(smoothstep(1, 0.975, surfPh)).mul(smoothstep(45, 10, dShore));
+  const lift = smoothstep(0.6, 0.95, surfPh).mul(smoothstep(60, 20, dShore)).mul(smoothstep(2, 10, dShore)).mul(0.18);
+  return { crest, lift };
+}
+
+// The open sea from the wave spectrum (ocean.js): each detail level's patch laid over the sea at
+// its own size, the large ones moving the surface itself (the heights, and the sideways push that
+// sharpens the crests) and all of them shaping the light on it.
+//   reflection - the sky and the sun's glint (the scene's own light), strongest at grazing angles;
+//                rougher far off, where the finest waves are too small to see but still scatter light
+//   colour     - deep blue-green, with the sun glowing turquoise through the thin water near the
+//                tops of the waves when it's behind them
+//   foam       - where crests fold over (fading over a few seconds), broken up by the ripple texture
+// The waves die down towards the shore, where the surf lines and the beach foam take over.
+function fftOceanMaterial(env, waves) {
+  const m = new THREE.MeshPhysicalNodeMaterial({ roughness: 0.06, metalness: 0, ior: 1.33 });
+  if (env) { m.envMap = env; m.envMapIntensity = 1; }
+  const sh = attribute('shore', 'vec3'), dShore = sh.x;
+  const calm = smoothstep(4, 60, dShore);
+  const P = positionGeometry, q = vec2(P.x, P.z), tiles = waves.tiles;
+  // The surface: the big patch and, more coarsely, the next (the sea's points are 3 m apart),
+  // smoother with distance as the points crowd together on screen
+  const camD = distance(cameraPosition.xz, q);
+  let d = vec3(0);
+  for (let c = 0; c < Math.min(2, tiles.length); c++) {
+    const lod = max(log2(camD.div(c ? 25 : 120).max(1e-3)), c ? 2.5 : 0.5);
+    d = d.add(texture(waves.disp[c], q.div(tiles[c])).level(lod).xyz);
+  }
+  const surf = surfLines(P, dShore);
+  // (the troughs ride smoothly up over the sea bed rather than cutting into it: the shallow sea
+  // round a course is mapped only a metre or two deep)
+  // (only out where the waves are: at the waterline the surface tucks under the beach as before)
+  const floorY = attribute('seabed', 'float').add(0.35), dy = d.y.mul(calm).sub(floorY);
+  const y = mix(d.y.mul(calm), floorY.add(dy.add(dy.mul(dy).add(0.09).sqrt()).mul(0.5)), calm);
+  m.positionNode = P.add(vec3(d.x.mul(calm), y.add(surf.lift), d.z.mul(calm)));
+  // Slopes and foam from every patch
+  let sx = float(0), sz = float(0), folded = float(0), h = float(0);
+  tiles.forEach((L, c) => {
+    const s = texture(waves.slope[c], q.div(L)), a = texture(waves.disp[c], q.div(L));
+    sx = sx.add(s.x); sz = sz.add(s.y);
+    folded = folded.add(a.w.mul([1, 0.5, 0.3][c]));
+    if (!c) h = a.y;
+  });
+  // (ripples from the texture too, mostly in the shallows where the waves have died down)
+  const ripples = loadTexture('water_normal.jpg', false);
+  const w = q.div(14);
+  const ra = texture(ripples, w.add(time.mul(vec2(0.012, 0.007)))).xyz.mul(2).sub(1);
+  const rb = texture(ripples, w.mul(0.37).add(time.mul(vec2(-0.009, 0.011)))).xyz.mul(2).sub(1);
+  const rn = ra.xy.add(rb.xy).mul(calm.oneMinus().mul(0.1).add(0.03));
+  m.normalNode = normalize(transformNormalToView(normalize(vec3(sx.mul(calm).negate().add(rn.x), 1, sz.mul(calm).negate().add(rn.y)))));
+  // Foam: folding crests out at sea, breaking surf and the band along the beach
+  const froth = ra.x.add(rb.y).mul(0.5).add(0.5);
+  const shoreFoam = smoothstep(6, 1.5, dShore).mul(smoothstep(0.35, 0.7, froth.add(sin(time.mul(0.9).add(dShore.mul(0.8))).mul(0.25))));
+  const surfFoam = surf.crest.mul(smoothstep(mix(float(0.35), float(0.6), smoothstep(10, 45, dShore)), 0.75, froth));
+  const seaFoam = smoothstep(0.4, 0.95, folded.mul(froth.add(0.35))).mul(calm).mul(0.9);
+  const foam = clamp(shoreFoam.add(surfFoam).add(seaFoam), 0, 1);
+  // Colour under the surface, and the sun through the crests
+  const facing = clamp(dot(normalView, positionViewDirection), 0, 1);
+  const fresnel = float(0.02).add(float(0.98).mul(pow(facing.oneMinus(), 5)));
+  const deep = mix(vec3(0.004, 0.026, 0.042), vec3(0.025, 0.11, 0.13), smoothstep(80, 6, dShore));
+  const view = normalize(positionWorld.sub(cameraPosition));
+  const crestH = smoothstep(-0.1 * waves.hs, 0.45 * waves.hs, h).mul(calm);
+  const behind = pow(clamp(dot(view, haze.sunDir).mul(0.5).add(0.5), 0, 1), 3);
+  const glow = crestH.mul(behind.mul(0.75).add(0.25)).mul(smoothstep(-0.05, 0.25, haze.sunDir.y));
+  m.colorNode = mix(deep.mul(fresnel.oneMinus()), vec3(0.85, 0.88, 0.86), foam);
+  m.emissiveNode = vec3(0.02, 0.12, 0.11).mul(glow).mul(fresnel.oneMinus()).mul(foam.oneMinus());
+  const dist = distance(cameraPosition, positionWorld);
+  m.roughnessNode = mix(mix(float(0.04), float(0.12), smoothstep(80, 1500, dist)), float(0.8), foam);
   return m;
 }
 
