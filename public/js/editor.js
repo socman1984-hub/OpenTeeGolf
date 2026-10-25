@@ -155,7 +155,7 @@ async function load() {
   shapes = [];
   if (r?.features) {
     for (const [kind, list2] of Object.entries(r.features)) {
-      if (FEATURE_KINDS.includes(kind)) list2.forEach((f) => shapes.push({ kind, pts: f.pts.map((p) => [...p]), inner: !!f.hole, ...(f.flow ? { flow: true } : {}), ...(f.banks ? { banks: true } : {}), ...(f.fit ? { fit: true } : {}) }));
+      if (FEATURE_KINDS.includes(kind)) list2.forEach((f) => shapes.push({ kind, pts: f.pts.map((p) => [...p]), inner: !!f.hole, ...(f.flow ? { flow: true } : {}), ...(f.banks ? { banks: true } : {}), ...(f.fit ? { fit: f.fit } : {}), ...(f.osm ? { osm: f.osm } : {}) }));
       else passthrough[kind] = list2;
     }
   }
@@ -185,7 +185,7 @@ async function load() {
   fitHole();
   photoReady = grid ? loadPhoto() : Promise.resolve(null);
   loadTrees();
-  fitBunkersToPhoto();
+  fitBunkersToGround();
   // (the photo's colours, for the species the game guesses for trees that have none)
   photoReady.then((r) => {
     if (r) speciesPhoto = (x, z) => { const i = Math.floor(x - r.minX), j = Math.floor(r.maxZ - z); if (i < 0 || j < 0 || i >= r.w || j >= r.h) return null; const o = (j * r.w + i) * 4; return [r.data[o], r.data[o + 1], r.data[o + 2]]; };
@@ -195,17 +195,16 @@ async function load() {
   loadHeather();
 }
 
-// Bunkers not yet lined up with the aerial photo (a course not played since it was built): lined
-// up here as the game would, and kept with the course straight away
-async function fitBunkersToPhoto() {
-  const list = shapes.filter((s) => s.kind === 'bunker').map((s) => ({ s, hole: s.inner, pts: s.pts, fit: s.fit }));
-  if (!needsBunkerFit(list)) return;
+// Bunkers not yet lined up with their hollows (a course not played since it was built): lined up
+// here as the game would, and kept with the course straight away
+async function fitBunkersToGround() {
+  const list = shapes.filter((s) => s.kind === 'bunker').map((s) => ({ s, hole: s.inner, pts: s.pts, fit: s.fit, osm: s.osm }));
+  if (!grid || !needsBunkerFit(list)) return;
   const raster = await photoReady;
-  if (!raster) return;
-  const fit = fitBunkers(list, raster);
-  fit.bunkers.forEach((b, i) => { if (!list[i].hole) { list[i].s.pts = b.pts; list[i].s.fit = true; } });
+  const fit = fitBunkers(list, { ...grid, heights: grid.h }, raster);
+  fit.bunkers.forEach((b, i) => { if (!list[i].hole) Object.assign(list[i].s, { pts: b.pts, fit: b.fit, osm: b.osm }); });
   fetch(`/api/courses/${courseId}/bunkers`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ bunker: fit.bunkers.map(({ s, ...b }) => b) }) }).catch(() => {});
-  if (fit.moved || fit.traced) setStatus(`Bunkers lined up with the aerial photo: ${fit.moved} moved, ${fit.traced} redrawn from it.`);
+  if (fit.moved || fit.byPhoto) setStatus(`Bunkers lined up: ${fit.moved} moved to their hollows in the ground${fit.byPhoto ? `, ${fit.byPhoto} to the sand in the aerial photo` : ''}.`);
   draw();
 }
 
@@ -539,8 +538,8 @@ async function save() {
     builder: { ...(courseData.GolfSimBuilder || {}), needsReview: false, edited: new Date().toISOString() },
   });
   const features = { ...passthrough };
-  // (bunkers saved from the editor are the player's: the game never moves them to the photo again)
-  for (const k of FEATURE_KINDS) features[k] = shapes.filter((s) => s.kind === k).map((s) => ({ hole: !!s.inner, pts: s.pts.map(([x, z]) => [r2(x), r2(z)]), ...(k === 'water' && s.flow ? { flow: true } : {}), ...(k === 'water' && s.flow && s.banks ? { banks: true } : {}), ...(k === 'bunker' && !s.inner ? { fit: true } : {}) }));
+  // (bunkers saved from the editor are the player's: the game never moves them again)
+  for (const k of FEATURE_KINDS) features[k] = shapes.filter((s) => s.kind === k).map((s) => ({ hole: !!s.inner, pts: s.pts.map(([x, z]) => [r2(x), r2(z)]), ...(k === 'water' && s.flow ? { flow: true } : {}), ...(k === 'water' && s.flow && s.banks ? { banks: true } : {}), ...(k === 'bunker' && !s.inner ? { fit: 'user' } : {}) }));
   const treeAreas = shapes.filter((s) => s.kind === 'trees').map((s) => ({ ...areaData(s), pts: s.pts.map(([x, z]) => [r2(x), r2(z)]) }));
   const tallGrass = grassStrokes.map((s) => ({ pts: s.pts.map(([x, z]) => [r2(x), r2(z)]), r: s.r, ...(s.erase ? { clear: true } : {}) }));
   setStatus('Saving…');

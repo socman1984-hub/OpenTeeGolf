@@ -505,15 +505,19 @@ const httpServer = http.createServer(async (req, res) => {
       return json(res, { ok: true, path: path.join(dir, m[2]) });
     }
     if ((m = p.match(/^\/api\/courses\/([\w-]+)\/bunkers$/)) && req.method === 'PUT') {
-      // Bunkers lined up with the aerial photo (public/js/bunkerfit.js): the course's bunker list
-      // ({ bunker: [{ pts, hole, fit? }] })
+      // Bunkers lined up with their hollows or the aerial photo (public/js/bunkerfit.js): the
+      // course's bunker list ({ bunker: [{ pts, hole, fit?, osm? }] }; osm: the map's own outline)
       const f = courseFile(m[1]);
       const rf = f && realFile(f);
       if (!rf || !fs.existsSync(rf)) return json(res, { error: 'No map data' }, 404);
       const b = await readBody(req, 20e6).catch(() => null);
       const fin = Number.isFinite, r2 = (v) => Math.round(v * 100) / 100;
-      const list = Array.isArray(b?.bunker) && b.bunker.length < 20000 && b.bunker.every((w) => Array.isArray(w?.pts) && w.pts.length >= 3 && w.pts.every((q) => fin(q?.[0]) && fin(q?.[1])))
-        ? b.bunker.map((w) => ({ hole: !!w.hole, pts: w.pts.map((q) => [r2(q[0]), r2(q[1])]), ...(w.fit ? { fit: true } : {}) })) : null;
+      const ptsOk = (p) => Array.isArray(p) && p.length >= 3 && p.length < 5000 && p.every((q) => fin(q?.[0]) && fin(q?.[1]));
+      const list = Array.isArray(b?.bunker) && b.bunker.length < 20000 && b.bunker.every((w) => ptsOk(w?.pts) && (!w.osm || ptsOk(w.osm)))
+        ? b.bunker.map((w) => ({
+          hole: !!w.hole, pts: w.pts.map((q) => [r2(q[0]), r2(q[1])]),
+          ...(w.fit === 2 || w.fit === 'user' ? { fit: w.fit } : {}), ...(w.osm ? { osm: w.osm.map((q) => [r2(q[0]), r2(q[1])]) } : {}),
+        })) : null;
       if (!list) return json(res, { error: 'Bad bunker list' }, 400);
       const real = JSON.parse(fs.readFileSync(rf, 'utf8'));
       real.features = { ...(real.features || {}), bunker: list };

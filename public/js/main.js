@@ -627,19 +627,17 @@ $('btn-start').onclick = async () => {
       } catch (err) { console.warn('River banks', err); }
       loader.finish('riverbanks');
     }
-    // Bunkers lined up with the sand in the aerial photo, the first time (kept with the course's
-    // map data, so the editor shows them too)
-    if (real && imagery && needsBunkerFit(real.features?.bunker)) {
+    // Bunkers lined up with their hollows in the terrain (or the sand in the aerial photo), the
+    // first time (kept with the course's map data, so the editor shows them too)
+    if (real?.grid && needsBunkerFit(real.features?.bunker)) {
       loader.step('bunkers', 'Bunkers');
       await breathe();
       try {
-        const photo = await photoAround(imagery, real.features.bunker.filter((f) => !f.hole), 16);
-        if (photo) {
-          const fit = fitBunkers(real.features.bunker, photo);
-          real.features.bunker = fit.bunkers;
-          console.log(`Bunkers lined up with the photo: ${fit.moved} moved, ${fit.traced} traced`);
-          fetch(`/api/courses/${id}/bunkers`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ bunker: fit.bunkers }) }).catch(() => {});
-        }
+        const photo = imagery ? await photoAround(imagery, real.features.bunker.filter((f) => !f.hole), 16) : null;
+        const fit = fitBunkers(real.features.bunker, real.grid, photo);
+        real.features.bunker = fit.bunkers;
+        console.log(`Bunkers lined up: ${fit.moved} to their hollows, ${fit.byPhoto} to the photo's sand`);
+        fetch(`/api/courses/${id}/bunkers`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ bunker: fit.bunkers }) }).catch(() => {});
       } catch (err) { console.warn('Bunkers', err); }
       loader.finish('bunkers');
     }

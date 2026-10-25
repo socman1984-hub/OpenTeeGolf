@@ -177,7 +177,8 @@ export class CourseScene {
     this.flag = this.makeFlag();
     this.dynamic.add(this.flag);
 
-    // Free-roaming camera (map style: drag to pan, right-drag to rotate, wheel to zoom)
+    // Free-roaming camera (map style: drag to pan, wheel to zoom; right-drag turns the view where
+    // the camera stands, as when looking round, rather than swinging it round the point looked at)
     this.controls = new MapControls(this.camera, this.renderer.domElement);
     this.controls.enabled = false;
     this.controls.enableDamping = true;
@@ -185,7 +186,9 @@ export class CourseScene {
     this.controls.maxPolarAngle = THREE.MathUtils.degToRad(86);
     this.controls.minDistance = 2;
     this.controls.maxDistance = 2500;
+    this.controls.enableRotate = false;
     this.freeKeys = new Set();
+    this.lookAround();
 
     this.raycaster = new THREE.Raycaster();
     this.setQuality('balanced');
@@ -3422,6 +3425,34 @@ export class CourseScene {
     this.camLook.copy(this.camGoalLook);
   }
 
+  // Free view, right-drag: turn (left-right) and tilt (up-down) the view about the camera itself -
+  // the point it looks at moves round it, the camera stays put. Tilt stops short of straight up
+  // or down.
+  lookAround() {
+    const el = this.renderer.domElement, SPEED = 0.0045;
+    let last = null;
+    el.addEventListener('pointerdown', (e) => {
+      if (e.button !== 2 || this.mode !== 'free') return;
+      last = [e.clientX, e.clientY];
+      el.setPointerCapture?.(e.pointerId);
+    });
+    el.addEventListener('pointermove', (e) => {
+      if (!last || this.mode !== 'free') return;
+      const dx = e.clientX - last[0], dy = e.clientY - last[1];
+      last = [e.clientX, e.clientY];
+      const cam = this.camera.position, t = this.controls.target;
+      const d = t.clone().sub(cam), len = d.length();
+      if (len < 1e-3) return;
+      const yaw = Math.atan2(d.x, d.z) - dx * SPEED;
+      const pitch = THREE.MathUtils.clamp(Math.asin(d.y / len) - dy * SPEED, -1.5, 1.2);
+      t.set(cam.x + Math.sin(yaw) * Math.cos(pitch) * len, cam.y + Math.sin(pitch) * len, cam.z + Math.cos(yaw) * Math.cos(pitch) * len);
+      this.camera.lookAt(t);
+    });
+    const end = (e) => { if (last) { last = null; el.releasePointerCapture?.(e.pointerId); } };
+    el.addEventListener('pointerup', end);
+    el.addEventListener('pointercancel', end);
+  }
+
   // Free view: roam anywhere with the mouse / WASD
   setFree(on) {
     if (on === (this.mode === 'free')) return;
@@ -3475,9 +3506,14 @@ export class CourseScene {
         const floor = (g ?? this.hmin ?? 0) + 1.5;
         if (this.camera.position.y < floor) this.camera.position.y = floor;
         const tg = this.course.heightAt(-this.controls.target.x, this.controls.target.z);
-        // (the point looked at only ever rises out of the ground: pulled down to it, rising with
-        // Space / E tipped the view down at the ground instead of going straight up)
-        if (tg != null && this.controls.target.y < tg + 0.5) this.controls.target.y += (tg + 0.5 - this.controls.target.y) * 0.2;
+        // (the point looked at is kept out of the ground by sliding it back along the line of sight
+        // to where that meets the ground: never moved up or down, which would tip the view - rising
+        // with Space / E goes straight up, and turning stays where it was turned)
+        const t = this.controls.target, c = this.camera.position;
+        if (tg != null && t.y < tg + 0.5 && c.y > tg + 0.5) {
+          const s = (tg + 0.5 - c.y) / (t.y - c.y);
+          if (s > 0 && s < 1 && c.distanceTo(t) * s > 3) t.sub(c).multiplyScalar(s).add(c);
+        }
       }
     } else {
       if (this.mode === 'follow') {
