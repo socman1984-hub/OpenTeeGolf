@@ -3175,7 +3175,9 @@ export class CourseScene {
     x.fillStyle = '#e8282b'; x.beginPath(); x.arc(32, 30, 9, 0, Math.PI * 2); x.fill();
     const markerTex = new THREE.CanvasTexture(c);
     markerTex.colorSpace = THREE.SRGBColorSpace;
-    const marker = new THREE.Sprite(new THREE.SpriteMaterial({ map: markerTex, sizeAttenuation: false, depthTest: false, transparent: true, fog: false }));
+    // (alphaTest: the clear parts are skipped altogether. Drawn, they wrote where they are into the
+    // High setting's finishing pass, which then shaded the sky behind them as near ground: a faint box)
+    const marker = new THREE.Sprite(new THREE.SpriteMaterial({ map: markerTex, sizeAttenuation: false, depthTest: false, transparent: true, alphaTest: 0.02, fog: false }));
     marker.center.set(0.5, 0);           // anchor the tip, so it points straight down at the hole
     marker.scale.set(0.028, 0.042, 1);
     marker.position.y = 2.6;
@@ -3201,7 +3203,9 @@ export class CourseScene {
     this.aimLabelCanvas.width = 512; this.aimLabelCanvas.height = 320;
     this.aimLabelTex = new THREE.CanvasTexture(this.aimLabelCanvas);
     this.aimLabelTex.colorSpace = THREE.SRGBColorSpace; // (a dark tag, not a washed-out grey one)
-    const label = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.aimLabelTex, sizeAttenuation: false, depthTest: false, transparent: true, fog: false }));
+    // (alphaTest: its clear part is skipped, or the finishing pass on High draws it as a faint box -
+    // see the hole locator pin)
+    const label = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.aimLabelTex, sizeAttenuation: false, depthTest: false, transparent: true, alphaTest: 0.02, fog: false }));
     label.scale.set(0.3, 0.1867, 1);
     label.position.y = 2.6;
     label.renderOrder = 6;
@@ -3471,7 +3475,9 @@ export class CourseScene {
         const floor = (g ?? this.hmin ?? 0) + 1.5;
         if (this.camera.position.y < floor) this.camera.position.y = floor;
         const tg = this.course.heightAt(-this.controls.target.x, this.controls.target.z);
-        if (tg != null && Math.abs(this.controls.target.y - tg) > 0.5) this.controls.target.y += (tg - this.controls.target.y) * 0.2;
+        // (the point looked at only ever rises out of the ground: pulled down to it, rising with
+        // Space / E tipped the view down at the ground instead of going straight up)
+        if (tg != null && this.controls.target.y < tg + 0.5) this.controls.target.y += (tg + 0.5 - this.controls.target.y) * 0.2;
       }
     } else {
       if (this.mode === 'follow') {

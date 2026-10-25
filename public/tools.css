@@ -1,5 +1,6 @@
 /* Shared styles for the course builder and editor pages */
-body.page { overflow: auto; height: auto; min-height: 100%; }
+/* (the tool pages scroll: the game itself fills the window and never does) */
+body.page { overflow-y: auto; height: 100%; }
 a { color: #9fd7ff; }
 a.button { display: inline-block; text-decoration: none; color: var(--text); background: rgba(255,255,255,0.1); border: 1px solid var(--line); border-radius: 8px; padding: 8px 14px; }
 a.button.primary { background: #2f8f4e; border-color: #3fae63; font-weight: 600; }
