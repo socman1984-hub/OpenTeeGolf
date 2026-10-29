@@ -160,6 +160,27 @@ much of the flight must be tracked, and the detection mode (automatic by club, o
 swing / outdoor). The live view relays the camera's own video stream; it can take 10-30 s to
 start while the camera warms up.
 
+### Garmin R10, Square Golf and other launch monitors (experimental)
+
+The **Launch monitor** menu also has:
+
+* **Garmin Approach R10**: pair the R10 once in Windows Settings > Bluetooth & devices, and close
+  the Garmin Golf app. OpenTeeGolf runs the open-source
+  [10over](https://github.com/divotmaker/10over) bridge (`tenover-frp`), which finds the R10 over
+  Bluetooth, arms it and passes its shots on.
+* **Square Golf Omni / Home**: turn it on (no pairing) and close the Square Golf app. OpenTeeGolf
+  runs the [allsquare](https://github.com/divotmaker/allsquare) bridge (`allsquare-frp`). The
+  Square arms for one club, so the bridge restarts in putting mode when you pick up the putter.
+* **Other: Flight Relay Protocol device**: any launch monitor or bridge that speaks the open
+  [Flight Relay Protocol](https://github.com/flightrelay/spec) (shots as JSON over a WebSocket),
+  such as [flighthook](https://github.com/divotmaker/flighthook). Enter its address, e.g.
+  `ws://192.168.1.20:5880/frp`.
+
+The bridges are in `bridges/` in the release zip; running from source, the first use downloads
+the pinned release and checks its SHA-256 (`lib/bridges.js`). They talk to the game on local port
+5881. Neither has been tried with real hardware here yet: tell us on Discord how it goes.
+`node test/fake-frp.js` runs a simulated FRP launch monitor on `ws://127.0.0.1:5880/frp`.
+
 ### Through FS Golf
 
 The Mevo+ sends shots to simulators through FlightScope's **FS Golf** PC app, using the
@@ -183,6 +204,29 @@ node test/send-shot.js 150 12 0 2700 0
 ```
 
 (arguments: ball speed in mph, launch angle, direction (+ = right), total spin in rpm, spin axis (+ = right))
+
+## Players and games
+
+In the menu's **Players & game** section, **Add player** (or **Edit players**) saves profiles you use
+every round: name, colour, handicap index, left or right handed, and the tees they always play
+(forward tees for kids, say). They're kept in `data/profiles.json`, with each player's past rounds.
+Click names to pick who's playing (the order picked is the order on the first tee; after that the
+best score on the last hole has the honour, and whoever's furthest from the hole plays next). Leave
+everyone out for a round on your own.
+
+| Game | How it works |
+| --- | --- |
+| Stroke play | Everyone plays their own ball; fewest strokes wins |
+| Stableford | Points per hole (1 bogey, 2 par, 3 birdie, 4 eagle); most points wins |
+| Match play | The lower score wins each hole; two players, or teams A and B with their best ball |
+| Skins | Each hole's skin goes to an outright lowest score; ties carry it over |
+| Best ball (four-ball) | Teams A and B; each hole the team counts its best score |
+| Scramble | Teams; everyone hits, the team plays from the best shot |
+| Alternate shot (foursomes) | Teams of two take turns hitting one ball, and turns teeing off |
+
+**Use handicaps** gives each player strokes on the hardest holes (match play: strokes off the
+lowest handicap; scramble teams get a tenth of their combined handicaps, alternate shot half). The
+other players' balls show on the course as a ball under a pole in their colour.
 
 ## Controls
 
@@ -220,6 +264,12 @@ The menu's **Graphics** option trades looks for speed. It's remembered between v
 | High | up to 2× | 4096 | all |
 | Balanced (default) | up to 1.25× | 2048 | ~85% / 70% / 20k tufts |
 | Performance | 1× | 1024 | ~60% / 40% / 9k tufts |
+| Cartoon | 1× | 2048 | ~60% toy trees / none / none |
+
+**Cartoon** is a bright, simple style for slower computers: the turf painted in clean colours (bold
+stripes down the fairways, a checker on the greens, no photo and no grass blades), round toy trees
+of a few dozen triangles each (smoother near the camera), painted hills on the horizon and a light
+colour grade.
 
 Press **P** (or tick **Show FPS**) for FPS, the slowest recent frame, draw calls and triangle
 count. If free view stutters, try Balanced or Performance.
