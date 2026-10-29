@@ -9,6 +9,9 @@ import { simulateShot, LIE_EFFECT, stimpToRoll, SURFACE_NAMES } from './physics.
 import { loadJolt, CollisionWorld } from './collision.js';
 import { PRESETS as WEATHER, fetchLiveWeather, wetness, gustFor, TIMES, timeHour, sunAt, daylight, dayOfYear, clockText } from './weather.js';
 import { PRACTICE_AREAS, makePractice } from './practice.js';
+import { BLAST_LEVELS } from './blast.js';
+import { Round, FORMATS } from './players.js';
+import { setupPlayersMenu, roundSetup, setupProblem, recordRound } from './players-menu.js';
 import { setVolume } from './creek-sound.js';
 
 const $ = (id) => document.getElementById(id);
@@ -384,6 +387,7 @@ function setupFor(kind) {
   if (kind) $('selected-name').textContent = PRACTICE_AREAS[kind].name;
   document.querySelectorAll('.course-only').forEach((el) => el.classList.toggle('hidden', !!kind));
   $('opt-stimp-wrap').classList.toggle('hidden', !!kind && kind !== 'putt');
+  $('opt-boom-wrap').classList.toggle('hidden', kind !== 'blast');
   $('opt-course-group').classList.toggle('hidden', !!kind && kind !== 'putt');
   if (kind) $('opt-terrain-wrap').classList.add('hidden');
   $('btn-start').textContent = kind ? 'Start practice' : 'Tee off';
@@ -415,7 +419,7 @@ const loader = {
     if (!r) {
       const el = document.createElement('div');
       el.className = 'lstep run';
-      el.innerHTML = '<span class="licon"></span><span class="llabel"></span><span class="ltime"></span><div class="lbar"><i></i></div><div class="ldetail"></div>';
+      el.innerHTML = '<span class="licon"></span><span class="llabel"></span><span class="ltime"></span><div class="lbar"><i></i></div><div class="ldetail"></div><div class="lnet"></div>';
       el.querySelector('.llabel').textContent = label;
       $('loading-steps').appendChild(el);
       r = { id, el, t0: Date.now(), last: Date.now(), stallAfter, state: 'run' };
@@ -475,11 +479,29 @@ const loader = {
   // Messages from the server's downloads (aerial imagery, buildings, paths, tree heights)
   serverEvent(p) {
     if (!this.course || p.course !== this.course) return;
-    const label = { imagery: 'Aerial imagery', buildings: 'Buildings', paths: 'Cart paths', parking: 'Car parks', roads: 'Roads', canopy: 'Tree heights', farland: 'Distant hills' }[p.task];
+    const label = SERVER_STEPS[p.task];
     if (label) this.step(p.task, label, { done: p.done, total: p.total, msg: p.msg, stallAfter: 60 });
+  },
+  // How much a server step has downloaded: "12.4 MB downloaded · 1.3 MB/s · this file 3.1 of 8.0 MB"
+  netEvent(p) {
+    if (!this.course || p.course !== this.course || !SERVER_STEPS[p.task]) return;
+    const r = this.rows.get(p.task);
+    if (!r || (!p.bytes && !p.waiting)) return;
+    // (data still arriving counts as progress: the step isn't stuck)
+    if (r.state === 'run' && p.bytes !== r.bytes) { r.last = Date.now(); r.el.classList.remove('stalled'); }
+    r.bytes = p.bytes;
+    const parts = p.bytes ? [`${size(p.bytes)} downloaded${p.files > 1 ? ` in ${p.files} files` : ''}`] : [];
+    if (r.state === 'run' && !p.done && p.waiting) parts.push(`waiting for ${p.waiting.host || 'the server'} to answer (${this.fmt(p.waiting.secs * 1000)})`);
+    if (r.state === 'run' && !p.done) {
+      if (p.rate > 1024) parts.push(`${size(p.rate)}/s`);
+      if (p.file?.total > 1048576) parts.push(`this file ${size(p.file.got)} of ${size(p.file.total)}`);
+    }
+    r.el.querySelector('.lnet').textContent = parts.join(' · ');
   },
 };
 $('loading-back').onclick = () => location.reload();
+const SERVER_STEPS = { imagery: 'Aerial imagery', buildings: 'Buildings', paths: 'Cart paths', parking: 'Car parks', roads: 'Roads', canopy: 'Tree heights', farland: 'Distant hills' };
+const size = (n) => (n < 1048576 ? `${Math.max(1, Math.round(n / 1024))} KB` : `${(n / 1048576).toFixed(1)} MB`);
 
 // Fetch with a byte counter (for the big course files)
 async function fetchProgress(url, onBytes, type = 'json') {
@@ -518,6 +540,7 @@ function readSettings() {
     windDir: $('opt-winddir').value,
     gimme: +$('opt-gimme').value,
     autoPutt: $('opt-putting').value === 'auto',
+    boomLevel: $('opt-boom').value,
     autoPuttR: +$('opt-autoputt-r').value,
   };
 }
@@ -551,6 +574,8 @@ async function buildCollisions(buildings) {
 
 $('btn-start').onclick = async () => {
   if (S.selected?.practice) return startPractice(S.selected.practice);
+  const prob = setupProblem();
+  if (prob) { toast(prob, 4000); return; }
   menu.played[S.selected.id] = Date.now();
   store.set('golfsim.played', menu.played);
   $('menu').classList.add('hidden');
@@ -674,6 +699,10 @@ $('btn-start').onclick = async () => {
   setupSun();
   loader.finish('weather');
   S.scores = S.course.holes.map(() => null);
+  // (players picked in the menu: a round between them, in the game chosen)
+  const rs = roundSetup();
+  S.round = rs ? new Round({ ...rs, holes: S.course.holes }) : null;
+  if (!S.round) scene.setOtherBalls([]);
   loader.close();
   $('hud').classList.remove('hidden');
   $('keys').textContent = KEYS_HELP.round;
@@ -693,6 +722,7 @@ const KEYS_HELP = {
   range: 'Click ground or minimap to aim · ←/→ fine aim · pick a club top right · T test shot · F free view · H traces · V overview · Space skip · U full screen · L conditions · Esc menu',
   targets: 'Click a green or 1–7 to pick a target · [ ] previous / next · ←/→ fine aim · T test shot · F free view · H traces · Space skip · U full screen · L conditions · Esc menu',
   putt: 'Click to aim · ←/→ fine aim · G slope grid · T test shot · F free view · V overview · M mulligan · C scorecard · N next hole · U full screen · L conditions · Esc menu',
+  blast: 'Click something to aim at it · ←/→ fine aim · pick a club top right · T test shot · F free view · Space skip · R new game · D difficulty · U full screen · Esc menu',
 };
 
 async function startPractice(kind) {
@@ -723,7 +753,14 @@ async function startPractice(kind) {
     await buildCollisions(spot.solids);
     $('credits').textContent = 'A practice area made by OpenTeeGolf · the mountains are made up';
   }
-  S.practice = { kind, clock: 0, shots: [], club: kind === 'range' ? 'DR' : null };
+  S.practice = { kind, clock: 0, shots: [], club: kind === 'range' || kind === 'blast' ? 'DR' : null };
+  S.round = null;
+  scene.setOtherBalls([]);
+  if (kind === 'blast') {
+    S.spot.newGame(S.settings.boomLevel);
+    // (each bang: points flash up, more for a chain)
+    S.spot.onBoom = (t, pts, chain) => banner(`${chain ? 'CHAIN REACTION!' : t.kind === 'balloons' ? 'POP!' : t.K.splat ? 'SPLAT!' : 'BOOM!'}<small>${t.K.name} · +${pts}</small>`, 1800);
+  }
   // One wind for the whole area, set against the line down the range
   const rel = S.settings.windDir === 'rand' ? Math.random() * 360 : +S.settings.windDir;
   S.windRel = S.course.holes.map(() => rel);
@@ -775,6 +812,7 @@ function selectTarget(i) {
 function practiceShotDone(res) {
   const P = S.practice, rest = res.rest;
   S.phase = 'result';
+  if (P.kind === 'blast') return blastShotDone(res);
   const entry = { club: $('club').value, carry: res.carry, total: res.total, offline: res.offline };
   const side = (m) => (Math.abs(m) < 0.5 ? 'dead straight' : `${fmtLen(Math.abs(m))} ${m > 0 ? 'right' : 'left'}`);
   if (P.kind === 'range') {
@@ -796,6 +834,28 @@ function practiceShotDone(res) {
   updateHud();
   P.resetTimer = setTimeout(practiceReset, S.pendingShot ? 0 : 2400);
 }
+// Boom range: count the ball, and after the last one say how the game went and start another
+function blastShotDone(res) {
+  const P = S.practice, sp = S.spot;
+  sp.landed(res.rest);
+  // (a moment for chain reactions to finish going off before the ball is counted)
+  P.resetTimer = setTimeout(() => {
+    const shot = sp.endShot(), g = sp.game;
+    P.shots.push({ club: $('club').value, carry: res.carry, total: res.total, offline: res.offline, points: shot.points });
+    if (shot.over) {
+      const cleared = !sp.left();
+      banner(`${cleared ? 'You blew up everything!' : 'Game over!'}<small>${g.score} points${g.score >= g.best && g.score ? ' · new best!' : ` · best ${g.best}`} · new game coming up</small>`, 5000);
+      P.resetTimer = setTimeout(() => { sp.newGame(); P.shots = []; updateHud(); practiceReset(); }, 5200);
+    } else {
+      const left = sp.balls() - g.ball;
+      if (!shot.points) banner(`Missed!<small>${left} ball${left === 1 ? '' : 's'} left · ${g.score} points</small>`, 2000);
+      else if (shot.hits.length > 1) banner(`${shot.hits.length} things in one shot!<small>+${shot.points} · ${g.score} points · ${left} ball${left === 1 ? '' : 's'} left</small>`, 2400);
+      P.resetTimer = setTimeout(practiceReset, S.pendingShot ? 0 : 1600);
+    }
+    updateHud();
+  }, 1200);
+}
+
 // Short distances in feet (or metres to the decimetre), longer ones in yards
 const fmtNear = (m) => (m < 15 ? fmtPutt(m) : fmtLen(m));
 
@@ -840,7 +900,14 @@ function updatePracticeCard() {
   const lr = (m) => `${Math.abs(f(m))}${m > 0.5 ? 'R' : m < -0.5 ? 'L' : ''}`;
   const stat = (label, v) => `<div><small>${label}</small><b>${v}</b></div>`;
   let stats, head, rows;
-  if (P.kind === 'range') {
+  if (P.kind === 'blast') {
+    const g = S.spot.game;
+    $('pc-title').textContent = `Boom range · ${S.spot.level().name}`;
+    $('pc-sub').textContent = g.ball >= S.spot.balls() ? 'Game over' : `Ball ${g.ball + 1} of ${S.spot.balls()} · ${S.spot.left()} things left to blow up`;
+    stats = stat('Score', g.score) + stat('Best', g.best || '—') + stat('Balls left', Math.max(0, S.spot.balls() - g.ball));
+    head = '<tr><th>Ball</th><th>Club</th><th>Carry</th><th>Points</th></tr>';
+    rows = shots.map((s, i) => ({ ...s, n: i + 1 })).slice(-6).reverse().map((s) => `<tr><td>${s.n}</td><td>${s.club}</td><td>${f(s.carry)}</td><td>${s.points ? `+${s.points}` : '—'}</td></tr>`).join('');
+  } else if (P.kind === 'range') {
     const club = $('club').value, mine = shots.filter((s) => s.club === club);
     const avg = (k) => (mine.length ? f(mine.reduce((a, s) => a + s[k], 0) / mine.length) : '—');
     $('pc-title').textContent = 'Driving range';
@@ -876,11 +943,11 @@ const pin = () => {
 const headingTo = (from, to) => Math.atan2(to.x - from.x, to.z - from.z);
 const onGreen = () => S.lie === 'green';
 
-function teePosition(h) {
-  if (h.tees[S.settings.tee]) return h.tees[S.settings.tee];
+function teePosition(h, tee = S.settings.tee) {
+  if (h.tees[tee]) return h.tees[tee];
   // Fall back to the closest available tee in the standard order
   const order = TEE_TYPES;
-  const i = order.indexOf(S.settings.tee);
+  const i = Math.max(0, order.indexOf(tee));
   for (let d = 1; d < order.length; d++) for (const j of [i + d, i - d]) if (h.tees[order[j]]) return h.tees[order[j]];
   return Object.values(h.tees)[0];
 }
@@ -1042,6 +1109,14 @@ function startHole(i) {
   S.prevBall = { ...S.ball };
   S.undo = null;
   S.phase = 'ready';
+  // (a round with players: everyone on their own tees, the honour first)
+  if (S.round) {
+    S.round.startHole(i, (side) => {
+      const tt = teePosition(h, (side.members.length === 1 && side.members[0].tee) || S.settings.tee);
+      return { x: tt.x, y: S.course.heightAt(tt.x, tt.z) ?? tt.y, z: tt.z };
+    });
+    loadSide(S.round.next((b) => dist(b, pin())));
+  }
   scene.clearTrails();
   scene.setPin(pin());
   S.spot?.setActive?.(i);
@@ -1055,10 +1130,76 @@ function startHole(i) {
   const len = t.distance ?? dist(t, pin());
   const kind = practiceKind();
   if (kind === 'range') banner('Driving range<small>Hit away: a new ball is teed up after every shot</small>', 3200);
+  else if (kind === 'blast') banner(`Boom range · ${S.spot.level().name}<small>Hit the barrels, crates, melons and balloons · ${S.spot.balls()} balls · red barrels set off everything near them · D changes the level</small>`, 4500);
   else if (kind === 'targets') banner('Target greens<small>Aim at any green; the next ball starts aimed at the same one</small>', 3600);
   else if (kind === 'putt') banner(`Hole ${h.number} · ${S.spot.holes[i].name}<small>Par ${h.par} · ${fmtPutt(len)}</small>`);
+  else if (S.round && !S.round.single) banner(`Hole ${h.number}<small>Par ${h.par} · ${fmtLen(len)} · ${upName()} to play</small>`);
   else banner(`Hole ${h.number}<small>Par ${h.par} · ${fmtLen(len)}</small>`);
   updateHud();
+}
+
+// ------------------------------------------------------------------ players taking turns
+
+const upName = () => { const R = S.round, sd = R?.sides[S.sideIdx]; if (!sd) return ''; const p = R.hitter(sd); return sd.members.length > 1 ? `${p.name} (${sd.name})` : p.name; };
+const distToPin = (b) => dist(b, pin());
+
+// Make side i the one playing: its ball, lie and strokes into the game's own, the others' balls
+// shown where they lie, and the launch monitor told whether this player is left or right handed
+function loadSide(i) {
+  const R = S.round, sd = R.sides[i];
+  S.sideIdx = i;
+  S.ball = { ...sd.ball }; S.prevBall = { ...sd.prevBall }; S.lie = sd.lie; S.strokes = sd.strokes;
+  S.undo = null;
+  S.scores = sd.scores;
+  scene.setBall(S.ball);
+  scene.setOtherBalls(R.sides.filter((o, k) => k !== i && !o.holed).map((o) => ({ ...o.ball, colour: o.colour })));
+  const p = R.hitter(sd);
+  fetch('/api/player', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ handed: p.hand === 'LH' ? 'LH' : 'RH' }) }).catch(() => {});
+}
+// The playing side's ball, lie and strokes back into its own record
+function saveSide() {
+  const sd = S.round.sides[S.sideIdx];
+  Object.assign(sd, { ball: { ...S.ball }, prevBall: { ...S.prevBall }, lie: S.lie, strokes: S.strokes });
+}
+
+// After a shot in a round with several sides: the scramble's next player from the same spot (or
+// the team's best shot once they've all hit), then whoever is away. Returns true when it has
+// taken over from the usual "same player again".
+function roundAfterShot() {
+  const R = S.round;
+  if (!R || R.single) { if (R) { saveSide(); R.sides[S.sideIdx].shots++; } return false; }
+  const sd = R.sides[S.sideIdx];
+  if (R.F.shared === 'scramble') {
+    const best = R.scrambleAttempt(sd, { ball: { ...S.ball }, lie: S.lie, strokes: S.strokes }, distToPin);
+    if (!best) {
+      // (back to the spot for the next player in the team)
+      S.ball = { ...sd.ball }; S.lie = sd.lie; S.strokes = sd.strokes;
+      beginTurn(S.sideIdx, true);
+      return true;
+    }
+    Object.assign(sd, { prevBall: { ...sd.ball }, ball: best.ball, lie: best.lie, strokes: best.strokes });
+    sd.shots++;
+    toast(`${sd.name} plays ${best.by.name}'s shot`, 3000);
+  } else { saveSide(); sd.shots++; }
+  const next = R.next(distToPin);
+  if (next < 0) return false;
+  beginTurn(next);
+  return true;
+}
+
+// The next player steps up: their ball, the view behind it, and whose turn it is
+function beginTurn(i, sameSpot = false) {
+  loadSide(i);
+  S.phase = 'ready';
+  if (S.lie === 'green') scene.clearTrails(); else scene.keepTrailAsGhost();
+  scene.setGhostsVisible(S.showTraces !== false);
+  resetAimToPin();
+  addressView();
+  banner(`${upName()}<small>${sameSpot ? 'from the same spot' : `${fmtLen(distToPin(S.ball))} to the pin · ${SURFACE_NAMES[S.lie] || S.lie}`}</small>`, 2200);
+  updateHud();
+  const pending = S.pendingShot;
+  S.pendingShot = null;
+  if (pending) onShot(pending);
 }
 
 function resetAim() {
@@ -1068,7 +1209,7 @@ function resetAim() {
   // From the tee on long holes aim down the fairway (first aim point within reach)
   if (S.strokes === 0 && h.par >= 4 && h.aims.length) target = h.aims[0];
   // (the range: straight down the middle; a putt-putt hole that turns: at the wall to bank off)
-  if (practiceKind() === 'range') target = { x: S.ball.x, z: p.z };
+  if (practiceKind() === 'range' || practiceKind() === 'blast') target = { x: S.ball.x, z: p.z };
   if (practiceKind() === 'putt' && S.strokes === 0 && S.spot.holes[S.hole].aim) target = S.spot.holes[S.hole].aim;
   S.heading = headingTo(S.ball, target);
   S.aimDist = dist(S.ball, target);
@@ -1138,7 +1279,7 @@ function addressView() {
 function autoClub() {
   if (practiceKind() === 'putt') return setClub('PT');
   // (the range keeps the club the player picked)
-  if (practiceKind() === 'range') return setClub(S.practice.club || 'DR');
+  if (practiceKind() === 'range' || practiceKind() === 'blast') return setClub(S.practice.club || 'DR');
   const d = dist(S.ball, pin()) * M_TO_YD;
   let club = 'PT';
   if (!onGreen()) {
@@ -1208,6 +1349,7 @@ function onShot(shot) {
   S.phase = 'flying';
   S.lastShot = { shot, res };
   S.anim = { res, t: 0 };
+  if (practiceKind() === 'blast') S.spot.startShot();
   scene.spinTilt = res.spinTilt || 0;
   scene.hideAim();
   scene.hidePuttGrid();
@@ -1242,6 +1384,12 @@ function tick(dt) {
   const p = pts[Math.max(0, n - 1)];
   scene.setBall(p);
   scene.setTrail(pts, n);
+  // (boom range: anything the ball passed through on its way goes off)
+  if (practiceKind() === 'blast') {
+    for (let i = Math.max(1, a.checked ?? 1); i < n; i++) S.spot.ballAt(pts[i - 1], pts[i]);
+    a.checked = n;
+    if (a.res.carryPoint && a.t >= a.res.carryPoint.t && !a.landedBoom) { a.landedBoom = true; S.spot.landed(a.res.carryPoint); }
+  }
   // Show carry once the ball has landed
   if (a.res.carryPoint && a.t >= a.res.carryPoint.t && !a.carryShown) {
     a.carryShown = true;
@@ -1318,6 +1466,7 @@ function finishShot(res) {
     return holeOut(true, 'Maximum strokes reached — picked up');
   }
   const next = () => {
+    if (roundAfterShot()) return;
     S.phase = 'ready';
     // Old tracers just get in the way when putting
     if (S.lie === 'green') scene.clearTrails(); else scene.keepTrailAsGhost();
@@ -1391,6 +1540,7 @@ const maxStrokes = (h) => (practiceKind() === 'putt' ? 6 : h.par + 5);
 // note: why the hole ended without the ball physically dropping (gimme, auto-putt, pick-up)
 function holeOut(pickedUp = false, note = '') {
   const h = hole();
+  if (S.round) return roundHoleOut(pickedUp, note);
   S.phase = 'holed';
   if (S.pendingShot) { S.pendingShot = null; toast('Hole finished — the next swing was not played'); }
   S.scores[S.hole] = pickedUp ? maxStrokes(h) : S.strokes;
@@ -1409,12 +1559,56 @@ function holeOut(pickedUp = false, note = '') {
   setTimeout(() => { if (S.phase === 'holed' && S.hole === holed) showScorecard(true); }, 2600);
 }
 
+// A side has finished the hole: its score, then the next player (or, when everyone's in, the hole's
+// result and the scorecard)
+function roundHoleOut(pickedUp, note) {
+  const R = S.round, h = hole(), sd = R.sides[S.sideIdx];
+  const total = pickedUp ? maxStrokes(h) : S.strokes;
+  sd.attempts = [];
+  R.holeOut(sd, total, pickedUp);
+  sd.ball = { ...pin() };
+  scene.hidePuttGrid(); S.gridKey = null;
+  if (note && !pickedUp) {
+    const p = pin(), from = { ...S.ball };
+    S.tween = { from, to: { x: p.x, y: p.y - 0.03, z: p.z }, t: 0, dur: Math.min(1.2, 0.3 + dist(from, p) * 0.15) };
+  } else scene.setBall(S.ball);
+  const toPar = total === h.par ? 'E' : (total > h.par ? '+' : '') + (total - h.par);
+  const who = R.single ? '' : `${sd.name}: `;
+  const next = R.next(distToPin);
+  if (S.pendingShot) { S.pendingShot = null; toast('Holed — the next swing was not played'); }
+  if (next >= 0) {
+    S.phase = 'between';
+    banner(`${who}${pickedUp ? 'Picked up' : scoreName(total, h.par)}<small>Hole ${h.number}: ${total} (${toPar})${note ? ` · ${note}` : ''}</small>`, 2600);
+    updateHud();
+    const holed = S.hole;
+    setTimeout(() => { if (S.phase === 'between' && S.hole === holed) beginTurn(next); }, 2400);
+    return;
+  }
+  // everyone's in
+  R.endHole();
+  S.phase = 'holed';
+  const news = R.single ? '' : R.holeNews(S.hole);
+  banner(`${who}${pickedUp ? 'Picked up' : scoreName(total, h.par)}<small>Hole ${h.number}: ${total} (${toPar})${note ? ` · ${note}` : ''}${news ? `<br>${news}` : ''}</small>`, 4200);
+  scene.setOtherBalls([]);
+  updateHud();
+  const holed = S.hole;
+  setTimeout(() => { if (S.phase === 'holed' && S.hole === holed) showScorecard(true); }, 3000);
+}
+
 function nextHole() {
   $('scorecard').classList.add('hidden');
   if (S.hole + 1 < S.course.holes.length) startHole(S.hole + 1);
   else {
     S.phase = 'done';
     showScorecard(false, true);
+    // (each player's round kept with their profile)
+    if (S.round) {
+      const R = S.round, played = S.course.holes.map((h, i) => i).filter((i) => R.sides.every((sd) => sd.scores[i] != null));
+      recordRound(R.players.map((p) => {
+        const sd = R.sides.find((x) => x.members.includes(p));
+        return { id: p.id, round: { at: Date.now(), course: S.course.name || S.selected?.name || '', holes: played.length, strokes: played.reduce((a, i) => a + sd.scores[i], 0), par: played.reduce((a, i) => a + S.course.holes[i].par, 0), format: R.format } };
+      }));
+    }
   }
 }
 
@@ -1451,6 +1645,18 @@ function updateHud() {
   let over = 0, played = 0;
   S.scores.forEach((s, i) => { if (s != null) { over += s - S.course.holes[i].par; played++; } });
   $('h-total').textContent = played ? `${over === 0 ? 'E' : (over > 0 ? '+' : '') + over} thru ${played}` : 'E';
+  const R = S.round, many = R && !R.single;
+  $('h-up').classList.toggle('hidden', !many);
+  $('h-board').classList.toggle('hidden', !many);
+  if (many) {
+    const sd = R.sides[S.sideIdx], p = R.hitter(sd);
+    const e = (t) => String(t).replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`);
+    $('h-up').innerHTML = S.phase === 'holed' ? `<b>Hole finished</b><small>${FORMATS[R.format].name}</small>`
+      : `<i style="background:${p.colour}"></i><b>${e(upName())}</b><small>${FORMATS[R.format].name}</small>`;
+    const rows = R.standings();
+    $('h-board').innerHTML = rows.map((r) => `<div><i style="background:${r.colour}"></i>${e(r.name)}<b>${e(r.value)}</b><small>${e(r.sub || '')}</small></div>`).join('')
+      + (rows.summary ? `<div class="sum">${e(rows.summary)}</div>` : '');
+  }
   // Wind arrow relative to where we're aiming (up = helping)
   const w = wind();
   if (w.mps) {
@@ -1552,10 +1758,26 @@ function drawMinimap() {
   }
   ctx.fillStyle = '#e8282b';
   ctx.beginPath(); ctx.arc(gx, gy, dotR * 1.2, 0, 7); ctx.fill();
+  // (a round with several players: everyone else's ball as a dot in their colour)
+  const R = S.round;
+  if (R && !R.single) {
+    ctx.lineWidth = 1.2 / s; ctx.strokeStyle = '#fff';
+    R.sides.forEach((sd, k) => {
+      if (k === S.sideIdx || sd.holed || !sd.ball) return;
+      const [ox, oy] = px(sd.ball);
+      ctx.fillStyle = sd.colour;
+      ctx.beginPath(); ctx.arc(ox, oy, dotR * 1.1, 0, 7); ctx.fill(); ctx.stroke();
+    });
+  }
   ctx.fillStyle = '#fff';
   ctx.strokeStyle = '#000';
   ctx.lineWidth = 1 / s;
   ctx.beginPath(); ctx.arc(bx, by, dotR, 0, 7); ctx.fill(); ctx.stroke();
+  // (and the ball being played ringed in its player's colour)
+  if (R && !R.single && R.sides[S.sideIdx]) {
+    ctx.strokeStyle = R.sides[S.sideIdx].colour; ctx.lineWidth = 2 / s;
+    ctx.beginPath(); ctx.arc(bx, by, dotR * 1.7, 0, 7); ctx.stroke();
+  }
   // Hovered spot: lines from the ball and on to the pin
   const hov = S.mmHover;
   if (hov) {
@@ -1694,9 +1916,46 @@ function showScorecard(afterHole = false, final = false) {
       <tr><th>Score</th>${hs.map((h, i) => `<td class="${from + i === S.hole && !final ? 'cur' : ''}"><span class="${cls(sc[i], h.par)}">${sc[i] ?? ''}</span></td>`).join('')}<td>${sc.some((x) => x != null) ? sum(sc) : ''}</td></tr></table>`;
   };
   const front = Math.min(9, holes.length);
+  if (S.round && !S.round.single) return showRoundCard(afterHole, final, table, front);
   $('sc-table').innerHTML = table(0, front, 'Out') + (holes.length > 9 ? '<br>' + table(9, holes.length, 'In') : '');
   const total = sum(S.scores), par = sum(holes.filter((_, i) => S.scores[i] != null).map((h) => h.par));
   $('sc-title').textContent = final ? `Round complete — ${total} (${total - par === 0 ? 'E' : (total > par ? '+' : '') + (total - par)})` : `${S.course.name} — Scorecard`;
+  $('sc-next').classList.toggle('hidden', !afterHole);
+  $('sc-next').textContent = S.hole + 1 < holes.length ? `Hole ${holes[S.hole + 1]?.number} →` : 'Finish round';
+  $('scorecard').classList.remove('hidden');
+}
+
+// The scorecard for a round with several players: a row per player (or team), with the team's best
+// ball, Stableford points, skins or the match as the game has them, and who's winning
+function showRoundCard(afterHole, final) {
+  const R = S.round, holes = S.course.holes, front = Math.min(9, holes.length);
+  const e = (t) => String(t).replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`);
+  const cls = (sc, par) => (sc == null ? '' : sc - par <= -2 ? 's-eagle' : sc - par === -1 ? 's-birdie' : sc - par === 1 ? 's-bogey' : sc - par >= 2 ? 's-double' : '');
+  const sum = (arr) => arr.reduce((a, b) => a + (b || 0), 0);
+  const skins = R.format === 'skins' ? R.skins() : null;
+  const table = (from, to, label) => {
+    const hs = holes.slice(from, to), idx = hs.map((_, k) => from + k);
+    const row = (name, colour, vals, tot, extra = '') => `<tr class="${extra}"><th class="side-name"><i style="background:${colour}"></i>${e(name)}</th>${vals.map((v) => `<td>${v}</td>`).join('')}<td>${tot}</td></tr>`;
+    let out = `<table class="sc"><tr><th>Hole</th>${hs.map((h) => `<th>${h.number}</th>`).join('')}<th>${label}</th></tr>
+      <tr><th>Par</th>${hs.map((h) => `<td>${h.par}</td>`).join('')}<td>${sum(hs.map((h) => h.par))}</td></tr>`;
+    for (const sd of R.sides) {
+      const v = idx.map((i) => { const x = sd.scores[i]; const dots = R.handicaps && sd.received[i] ? '•'.repeat(Math.min(3, sd.received[i])) : ''; return x == null ? (dots ? `<small>${dots}</small>` : '') : `<span class="${cls(x, holes[i].par)}">${x}</span>${dots ? `<small>${dots}</small>` : ''}`; });
+      const any = idx.some((i) => sd.scores[i] != null);
+      out += row(sd.name, sd.colour, v, any ? sum(idx.map((i) => sd.scores[i])) : '');
+      if (R.format === 'stableford') out += row('  points', sd.colour, idx.map((i) => R.stablefordPoints(sd, i) ?? ''), sum(idx.map((i) => R.stablefordPoints(sd, i))), 'team');
+    }
+    if (R.format === 'bestball' || (R.format === 'match' && R.teamed)) for (const t of R.teamScores()) out += row(`${t.name} best`, t.colour, idx.map((i) => t.scores[i] ?? ''), sum(idx.map((i) => t.scores[i])) || '', 'team');
+    if (skins) out += `<tr class="team"><th class="side-name">Skins</th>${idx.map((i) => { const k = skins.byHole[i]; return `<td>${!k ? '' : k.side >= 0 ? `<i style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${R.sides[k.side].colour}"></i>${k.skins}` : '→'}</td>`; }).join('')}<td></td></tr>`;
+    if (R.format === 'match') {
+      const m = R.matchSides();
+      if (m) out += `<tr class="team"><th class="side-name">Hole won</th>${idx.map((i) => { const a = m[0].scores[i], b = m[1].scores[i]; return `<td>${a == null || b == null ? '' : a === b ? '½' : `<i style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${(a < b ? m[0] : m[1]).colour}"></i>`}</td>`; }).join('')}<td></td></tr>`;
+    }
+    return out + '</table>';
+  };
+  $('sc-table').innerHTML = table(0, front, 'Out') + (holes.length > 9 ? '<br>' + table(9, holes.length, 'In') : '');
+  const rows = R.standings(), lead = rows[0];
+  const verdict = R.format === 'match' ? rows.summary : `${lead.name} leads · ${lead.value}`;
+  $('sc-title').textContent = final ? `${FORMATS[R.format].name} — ${R.format === 'match' ? rows.summary : `${lead.name} wins (${lead.value})`}` : `${S.course.name} — ${FORMATS[R.format].name} · ${verdict}`;
   $('sc-next').classList.toggle('hidden', !afterHole);
   $('sc-next').textContent = S.hole + 1 < holes.length ? `Hole ${holes[S.hole + 1]?.number} →` : 'Finish round';
   $('scorecard').classList.remove('hidden');
@@ -1726,7 +1985,7 @@ $('club').innerHTML = CLUBS.map(([code, name]) => `<option value="${code}">${nam
 $('club').onchange = () => {
   if (S.practice) S.practice.club = $('club').value;
   setClub($('club').value);
-  if (practiceKind() === 'range') updateHud();
+  if (practiceKind() === 'range' || practiceKind() === 'blast') updateHud();
 };
 
 const PRESETS = {
@@ -1802,7 +2061,19 @@ window.addEventListener('keydown', (e) => {
       break;
     case 'ArrowLeft': if (S.phase === 'ready') { S.heading -= step; refreshAim(); } e.preventDefault(); break;
     case 'ArrowRight': if (S.phase === 'ready') { S.heading += step; refreshAim(); } e.preventDefault(); break;
-    case 'r': case 'R': if (S.phase === 'ready') resetAimToPin(); break;
+    case 'd': case 'D':
+      // (boom range: the next level, a new game)
+      if (practiceKind() === 'blast' && S.phase === 'ready') {
+        const ks = Object.keys(BLAST_LEVELS), next = ks[(ks.indexOf(S.settings.boomLevel) + 1) % ks.length];
+        S.settings.boomLevel = next; $('opt-boom').value = next; savePrefs();
+        S.spot.newGame(next); S.practice.shots = []; updateHud();
+        banner(`${BLAST_LEVELS[next].name}<small>${BLAST_LEVELS[next].about} · ${BLAST_LEVELS[next].balls} balls</small>`, 2400);
+      }
+      break;
+    case 'r': case 'R':
+      if (practiceKind() === 'blast' && S.phase === 'ready') { S.spot.newGame(); S.practice.shots = []; updateHud(); toast('New game: everything is back'); }
+      else if (S.phase === 'ready') resetAimToPin();
+      break;
     case 'v': case 'V':
       if (scene.mode === 'overview') addressView(); else scene.viewOverview(S.ball, pin());
       break;
@@ -1892,6 +2163,7 @@ function connectEvents() {
     onShot(shot);
   });
   es.addEventListener('progress', (e) => loader.serverEvent(JSON.parse(e.data)));
+  es.addEventListener('net', (e) => loader.netEvent(JSON.parse(e.data)));
   es.addEventListener('lm', (e) => {
     const lm = JSON.parse(e.data);
     const dot = $('lm-dot');
@@ -1911,6 +2183,12 @@ function connectEvents() {
       $('lm-arm').classList.toggle('hidden', !['ready', 'idle', 'off'].includes(st));
       $('lm-arm').textContent = st === 'ready' ? 'disarm' : st === 'idle' ? 'arm' : 'connect';
       $('lm-arm').dataset.state = st;
+    } else if (lm.relay) {
+      // R10 / Square Golf bridge or another FRP device: what it's doing (searching, connecting, ready)
+      $('lm-arm').classList.add('hidden');
+      $('lm-text').textContent = lm.connected ? `${lm.device} — ${lm.ready ? 'ready' : 'connected'}${battery}`
+        : `${LM_NAMES[lm.relay.kind] || 'Launch monitor'}: ${lm.relay.text}`;
+      $('lm-text').title = lm.relay.error || '';
     } else {
       $('lm-arm').classList.add('hidden');
       $('lm-text').textContent = lm.connected
@@ -1941,24 +2219,50 @@ function connectEvents() {
 
 // ---- launch monitor setting (menu)
 
+const LM_NAMES = { r10: 'Garmin R10', square: 'Square Golf', frp: 'Launch monitor' };
+const LM_HELP = {
+  direct: 'Join this PC to the <b>Mevo+ Wi-Fi</b> (network <b>FS M2-…</b>; the password is the device\'s 9-digit serial), and close FS Golf. '
+    + 'OpenTeeGolf connects to the radar itself and switches between full swing, chipping and putting modes on its own.',
+  fsgolf: 'Open the <b>FS Golf</b> PC app, connect it to your Mevo+, and choose its GSPro/OpenConnect connection (address 127.0.0.1, port 921).',
+  r10: 'Turn the R10 on and pair it once in <b>Windows Settings &rarr; Bluetooth &amp; devices</b>, and close the Garmin Golf app on your phone. '
+    + 'OpenTeeGolf finds it over Bluetooth through the open-source <a href="https://github.com/divotmaker/10over" target="_blank" rel="noopener">10over</a> bridge (downloaded the first time).',
+  square: 'Turn the Square on (no pairing needed) and close the Square Golf app. '
+    + 'OpenTeeGolf finds it over Bluetooth through the open-source <a href="https://github.com/divotmaker/allsquare" target="_blank" rel="noopener">allsquare</a> bridge (downloaded the first time). '
+    + 'It reconnects in putting mode when you pick up the putter.',
+  frp: 'For any launch monitor or bridge that speaks the open <a href="https://github.com/flightrelay/spec" target="_blank" rel="noopener">Flight Relay Protocol</a>, '
+    + 'such as <a href="https://github.com/divotmaker/flighthook" target="_blank" rel="noopener">flighthook</a>: enter its address.',
+};
 function showLmHelp(lm = null) {
-  const direct = $('opt-lm').value === 'direct';
-  let html = direct
-    ? 'Join this PC to the <b>Mevo+ Wi-Fi</b> (network <b>FS M2-…</b>; the password is the device\'s 9-digit serial), and close FS Golf. '
-      + 'OpenTeeGolf connects to the radar itself and switches between full swing, chipping and putting modes on its own.'
-    : 'Open the <b>FS Golf</b> PC app, connect it to your Mevo+, and choose its GSPro/OpenConnect connection (address 127.0.0.1, port 921).';
-  if (direct && lm?.direct) {
+  const kind = $('opt-lm').value;
+  let html = LM_HELP[kind] || '';
+  if (kind === 'direct' && lm?.direct) {
     html += `<br>Status: <b>${lm.direct.state === 'ready' ? `${lm.device} ready` : lm.direct.text}</b>${lm.direct.error ? ` (${lm.direct.error})` : ''}`;
+  } else if (lm?.relay && lm.relay.kind === kind) {
+    const esc = (t) => String(t).replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`);
+    html += `<br>Status: <b>${esc(lm.connected ? `${lm.device} ${lm.ready ? 'ready' : 'connected'}` : lm.relay.text)}</b>${lm.relay.error ? ` (${esc(lm.relay.error)})` : ''}`;
   }
   $('lm-help').innerHTML = html;
+  $('lm-frp-row').classList.toggle('hidden', kind !== 'frp');
+  $('lm-mevo-link').classList.toggle('hidden', kind !== 'direct' && kind !== 'fsgolf');
 }
-fetch('/api/lm').then((r) => r.json()).then((r) => { $('opt-lm').value = r.settings.connection; showLmHelp(r.state); }).catch(() => {});
+const saveLm = (body) => fetch('/api/lm', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).catch(() => {});
+fetch('/api/lm').then((r) => r.json()).then((r) => {
+  $('opt-lm').value = r.settings.connection;
+  $('opt-frp-url').value = r.settings.frpUrl || '';
+  showLmHelp(r.state);
+}).catch(() => {});
 $('opt-lm').onchange = async () => {
   showLmHelp();
-  await fetch('/api/lm', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ connection: $('opt-lm').value }) }).catch(() => {});
+  await saveLm({ connection: $('opt-lm').value });
+};
+$('opt-frp-url').onchange = async () => {
+  const url = $('opt-frp-url').value.trim();
+  if (!/^wss?:\/\/\S+$/.test(url)) return toast('The address starts with ws://, e.g. ws://192.168.1.20:5880/frp');
+  await saveLm({ connection: 'frp', frpUrl: url });
 };
 
 connectEvents();
+setupPlayersMenu().catch((err) => console.warn('Players', err));
 loadCourses().catch((err) => {
   $('course-list').innerHTML = `<div class="muted">Could not load courses: ${err.message}</div>`;
 });
@@ -1999,13 +2303,14 @@ $('opt-fps').addEventListener('change', () => setFps($('opt-fps').checked));
 
 // Remember graphics choices between visits
 function savePrefs() {
-  try { localStorage.setItem('golfsim.prefs', JSON.stringify({ quality: $('opt-quality').value, fps: !!S.showFps, traces: S.showTraces !== false, volume: +$('opt-volume').value })); } catch { /* storage unavailable */ }
+  try { localStorage.setItem('golfsim.prefs', JSON.stringify({ quality: $('opt-quality').value, fps: !!S.showFps, traces: S.showTraces !== false, volume: +$('opt-volume').value, boom: $('opt-boom').value })); } catch { /* storage unavailable */ }
 }
 try {
   const prefs = JSON.parse(localStorage.getItem('golfsim.prefs') || '{}');
   if (prefs.quality) $('opt-quality').value = prefs.quality;
   if (prefs.fps) setFps(true);
   if (prefs.volume != null) $('opt-volume').value = prefs.volume;
+  if (BLAST_LEVELS[prefs.boom]) $('opt-boom').value = prefs.boom;
 } catch { /* ignore */ }
 // Sound volume (streams so far)
 setVolume($('opt-volume').value / 100);
