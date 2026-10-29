@@ -13,6 +13,9 @@ OpenTeeGolf is free software under the GNU General Public License v3 (see `LICEN
 | [ironsight](https://github.com/divotmaker/ironsight) (Copyright 2026 Eric Thill): the Mevo+ protocol, ported to JavaScript in `lib/mevo.js` | MIT OR Apache-2.0 (used under MIT) |
 | [Creek Water Studio](https://github.com/bjlin-meshy/creek-water-studio) (bjlin-meshy): the ideas behind the clear creek water, its stony bed, the foam and leaves drifting on it and the creek sounds (`public/js/flotsam.js`, `public/js/creek-sound.js`, stream water in `public/js/scene.js`) | MIT |
 | [Koi Pond Garden](https://github.com/souranyp-stack/koi-pond-garden) (Copyright 2026 Sourany Phomhome): the ideas behind the ponds you see into, their lily pads, fish and ripples (`public/js/pond.js`, pond water in `public/js/scene.js`) | MIT |
+| [10over](https://github.com/divotmaker/10over) 0.2 (Copyright 2026 Eric Thill): `tenover-frp`, the Garmin R10 bridge, run by `lib/bridges.js` and bundled in `bridges/` in the Windows release zip | MIT OR Apache-2.0 (used under MIT, see `bridges/10over-LICENSE-MIT.txt`) |
+| [allsquare](https://github.com/divotmaker/allsquare) 0.2 (Copyright 2026 Eric Thill): `allsquare-frp`, the Square Golf bridge, run by `lib/bridges.js` and bundled in `bridges/` in the Windows release zip | MIT OR Apache-2.0 (used under MIT, see `bridges/allsquare-LICENSE-MIT.txt`) |
+| [Flight Relay Protocol](https://github.com/flightrelay/spec) 0.1 (the shot format `lib/frp.js` reads) | CC0 1.0 |
 | [Node.js](https://nodejs.org) (bundled in the Windows release zip) | MIT and others, see `node/LICENSE` in the zip |
 
 ## Textures (in `public/textures/`)

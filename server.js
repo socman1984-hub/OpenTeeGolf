@@ -4,6 +4,8 @@
 //  - Course builder: search OpenStreetMap, check a course's mapping, build it; course editor saves
 //  - Listens for launch monitor shots using the OpenConnect protocol (TCP 921),
 //    which is what the FlightScope FS Golf app uses to send Mevo+ shots to a simulator.
+//  - Or takes shots from the Mevo+ directly (lib/mevo.js), from a Garmin R10 or Square Golf
+//    through their bridges (lib/bridges.js), or from any Flight Relay Protocol device (lib/frp.js).
 //  - Pushes shots to the browser over Server-Sent Events.
 //
 // Usage: node server.js
@@ -14,6 +16,7 @@ import net from 'node:net';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { normalizeSpin } from './public/js/physics.js';
 import { TREE_SPECIES, TREE_MIXES } from './public/js/treeplace.js';
 import { BUILDING_TYPES } from './public/js/buildingtypes.js';
@@ -29,6 +32,8 @@ import { ensurePhoto, photoMeta, photoStale, savePhoto } from './lib/coursephoto
 import { ensureCanopy } from './lib/canopy.js';
 import { ensureFarLand } from './lib/farland.js';
 import { MevoClient, DEFAULT_SETUP } from './lib/mevo.js';
+import { FrpController } from './lib/frp.js';
+import { BridgeProcess, BRIDGES } from './lib/bridges.js';
 const BUILDING_TYPE_IDS = new Set(BUILDING_TYPES.map((t) => t.id));
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -112,6 +117,52 @@ const sseClients = new Set();
 function broadcast(type, data) {
   const msg = `event: ${type}\ndata: ${JSON.stringify(data)}\n\n`;
   for (const res of sseClients) res.write(msg);
+}
+
+// How much each loading step has downloaded, for the loading screen: every fetch made while a step
+// runs (inside withTask) counts its bytes towards that step, and about once a second the step's
+// total, its speed and the file coming in now go to the browser as a 'net' event.
+const taskStore = new AsyncLocalStorage();
+const realFetch = globalThis.fetch;
+globalThis.fetch = async (...args) => {
+  const t = taskStore.getStore();
+  if (!t) return realFetch(...args);
+  // (a request waiting for the server to answer: big imagery exports can take minutes to start)
+  const wait = { host: (() => { try { return new URL(String(args[0]?.url || args[0])).host; } catch { return ''; } })(), since: Date.now() };
+  t.waiting.add(wait);
+  let res;
+  try { res = await realFetch(...args); } finally { t.waiting.delete(wait); }
+  if (!res.body || [101, 204, 205, 304].includes(res.status)) return res;
+  const file = { got: 0, total: +res.headers.get('content-length') || 0 };
+  t.file = file;
+  t.files++;
+  const counted = res.body.pipeThrough(new TransformStream({
+    transform(chunk, ctl) { t.bytes += chunk.byteLength; file.got += chunk.byteLength; ctl.enqueue(chunk); },
+  }));
+  const out = new Response(counted, { status: res.status, statusText: res.statusText, headers: res.headers });
+  Object.defineProperty(out, 'url', { value: res.url });
+  return out;
+};
+async function withTask(course, task, fn) {
+  const t = { bytes: 0, files: 0, file: null, waiting: new Set() };
+  const t0 = Date.now();
+  let lastBytes = 0, lastAt = t0, rate = 0;
+  const send = (done = false) => {
+    const now = Date.now();
+    // (speed over the last few seconds, smoothed)
+    const r = ((t.bytes - lastBytes) * 1000) / Math.max(1, now - lastAt);
+    rate = rate ? rate * 0.6 + r * 0.4 : r;
+    lastBytes = t.bytes; lastAt = now;
+    // (the longest wait for a server to start answering, once it's been a few seconds)
+    let w = null;
+    for (const x of t.waiting) if (!w || x.since < w.since) w = x;
+    const waiting = w && now - w.since > 4000 && r < 1024 ? { host: w.host, secs: Math.round((now - w.since) / 1000) } : null;
+    if (!t.bytes && !waiting && !done) return;
+    const f = t.file && t.file.got < t.file.total ? { got: t.file.got, total: t.file.total } : null;
+    broadcast('net', { course, task, bytes: t.bytes, files: t.files, rate: done ? 0 : rate, file: f, waiting, done });
+  };
+  const timer = setInterval(send, 1000);
+  try { return await taskStore.run(t, fn); } finally { clearInterval(timer); send(true); }
 }
 
 // Download progress for the loading screen: counts ("3/12") or percentages in a message become a bar
@@ -236,13 +287,13 @@ const ocServer = net.createServer((sock) => {
   lmSockets.add(sock);
   const addr = `${sock.remoteAddress}:${sock.remotePort}`;
   console.log(`Launch monitor connected from ${addr}`);
-  if (settings.lm.connection !== 'direct') setLm({ connected: true, address: addr });
+  if (settings.lm.connection === 'fsgolf') setLm({ connected: true, address: addr });
   sendPlayer(sock);
   sock.on('data', jsonSplitter((msg) => handleMessage(sock, msg)));
   const gone = () => {
     if (!lmSockets.delete(sock)) return;
     console.log(`Launch monitor disconnected (${addr})`);
-    if (settings.lm.connection !== 'direct') setLm({ connected: lmSockets.size > 0, ready: lmSockets.size > 0 && lmState.ready });
+    if (settings.lm.connection === 'fsgolf') setLm({ connected: lmSockets.size > 0, ready: lmSockets.size > 0 && lmState.ready });
   };
   sock.on('close', gone);
   sock.on('error', gone);
@@ -256,11 +307,13 @@ ocServer.listen(OC_PORT, '0.0.0.0', () => console.log(`OpenConnect listener on p
 
 // ---------------------------------------------------------------- Mevo+ direct (no FS Golf)
 
-// Saved choice of how shots arrive: 'fsgolf' (FS Golf → OpenConnect above) or 'direct' (this PC
-// joins the Mevo+ Wi-Fi and talks to the radar itself, see lib/mevo.js)
+// Saved choice of how shots arrive: 'fsgolf' (FS Golf → OpenConnect above), 'direct' (this PC
+// joins the Mevo+ Wi-Fi and talks to the radar itself, see lib/mevo.js), 'r10' or 'square' (a
+// Bluetooth launch monitor through its bridge) or 'frp' (any Flight Relay Protocol device at frpUrl)
 const SETTINGS_FILE = process.env.SETTINGS_FILE || path.join(ROOT, 'data', 'settings.json');
 const settings = (() => { try { return JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8')); } catch { return {}; } })();
-settings.lm = { connection: 'fsgolf', host: '192.168.2.1', port: 5100, videoPort: 8080, ...settings.lm };
+settings.lm = { connection: 'fsgolf', host: '192.168.2.1', port: 5100, videoPort: 8080, frpUrl: 'ws://127.0.0.1:5880/frp', ...settings.lm };
+const CONNECTIONS = ['fsgolf', 'direct', 'r10', 'square', 'frp'];
 const saveSettings = () => { fs.mkdirSync(path.dirname(SETTINGS_FILE), { recursive: true }); fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 1)); };
 
 // The Mevo+ detection mode follows the club: putter → putting; a wedge for a short shot (or any
@@ -316,11 +369,14 @@ function startMevo() {
   mevo?.removeAllListeners(); // (its last "off" mustn't overwrite the new one's status)
   mevo?.disconnect(); // disarms it if it was armed
   mevo = null;
+  startRelay();
   if (settings.lm.connection !== 'direct' || mevoOff) {
-    if (mevoOff) setLm({ connected: false, ready: false, battery: null, direct: { state: 'off', text: DIRECT_TEXT.off, error: null, mode: null } });
-    else setLm({ direct: null, connected: lmSockets.size > 0, ready: lmSockets.size > 0 && lmState.ready, battery: null });
+    if (mevoOff && settings.lm.connection === 'direct') setLm({ connected: false, ready: false, battery: null, direct: { state: 'off', text: DIRECT_TEXT.off, error: null, mode: null } });
+    else if (settings.lm.connection === 'fsgolf') setLm({ direct: null, relay: null, connected: lmSockets.size > 0, ready: lmSockets.size > 0 && lmState.ready, battery: null });
+    else setLm({ direct: null });
     return;
   }
+  setLm({ relay: null });
   mevo = new MevoClient({ host: settings.lm.host, port: settings.lm.port, mode: mevoMode(), log: mevoLog, trace: mevoTrace });
   if (settings.lm.setup) mevo.setup = { ...DEFAULT_SETUP, ...settings.lm.setup };
   mevo.holdAfterShot = armOnTurn();
@@ -342,7 +398,69 @@ function startMevo() {
   });
   mevo.start();
 }
+
+// ---------------------------------------------------------------- Flight Relay Protocol
+
+// A Garmin R10 or Square Golf through its bridge program, or any FRP device at settings.lm.frpUrl.
+// Shots and status come in through the FRP controller; the bridge (if any) reports its own progress
+// (searching, connecting, ready) until the controller has connected to it.
+const BRIDGE_PORT = +(process.env.BRIDGE_PORT || 5881);
+let relay = null; // { frp, bridge, kind }
+const frpMode = () => ({ mode: mevoMode() === 'outdoor' ? 'full' : mevoMode(), handed: player.Handed === 'LH' ? 'lh' : 'rh' });
+// The Square Golf bridge arms for one club when it starts: it's started again when the putter is
+// picked up or put down (the Omni putts and chips by club, not by mode)
+const SQUARE_CLUB = { DR: 'driver', W3: '3w', W5: '3w', H4: '3h', I4: '4i', I5: '5i', I6: '6i', I7: '7i', I8: '8i', I9: '9i', PW: 'pw', GW: 'gw', SW: 'sw', LW: 'lw', PT: 'putter' };
+const squareArgs = () => [SQUARE_CLUB[player.Club] || 'driver'];
+function relayPlayerChanged() {
+  if (!relay) return;
+  relay.frp.setMode(frpMode());
+  if (relay.kind === 'square' && (relay.bridge.args[0] === 'putter') !== (player.Club === 'PT')) relay.bridge.restart(squareArgs());
+}
+function startRelay() {
+  if (relay) {
+    relay.frp.removeAllListeners(); relay.frp.stop();
+    relay.bridge?.removeAllListeners(); relay.bridge?.stop();
+    relay = null;
+  }
+  const kind = settings.lm.connection;
+  if (!['r10', 'square', 'frp'].includes(kind)) return;
+  const name = BRIDGES[kind]?.name || 'Launch monitor';
+  const bridge = BRIDGES[kind] ? new BridgeProcess(kind, { port: BRIDGE_PORT, args: kind === 'square' ? squareArgs() : [], log: mevoLog }) : null;
+  const frp = new FrpController({ url: bridge ? bridge.url : settings.lm.frpUrl, log: mevoLog });
+  relay = { kind, frp, bridge };
+  const show = () => {
+    const f = frp.status, b = bridge?.status;
+    const live = f.state === 'connected';
+    // the bridge's own progress until it has the device; then whether the device says it's ready
+    const found = !b || b.state === 'ready';
+    const st = !found ? b : live ? (f.ready === false ? { state: 'connected', text: 'connected, not ready' } : { state: 'ready', text: 'ready' }) : f;
+    setLm({
+      connected: live && found,
+      ready: live && found && f.ready !== false,
+      device: f.model || name,
+      battery: f.battery ?? null,
+      relay: { kind, state: st.state, text: st.text, error: f.error || b?.error || null },
+    });
+  };
+  frp.on('status', show);
+  bridge?.on('status', show);
+  bridge?.on('log', (line) => mevoWrite(line));
+  frp.on('shot', (ball, meta) => {
+    const shot = toShot({ DeviceID: lmState.device || name, ShotNumber: meta.shotNumber, BallData: ball, ClubData: ball.ClubData }, kind);
+    console.log(`Shot (${name}): ${shot.speedMph.toFixed(1)} mph, VLA ${shot.vla.toFixed(1)}, HLA ${shot.hla.toFixed(1)}, spin ${Math.round(shot.totalSpin)} rpm, axis ${shot.spinAxis.toFixed(1)}`);
+    if (shot.speedMph <= 0) return;
+    setLm({ lastShotAt: shot.at });
+    broadcast('shot', shot);
+  });
+  frp.setMode(frpMode());
+  bridge?.start();
+  frp.start();
+  show();
+}
 startMevo();
+// (a bridge program is stopped with the game)
+process.on('exit', () => relay?.bridge?.stop());
+for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => { relay?.bridge?.stop(); process.exit(0); });
 
 // The Mevo+ camera's live MJPEG stream (port 8080 on the Mevo+), passed through to the setup page
 // so the browser never has to reach the device itself. The stream's path isn't documented, so the
@@ -441,7 +559,7 @@ const httpServer = http.createServer(async (req, res) => {
       const geo = geoFor(readCourseData(f), real);
       if (!geo) return json(res, { error: 'Course position unknown — re-run the import to enable imagery' }, 404);
       const satDir = rf.replace(/\.real\.json$/i, '.sat');
-      const manifest = await ensureSatellite(satDir, geo, real.grid, reporter(m[1], 'imagery'));
+      const manifest = await withTask(m[1], 'imagery', () => ensureSatellite(satDir, geo, real.grid, reporter(m[1], 'imagery')));
       return json(res, manifest);
     }
     if ((m = p.match(/^\/api\/courses\/([\w-]+)\/paths$/))) {
@@ -453,7 +571,7 @@ const httpServer = http.createServer(async (req, res) => {
       const geo = geoFor(cd, real);
       if (!geo) return json(res, []);
       const oob = (cd.pOOB?.coords || []).map((c) => [c.x, c.z]);
-      return json(res, await ensurePaths(rf.replace(/\.real\.json$/i, '.sat'), geo, real.grid, oob, reporter(m[1], 'paths')));
+      return json(res, await withTask(m[1], 'paths', () => ensurePaths(rf.replace(/\.real\.json$/i, '.sat'), geo, real.grid, oob, reporter(m[1], 'paths'))));
     }
     if ((m = p.match(/^\/api\/courses\/([\w-]+)\/heather$/))) {
       // The tall grass the game found in the aerial photo, saved by the game so the editor can show
@@ -551,7 +669,7 @@ const httpServer = http.createServer(async (req, res) => {
       const geo = geoFor(cd, real);
       if (!geo) return json(res, none);
       const oob = (cd.pOOB?.coords || []).map((c) => [c.x, c.z]);
-      return json(res, await ensureRoads(rf.replace(/\.real\.json$/i, '.sat'), geo, real.grid, oob, reporter(m[1], 'roads')));
+      return json(res, await withTask(m[1], 'roads', () => ensureRoads(rf.replace(/\.real\.json$/i, '.sat'), geo, real.grid, oob, reporter(m[1], 'roads'))));
     }
     if ((m = p.match(/^\/api\/courses\/([\w-]+)\/parking$/))) {
       // Car parks (their bays and cars are laid out by the game)
@@ -562,7 +680,7 @@ const httpServer = http.createServer(async (req, res) => {
       const real = JSON.parse(fs.readFileSync(rf, 'utf8'));
       const geo = geoFor(readCourseData(f), real);
       if (!geo) return json(res, none);
-      return json(res, await ensureParking(rf.replace(/\.real\.json$/i, '.sat'), geo, real.grid, reporter(m[1], 'parking')));
+      return json(res, await withTask(m[1], 'parking', () => ensureParking(rf.replace(/\.real\.json$/i, '.sat'), geo, real.grid, reporter(m[1], 'parking'))));
     }
     if ((m = p.match(/^\/api\/courses\/([\w-]+)\/buildings$/))) {
       const f = courseFile(m[1]);
@@ -571,7 +689,7 @@ const httpServer = http.createServer(async (req, res) => {
       const real = JSON.parse(fs.readFileSync(rf, 'utf8'));
       const geo = geoFor(readCourseData(f), real);
       if (!geo) return json(res, []);
-      return json(res, await ensureBuildings(rf.replace(/\.real\.json$/i, '.sat'), geo, real.grid, reporter(m[1], 'buildings')));
+      return json(res, await withTask(m[1], 'buildings', () => ensureBuildings(rf.replace(/\.real\.json$/i, '.sat'), geo, real.grid, reporter(m[1], 'buildings'))));
     }
     if ((m = p.match(/^\/api\/courses\/([\w-]+)\/canopy$/))) {
       // Tree heights (downloaded the first time a course is opened); the grid itself is canopy.bin
@@ -581,7 +699,7 @@ const httpServer = http.createServer(async (req, res) => {
       const real = JSON.parse(fs.readFileSync(rf, 'utf8'));
       const geo = geoFor(readCourseData(f), real);
       if (!geo) return json(res, { available: false });
-      return json(res, await ensureCanopy(satDir(f), geo, real.grid, reporter(m[1], 'canopy')));
+      return json(res, await withTask(m[1], 'canopy', () => ensureCanopy(satDir(f), geo, real.grid, reporter(m[1], 'canopy'))));
     }
     if ((m = p.match(/^\/api\/courses\/([\w-]+)\/farland$/))) {
       // The land out to the horizon: elevation and a photo for 40 km around the course (downloaded
@@ -593,7 +711,7 @@ const httpServer = http.createServer(async (req, res) => {
       const geo = geoFor(readCourseData(f), real);
       if (!geo) return json(res, { available: false });
       try {
-        return json(res, { available: true, ...(await ensureFarLand(satDir(f), geo, real.grid, reporter(m[1], 'farland'))) });
+        return json(res, { available: true, ...(await withTask(m[1], 'farland', () => ensureFarLand(satDir(f), geo, real.grid, reporter(m[1], 'farland')))) });
       } catch (err) {
         console.warn(`Distant land unavailable: ${err.message}`);
         return json(res, { available: false, error: err.message });
@@ -675,6 +793,7 @@ const httpServer = http.createServer(async (req, res) => {
       if (b.distanceToTarget != null) player.DistanceToTarget = +b.distanceToTarget || 0;
       gameTurn = !!b.ready;
       applyTurn();
+      relayPlayerChanged();
       return json(res, { ok: true, state: mevo?.state || 'off' });
     }
     if (p === '/api/player' && req.method === 'POST') {
@@ -684,6 +803,7 @@ const httpServer = http.createServer(async (req, res) => {
       if (b.distanceToTarget != null) player.DistanceToTarget = +b.distanceToTarget || 0;
       for (const s of lmSockets) sendPlayer(s);
       mevo?.setMode(mevoMode());
+      relayPlayerChanged();
       return json(res, { ok: true, player });
     }
     if (p === '/api/mevo') {
@@ -769,11 +889,32 @@ const httpServer = http.createServer(async (req, res) => {
       return fs.createReadStream(MEVO_LOG).on('error', () => res.end('(no log yet)')).pipe(res);
     }
     if (p === '/api/mevo/video') return proxyMevoVideo(req, res);
+    if (p === '/api/profiles') {
+      // The players' profiles (name, colour, handicap, hand, tees, and their round history), kept
+      // in data/profiles.json so they're there every time, whichever browser opens the game
+      const file = path.join(path.dirname(SETTINGS_FILE), 'profiles.json');
+      if (req.method === 'PUT') {
+        const b = await readBody(req, 2e6).catch(() => null);
+        if (!Array.isArray(b?.profiles) || b.profiles.length > 64) return json(res, { error: 'Bad profiles' }, 400);
+        const str = (v, n) => String(v ?? '').slice(0, n);
+        const profiles = b.profiles.filter((x) => x && typeof x.id === 'string' && str(x.name, 40).trim()).map((x) => ({
+          id: str(x.id, 40), name: str(x.name, 40).trim(), colour: /^#[0-9a-f]{6}$/i.test(x.colour) ? x.colour : '#e53935',
+          handicap: Number.isFinite(+x.handicap) ? Math.max(-10, Math.min(54, +x.handicap)) : 0,
+          hand: x.hand === 'LH' ? 'LH' : 'RH', tee: str(x.tee, 20),
+          rounds: Array.isArray(x.rounds) ? x.rounds.slice(-200).map((r) => ({ at: +r.at || 0, course: str(r.course, 80), holes: +r.holes || 0, strokes: +r.strokes || 0, par: +r.par || 0, format: str(r.format, 20) })) : [],
+        }));
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        fs.writeFileSync(file, JSON.stringify({ profiles }, null, 1));
+        return json(res, { profiles });
+      }
+      try { return json(res, JSON.parse(fs.readFileSync(file, 'utf8'))); } catch { return json(res, { profiles: [] }); }
+    }
     if (p === '/api/lm') {
-      // How shots arrive: FS Golf (OpenConnect) or the Mevo+ directly
+      // How shots arrive: FS Golf (OpenConnect), the Mevo+ directly, a Bluetooth monitor's bridge or FRP
       if (req.method === 'POST') {
         const b = await readBody(req);
-        if (b.connection === 'direct' || b.connection === 'fsgolf') settings.lm.connection = b.connection;
+        if (CONNECTIONS.includes(b.connection)) settings.lm.connection = b.connection;
+        if (typeof b.frpUrl === 'string' && /^wss?:\/\/[\w.\-\[\]:]{1,100}(\/[\w.\-\/]*)?$/.test(b.frpUrl)) settings.lm.frpUrl = b.frpUrl;
         if (typeof b.host === 'string' && /^[\w.-]{1,64}$/.test(b.host)) settings.lm.host = b.host;
         if (Number.isInteger(b.port) && b.port > 0 && b.port < 65536) settings.lm.port = b.port;
         if (Number.isInteger(b.videoPort) && b.videoPort > 0 && b.videoPort < 65536) settings.lm.videoPort = b.videoPort;

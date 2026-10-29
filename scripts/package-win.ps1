@@ -63,6 +63,19 @@ foreach ($dep in 'geotiff', '@petamoriken\float16', 'lerc', 'pako', 'parse-heade
   Copy-Item -Recurse (Join-Path $root "node_modules\$dep") $dst
 }
 
+# The Garmin R10 and Square Golf bridges (lib/bridges.js downloads and checks the pinned releases)
+Push-Location $root
+try { node -e "import('./lib/bridges.js').then((m) => Promise.all(['r10', 'square'].map((k) => m.ensureBridge(k)))).catch((e) => { console.error(e.message); process.exit(1); })" }
+finally { Pop-Location }
+if ($LASTEXITCODE -ne 0) { throw 'Getting the launch monitor bridges failed.' }
+$bridgesOut = Join-Path $stage 'bridges'
+New-Item -ItemType Directory -Force $bridgesOut | Out-Null
+Copy-Item (Join-Path $root 'bridges\*.exe') $bridgesOut
+# (their licence texts go with them)
+foreach ($b in @(@('10over', 'v0.2.0'), @('allsquare', 'v0.2.0'))) {
+  Invoke-WebRequest "https://raw.githubusercontent.com/divotmaker/$($b[0])/$($b[1])/LICENSE-MIT" -OutFile (Join-Path $bridgesOut "$($b[0])-LICENSE-MIT.txt") -UseBasicParsing
+}
+
 # Node.js runtime, checked against the official checksums
 $cache = Join-Path $dist 'cache'
 New-Item -ItemType Directory -Force $cache | Out-Null
