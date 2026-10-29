@@ -35,6 +35,32 @@ export function setVolume(v) {
   if (master) master.gain.setTargetAtTime(v, ctx.currentTime, 0.05);
 }
 
+// A bang (the boom range): a burst of noise through a closing low-pass filter over a deep thump,
+// bigger with size (about 0.5 to 3). pop: a short, bright pop instead (balloons, melons).
+export function boom(size = 1, pop = false) {
+  if (!ctx || ctx.state !== 'running') return;
+  const t = ctx.currentTime, len = pop ? 0.25 : 0.8 + 0.5 * size;
+  const noise = ctx.createBuffer(1, Math.ceil(ctx.sampleRate * len), ctx.sampleRate), d = noise.getChannelData(0);
+  for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / d.length, pop ? 6 : 2.2);
+  const src = ctx.createBufferSource(), lp = ctx.createBiquadFilter(), gain = ctx.createGain();
+  src.buffer = noise;
+  lp.type = 'lowpass';
+  lp.frequency.setValueAtTime(pop ? 6000 : 2600, t);
+  lp.frequency.exponentialRampToValueAtTime(pop ? 1500 : 180, t + len);
+  gain.gain.value = pop ? 0.5 : Math.min(1, 0.45 + 0.2 * size);
+  src.connect(lp).connect(gain).connect(master);
+  src.start(t);
+  if (pop) return;
+  const thump = ctx.createOscillator(), tg = ctx.createGain();
+  thump.frequency.setValueAtTime(90, t);
+  thump.frequency.exponentialRampToValueAtTime(32, t + 0.6);
+  tg.gain.setValueAtTime(Math.min(1, 0.5 + 0.2 * size), t);
+  tg.gain.exponentialRampToValueAtTime(0.001, t + 0.7 + 0.2 * size);
+  thump.connect(tg).connect(master);
+  thump.start(t);
+  thump.stop(t + 1.2 + 0.2 * size);
+}
+
 export class CreekSound {
   constructor(chains) {
     this.chains = chains.filter((c) => c.speed && c.pts.length > 1);

@@ -10,11 +10,13 @@
 import * as THREE from 'three/webgpu';
 import { noise, pointInPoly } from './course.js';
 import { BALL_RADIUS } from './physics.js';
+import { blastRange } from './blast.js';
 
 export const PRACTICE_AREAS = {
   range: { name: 'Driving range', blurb: 'Open range below the mountains. Carry, total and launch data on every shot.' },
   targets: { name: 'Target greens', blurb: 'Seven greens from wedge to long iron, all from one tee.' },
   putt: { name: 'Putt-putt', blurb: 'Six holes of mini golf: ramps, a tunnel and a windmill.' },
+  blast: { name: 'Boom range', blurb: 'Blow things up! TNT barrels, crates, melons, balloons and a giant bomb. Ten balls.' },
 };
 
 const YD = 0.9144;
@@ -102,7 +104,7 @@ const courseFile = (name, holes, extra = {}) => ({
 // ------------------------------------------------------------------ the three areas
 
 export async function makePractice(kind, { units = 'yd' } = {}) {
-  const spot = kind === 'putt' ? puttPutt() : kind === 'targets' ? targetGreens(units) : drivingRange(units);
+  const spot = kind === 'putt' ? puttPutt() : kind === 'targets' ? targetGreens(units) : kind === 'blast' ? blastRange(drivingRange(units), units) : drivingRange(units);
   spot.kind = kind;
   spot.name = PRACTICE_AREAS[kind].name;
   spot.farland = await mountains();
