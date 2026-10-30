@@ -17,6 +17,17 @@
 //   douglasfir   - tall western fir with a straight bole, layered limbs and drooping sprays
 //   ponderosa    - open western pine with long, spaced limbs and orange plated bark
 //   beech        - American beech: a smooth gray trunk under a dense, rounded crown
+//   dogwood      - flowering dogwood: a small tree, low layered crown, white four-bracted flowers
+//   crapemyrtle  - crape myrtle: several smooth, mottled stems in a vase under pink and lavender
+//                  flower heads
+//   elm          - American elm: a tall trunk splitting into a vase of long limbs that arch over
+//                  at the ends
+//   hemlock      - eastern hemlock: a dense, soft cone of short flat needle sprays to the ground,
+//                  drooping limbs and a nodding tip
+//   juniper      - Rocky Mountain / Utah juniper: a short, twisted, bushy evergreen of grey-green
+//                  scale sprays with blue berries
+//   olive        - a gnarled, leaning trunk under a low, open crown of narrow silver-green leaves
+//   holly        - American holly: a dense pyramid of spiny, glossy leaves with red berries
 //   saguaro      - the cactus: a ribbed column, usually with arms that bend up, flowers on top
 // The output has the same form as an ez-tree model (see sugarmaple.js, which this generalizes):
 // bark (position, normal, uv already tiled) and leaves (cards), foot at y = 0, about 60 units
@@ -162,6 +173,58 @@ export const SPECIES = {
     branch: sp({ step: 0.8, up: [0, 0.045, 0.04, 0.025, 0.015, 0.01, 0], jit: [0, 0.07, 0.11, 0.12, 0.12, 0.12, 0.12], lat: [0, 0.38, 0.28, 0.13, 0, 0, 0], twigFrom: 4, cover: 0.58, budget: 3000 }),
     leaves: { mode: 'twig', size: 0.95, cards: 4200 },
     bark: { u: 1.1, v: 2.1 },
+  },
+  dogwood: {
+    trunk: { h: [1.3, 2.1], r: 0.2, flare: 0.3, lean: 0.12 },
+    leaders: { n: [3, 5], tilt: [0.8, 1.15], len: [2.8, 3.8], rad: 0.55 },
+    crown: { cy: 4.1, rx: 4.4, ry: 2.3 },
+    branch: sp({ step: 0.38, up: [0, 0.015, 0.02, 0.02, 0.01, 0, 0], jit: [0, 0.1, 0.13, 0.13, 0.13, 0.13, 0.13], lat: [0, 0.45, 0.32, 0.16, 0, 0, 0], twigFrom: 4, cover: 0.5, budget: 2600 }),
+    leaves: { mode: 'twig', size: 0.55, cards: 3400, flowers: 0.32, flowerQ: ['tl', 'tr'], flowerSize: 0.6 },
+    bark: { u: 0.5, v: 0.7 },
+  },
+  crapemyrtle: {
+    stems: { n: [3, 6], tilt: [0.12, 0.38], len: [2.4, 3.4], rad: 0.09 },
+    crown: { cy: 4.3, rx: 2.9, ry: 2.2 },
+    branch: sp({ step: 0.35, up: [0, 0.04, 0.04, 0.02, 0.01, 0, 0], jit: [0, 0.08, 0.12, 0.13, 0.13, 0.13, 0.13], lat: [0, 0.35, 0.3, 0.16, 0, 0, 0], out: 0.03, droop: 0.02, twigFrom: 4, cover: 0.5, budget: 2600 }),
+    leaves: { mode: 'twig', size: 0.48, cards: 3000, flowers: 0.3, flowerQ: ['tl', 'tr'], flowerSize: 0.62 },
+    bark: { u: 0.45, v: 0.8 },
+  },
+  elm: {
+    trunk: { h: [4, 6], r: 0.62, flare: 0.4, lean: 0.05 },
+    leaders: { n: [3, 5], tilt: [0.26, 0.52], len: [9, 12], rad: 0.46 },
+    crown: { cy: 17, rx: 11.5, ry: 8 },
+    branch: sp({ step: 0.85, up: [0, 0.02, 0.012, 0, 0, 0, 0], jit: [0, 0.07, 0.12, 0.14, 0.14, 0.14, 0.14], lat: [0, 0.38, 0.3, 0.15, 0, 0, 0], out: 0.05, droop: 0.06, droopFrom: 3, twigFrom: 4, cover: 0.5, budget: 3400 }),
+    leaves: { mode: 'twig', size: 0.85, cards: 4600 },
+    bark: { u: 1.2, v: 2.0 },
+  },
+  hemlock: {
+    central: { h: [18, 26], r: 0.5, flare: 0.3, from: 0.04, every: 0.06, p: 0.97, len: [2.5, 6.5], tilt: [0.95, 1.3], rad: [0.11, 0.03] },
+    crown: { cone: true, tip: 1.2 },
+    branch: sp({ step: 0.6, up: [0, 0, 0.01, 0.02, 0.02, 0.02], jit: [0, 0.06, 0.09, 0.1, 0.1, 0.1], lat: [0, 0, 0.32, 0.2, 0, 0], droop: 0.022, droopFrom: 3, maxDepth: 5, twigFrom: 3, cover: 0.12, barkDepth: 4, forkAng: [0.3, 0.5], forkLen: [0.62, 0.78], budget: 3400 }),
+    leaves: { mode: 'pad', size: 0.9, cards: 7600, upperBoost: 1 },
+    bark: { u: 1.0, v: 2.0 },
+  },
+  juniper: {
+    stems: { n: [1, 3], tilt: [0.08, 0.45], len: [2.0, 3.0], rad: 0.2 },
+    crown: { cy: 3.6, rx: 2.9, ry: 2.8 },
+    branch: sp({ step: 0.4, up: [0, 0.04, 0.03, 0.02, 0.01, 0, 0], jit: [0, 0.18, 0.18, 0.16, 0.16, 0.16, 0.16], lat: [0, 0.5, 0.4, 0.22, 0, 0, 0], twigFrom: 3, cover: 0.4, droopFrom: 9, budget: 2800 }),
+    leaves: { mode: 'pad', size: 0.32, cards: 8000, flowers: 0.35, flowerQ: ['tl', 'tr'], flowerSize: 0.32 },
+    bark: { u: 0.6, v: 1.0 },
+  },
+  olive: {
+    trunk: { h: [1.2, 2.0], r: 0.4, flare: 0.5, lean: 0.22 },
+    leaders: { n: [3, 5], tilt: [0.55, 1.0], len: [3.4, 4.8], rad: 0.5 },
+    crown: { cy: 5, rx: 4.8, ry: 2.8 },
+    branch: sp({ step: 0.45, up: [0, 0.03, 0.02, 0.02, 0.01, 0, 0], jit: [0, 0.17, 0.2, 0.18, 0.16, 0.16, 0.16], lat: [0, 0.45, 0.32, 0.16, 0, 0, 0], droop: 0.03, twigFrom: 4, cover: 0.5, budget: 2800 }),
+    leaves: { mode: 'twig', size: 0.55, cards: 4200 },
+    bark: { u: 0.8, v: 1.2 },
+  },
+  holly: {
+    central: { h: [10, 15], r: 0.3, flare: 0.3, from: 0.06, every: 0.18, p: 0.95, len: [1.5, 4.5], tilt: [0.8, 1.2], rad: [0.09, 0.03] },
+    crown: { cone: true, tip: 0.6 },
+    branch: sp({ step: 0.5, up: [0, 0, 0.03, 0.02, 0.01, 0, 0], jit: [0, 0.08, 0.1, 0.1, 0.1, 0.1], lat: [0, 0, 0.35, 0.2, 0, 0], maxDepth: 5, twigFrom: 4, barkDepth: 4, droopFrom: 9 }),
+    leaves: { mode: 'twig', size: 0.8, cards: 4200, flowers: 0.12, flowerSize: 0.8 },
+    bark: { u: 0.8, v: 1.6 },
   },
   saguaro: { cactus: { h: [7, 11], r: 0.3, arms: [1, 4] }, bark: { u: 1, v: 1.0 } },
 };
@@ -453,8 +516,10 @@ function leafGeometry(S, sk, seed, lod, scale) {
       const p = t.pos.clone().add(new V3(rr(-0.5, 0.5), rr(-0.5, 0.5), rr(-0.5, 0.5)));
       const out = p.clone().sub(ctr).normalize();
       const flower = Lf.flowers && rng() < Lf.flowers;
-      const quarter = flower ? 'tl' : rng() < 0.5 ? 'bl' : 'br';
-      const s = (flower ? 0.45 : size) * rr(0.8, 1.2);
+      // (flowers, fruit, berries: the top quarters; flowerQ: which, flowerSize: card size)
+      const fq = Lf.flowerQ || ['tl'];
+      const quarter = flower ? fq[Math.floor(rng() * fq.length)] : rng() < 0.5 ? 'bl' : 'br';
+      const s = (flower ? (Lf.flowerSize ?? 0.45) * (mid ? 1.4 : 1) : size) * rr(0.8, 1.2);
       if (Lf.mode === 'pad') {
         // Flat sprays lying nearly level, facing the sky (cypress)
         const h = new V3(t.dir.x, 0, t.dir.z).add(new V3(out.x, 0, out.z).multiplyScalar(0.8)).add(new V3(rr(-0.5, 0.5), 0, rr(-0.5, 0.5)));

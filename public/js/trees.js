@@ -105,6 +105,9 @@ const SHAPES = {
   },
 };
 
+// Species whose crown the ball meets as a cone (the rest: an ellipsoid)
+const CONES = new Set(['pine', 'loblolly', 'redcedar', 'douglasfir', 'ponderosa', 'spruce', 'baldcypress', 'hemlock', 'holly']);
+
 // kind, preset, seed, and how much to vary branching/leaves from the preset
 const VARIANTS = [
   { kind: 'oak', preset: 'Oak Medium', seed: 101 }, { kind: 'oak', preset: 'Oak Medium', seed: 202 },
@@ -141,6 +144,13 @@ const VARIANTS = [
   { kind: 'douglasfir', grow: 'grow', seed: 4301, raw: true }, { kind: 'douglasfir', grow: 'grow', seed: 4302, raw: true }, { kind: 'douglasfir', grow: 'grow', seed: 4303, raw: true, big: true },
   { kind: 'ponderosa', grow: 'grow', seed: 4401, raw: true }, { kind: 'ponderosa', grow: 'grow', seed: 4402, raw: true }, { kind: 'ponderosa', grow: 'grow', seed: 4403, raw: true, big: true },
   { kind: 'beech', grow: 'grow', seed: 4501, raw: true }, { kind: 'beech', grow: 'grow', seed: 4502, raw: true, big: true },
+  { kind: 'dogwood', grow: 'grow', seed: 4601, raw: true }, { kind: 'dogwood', grow: 'grow', seed: 4602, raw: true },
+  { kind: 'crapemyrtle', grow: 'grow', seed: 4701, raw: true }, { kind: 'crapemyrtle', grow: 'grow', seed: 4702, raw: true },
+  { kind: 'elm', grow: 'grow', seed: 4801, raw: true }, { kind: 'elm', grow: 'grow', seed: 4802, raw: true, big: true },
+  { kind: 'hemlock', grow: 'grow', seed: 4901, raw: true }, { kind: 'hemlock', grow: 'grow', seed: 4902, raw: true, big: true },
+  { kind: 'juniper', grow: 'grow', seed: 5001, raw: true }, { kind: 'juniper', grow: 'grow', seed: 5002, raw: true },
+  { kind: 'olive', grow: 'grow', seed: 5101, raw: true }, { kind: 'olive', grow: 'grow', seed: 5102, raw: true },
+  { kind: 'holly', grow: 'grow', seed: 5201, raw: true }, { kind: 'holly', grow: 'grow', seed: 5202, raw: true },
 ];
 
 function tweakOptions(o, seed, lod) {
@@ -170,7 +180,8 @@ function tweakOptions(o, seed, lod) {
 // poplar, pine and spruce, palm fronds and trunks (drawn by scripts/palm-textures.py), and the
 // leaves and bark of the species grown by grow.js (drawn by scripts/tree-textures.py). The
 // other species keep ez-tree's own.
-const GROWN = ['liveoak', 'cypress', 'baldcypress', 'mesquite', 'paloverde', 'saguaro', 'sycamore', 'magnolia', 'redmaple', 'tuliptree', 'loblolly', 'redcedar', 'douglasfir', 'ponderosa', 'beech'];
+const GROWN = ['liveoak', 'cypress', 'baldcypress', 'mesquite', 'paloverde', 'saguaro', 'sycamore', 'magnolia', 'redmaple', 'tuliptree', 'loblolly', 'redcedar', 'douglasfir', 'ponderosa', 'beech',
+  'dogwood', 'crapemyrtle', 'elm', 'hemlock', 'juniper', 'olive', 'holly'];
 const OWN = { leaves: ['maple', 'willow', 'birch', 'palm', ...GROWN], bark: ['ash', 'maple', 'poplar', 'pine', 'spruce', 'palm', ...GROWN] };
 let own = null;
 async function loadOwnTextures() {
@@ -231,6 +242,20 @@ function buildModel(v, lod) {
   return finishModel(v, bark, leaves, tree.branchesMesh.material, tree.leavesMesh.material, tree.options.bark.textureScale);
 }
 
+// One tree of a species on its own, for the course editor's preview: the game's full (near) model,
+// pictures and materials, foot at 0 and `height` model units tall (about 60)
+export async function previewTree(kind) {
+  await loadOwnTextures();
+  const list = VARIANTS.filter((v) => v.kind === kind);
+  const v = list.find((x) => !x.big) || list[0];
+  if (!v) return null;
+  const m = buildModel(v, 'near');
+  const group = new THREE.Group();
+  group.add(new THREE.Mesh(m.bark, barkMaterial(m.barkMat)), new THREE.Mesh(m.leaves, leafMaterial(m.leafMat, v)));
+  for (const o of group.children) { o.castShadow = true; o.receiveShadow = true; }
+  return { group, height: m.height };
+}
+
 // Everything after the geometry, the same for every model: crown lighting, size, trunk width,
 // and our own bark and leaf pictures. barkScale: how the bark picture is tiled ({ x, y }).
 function finishModel(v, bark, leaves, barkMat, leafMat, barkScale) {
@@ -262,7 +287,7 @@ function finishModel(v, bark, leaves, barkMat, leafMat, barkScale) {
 // looks speckled and flat). Leaves deep inside the crown or low in it are shaded by the rest:
 // leafAo, 1 on the outside at the top down to 0.4 in the heart of the tree.
 const smooth = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
-function shapeCrown(g) {
+export function shapeCrown(g) {
   if (!g.attributes.normal) g.computeVertexNormals();
   g.computeBoundingBox();
   const b = g.boundingBox, c = b.getCenter(new THREE.Vector3()), r = b.getSize(new THREE.Vector3()).multiplyScalar(0.5);
@@ -361,7 +386,7 @@ function barkMaterial(src) {
   m.maskNode = seeThroughMask(positionWorld);
   return m;
 }
-function leafMaterial(src, v) {
+export function leafMaterial(src, v) {
   // (leaves barely mirror the sky: with the crown-shaped normals, a normal sheen turned the crowns
   // pale blue-white wherever they faced away from you)
   const m = new THREE.MeshPhysicalNodeMaterial({
@@ -395,7 +420,7 @@ function leafMaterial(src, v) {
 const AZ = 8, ELS = [0.09, 0.7, 1.31], FRAME = 160; // 8 directions x 3 heights (5°, 40°, 75°)
 const FRAMES = AZ * ELS.length;
 // Variants side by side in the atlas, so its height stays under the 8192-pixel limit on textures
-// (46 variants: 23 rows of 2)
+// (79 variants: 40 rows of 2)
 const COLS = 2;
 // How much the leaves' coverage is raised when they're baked into the pictures
 const LEAF_BAKE_BOOST = 3;
@@ -627,7 +652,7 @@ export class Forest {
         // Collision shape for the ball, matching what's drawn
         t.trunkR = Math.max(0.12, near.trunk * sxz);
         const crownBase = y + near.crownBase * t.h;
-      if (v.kind === 'pine' || v.kind === 'loblolly' || v.kind === 'redcedar' || v.kind === 'douglasfir' || v.kind === 'ponderosa' || v.kind === 'spruce' || v.kind === 'baldcypress') Object.assign(t, { trunkTop: crownBase + 0.6, coneBase: crownBase, coneH: t.h - near.crownBase * t.h, coneR: near.crown * sxz });
+      if (CONES.has(v.kind)) Object.assign(t, { trunkTop: crownBase + 0.6, coneBase: crownBase, coneH: t.h - near.crownBase * t.h, coneR: near.crown * sxz });
         else Object.assign(t, { trunkTop: crownBase + 0.3, cy: (crownBase + y + t.h) / 2, rh: near.crown * sxz, rv: (y + t.h - crownBase) / 2 });
       });
       const barkM = barkMaterial(near.barkMat), leafM = leafMaterial(near.leafMat, v);

@@ -1,6 +1,7 @@
 // Round toy trees for the Cartoon graphics style: a short brown trunk under a soft, lumpy ball of
 // leaves (broadleaf trees), stacked cones (pines, spruces, firs, cedars), a tall rounded column
-// (cypresses, poplars), a fan of fronds on a slim trunk (palms) or a plain green cactus. Each shape
+// (cypresses, poplars), a fan of fronds on a slim trunk (palms) or a plain green cactus; flowering
+// trees (dogwood, crape myrtle) in their blossom colours. Each shape
 // is one instanced mesh of a few dozen triangles, so tens of thousands of trees cost little: no
 // leaf textures, no distant pictures. Lumps are lit with normals pointing out from the middle of
 // the crown, so a handful of flat faces still shades as one smooth, rounded mass.
@@ -9,13 +10,19 @@
 // Same use as trees.js's Forest: build(trees, heightAt), update(camera), group.
 import * as THREE from 'three/webgpu';
 
-const CONE = new Set(['pine', 'spruce', 'loblolly', 'redcedar', 'douglasfir', 'baldcypress']);
+const CONE = new Set(['pine', 'spruce', 'loblolly', 'redcedar', 'douglasfir', 'baldcypress', 'hemlock', 'holly']);
 const COLUMN = new Set(['cypress', 'poplar']);
 const CACTUS = new Set(['saguaro']);
 const PALM = new Set(['palm']);
 // (leaf colours: bright, warm greens for broadleaf trees, deeper blue-greens for conifers)
 const LEAF = [0x2e6e22, 0x3a7d28, 0x285f1e, 0x467f2c, 0x23571d, 0x4f8a30];
 const NEEDLE = [0x1f5a2e, 0x1a4d28, 0x266636];
+// Species with colours of their own: flowering dogwoods and crape myrtles in bloom, silvery olives,
+// blue-grey junipers, dark glossy hollies
+const SPECIES_COLOURS = {
+  dogwood: [0xf2eee4, 0xf0dde6, 0xe6e4d2], crapemyrtle: [0xe0609e, 0xd2559a, 0xb46ec4], olive: [0x8d9e72, 0x99a882, 0x7f9268],
+  juniper: [0x5d7e6c, 0x6a8a78, 0x55705f], holly: [0x174a26, 0x1c5229],
+};
 const hash = (x, z, k) => { const s = Math.sin(x * 12.9898 + z * 78.233 + k * 37.719) * 43758.5453; return s - Math.floor(s); };
 
 // Normals pointing out from c (so the lumps shade as one rounded crown)
@@ -141,7 +148,7 @@ export class ToonForest {
           p.set(-t.x, y, t.z); s.set(h, h, h);
         }
         m4.compose(p, q, s).toArray(mats, i * 16);
-        const pal = shape === 'cone' ? NEEDLE : shape === 'cactus' ? [0x5a9a4a] : LEAF;
+        const pal = SPECIES_COLOURS[t.kind] || (shape === 'cone' ? NEEDLE : shape === 'cactus' ? [0x5a9a4a] : LEAF);
         c.setHex(pal[Math.floor(hash(t.x, t.z, 3) * pal.length)]).toArray(cols, i * 3);
         xz[i * 2] = -t.x; xz[i * 2 + 1] = t.z;
         if (trunkH > 0.3) trunks.push([t.x, y, t.z, trunkH, trunkW]);

@@ -7,6 +7,10 @@
   <link rel="stylesheet" href="/style.css">
   <link rel="stylesheet" href="/tools.css">
   <link rel="stylesheet" href="/editor.css">
+  <!-- (the 3D previews of trees and grass use the game's own models) -->
+  <script type="importmap">
+    { "imports": { "three": "/vendor/three/build/three.webgpu.js", "three/webgpu": "/vendor/three/build/three.webgpu.js", "three/tsl": "/vendor/three/build/three.tsl.js", "three/addons/": "/vendor/three/examples/jsm/", "ez-tree": "/vendor/ez-tree/ez-tree.es.js" } }
+  </script>
 </head>
 <body>
   <div class="editor">
@@ -27,9 +31,14 @@
           <label>Greens <select id="c-surface-green"></select></label>
           <label>Rough <select id="c-surface-rough"></select></label>
         </div>
-        <div class="height-row">
-          <label>Rough height <select id="c-rough-h"></select></label>
-          <label>Tall grass height <select id="c-native-h"></select></label>
+        <div class="grass-heights">
+          <label class="grass-h">Rough height <input id="c-rough-h" type="range" step="0.05"> <span id="c-rough-v"></span></label>
+          <label class="grass-h">Tall grass height <input id="c-native-h" type="range" step="0.05"> <span id="c-native-v"></span></label>
+          <div class="preview-box">
+            <canvas id="grass-prev" title="Drag to turn the view"></canvas>
+            <div class="pv-tabs"><button id="pv-rough" class="active">Rough</button><button id="pv-tall">Tall grass</button></div>
+            <div id="grass-prev-cap" class="muted small">Loading the preview…</div>
+          </div>
         </div>
         <div class="mow-row">
           <label>Fairway mowing <select id="c-mow-fairway"></select></label>
@@ -70,6 +79,10 @@
         </div>
         <label>Species for trees you add <select id="t-kind" class="species-select"></select></label>
         <div class="tree-tool">
+          <button id="t-cut" title="Take out any tree by brushing over it: ones from the tree-height (lidar) map, OpenStreetMap, the aerial photo or your own">Remove trees</button>
+          <label class="brush-size">Size <input id="t-cut-size" type="range" min="2" max="60" step="1" value="12"> <span id="t-cut-size-v">12 m</span></label>
+        </div>
+        <div class="tree-tool">
           <button id="t-area">Draw tree area</button>
           <select id="t-density" title="How closely trees stand in the area">
             <option value="sparse">Sparse</option>
@@ -82,13 +95,29 @@
           <label>Shortest (m) <input id="t-hmin" type="number" min="2" max="40" step="1"></label>
           <label>Tallest (m) <input id="t-hmax" type="number" min="2" max="40" step="1"></label>
         </div>
+        <div class="preview-box">
+          <canvas id="tree-prev" title="Drag to turn the tree"></canvas>
+          <label>Preview a species <select id="pv-kind"></select></label>
+          <div id="tree-prev-cap" class="muted small">Loading the preview…</div>
+        </div>
         <details class="species-list" open>
           <summary>Tree species on this course</summary>
           <label class="check"><input id="t-colour" type="checkbox"> Colour every tree by its species</label>
           <div class="muted small">Click a species to pick its trees out on the map. Untick one to stop using it: its trees become another species that grows here (yours too).</div>
           <ul id="species-list"></ul>
         </details>
-        <div class="muted small">Add trees: click the map once per tree. Tree area: click its outline, double-click or Enter to finish; it fills with trees (not on fairways, greens, tees, bunkers or water). Your trees are the bright ones: drag to move, Delete to remove.</div>
+        <div class="muted small">Add trees: click the map once per tree. Tree area: click its outline, double-click or Enter to finish; it fills with trees (not on fairways, greens, tees, bunkers or water). Your trees are the bright ones: drag to move, Delete to remove. Remove trees: brush over any trees (from the tree-height map, OpenStreetMap, the photo or your areas) to take them out.</div>
+      </details>
+
+      <details open>
+        <summary>Shrubs, flowers and grasses</summary>
+        <label class="grass-h">How many <input id="p-amount" type="range" min="0" max="2" step="0.05" value="1"> <span id="p-amount-v">As usual</span></label>
+        <div class="preview-box">
+          <canvas id="plant-prev" title="Drag to turn the view"></canvas>
+          <div id="plant-prev-cap" class="muted small">Click a name below to see it.</div>
+        </div>
+        <ul id="plant-list" class="plant-list"></ul>
+        <div class="muted small">The game plants these on its own, by where the course is: shrubs along the edges of the woods, ferns under the trees, flower beds behind some tees and by the clubhouse, grasses round greens and ponds, scrub in dry country. Untick a kind to leave it out; tick one that doesn't grow here to add it. Click a name to see it.</div>
       </details>
 
       <details open>
@@ -115,7 +144,7 @@
           <li>Drag tees, pins, aim points and the green center of the selected hole.</li>
           <li>Click a shape to select it. Drag its corners; drag a small circle to add a corner; Alt+click a corner to remove it.</li>
           <li>Drag inside a selected shape to move the whole shape (to line it up with the photo); arrow keys nudge it 25 cm, Shift+arrow 1 m.</li>
-          <li>Trees: dark circles are found from tree heights and OpenStreetMap, amber dashed ones are guessed from the aerial photo, and bright ones are yours. Drag yours to move them. Click a found tree to remove it or replace it with your own; a red cross marks a removed tree (click it to put the tree back). To remove a lot at once, hold Shift and drag a box round them (Shift-click adds or drops one), then press Delete.</li>
+          <li>Trees: dark circles are found from tree heights and OpenStreetMap, amber dashed ones are guessed from the aerial photo, and bright ones are yours. Drag yours to move them. Click a found tree to remove it or replace it with your own; a red cross marks a removed tree (click it to put the tree back). To remove a lot at once, use the Remove trees brush, or hold Shift and drag a box round them (Shift-click adds or drops one), then press Delete.</li>
           <li><b>Delete</b> removes the selected shape or tree · <b>Ctrl+Z</b> undo · <b>Ctrl+S</b> save · <b>Esc</b> cancel.</li>
         </ul>
       </details>

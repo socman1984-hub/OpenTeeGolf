@@ -7,6 +7,7 @@
 //   - water (penalty areas) and OOB
 // These drive both the physics (heightAt / normalAt / surfaceAt) and the rendering.
 
+import { coursePlants } from './plants-data.js';
 import { courseMowing, courseGrass, courseSurface } from './mowing.js';
 import { prepareStreams, streamFlow, streamDepth } from './streams.js';
 
@@ -650,6 +651,8 @@ export function buildCourse(courseData, real = null) {
     grass: courseGrass(courseData),
     // Tree species turned off in the course editor (their trees are replaced: treeplace.js swapSpecies)
     treesOff: Array.isArray(courseData.TreesOff) ? courseData.TreesOff : [],
+    // Shrubs, flowers and grasses: kinds turned off or added, and how many (plants-data.js coursePlants)
+    plants: coursePlants(courseData),
     surface: courseSurface(courseData),
     holes,
     hazards,

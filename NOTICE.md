@@ -37,6 +37,8 @@ OpenTeeGolf is free software under the GNU General Public License v3 (see `LICEN
 | `trees/{mesquite,paloverde,saguaro}_leaves.png`, `trees/{paloverde,saguaro}_bark_*.jpg` | Drawn by `scripts/tree-textures.py` (no source images) | Part of OpenTeeGolf (GPL-3.0-or-later) |
 | `trees/{redmaple,tuliptree,loblolly}_{leaves.png,bark_*.jpg}` | Drawn by `scripts/tree-textures.py` (no source images) | Part of OpenTeeGolf (GPL-3.0-or-later) |
 | `trees/{redcedar,douglasfir,ponderosa,beech}_{leaves.png,bark_*.jpg}` | Drawn by `scripts/tree-textures.py` (no source images) | Part of OpenTeeGolf (GPL-3.0-or-later) |
+| `trees/{dogwood,crapemyrtle,elm,hemlock,juniper,olive,holly}_{leaves.png,bark_*.jpg}` | Drawn by `scripts/tree-textures.py` (no source images) | Part of OpenTeeGolf (GPL-3.0-or-later) |
+| `plants/plants.png` (shrubs, ferns, ornamental grasses, flowers, desert plants) | Drawn by `scripts/plant-textures.py` (no source images) | Part of OpenTeeGolf (GPL-3.0-or-later) |
 | `water_normal.jpg` | [three.js](https://github.com/mrdoob/three.js/blob/r186/examples/textures/waternormals.jpg) example textures | MIT |
 
 The ambientCG and Poly Haven textures were resized to 1K and recompressed; CC0 needs no attribution, but credit is given here anyway.

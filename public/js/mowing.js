@@ -21,11 +21,25 @@ export const GRASS_HEIGHTS = {
   native: [{ id: 'short', label: 'Short', scale: 0.7 }, { id: 'medium', label: 'Medium', scale: 1 }, { id: 'tall', label: 'Tall', scale: 1.3 }],
 };
 const GRASS_DEFAULTS = { rough: 'medium', native: 'medium' };
-// The course's choices ({ rough, native } ids) and their scales
+// Any height in between, set with a slider in the editor: the scale's range, and how tall the
+// grass typically stands at scale 1 (cm): the tops of the rough's tufts about 7 cm, the tall
+// grass's clumps about 60 cm
+export const GRASS_RANGE = { rough: { min: 0.3, max: 1.6, cm: 7 }, native: { min: 0.4, max: 1.8, cm: 60 } };
+export const grassCm = (kind, scale) => Math.round(scale * GRASS_RANGE[kind].cm);
+// The preset nearest a scale (what versions before the sliders read)
+export const nearestGrass = (kind, scale) => GRASS_HEIGHTS[kind].reduce((a, b) => (Math.abs(b.scale - scale) < Math.abs(a.scale - scale) ? b : a)).id;
+// The course's choices: { rough, native } (the nearest presets) and their scales. Saved as
+// Grass: { rough, native, roughScale, nativeScale }; older files have only the preset ids.
 export const courseGrass = (courseData) => {
-  const pick = (k) => (GRASS_HEIGHTS[k].some((o) => o.id === courseData?.Grass?.[k]) ? courseData.Grass[k] : GRASS_DEFAULTS[k]);
-  const rough = pick('rough'), native = pick('native');
-  return { rough, native, roughScale: GRASS_HEIGHTS.rough.find((o) => o.id === rough).scale, nativeScale: GRASS_HEIGHTS.native.find((o) => o.id === native).scale };
+  const g = courseData?.Grass, R = GRASS_RANGE;
+  const scale = (k) => {
+    const v = +g?.[`${k}Scale`];
+    if (Number.isFinite(v)) return Math.min(R[k].max, Math.max(R[k].min, v));
+    const id = GRASS_HEIGHTS[k].some((o) => o.id === g?.[k]) ? g[k] : GRASS_DEFAULTS[k];
+    return GRASS_HEIGHTS[k].find((o) => o.id === id).scale;
+  };
+  const roughScale = scale('rough'), nativeScale = scale('native');
+  return { rough: nearestGrass('rough', roughScale), native: nearestGrass('native', nativeScale), roughScale, nativeScale };
 };
 
 // The colours of the fairways, greens, tees and rough: the game's own, or the aerial photo's

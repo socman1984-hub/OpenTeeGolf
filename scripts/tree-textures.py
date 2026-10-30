@@ -15,6 +15,7 @@
 # this). Running this again draws them all afresh.
 #   python scripts/tree-textures.py public/textures/trees [kind ...]
 # Kinds: liveoak cypress baldcypress mesquite paloverde saguaro sycamore magnolia redmaple tuliptree loblolly redcedar douglasfir ponderosa beech
+#        dogwood crapemyrtle elm hemlock juniper olive holly
 # Needs Python 3 with Pillow and NumPy.
 import sys, math, random
 import numpy as np
@@ -129,9 +130,10 @@ def compound(d, ox, oy, cols, stem, n_pinnae, leaflets, leaflet_len, seed, flowe
             r = rnd.uniform(9, 15)
             d.ellipse([x - r, y - r, x + r, y + r], fill=jit(flowers, 12))
 
-def spray(d, ox, oy, col, seed, needle=False):
+def spray(d, ox, oy, col, seed, needle=False, berries=None, short=30):
     """Conifer foliage. Scale sprays (Monterey cypress): dense, branching rope-like shoots.
-    needle=True (bald cypress): flat sprays of short soft needles in two rows."""
+    needle=True (bald cypress): flat sprays of short soft needles in two rows, short px long.
+    berries: colour of juniper "berries" dotted over the sprays."""
     rnd = random.Random(seed)
     cx, by = ox + Q / 2, oy + Q - 10
     inside = lambda x, y: ox + 16 < x < ox + Q - 16 and oy + 16 < y < oy + Q - 4
@@ -145,7 +147,7 @@ def spray(d, ox, oy, col, seed, needle=False):
             if needle and depth >= 1:
                 for sgn in (-1, 1):
                     na = a + sgn * 1.2
-                    ex, ey = nx + math.sin(na) * 30, ny - math.cos(na) * 30
+                    ex, ey = nx + math.sin(na) * short, ny - math.cos(na) * short
                     if inside(ex, ey): d.line([(nx, ny), (ex, ey)], fill=jit(col, 16), width=4)
             if depth < 3 and rnd.random() < (0.6 if not needle else 0.5):
                 for sgn in ((-1, 1) if rnd.random() < 0.5 else (rnd.choice((-1, 1)),)):
@@ -153,6 +155,14 @@ def spray(d, ox, oy, col, seed, needle=False):
             x, y = nx, ny
     for k in range(3):
         shoot(cx + rnd.uniform(-20, 20), by, rnd.uniform(-0.3, 0.3), Q * rnd.uniform(0.55, 0.68), 20 if not needle else 6, 0)
+    if berries:
+        # (small waxy blue cones with a pale bloom)
+        for _ in range(60):
+            x, y = cx + rnd.gauss(0, Q * 0.17), oy + Q * rnd.uniform(0.15, 0.8)
+            if not inside(x, y): continue
+            r = rnd.uniform(9, 13)
+            d.ellipse([x - r, y - r, x + r, y + r], fill=jit(berries, 12))
+            d.ellipse([x - r * 0.4, y - r * 0.6, x + r * 0.1, y - r * 0.1], fill=jit((200, 212, 226), 8))
 
 def moss(d, ox, oy, seed):
     """Spanish moss: grey-green strands hanging from the top of the quarter, tangled and thinning out."""
@@ -218,6 +228,70 @@ def L_beech(rnd, s):
         pts.append((W * 0.5 * math.sin(math.pi * t) ** 0.85 * tooth, -L * t))
     return pts + [(-x, y) for x, y in reversed(pts)]
 
+def L_dogwood(rnd, s): return ellipse_leaf(rnd.uniform(170, 210) * s, rnd.uniform(90, 112) * s, 0.75)
+def L_crape(rnd, s): return ellipse_leaf(rnd.uniform(95, 125) * s, rnd.uniform(48, 58) * s, 0.5)
+def L_olive(rnd, s): return ellipse_leaf(rnd.uniform(140, 175) * s, rnd.uniform(24, 30) * s, 0.4)
+
+def L_elm(rnd, s):
+    """Lopsided at the base, double-toothed."""
+    L, W = rnd.uniform(170, 210) * s, rnd.uniform(84, 104) * s
+    pts = []
+    for i in range(29):
+        t = i / 28
+        pts.append((W * 0.5 * math.sin(math.pi * t) ** 0.8 * (1 - 0.3 * t) * (1 + 0.06 * math.sin(t * math.pi * 24)), -L * t))
+    left = [(-x * (0.85 if y > -L * 0.25 else 1), y + (L * 0.05 if y > -L * 0.25 else 0)) for x, y in reversed(pts)]
+    return pts + left
+
+def L_holly(rnd, s):
+    """Spiny: a stiff oval with a sharp spine at every other point of its wavy edge."""
+    L, W = rnd.uniform(150, 180) * s, rnd.uniform(70, 86) * s
+    right = []
+    for i in range(13):
+        t = i / 12
+        w = W * 0.5 * math.sin(math.pi * t) ** 0.7
+        right.append((w * (1.22 if i % 2 else 0.86), -L * t))
+    return right + [(-x, y) for x, y in reversed(right)]
+
+def flower_dogwood(d, ox, oy, seed):
+    """Flowering dogwood: leaves with white four-bracted flowers, each bract notched at the tip."""
+    twig(d, ox, oy, L_dogwood, 3, [(70, 112, 52), (78, 120, 56)], stem=(96, 76, 60), side=4, spread=1.0, vein=(118, 150, 88), seed=seed)
+    rnd = random.Random(seed + 1)
+    for _ in range(7):
+        x, y = ox + Q * rnd.uniform(0.2, 0.8), oy + Q * rnd.uniform(0.15, 0.62)
+        a0 = rnd.uniform(0, 1.6)
+        for k in range(4):
+            a = a0 + k * math.pi / 2
+            draw_leaf(d, ellipse_leaf(rnd.uniform(70, 86), rnd.uniform(52, 62), tip=-0.2), x, y, a, jit((246, 244, 232), 6), vein=(222, 220, 196))
+            tx, ty = x + math.sin(a) * 76, y - math.cos(a) * 76
+            d.ellipse([tx - 6, ty - 6, tx + 6, ty + 6], fill=(150, 96, 92))
+        d.ellipse([x - 14, y - 14, x + 14, y + 14], fill=jit((172, 182, 92), 8))
+
+def panicles(d, ox, oy, seed, cols):
+    """Crape myrtle: cone-shaped heads of crinkled little flowers over a few leaves."""
+    twig(d, ox, oy, L_crape, 5, [(56, 98, 44), (66, 108, 50)], stem=(130, 100, 80), side=4, spread=0.9, seed=seed)
+    rnd = random.Random(seed + 2)
+    for _ in range(5):
+        cx, top = ox + Q * rnd.uniform(0.22, 0.78), oy + Q * rnd.uniform(0.08, 0.3)
+        H, W = Q * rnd.uniform(0.3, 0.42), Q * rnd.uniform(0.18, 0.24)
+        for _ in range(170):
+            t = rnd.random() ** 0.8
+            x, y = cx + rnd.uniform(-0.5, 0.5) * W * (0.25 + 0.75 * t), top + t * H
+            r = rnd.uniform(9, 16)
+            c = jit(rnd.choice(cols), 14)
+            d.ellipse([x - r, y - r * 0.8, x + r, y + r * 0.8], fill=c)
+            d.ellipse([x - r * 0.3, y - r * 0.3, x + r * 0.3, y + r * 0.3], fill=tuple(int(v * 0.86) for v in c[:3]) + (255,))
+
+def berries_holly(d, ox, oy, seed):
+    """American holly: spiny leaves with clusters of red berries."""
+    twig(d, ox, oy, L_holly, 4, [(30, 70, 38), (36, 78, 42)], stem=(110, 104, 90), side=4, spread=0.85, vein=(84, 120, 76), seed=seed)
+    rnd = random.Random(seed + 3)
+    for _ in range(12):
+        x, y = ox + Q * rnd.uniform(0.2, 0.8), oy + Q * rnd.uniform(0.2, 0.8)
+        for _ in range(rnd.randint(3, 6)):
+            bx, by, r = x + rnd.uniform(-26, 26), y + rnd.uniform(-26, 26), rnd.uniform(13, 18)
+            d.ellipse([bx - r, by - r, bx + r, by + r], fill=jit((196, 30, 34), 14))
+            d.ellipse([bx - r * 0.45, by - r * 0.6, bx - r * 0.05, by - r * 0.2], fill=(236, 120, 110))
+
 LEAVES = {
     'liveoak': lambda d: (
         twig(d, *QUARTERS['bl'], L_small_oak, 34, [(58, 76, 38), (66, 84, 42), (52, 70, 36), (92, 104, 72)], stem=(80, 70, 58), side=6, spread=1.0, seed=1),
@@ -242,6 +316,24 @@ LEAVES = {
     'douglasfir': lambda d: [spray(d, *QUARTERS[q], (42, 82, 48), 110 + i, needle=True) for i, q in enumerate(QUARTERS)],
     'ponderosa': lambda d: [spray(d, *QUARTERS[q], (76, 112, 56), 120 + i, needle=True) for i, q in enumerate(QUARTERS)],
     'beech': lambda d: [twig(d, *QUARTERS[q], L_beech, 6, [(64, 112, 52), (76, 124, 58), (88, 132, 62)], stem=(104, 82, 56), side=4, spread=0.8, vein=(128, 150, 82), seed=130 + i) for i, q in enumerate(QUARTERS)],
+    'dogwood': lambda d: (
+        twig(d, *QUARTERS['bl'], L_dogwood, 5, [(66, 110, 50), (74, 118, 54), (60, 100, 46)], stem=(96, 76, 60), side=4, spread=1.0, vein=(118, 150, 88), seed=140),
+        twig(d, *QUARTERS['br'], L_dogwood, 5, [(70, 114, 52), (62, 104, 48)], stem=(96, 76, 60), side=4, spread=1.0, vein=(118, 150, 88), seed=141),
+        flower_dogwood(d, *QUARTERS['tl'], 142), flower_dogwood(d, *QUARTERS['tr'], 143)),
+    'crapemyrtle': lambda d: (
+        twig(d, *QUARTERS['bl'], L_crape, 8, [(54, 96, 44), (62, 104, 48), (48, 88, 40)], stem=(130, 100, 80), side=5, spread=0.9, seed=150),
+        twig(d, *QUARTERS['br'], L_crape, 8, [(58, 100, 46), (50, 92, 42)], stem=(130, 100, 80), side=5, spread=0.9, seed=151),
+        panicles(d, *QUARTERS['tl'], 152, [(222, 92, 150), (236, 120, 170), (204, 76, 136)]),
+        panicles(d, *QUARTERS['tr'], 153, [(178, 112, 196), (196, 134, 210), (160, 96, 180)])),
+    'elm': lambda d: [twig(d, *QUARTERS[q], L_elm, 6, [(66, 104, 46), (74, 114, 50), (60, 96, 42)], stem=(98, 80, 58), side=4, spread=0.85, vein=(112, 140, 78), seed=160 + i) for i, q in enumerate(QUARTERS)],
+    'hemlock': lambda d: [spray(d, *QUARTERS[q], (40, 72, 42), 170 + i, needle=True, short=22) for i, q in enumerate(QUARTERS)],
+    'juniper': lambda d: [spray(d, *QUARTERS[q], (82, 106, 86), 180 + i, berries=(96, 112, 150) if q in ('tl', 'tr') else None) for i, q in enumerate(QUARTERS)],
+    'olive': lambda d: [twig(d, *QUARTERS[q], L_olive, 9, [(92, 108, 80), (110, 124, 98), (136, 146, 124), (80, 96, 70)], stem=(110, 104, 88), side=5, spread=0.8, seed=190 + i) for i, q in enumerate(QUARTERS)],
+    'holly': lambda d: (
+        twig(d, *QUARTERS['bl'], L_holly, 6, [(28, 66, 36), (34, 74, 40), (40, 80, 44)], stem=(110, 104, 90), side=4, spread=0.85, vein=(84, 120, 76), seed=200),
+        twig(d, *QUARTERS['br'], L_holly, 6, [(30, 70, 38), (26, 62, 34)], stem=(110, 104, 90), side=4, spread=0.85, vein=(84, 120, 76), seed=201),
+        berries_holly(d, *QUARTERS['tl'], 202),
+        twig(d, *QUARTERS['tr'], L_holly, 6, [(32, 72, 40), (38, 78, 42)], stem=(110, 104, 90), side=4, spread=0.85, vein=(84, 120, 76), seed=203)),
     'saguaro': lambda d: (flowers_saguaro(d, *QUARTERS['tl'], 60), flowers_saguaro(d, *QUARTERS['tr'], 61, fruit=True),
                           flowers_saguaro(d, *QUARTERS['bl'], 62), flowers_saguaro(d, *QUARTERS['br'], 63, fruit=True)),
 }
@@ -375,6 +467,55 @@ def bark_beech():
     c *= (0.96 + 0.04 * streaks)[..., None]
     return c, h, 1.5
 
+def bark_dogwood():
+    # small square "alligator" blocks, grey-brown
+    h = plates(16, 22, 104, 0.12) * (0.78 + 0.22 * fbm(12, 12, 105))
+    return tint(h, (52, 44, 40), (138, 124, 112)), h, 7
+
+def bark_crapemyrtle():
+    # smooth, peeling in patches: cinnamon, tan and grey-green mottles
+    a, b = fbm(6, 9, 106), fbm(9, 12, 107)
+    c = np.zeros((N, N, 3))
+    c[:] = (184, 156, 124)
+    c[a < 0.46] = (148, 112, 86); c[a < 0.36] = (126, 92, 70); c[(b < 0.38) & (a >= 0.46)] = (168, 164, 140)
+    c = c * (0.93 + 0.07 * fbm(40, 40, 108))[..., None]
+    h = 0.55 + 0.06 * (a < 0.46) + 0.03 * fbm(30, 30, 108) + 0.04 * fibres(9, 109, 0.03)
+    return c, h, 2
+
+def bark_elm():
+    # grey, deep interlacing ridges
+    f = fibres(12, 110, 0.18) * 0.6 + fibres(29, 111, 0.1) * 0.25 + fbm(10, 20, 112) * 0.15
+    h = np.clip((f - 0.25) * 1.5, 0, 1)
+    return tint(h, (48, 44, 40), (140, 132, 120)), h, 8
+
+def bark_hemlock():
+    # dark reddish-brown, broad scaly ridges
+    h = (plates(5, 16, 113, 0.09) * 0.55 + fibres(10, 114, 0.12) * 0.45) * (0.8 + 0.2 * fbm(10, 14, 115))
+    return tint(h, (46, 30, 26), (122, 82, 64)), h, 8
+
+def bark_juniper():
+    # shredding grey-brown strips that twist round the stem
+    w = (fbm(2, 4, 116) - 0.5) * 0.25 + Y * 0.12
+    f = (0.5 + 0.5 * np.sin((X + w) * 18 * 2 * math.pi + fbm(8, 3, 117) * 5)) * 0.6 + fbm(10, 30, 124) * 0.4
+    h = f * (0.7 + 0.3 * fbm(6, 18, 118))
+    return tint(h, (70, 56, 46), (162, 144, 124)), h, 7
+
+def bark_olive():
+    # pale grey, gnarled and fissured
+    f = fibres(7, 119, 0.3) * 0.45 + fbm(6, 8, 120) * 0.55
+    h = np.clip(f * 1.2 - 0.1, 0, 1) ** 0.8
+    return tint(h, (62, 60, 54), (164, 160, 148)), h, 7
+
+def bark_holly():
+    # smooth, light grey with little warty lenticels
+    m = fbm(6, 6, 121)
+    h = 0.55 + 0.08 * m + 0.05 * fbm(48, 48, 122)
+    warts = fbm(70, 70, 123) > 0.72
+    c = tint(m, (128, 124, 114), (178, 172, 160))
+    c[warts] = c[warts] * 0.82
+    h = np.where(warts, h + 0.06, h)
+    return c, h, 3
+
 RIBS = 16
 def bark_saguaro():
     u = (X * RIBS) % 1
@@ -392,7 +533,9 @@ def bark_saguaro():
 BARKS = {'liveoak': bark_liveoak, 'cypress': bark_cypress, 'baldcypress': bark_baldcypress, 'mesquite': bark_mesquite,
          'paloverde': bark_paloverde, 'sycamore': bark_sycamore, 'magnolia': bark_magnolia, 'saguaro': bark_saguaro,
          'redmaple': bark_redmaple, 'tuliptree': bark_tuliptree, 'loblolly': bark_loblolly,
-         'redcedar': bark_redcedar, 'douglasfir': bark_douglasfir, 'ponderosa': bark_ponderosa, 'beech': bark_beech}
+         'redcedar': bark_redcedar, 'douglasfir': bark_douglasfir, 'ponderosa': bark_ponderosa, 'beech': bark_beech,
+         'dogwood': bark_dogwood, 'crapemyrtle': bark_crapemyrtle, 'elm': bark_elm, 'hemlock': bark_hemlock,
+         'juniper': bark_juniper, 'olive': bark_olive, 'holly': bark_holly}
 
 def normals(h, k):
     gx = (np.roll(h, -1, 1) - np.roll(h, 1, 1)) * k

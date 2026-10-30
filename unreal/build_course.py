@@ -44,7 +44,7 @@ TURF = {"fairway": (0.06, 0.112, 0.022), "green": (0.074, 0.136, 0.026), "rough"
         "water": (0.03, 0.03, 0.018)}   # (the pond floor under Unreal's water: dark silt, not the photo's pale water)
 TURF_AMOUNT = 0.88        # how much of the turf colour over the photo's (the rest the photo's own)
 TREE_CULL_CM = (90000, 130000)   # trees fade out between 900 and 1300 m
-CONIFERS = {"pine", "loblolly", "redcedar", "douglasfir", "ponderosa", "spruce", "cypress", "baldcypress"}
+CONIFERS = {"pine", "loblolly", "redcedar", "douglasfir", "ponderosa", "spruce", "cypress", "baldcypress", "hemlock", "juniper", "holly"}
 
 # Unreal's own trees (from Fab), used in place of the game's broadleaf trees: every whole-tree mesh
 # in these folders (the wind-animated ones). Each game tree gets the one closest to its height, so

@@ -990,9 +990,10 @@ const httpServer = http.createServer(async (req, res) => {
           log('Kept the trees added in the editor.');
         }
         // (and the course's look chosen in the editor: mowing patterns, grass heights)
-        if (cd.Mowing || cd.Grass || cd.Surface || cd.TreesOff) {
+        if (cd.Mowing || cd.Grass || cd.Surface || cd.TreesOff || cd.Plants) {
           const nd0 = readCourseData(r.dataFile);
           if (cd.TreesOff) nd0.TreesOff = cd.TreesOff;
+          if (cd.Plants) nd0.Plants = cd.Plants;
           if (cd.Mowing) nd0.Mowing = cd.Mowing;
           if (cd.Grass) nd0.Grass = cd.Grass;
           if (cd.Surface) nd0.Surface = cd.Surface;

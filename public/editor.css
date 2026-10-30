@@ -77,4 +77,24 @@
 .b-legend i { width: 11px; height: 11px; border-radius: 2px; display: inline-block; border: 1px solid rgba(0,0,0,0.4); }
 
 .brush-size { display: flex; align-items: center; gap: 8px; }
+/* 3D previews of trees and grass */
+.preview-box { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; }
+.preview-box canvas { width: 100%; height: 190px; border-radius: 8px; border: 1px solid var(--line); background: #b9d3e8; cursor: grab; touch-action: none; }
+.preview-box canvas:active { cursor: grabbing; }
+.pv-tabs { display: flex; gap: 6px; }
+.pv-tabs button { flex: 1; }
+.grass-heights { display: flex; flex-direction: column; gap: 6px; }
+.grass-h { display: grid; grid-template-columns: 1fr; gap: 2px; }
+.grass-h input { width: 100%; }
+.grass-h span { font-size: 12px; opacity: 0.8; }
+/* shrubs, flowers and grasses on the course */
+.plant-list { list-style: none; margin: 4px 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.plant-list .group { margin-top: 6px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; opacity: 0.6; }
+.plant-list .kind { display: flex; align-items: center; gap: 6px; padding: 3px 4px; border-radius: 6px; cursor: pointer; }
+.plant-list .kind:hover, .plant-list .kind.hot { background: rgba(255, 255, 255, 0.07); }
+.plant-list .kind input { width: auto; flex: none; margin: 0; }
+.plant-list .kind b { font-weight: 500; flex: 1; text-align: left; }
+.plant-list .kind span { font-size: 11px; opacity: 0.65; white-space: nowrap; }
+.plant-list .kind.off b { opacity: 0.5; text-decoration: line-through; }
+.plant-list .kind.added span { color: #8fd46a; opacity: 1; }
 .brush-size input { flex: 1; }

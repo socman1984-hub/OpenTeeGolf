@@ -26,6 +26,7 @@ import { MOW_WIDTH, mowIndex } from './mowing.js';
 import { layoutParking, bayCorners, carColour } from './parking.js';
 import { roadLines, roadSamples, stripTriangles, onRoad } from './roads.js';
 import { buildBuildings } from './buildings.js';
+import { Plants, placePlants, PLANTS } from './plants.js';
 import { MIN_HW, flowSpeed } from './streams.js';
 import { removeShadows } from './deshadow.js';
 import { cloudAlpha, cloudAlphaNode, shadowDir, shadowDirCPU } from './clouds.js';
@@ -241,12 +242,13 @@ export class CourseScene {
   // flat painted turf with bold stripes, round toy trees, no grass blades.
   setQuality(q) {
     const Q = {
-      // grass: rough tufts around the ball / free camera, blades per tuft; lie: tufts in the patch the ball sits in
-      high: { dpr: 1.5, shadow: 4096, trees: 1, grass: 32000, blades: 11, lie: 44000, native: 1 },
-      balanced: { dpr: 1.25, shadow: 2048, trees: 0.85, grass: 20000, blades: 8, lie: 30000, native: 0.7 },
-      performance: { dpr: 1, shadow: 1024, trees: 0.6, grass: 9000, blades: 5, lie: 13000, native: 0.4 },
-      // (no grass blades or tall grass at all: clean, bright, painted turf and round toy trees)
-      cartoon: { dpr: 1, shadow: 2048, trees: 0.6, grass: 0, blades: 0, lie: 0, native: 0, tier: 'performance', toon: true },
+      // grass: rough tufts around the ball / free camera, blades per tuft; lie: tufts in the patch the ball sits in;
+      // plants: how many shrubs, flowers and ornamental grasses (plants.js)
+      high: { dpr: 1.5, shadow: 4096, trees: 1, grass: 32000, blades: 11, lie: 44000, native: 1, plants: 1 },
+      balanced: { dpr: 1.25, shadow: 2048, trees: 0.85, grass: 20000, blades: 8, lie: 30000, native: 0.7, plants: 0.75 },
+      performance: { dpr: 1, shadow: 1024, trees: 0.6, grass: 9000, blades: 5, lie: 13000, native: 0.4, plants: 0.45 },
+      // (no grass blades or tall grass at all: clean, bright, painted turf, round toy trees and toy shrubs)
+      cartoon: { dpr: 1, shadow: 2048, trees: 0.6, grass: 0, blades: 0, lie: 0, native: 0, plants: 0.5, tier: 'performance', toon: true },
     }[q] || null;
     if (!Q) return;
     this.quality = { name: q, tier: q, ...Q };
@@ -494,6 +496,7 @@ export class CourseScene {
     if (buildings.length) this.addBuildings(course, buildings, buildingTypes);
     this.addCars(course);
     this.addRoadMarkings(course);
+    await this.addPlants(course, shore, buildings, buildingTypes);
     this.grassCenter = null; this.grassJob = null;
     if (this.grass) this.grass.count = 0; // (the next lot is laid out at once, for the new course)
     if (this.lieGrass) this.lieGrass.count = 0;
@@ -2387,6 +2390,69 @@ export class CourseScene {
     this.trees = index;
   }
 
+  // Shrubs, flower beds and ornamental grasses (plants.js): along woods edges and under the trees,
+  // behind tees and greens, round the clubhouse and houses, on pond banks and through the scrub of
+  // dry country; never on mown grass, sand, paths, roads, car parks, water or in a building
+  async addPlants(course, shore, buildings = [], buildingTypes = {}) {
+    if (!this.plants) this.plants = new Plants();
+    // (the graphics setting's share, times the course's own amount: plants.js coursePlants)
+    const cp = course.plants || { off: [], extra: [], amount: 1 }, amount = (this.quality?.plants ?? 1) * cp.amount;
+    this.beds = null;
+    if (course.autoTrees === false || !amount) { this.plants.group.clear(); this.plants.chunks = []; this.plantCount = 0; return; }
+    const lanes = [...(course.roads?.roads || []), ...(course.paths || [])];
+    const paved = onRoad(lanes, 1.2);
+    const lots = (this.parking?.lots || []).filter((l) => l.pts?.length > 2);
+    // (buildings in 20 m buckets by their bounding boxes)
+    const bb = new Map(), bkey = (i, j) => i * 73856093 ^ j * 19349663;
+    for (const b of buildings) {
+      if (!b.pts || b.pts.length < 3) continue;
+      const xs = b.pts.map((p) => p[0]), zs = b.pts.map((p) => p[1]);
+      for (let i = Math.floor((Math.min(...xs) - 1) / 20); i <= Math.floor((Math.max(...xs) + 1) / 20); i++) for (let j = Math.floor((Math.min(...zs) - 1) / 20); j <= Math.floor((Math.max(...zs) + 1) / 20); j++) {
+        if (!bb.has(bkey(i, j))) bb.set(bkey(i, j), []);
+        bb.get(bkey(i, j)).push(b.pts);
+      }
+    }
+    const inBuilding = (x, z) => (bb.get(bkey(Math.floor(x / 20), Math.floor(z / 20))) || []).some((pts) => pointInPoly(pts, x, z) || pointInPoly(pts, x + 0.6, z) || pointInPoly(pts, x - 0.6, z) || pointInPoly(pts, x, z + 0.6) || pointInPoly(pts, x, z - 0.6));
+    const NO = new Set(['green', 'fringe', 'tee', 'sand', 'water', 'path', 'fairway', 'firstcut']);
+    const ok = (x, z, mown = 1.5) => {
+      if (course.heightAt(x, z) === null || NO.has(this.fastSurface(x, z)) || NO.has(course.surfaceAt(x, z))) return false;
+      if (this.nearPath(x, z, 1.5) || this.nearSand(x, z, 1.5) || (mown && this.nearMown(x, z, mown)) || paved(x, z)) return false;
+      return !lots.some((l) => pointInPoly(l.pts, x, z)) && !inBuilding(x, z);
+    };
+    let bank = null;
+    if (shore) {
+      const { perimeter, shoreSpot } = this.shoreTools(course, shore);
+      const MOWN = new Set(['fairway', 'green', 'fringe', 'tee', 'path']);
+      bank = perimeter ? { perimeter, shoreSpot, nearPlay: (x, z, nx, nz) => [1.5, 3.5, 6, 9].some((d) => MOWN.has(this.fastSurface(x + nx * d, z + nz * d, true))) } : null;
+    }
+    const spots = placePlants({
+      region: this.treeRegion, amount, off: new Set(cp.off), extra: new Set(cp.extra), trees: this.forest?.trees || [], holes: course.holes, buildings, buildingTypes, shore: bank,
+      bounds: course.bounds, heightAt: (x, z) => course.heightAt(x, z), ok, surface: (x, z) => this.fastSurface(x, z),
+    });
+    await this.plants.build(spots, { toon: !!this.quality?.toon, envApply: (m) => this.applyEnvIntensity(m) });
+    this.plants.update(this.camera);
+    this.courseGroup.add(this.plants.group);
+    this.plantCount = spots.length;
+    // Flower beds are mulch, not rough: no grass tufts in them (the carpet's map, and the tufts
+    // round the ball: bedAt)
+    this.beds = new Set();
+    const R = this.roughMap;
+    for (const p of spots) {
+      if (PLANTS[p.kind].form !== 'flowers') continue;
+      const r = p.w / 2 + 0.3;
+      for (let x = Math.floor(p.x - r); x <= p.x + r; x++) for (let z = Math.floor(p.z - r); z <= p.z + r; z++) {
+        if (Math.hypot(x + 0.5 - p.x, z + 0.5 - p.z) > r) continue;
+        this.beds.add(`${x},${z}`);
+        const i = Math.floor(x + 0.5 - R?.minX), j = Math.floor(R?.maxZ - z - 0.5);
+        if (R && i >= 0 && j >= 0 && i < R.w && j < R.h) R.data[(j * R.w + i) * 4 + 2] = 0;
+      }
+    }
+    if (R && this.beds.size) R.map.needsUpdate = true;
+  }
+
+  // In a flower bed (no grass tufts there)
+  bedAt(x, z) { return !!this.beds?.size && this.beds.has(`${Math.floor(x)},${Math.floor(z)}`); }
+
   // Trees where the aerial photo shows tree canopy (dark, green, textured), outside the playing surfaces
   addTreesFromImagery(course, sat) {
     const S = sat.sample;
@@ -3053,6 +3119,7 @@ export class CourseScene {
   roughEdge(d) { return 1 - Math.min(1, Math.max(0, (d - 3) / 19)); }
 
   addRoughCarpet(course) {
+    this.roughMap = null;
     if (this.quality?.toon) return;
     const { minX, maxX, minZ, maxZ } = course.bounds;
     const w = Math.ceil(maxX - minX), h = Math.ceil(maxZ - minZ), data = new Uint8Array(w * h * 4);
@@ -3100,6 +3167,7 @@ export class CourseScene {
     const map = new THREE.DataTexture(data, w, h, THREE.RGBAFormat, THREE.UnsignedByteType);
     map.magFilter = map.minFilter = THREE.NearestFilter; map.generateMipmaps = false; map.colorSpace = THREE.NoColorSpace;
     map.needsUpdate = true;
+    this.roughMap = { map, data, w, h, minX, maxZ }; // (flower beds clear their own cells: addPlants)
     // Two rings: the close-up carpet out to 16 m, and beyond it out to 32 m fewer, wider tufts
     // with fewer blades (each covers more of the screen there), cross-fading between 12 and 16 m,
     // so the rough reads as thick grass well out from the camera, not just at your feet
@@ -3175,7 +3243,7 @@ export class CourseScene {
       const s = this.fastSurface(x, z);
       // Tufts only in the rough, never on mown grass (fairway, first cut, fringe, green, tee)
       if (!ROUGH.has(s)) continue;
-      if (this.nearPath(x, z) || this.nearMown(x, z) || this.nearSand(x, z)) continue;
+      if (this.nearPath(x, z) || this.nearMown(x, z) || this.nearSand(x, z) || this.bedAt(x, z)) continue;
       if (Math.random() < this.bareAt(x, z)) continue; // (bare ground: sand, rock, dirt)
       const y = this.course.heightAt(x, z);
       if (y === null) continue;
@@ -3795,6 +3863,7 @@ export class CourseScene {
     // Flag flutter and water ripples
     // Trees: detailed near the camera, light further away; see-through between camera and ball
     this.forest?.update(this.camera);
+    this.plants?.update(this.camera);
     this.updateOtherBalls();
     this.updateNativeTiles();
     this.stepGrass();

@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>GolfSim tree preview</title>
+  <title>OpenTeeGolf tree preview</title>
   <style>
     :root { color-scheme: dark; font: 16px/1.45 system-ui, sans-serif; background: #101913; color: #edf1e7; }
     * { box-sizing: border-box; }
@@ -23,12 +23,12 @@
 </head>
 <body>
   <header>
-    <h1>New tree species</h1>
-    <p>Procedural previews from GolfSim’s tree models. Drag a panel to rotate its tree; scroll over it to zoom.</p>
+    <h1>Tree species</h1>
+    <p>The species grown by the game, on their own (choose them with <code>?kinds=elm,olive</code>). Drag a panel to rotate its tree; scroll over it to zoom.</p>
   </header>
   <main>
     <div id="stage">
-      <canvas id="view" aria-label="Interactive 3D preview of eastern redcedar, Douglas-fir, ponderosa pine, and American beech"></canvas>
+      <canvas id="view" aria-label="Interactive 3D preview of tree species"></canvas>
     </div>
     <div id="status" role="status">Growing the models…</div>
   </main>
