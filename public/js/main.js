@@ -2193,7 +2193,7 @@ function connectEvents() {
       $('lm-arm').classList.add('hidden');
       $('lm-text').textContent = lm.connected
         ? `${lm.device || 'Launch monitor'}${lm.ready ? ' — ready' : ' — connected'}`
-        : 'Mevo+ not connected';
+        : lm.ocError || 'Mevo+ not connected';
       $('lm-text').title = '';
     }
     showLmHelp(lm);
@@ -2223,7 +2223,8 @@ const LM_NAMES = { r10: 'Garmin R10', square: 'Square Golf', frp: 'Launch monito
 const LM_HELP = {
   direct: 'Join this PC to the <b>Mevo+ Wi-Fi</b> (network <b>FS M2-…</b>; the password is the device\'s 9-digit serial), and close FS Golf. '
     + 'OpenTeeGolf connects to the radar itself and switches between full swing, chipping and putting modes on its own.',
-  fsgolf: 'Open the <b>FS Golf</b> PC app, connect it to your Mevo+, and choose its GSPro/OpenConnect connection (address 127.0.0.1, port 921).',
+  fsgolf: 'Open the <b>FS Golf</b> PC app, connect it to your Mevo+, and choose its OpenConnect simulator connection (address 127.0.0.1, port 921). '
+    + 'Tee and mat height are set in FS Golf.',
   r10: 'Turn the R10 on and pair it once in <b>Windows Settings &rarr; Bluetooth &amp; devices</b>, and close the Garmin Golf app on your phone. '
     + 'OpenTeeGolf finds it over Bluetooth through the open-source <a href="https://github.com/divotmaker/10over" target="_blank" rel="noopener">10over</a> bridge (downloaded the first time).',
   square: 'Turn the Square on (no pairing needed) and close the Square Golf app. '
@@ -2237,6 +2238,10 @@ function showLmHelp(lm = null) {
   let html = LM_HELP[kind] || '';
   if (kind === 'direct' && lm?.direct) {
     html += `<br>Status: <b>${lm.direct.state === 'ready' ? `${lm.device} ready` : lm.direct.text}</b>${lm.direct.error ? ` (${lm.direct.error})` : ''}`;
+  } else if (kind === 'fsgolf' && lm) {
+    html += `<br>Status: <b>${lm.ocError ? `${lm.ocError}. Close it, then connect FS Golf.`
+      : lm.connected ? `FS Golf connected${lm.ready ? ', Mevo+ ready' : ''}`
+        : `waiting for FS Golf on port ${lm.ocPort}, nothing has connected yet`}</b>`;
   } else if (lm?.relay && lm.relay.kind === kind) {
     const esc = (t) => String(t).replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`);
     html += `<br>Status: <b>${esc(lm.connected ? `${lm.device} ${lm.ready ? 'ready' : 'connected'}` : lm.relay.text)}</b>${lm.relay.error ? ` (${esc(lm.relay.error)})` : ''}`;

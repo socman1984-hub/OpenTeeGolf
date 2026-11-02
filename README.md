@@ -161,6 +161,10 @@ much of the flight must be tracked, and the detection mode (automatic by club, o
 swing / outdoor). The live view relays the camera's own video stream; it can take 10-30 s to
 start while the camera warms up.
 
+If your mat is higher than the Mevo+, keep the Mevo+ on the floor and enter the mat's height as
+the hitting-surface height. The level aims for about 12° of tilt (you can change the target) and
+0° of roll. It's only a guide and doesn't stop the Mevo+ from arming.
+
 ### Garmin R10, Square Golf and other launch monitors (experimental)
 
 The **Launch monitor** menu also has:
@@ -192,7 +196,11 @@ The Mevo+ sends shots to simulators through FlightScope's **FS Golf** PC app, us
 3. In FS Golf, choose its OpenConnect simulator connection (FS Golf names it after the
    simulator it was made for). The address is `127.0.0.1`, port `921`. If FS Golf runs on a
    different PC, use this PC's IP address instead and allow Node through the Windows Firewall.
-4. The status box at the top right turns green ("ready") when the Mevo+ is connected.
+4. The status box at the top right turns green ("ready") when the Mevo+ is connected. The
+   **Launch monitor** menu says whether anything has connected on port 921, or if another program
+   is holding the port.
+
+With this connection FS Golf runs the radar, so tee and mat height are set in FS Golf.
 
 OpenTeeGolf sends the selected club and the distance to the pin back to FS Golf. Clubs are
 auto-selected (putter on the green), and you can change them in the Club dropdown.

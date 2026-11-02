@@ -174,7 +174,7 @@ function reporter(course, task) {
   };
 }
 
-const lmState = { connected: false, ready: false, ballDetected: false, device: null, address: null, lastShotAt: null };
+const lmState = { connected: false, ready: false, ballDetected: false, device: null, address: null, lastShotAt: null, ocPort: OC_PORT, ocError: null };
 const player = { Handed: 'RH', Club: 'DR', DistanceToTarget: 0 };
 
 function setLm(patch) {
@@ -298,12 +298,22 @@ const ocServer = net.createServer((sock) => {
   sock.on('close', gone);
   sock.on('error', gone);
 });
-ocServer.on('error', (err) => {
-  if (err.code === 'EADDRINUSE') {
-    console.error(`\n!! Port ${OC_PORT} is already in use. Close any other simulator or connector using it so OpenTeeGolf can receive Mevo+ shots.\n`);
-  } else console.error('OpenConnect server error:', err);
+const ocListen = () => ocServer.listen(OC_PORT, '0.0.0.0');
+ocServer.on('listening', () => {
+  console.log(`OpenConnect listener on port ${OC_PORT} (point FS Golf here)`);
+  setLm({ ocError: null });
 });
-ocServer.listen(OC_PORT, '0.0.0.0', () => console.log(`OpenConnect listener on port ${OC_PORT} (point FS Golf here)`));
+ocServer.on('error', (err) => {
+  // Say so in the game too, and keep trying so closing the other program is enough
+  const ocError = err.code === 'EADDRINUSE' ? `Port ${OC_PORT} is in use by another program` : `Can't listen on port ${OC_PORT}: ${err.code || err.message}`;
+  if (ocError !== lmState.ocError) {
+    if (err.code === 'EADDRINUSE') console.error(`\n!! Port ${OC_PORT} is already in use. Close any other simulator or connector using it so OpenTeeGolf can receive Mevo+ shots.\n`);
+    else console.error('OpenConnect server error:', err);
+    setLm({ ocError });
+  }
+  setTimeout(ocListen, 5000).unref();
+});
+ocListen();
 
 // ---------------------------------------------------------------- Mevo+ direct (no FS Golf)
 
@@ -820,7 +830,7 @@ const httpServer = http.createServer(async (req, res) => {
       const d = DEFAULT_SETUP;
       settings.lm.setup = {
         distanceM: num(b.distanceM, 1.5, 6, d.distanceM), surfaceIn: num(b.surfaceIn, 0, 10, d.surfaceIn),
-        teeHeightIn: num(b.teeHeightIn, 0, 4, d.teeHeightIn), ballType: b.ballType ? 1 : 0,
+        teeHeightIn: num(b.teeHeightIn, 0, 4, d.teeHeightIn), tiltTarget: num(b.tiltTarget, -10, 25, d.tiltTarget), ballType: b.ballType ? 1 : 0,
         trackPct: num(b.trackPct, 0.6, 1, d.trackPct), mode: ['auto', 'full', 'outdoor'].includes(b.mode) ? b.mode : 'auto',
       };
       if (typeof b.armOnTurn === 'boolean') settings.lm.armOnTurn = b.armOnTurn;

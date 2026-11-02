@@ -21,7 +21,8 @@
       <h2>Direct connection is off</h2>
       <p class="muted">This page talks to the Mevo+ directly. In the main menu set <b>Launch monitor</b> to
         <i>Mevo+ direct</i>, join this PC to the Mevo+ Wi-Fi (<b>FS M2-…</b>, password = the 9-digit serial),
-        and close FS Golf.</p>
+        and close FS Golf. While FS Golf runs the Mevo+, set the tee and mat height in FS Golf: the setup below
+        only reaches the radar on the direct connection.</p>
       <button id="enable-direct" class="primary">Switch to direct connection</button>
     </div>
 
@@ -59,6 +60,8 @@
         </div>
       </div>
       <p id="level-hint" class="muted small"></p>
+      <p class="muted small">This is a guide: the Mevo+ still arms if it's off target. It isn't meant to lie flat, so a mat
+        higher than the Mevo+ is fine. FlightScope's advice is to keep it on the floor and enter the mat's height under Setup.</p>
     </section>
 
     <section class="card">
@@ -89,9 +92,13 @@
           <small>FlightScope recommends about 7–9 ft indoors (8 ft+ outdoors), with at least 8 ft of ball flight to the net.</small></label>
         <label>Hitting surface height
           <span class="unit-row"><input id="s-surface" type="number" step="0.25" min="0" max="10"> in</span>
-          <small>How far the ball sits above the floor the Mevo+ stands on (mat thickness).</small></label>
+          <small>How far the mat's surface is above the floor the Mevo+ stands on. Change this if your mat is higher than the Mevo+.</small></label>
         <label>Driver tee height
-          <span class="unit-row"><input id="s-tee" type="number" step="0.25" min="0" max="4"> in</span></label>
+          <span class="unit-row"><input id="s-tee" type="number" step="0.25" min="0" max="4"> in</span>
+          <small>How high the ball sits above the mat with a driver.</small></label>
+        <label>Tilt to aim for
+          <span class="unit-row"><input id="s-target" type="number" step="0.5" min="-10" max="25"> °</span>
+          <small>What the Level card counts as on target. FlightScope's guide says about 12°. Only the Level card uses it.</small></label>
         <label>Balls
           <select id="s-ball"><option value="0">Standard golf balls</option><option value="1">RCT (radar capture) balls</option></select>
           <small>RCT balls give the most reliable spin indoors.</small></label>

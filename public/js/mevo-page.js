@@ -11,8 +11,10 @@ const STATE = {
 let direct = false, busy = false;
 const MODE = { full: 'Full swing', chipping: 'Chipping', putting: 'Putting', outdoor: 'Outdoor' };
 
-// Level: green within 1°, amber to 2.5°, red beyond
-const levelClass = (v) => (Math.abs(v) <= 1 ? 'good' : Math.abs(v) <= 2.5 ? 'warn' : 'bad');
+// Level: roll is green within 1° of flat, amber to 2.5°; tilt is green within 3° of the target, amber to 6°; red beyond
+const ROLL_OK = 1, TILT_OK = 3;
+const levelClass = (v, ok) => (Math.abs(v) <= ok ? 'good' : Math.abs(v) <= ok * 2.5 ? 'warn' : 'bad');
+let tiltTarget = 12;
 
 function render() {
   const ready = state === 'ready' || state === 'shot';
@@ -45,17 +47,18 @@ function render() {
   if (info.tilt != null && info.roll != null) {
     $('tilt').textContent = `${info.tilt > 0 ? '+' : ''}${info.tilt.toFixed(1)}°`;
     $('roll').textContent = `${info.roll > 0 ? '+' : ''}${info.roll.toFixed(1)}°`;
-    $('tilt').className = levelClass(info.tilt);
-    $('roll').className = levelClass(info.roll);
-    // 5° from level reaches the edge of the bubble
-    const k = 50 / 5, x = Math.max(-50, Math.min(50, info.roll * k)), y = Math.max(-50, Math.min(50, -info.tilt * k));
+    const off = info.tilt - tiltTarget;
+    $('tilt').className = levelClass(off, TILT_OK);
+    $('roll').className = levelClass(info.roll, ROLL_OK);
+    // 5° of roll or 15° from the tilt target reaches the edge of the bubble
+    const x = Math.max(-50, Math.min(50, info.roll * 50 / 5)), y = Math.max(-50, Math.min(50, -off * 50 / 15));
     const b = $('bubble');
     b.style.left = `${50 + x * 0.82}%`;
     b.style.top = `${50 + y * 0.82}%`;
-    const level = Math.abs(info.tilt) <= 1 && Math.abs(info.roll) <= 1;
+    const level = Math.abs(off) <= TILT_OK && Math.abs(info.roll) <= ROLL_OK;
     b.classList.toggle('off', !level);
-    $('level-hint').textContent = level ? 'Level. Good.'
-      : `Adjust the Mevo+ until both read close to 0° (within 1°).${Math.abs(info.roll) > 1 ? ` It leans to the ${info.roll > 0 ? 'right' : 'left'}.` : ''}${Math.abs(info.tilt) > 1 ? ` It points ${info.tilt > 0 ? 'up' : 'down'}.` : ''}`;
+    $('level-hint').textContent = level ? 'On target. Good.'
+      : `Aim for about ${tiltTarget}° of tilt and 0° of roll.${Math.abs(info.roll) > ROLL_OK ? ` It leans to the ${info.roll > 0 ? 'right' : 'left'}.` : ''}${Math.abs(off) > TILT_OK ? ` It points too far ${off > 0 ? 'up' : 'down'}.` : ''}`;
   }
 
   // Last shot
@@ -122,6 +125,7 @@ function fillSetup(st) {
   $('s-dist').value = (st.distanceM / FT).toFixed(1);
   $('s-surface').value = st.surfaceIn;
   $('s-tee').value = st.teeHeightIn;
+  $('s-target').value = tiltTarget = st.tiltTarget;
   $('s-ball').value = String(st.ballType);
   $('s-track').value = st.trackPct;
   $('s-mode').value = st.mode;
@@ -130,7 +134,7 @@ function fillSetup(st) {
 $('setup').onsubmit = async (e) => {
   e.preventDefault();
   const body = {
-    distanceM: +$('s-dist').value * FT, surfaceIn: +$('s-surface').value, teeHeightIn: +$('s-tee').value,
+    distanceM: +$('s-dist').value * FT, surfaceIn: +$('s-surface').value, teeHeightIn: +$('s-tee').value, tiltTarget: +$('s-target').value,
     ballType: +$('s-ball').value, trackPct: +$('s-track').value, mode: $('s-mode').value, armOnTurn: $('s-turn').checked,
   };
   $('save').disabled = true;
@@ -140,7 +144,9 @@ $('setup').onsubmit = async (e) => {
   $('save').disabled = false;
   if (r.error) { $('save-msg').textContent = `Couldn't apply: ${r.error}`; return; }
   fillSetup(r.setup);
-  $('save-msg').textContent = state === 'ready' || state === 'arming' ? 'Saved and applied.' : 'Saved; it will be applied when the Mevo+ connects.';
+  render();
+  $('save-msg').textContent = !direct ? 'Saved; it will be applied if you connect directly. FS Golf uses its own settings.'
+    : state === 'ready' || state === 'arming' ? 'Saved and applied.' : 'Saved; it will be applied when the Mevo+ connects.';
 };
 
 $('enable-direct').onclick = async () => {
