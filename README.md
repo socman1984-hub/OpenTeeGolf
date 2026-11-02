@@ -8,8 +8,9 @@ A free, open-source golf simulator for the **FlightScope Mevo+**. It runs in you
 and plays **any golf course mapped in OpenStreetMap**: search for a course, build it in about a
 minute, and play it on real lidar terrain under real aerial photos.
 
-It renders with **three.js on WebGPU** and uses **Jolt Physics** for collisions, on top of its own
-ball-flight model calibrated to launch monitor data.
+It renders with **three.js on WebGPU** and uses **Jolt Physics** for collisions, with the ball's
+flight, bounce and roll from [OpenFairway](https://github.com/digitalhand/uopengolf/tree/main/Plugins/OpenFairwayPhysics),
+calibrated to launch monitor data.
 
 OpenTeeGolf is licensed under the **GNU GPL v3** (see [LICENSE](LICENSE)). You can use, study,
 change and share it, and any version you share must stay open source under the same license.
@@ -383,20 +384,23 @@ the course (`*.sat/`).
 
 ## Rules and physics
 
-* Ball flight uses drag and Magnus lift calibrated to TrackMan PGA Tour averages, with air
-  density for the course altitude. Run `npm test` to check it.
-* Landing uses an impact model where backspin checks the ball, then rolling friction and slope.
-  Green speed is set by the stimp value.
+* Ball physics come from [OpenFairway](https://github.com/digitalhand/uopengolf/tree/main/Plugins/OpenFairwayPhysics)
+  (ported to JavaScript in `public/js/openfairway.js`): drag and Magnus lift from wind-tunnel fits
+  calibrated to FlightScope, spin that decays with speed, and wind that is weaker near the ground and
+  stronger high up. The air's density comes from the course altitude and the weather. Run
+  `npm test` to compare it with launch monitor numbers.
+* Landing uses an impact model where backspin checks the ball (and on greens can spin it back),
+  then sliding and rolling friction, grass drag and slope. Green speed is set by the stimp value.
 * **Surfaces play differently:** each one has its own bounce, grip and roll, and changes your
   next strike.
 
   | Surface | Driver roll-out | Next shot |
   | --- | --- | --- |
-  | Fairway / tee | ~18 yd | full speed and spin |
-  | First cut (2 m collar around fairways) | ~14 yd | −3% speed, −12% spin |
-  | Rough | ~8 yd | −10% speed, −38% spin |
+  | Fairway / tee | ~17 yd | full speed and spin |
+  | First cut (2 m collar around fairways) | ~13 yd | −3% speed, −12% spin |
+  | Rough | ~11 yd | −10% speed, −38% spin |
   | Deep rough (under trees) | ~5 yd | −22% speed, −55% spin |
-  | Bunker | ~2 yd | −15% speed, −20% spin |
+  | Bunker | plugs, ~0 yd | −15% speed, −20% spin |
   | Green | fast, set by the stimp | putting |
 
 * **Where the surfaces come from:** OpenStreetMap supplies the greens, fairways, tees, bunkers
@@ -460,7 +464,8 @@ locally with `npm run package` (Windows; output in `dist/`).
   imagery (NAIP / Esri), buildings, cart paths, roads and car parks, cached per course
 * `lib/coursephoto.js`: finds a picture for each course
 * `public/js/course.js`: course file + real data → terrain, surfaces and hazards
-* `public/js/physics.js`: flight, bounce and roll
+* `public/js/physics.js`: the ball on the course (terrain, surfaces, trees, water, the cup)
+* `public/js/openfairway.js`: OpenFairway's flight, bounce and roll equations
 * `public/js/collision.js`: the Jolt Physics collision world (terrain, trunks, buildings, flagstick)
 * `public/js/scene.js`: three.js WebGPU rendering (terrain shading in TSL)
 * `public/js/main.js`: menu, game flow, rules and HUD

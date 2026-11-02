@@ -77,9 +77,11 @@ const noTree = simulateShot(flat, lowFrom, lowShot, { ...opts, collider: new Col
 const moved = Math.hypot(toTree.rest.x - noTree.rest.x, toTree.rest.z - noTree.rest.z);
 check(toTree.treeHits.includes('trunk') && moved > 5, `low shot into a trunk is knocked off its line (ends ${moved.toFixed(1)} m from where it would without the tree, hits: ${toTree.treeHits.join(', ')})`);
 
-// 4. A building wall stops a low runner
+// 4. A building wall turns back a low runner, which never gets inside (on this slope it may then
+// roll along the wall and around the corner)
 const toWall = simulateShot(flat, { x: -150, y: flat.heightAt(-150, 280), z: 280 }, { speedMph: 60, vla: 3, hla: 0, backSpin: 500, sideSpin: 0 }, { ...opts, collider: world });
-check(toWall.treeHits.includes('building') && toWall.rest.z < 300, `ball runs into a building and stays out (rest z = ${toWall.rest.z.toFixed(1)})`);
+const inside = toWall.points.some((q) => q.x > -170 && q.x < -130 && q.z > 300 && q.z < 320);
+check(toWall.treeHits.includes('building') && !inside, `ball runs into a building and stays out (rest x ${toWall.rest.x.toFixed(1)}, z ${toWall.rest.z.toFixed(1)})`);
 
 // 5. The flagstick
 const pin = { x: 150, y: flat.heightAt(150, 20), z: 20 };

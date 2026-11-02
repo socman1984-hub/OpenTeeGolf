@@ -1,47 +1,35 @@
-// Golf ball flight, bounce and roll simulation.
+// Golf ball flight, bounce and roll on the course: OpenFairway's ball physics (openfairway.js)
+// meeting the course's terrain, surfaces, trees, buildings, water and the cup.
 //
 // Works in course space (Unity-style frame): x/z horizontal, y up, meters.
 // A heading of 0 points along +z; "right" of heading h is (cos h, 0, -sin h).
 
-export const BALL_MASS = 0.04593;           // kg
-export const BALL_RADIUS = 0.021335;        // m
-const BALL_AREA = Math.PI * BALL_RADIUS * BALL_RADIUS;
-const G = 9.81;
+import * as OF from './openfairway.js';
+
+export const BALL_MASS = OF.MASS;           // kg
+export const BALL_RADIUS = OF.RADIUS;       // m
+const G = OF.G;
 export const CUP_RADIUS = 0.054;
 const MPH = 0.44704;
-const RPM = (2 * Math.PI) / 60;
+const RPM = OF.RAD_PER_RPM;
+const DT = OF.DT;
 
-// Aerodynamic model, calibrated against TrackMan tour averages (see test/physics-test.js).
-export const AERO = {
-  cd0: 0.22,     // drag at zero spin
-  cd1: 0.20,     // drag growth with spin factor
-  cdv: 0.08,     // extra drag at lower speeds (Reynolds effect), per 50 m/s below 50 m/s
-  cl0: 0.08,     // lift offset
-  cl1: 0.80,     // lift slope vs spin factor
-  clp: 1.00,     // lift exponent
-  clMax: 0.30,
-  spinDecay: 0.04, // fraction of spin lost per second
-};
-
-// Ground behaviour per surface. e = restitution scale (on Penner's speed-dependent curve),
-// fric = Coulomb friction on impact, roll = rolling friction coefficient,
-// drag = extra grass drag per m/s above 2 m/s,
-// bite = how hard backspin grips on landing (a soft, closely mown green takes the spin best: the
-// ball digs in; grass between ball and ground in the rough cushions it, so spin hardly bites),
-// back = the fastest (m/s) backspin can pull the ball back the way it came.
+// How each course surface plays (OpenFairway's contact settings: see openfairway.js). Tee, fairway,
+// fringe, rough, green and sand are OpenFairway's own presets; the course's other surfaces are
+// OpenTeeGolf's, built on them: first cut between fairway and rough, deep rough and heather
+// grabbing harder and cushioning the bounce, a cart path that bounces like pavement and runs.
 export const SURFACES = {
-  green:   { e: 1.08, fric: 1.05, roll: null, drag: 0.35, bite: 2.6, back: 1.9 },
-  fringe:  { e: 1.00, fric: 1.05, roll: 0.10, drag: 1.8, bite: 2.3, back: 1.2 },
-  fairway: { e: 1.20, fric: 1.00, roll: 0.10, drag: 1.5, bite: 2.2, back: 1.0 },
-  tee:     { e: 1.20, fric: 1.00, roll: 0.10, drag: 1.5, bite: 2.2, back: 1.0 },
-  firstcut:  { e: 1.00, fric: 1.10, roll: 0.16, drag: 2.2, bite: 1.8, back: 0.6 },
-  rough:     { e: 0.60, fric: 1.30, roll: 0.35, drag: 4.0, bite: 1.1, back: 0.3 },
-  deeprough: { e: 0.35, fric: 1.50, roll: 0.70, drag: 6.0, bite: 0.8, back: 0.2 },
-  native:    { e: 0.30, fric: 1.55, roll: 0.80, drag: 6.5, bite: 0.8, back: 0.2 },
-  path:      { e: 3.00, fric: 0.30, roll: 0.035, drag: 0.15, bite: 0.6, back: 0.3 }, // pavement: lively bounce, rolls a long way
-  sand:      { e: 0.08, fric: 1.60, roll: 1.40, drag: 5.0, bite: 1.0, back: 0.2 },
-  oob:       { e: 0.60, fric: 1.30, roll: 0.35, drag: 4.0, bite: 1.1, back: 0.3 },
-  water:   { e: 0, fric: 1, roll: 5, drag: 5, bite: 1, back: 0 },
+  green: OF.PRESETS.green,
+  fringe: OF.PRESETS.fringe,
+  fairway: OF.PRESETS.fairway,
+  tee: OF.PRESETS.fairway,
+  firstcut: OF.makeSurface(0.56, 0.072, 0.00245, 0.32, 0.74),
+  rough: OF.PRESETS.rough,
+  deeprough: OF.makeSurface(0.7, 0.18, 0.006, 0.4, 0.6, { restitutionScale: 0.6, impactRetentionScale: 0.6 }),
+  native: OF.makeSurface(0.72, 0.2, 0.0065, 0.42, 0.6, { restitutionScale: 0.55, impactRetentionScale: 0.55 }),
+  path: OF.makeSurface(0.3, 0.02, 0.0003, 0.25, 0.6, { restitutionScale: 2.0 }),
+  sand: OF.PRESETS.sand,
+  oob: OF.PRESETS.rough,
 };
 
 // Solid objects (Jolt collision world): restitution e (+ up to eVar at random), share of speed
@@ -52,15 +40,6 @@ export const OBSTACLES = {
   pole:     { e: 0.2, eVar: 0.1, keep: 0.5, spin: 0.5 },
   bumper:   { e: 0.62, eVar: 0.06, keep: 0.86, spin: 0.6 }, // putt-putt walls and posts: lively
   blade:    { e: 0.35, eVar: 0.1, keep: 0.7, spin: 0.5 },   // a windmill's sail
-};
-
-// Turf lets backspin bite harder than a rigid surface would (the ball digs in). Surfaces set their
-// own (SURFACES.bite); this is for any without one.
-export const GROUND = { spinBite: 2.0 };
-
-const restitution = (vn) => {
-  const v = Math.min(Math.abs(vn), 20);
-  return 0.51 - 0.0375 * v + 0.000903 * v * v;
 };
 
 // How the lie affects the next strike.
@@ -83,53 +62,18 @@ export const SURFACE_NAMES = {
   rough: 'Rough', deeprough: 'Deep rough', native: 'Heather', path: 'Cart path', sand: 'Bunker', water: 'Water', oob: 'Out of bounds',
 };
 
-export function stimpToRoll(stimpFt) {
-  // A stimpmeter releases the ball at ~1.83 m/s; it rolls `stimp` feet.
-  return (1.83 * 1.83) / (2 * G * stimpFt * 0.3048);
-}
+// Ball speed (m/s) that rolls a putt `distanceM` on a level green of this stimp
+export const puttSpeed = (distanceM, stimpFt) => OF.puttSpeed(distanceM, stimpFt);
 
 // Air density (kg/m³) from altitude, temperature, humidity and (if known) the actual station
 // pressure. Warm, humid, thin air = less drag and lift = the ball flies further.
 export function airDensity(altitudeM, tempC = 20, humidity = 0.5, pressureHpa = null) {
-  const pressure = pressureHpa ? pressureHpa * 100 : 101325 * Math.pow(1 - 2.25577e-5 * altitudeM, 5.25588);
-  const T = tempC + 273.15;
-  const pv = humidity * 610.78 * Math.pow(10, (7.5 * tempC) / (tempC + 237.3)); // water vapour pressure (Pa)
-  return (pressure - pv) / (287.05 * T) + pv / (461.5 * T);
-}
-
-// Wind is measured 10 m up; near the ground it is weaker, higher up stronger (log profile, short grass)
-export function windAtHeight(h) {
-  const z0 = 0.03;
-  return Math.min(1.35, Math.max(0.35, Math.log(Math.max(h, 0.5) / z0) / Math.log(10 / z0)));
-}
-
-function aero(v, rho, spinRadS, tiltRad, wind, out) {
-  // Relative air velocity
-  const rx = v[0] - wind[0], ry = v[1] - wind[1], rz = v[2] - wind[2];
-  const speed = Math.hypot(rx, ry, rz);
-  out[0] = 0; out[1] = -G; out[2] = 0;
-  if (speed < 1e-6) return;
-  const S = (BALL_RADIUS * spinRadS) / speed;
-  const cd = AERO.cd0 + AERO.cd1 * S + (AERO.cdv * (50 - speed)) / 50;
-  const cl = S > 0.005 ? Math.min(AERO.clMax, AERO.cl0 + AERO.cl1 * Math.pow(S, AERO.clp)) : 0;
-  const q = (0.5 * rho * BALL_AREA * speed * speed) / BALL_MASS;
-  const ux = rx / speed, uy = ry / speed, uz = rz / speed;
-  // Drag
-  out[0] -= q * cd * ux; out[1] -= q * cd * uy; out[2] -= q * cd * uz;
-  // Lift: perpendicular to velocity, tilted by spin axis.
-  let px = -uy * ux, py = 1 - uy * uy, pz = -uy * uz; // world up minus its velocity component
-  const pl = Math.hypot(px, py, pz) || 1;
-  px /= pl; py /= pl; pz /= pl;
-  const hl = Math.hypot(ux, uz) || 1;
-  const sx = uz / hl, sz = -ux / hl;                      // horizontal right of travel
-  const c = Math.cos(tiltRad), s = Math.sin(tiltRad);
-  out[0] += q * cl * (c * px + s * sx);
-  out[1] += q * cl * (c * py);
-  out[2] += q * cl * (c * pz + s * sz);
+  return OF.airDensity(altitudeM, tempC, humidity, pressureHpa ? pressureHpa * 100 : 0);
 }
 
 /**
- * Simulate a shot from launch until the ball stops.
+ * Simulate a shot from launch until the ball stops, with OpenFairway's flight, bounce and roll
+ * (openfairway.js) on the course's own ground.
  *
  * course: { heightAt(x,z), normalAt(x,z), surfaceAt(x,z) }
  * shot:   { speedMph, vla, hla, backSpin, sideSpin }  (deg / rpm, hla & sideSpin positive = right)
@@ -139,46 +83,68 @@ function aero(v, rho, spinRadS, tiltRad, wind, out) {
  * every step, with the time since the strike, and answers like the collision world does.
  */
 export function simulateShot(course, origin, shot, opts) {
-  const rho = airDensity(opts.altitudeM ?? 0, opts.tempC ?? 20, opts.humidity ?? 0.5, opts.pressureHpa ?? null);
+  const tempC = opts.tempC ?? 20;
+  const back = shot.backSpin || 0, side = shot.sideSpin || 0;
+  const launch = OF.resolveLaunch(shot.speedMph, shot.vla, Math.hypot(back, side));
+  const env = {
+    rho: airDensity(opts.altitudeM ?? 0, tempC, opts.humidity ?? 0.5, opts.pressureHpa ?? null),
+    mu: OF.airViscosity(tempC),
+    dragScale: launch.dragScale, liftScale: launch.liftScale, launchDeg: launch.launchDeg,
+  };
   // Wet ground (rain): softer landings, more grip, slower greens
   const wet = Math.min(1, Math.max(0, opts.wet ?? 0));
-  const greenRoll = stimpToRoll(Math.max(6, (opts.stimp ?? 10) - 1.8 * wet));
+  const greenRolling = OF.greenRollingFriction(Math.max(6, (opts.stimp ?? 10) - 1.8 * wet));
+  const settings = {};
   const surfaceParams = (surf) => {
-    const sp = SURFACES[surf] || SURFACES.rough;
+    if (settings[surf]) return settings[surf];
+    let sp = SURFACES[surf] || SURFACES.rough;
+    if (surf === 'green') sp = { ...sp, rollingFriction: greenRolling };
     // (wet, softer turf also takes spin better)
-    return wet ? { ...sp, e: sp.e * (1 - 0.35 * wet), fric: sp.fric * (1 + 0.15 * wet), roll: sp.roll == null ? null : sp.roll * (1 + 1.0 * wet), drag: sp.drag * (1 + 0.8 * wet), bite: (sp.bite ?? GROUND.spinBite) * (1 + 0.15 * wet) } : sp;
+    if (wet) sp = { ...sp, restitutionScale: sp.restitutionScale * (1 - 0.35 * wet), kineticFriction: sp.kineticFriction * (1 + 0.15 * wet), rollingFriction: sp.rollingFriction * (surf === 'green' ? 1 : 1 + 0.6 * wet), grassViscosity: sp.grassViscosity * (1 + 0.8 * wet) };
+    return (settings[surf] = sp);
   };
-  const windH = [0, 0, 0];
   const heading = opts.heading + (shot.hla * Math.PI) / 180;
   const vla = (shot.vla * Math.PI) / 180;
   const speed = shot.speedMph * MPH;
-  const v = [
-    speed * Math.cos(vla) * Math.sin(heading),
-    speed * Math.sin(vla),
-    speed * Math.cos(vla) * Math.cos(heading),
-  ];
-  const back = shot.backSpin || 0, side = shot.sideSpin || 0;
-  let spin = Math.hypot(back, side) * RPM;
+  const fx = Math.sin(heading), fz = Math.cos(heading);
+  const v = [speed * Math.cos(vla) * fx, speed * Math.sin(vla), speed * Math.cos(vla) * fz];
+  // Backspin turns about the horizontal axis to the left of the line (forward × up), side spin about
+  // up; positive side spin curves right
+  const spin = [-back * RPM * fz, side * RPM, back * RPM * fx];
   const tilt = Math.atan2(side, back);
   // Wind "from" direction is a compass heading in course space (0 = from +z).
   const wf = ((opts.wind?.fromDeg ?? 0) * Math.PI) / 180;
   const wm = opts.wind?.mps ?? 0;
   const wind = [-Math.sin(wf) * wm, 0, -Math.cos(wf) * wm];
+  const windH = [0, 0, 0];
 
   const p = [origin.x, origin.y, origin.z];
   const points = [{ t: 0, x: p[0], y: p[1], z: p[2] }];
-  const a = [0, 0, 0], a2 = [0, 0, 0];
-  const dt = 1 / 240;
-  let t = 0, apex = p[1], phase = 'air', bounces = 0;
-  // Putts (and bumps along the green) start rolling immediately.
+  let t = 0, apex = p[1], phase = 'air', bounces = 0, firstImpact = true, impactRpm = 0;
+  // Putts (and bumps along the green) start rolling immediately: with no measured spin, rolling.
   const startSurf = course.surfaceAt(origin.x, origin.z);
-  if ((startSurf === 'green' || startSurf === 'fringe') && shot.vla < 6 && shot.speedMph < 25) phase = 'roll';
+  if ((startSurf === 'green' || startSurf === 'fringe') && shot.vla < 6 && shot.speedMph < 25) {
+    phase = 'roll';
+    const n = course.normalAt(origin.x, origin.z);
+    const vn = v[0] * n[0] + v[1] * n[1] + v[2] * n[2];
+    v[0] -= vn * n[0]; v[1] -= vn * n[1]; v[2] -= vn * n[2];
+    const s0 = OF.launchSpin(v, spin, n);
+    spin[0] = s0[0]; spin[1] = s0[1]; spin[2] = s0[2];
+    impactRpm = Math.hypot(...spin) / RPM;
+  }
   let carryPoint = null, result = 'rest', waterEntry = null, lastDry = { x: p[0], y: p[1], z: p[2] };
   const pin = opts.pin;
   let sampleAcc = 0;
 
   // (w: spin rate in rad/s and air: in flight, for drawing the ball turning)
-  const push = () => points.push({ t, x: p[0], y: p[1], z: p[2], w: spin, air: phase === 'air' });
+  const push = () => points.push({ t, x: p[0], y: p[1], z: p[2], w: Math.hypot(spin[0], spin[1], spin[2]), air: phase === 'air' });
+  const scaleSpin = (k) => { spin[0] *= k; spin[1] *= k; spin[2] *= k; };
+  // Keep a rolling ball's velocity along the ground
+  const alongGround = () => {
+    const n = course.normalAt(p[0], p[2]);
+    const vn = v[0] * n[0] + v[1] * n[1] + v[2] * n[2];
+    v[0] -= vn * n[0]; v[1] -= vn * n[1]; v[2] -= vn * n[2];
+  };
   const cupState = { over: false };
   // Trees (optional): { near(x, z) -> [tree] } from the renderer
   const trees = opts.trees || null;
@@ -191,9 +157,9 @@ export function simulateShot(course, origin, shot, opts) {
   const treeState = { spinMul: 1, inCrown: new Set(), hits: [] };
   const treeStep = () => {
     if (!trees) return;
-    const ev = treeInteract(trees, p, v, dt, treeState, !collider);
+    const ev = treeInteract(trees, p, v, DT, treeState, !collider);
     if (ev) treeState.hits.push(ev);
-    if (treeState.spinMul !== 1) { spin *= treeState.spinMul; treeState.spinMul = 1; }
+    if (treeState.spinMul !== 1) { scaleSpin(treeState.spinMul); treeState.spinMul = 1; }
   };
   // The ball meets a solid object (trunk, wall, flagstick): bounce off it, losing speed and spin
   const hitObstacle = (hit) => {
@@ -203,7 +169,7 @@ export function simulateShot(course, origin, shot, opts) {
       const e = k.e + Math.random() * k.eVar;
       v[0] -= (1 + e) * vn * n[0]; v[1] -= (1 + e) * vn * n[1]; v[2] -= (1 + e) * vn * n[2];
       v[0] *= k.keep; v[1] *= k.keep; v[2] *= k.keep;
-      spin *= k.spin;
+      scaleSpin(k.spin);
     }
     p[0] = hit.point[0] + n[0] * 0.005; p[1] = hit.point[1] + n[1] * 0.005; p[2] = hit.point[2] + n[2] * 0.005;
     treeState.hits.push(hit.kind);
@@ -220,39 +186,47 @@ export function simulateShot(course, origin, shot, opts) {
     }
   };
 
-  for (let step = 0; step < 240 * 60; step++) {
+  for (let step = 0; step < 120 * 60; step++) {
     if (phase === 'air') {
-      // Midpoint (RK2) integration
-      // Wind strength depends on how high the ball is above where it was struck
-      const wk = windAtHeight(p[1] - origin.y);
+      // Wind strength depends on how high the ball's centre is above where it was struck
+      const wk = OF.windFactor(p[1] - origin.y + BALL_RADIUS);
       windH[0] = wind[0] * wk; windH[2] = wind[2] * wk;
-      aero(v, rho, spin, tilt, windH, a);
-      const vm = [v[0] + a[0] * dt * 0.5, v[1] + a[1] * dt * 0.5, v[2] + a[2] * dt * 0.5];
-      aero(vm, rho, spin, tilt, windH, a2);
+      OF.stepFlight(v, spin, env, windH, DT);
       prev[0] = p[0]; prev[1] = p[1]; prev[2] = p[2];
-      p[0] += vm[0] * dt; p[1] += vm[1] * dt; p[2] += vm[2] * dt;
-      v[0] += a2[0] * dt; v[1] += a2[1] * dt; v[2] += a2[2] * dt;
-      spin *= 1 - AERO.spinDecay * dt;
-      t += dt;
-      // What the ball met along this step (Jolt): solid objects bounce it, the ground ends the flight
-      let landed = false;
+      p[0] += v[0] * DT; p[1] += v[1] * DT; p[2] += v[2] * DT;
+      t += DT;
+      // What the ball met along this step (Jolt): solid objects bounce it, the ground ends the flight.
+      // `spent` is the share of the step taken before it touched the ground.
+      let landed = false, spent = 1;
       if (collider) {
         const hit = collider.cast(prev, p);
         if (hit && hit.kind !== 'terrain') { hitObstacle(hit); push(); continue; }
         if (hit) {
           const n = course.normalAt(hit.point[0], hit.point[2]);
-          if (v[0] * n[0] + v[1] * n[1] + v[2] * n[2] < 0) { p[0] = hit.point[0]; p[1] = hit.point[1]; p[2] = hit.point[2]; landed = true; }
+          if (v[0] * n[0] + v[1] * n[1] + v[2] * n[2] < 0) {
+            const step = Math.hypot(p[0] - prev[0], p[1] - prev[1], p[2] - prev[2]);
+            spent = step > 0 ? Math.min(1, Math.hypot(hit.point[0] - prev[0], hit.point[1] - prev[1], hit.point[2] - prev[2]) / step) : 0;
+            p[0] = hit.point[0]; p[1] = hit.point[1]; p[2] = hit.point[2]; landed = true;
+          }
         }
       }
       if (movers) { const mh = moverHit(); if (mh) { hitObstacle(mh); push(); continue; } }
       treeStep();
       apex = Math.max(apex, p[1]);
-      const ground = course.heightAt(p[0], p[2]);
+      let ground = course.heightAt(p[0], p[2]);
       if (ground === null) { result = 'oob'; push(); break; }
-      // Without Jolt (or if a step slips through), the ball lands once it is at or below the ground
-      if (!landed && p[1] <= ground && v[1] < 0) landed = true;
+      // Without Jolt (or if a step slips through), the ball lands once it is at or below the ground:
+      // back up to the moment it touched
+      if (!landed && p[1] <= ground && v[1] < 0) {
+        landed = true;
+        const above = prev[1] - (course.heightAt(prev[0], prev[2]) ?? ground);
+        spent = above > 0 ? Math.min(1, above / (above - (p[1] - ground))) : 0;
+        for (let k = 0; k < 3; k++) p[k] = prev[k] + (p[k] - prev[k]) * spent;
+        ground = course.heightAt(p[0], p[2]) ?? ground;
+      }
       if (landed) {
         p[1] = ground;
+        t -= (1 - spent) * DT;
         const surf = course.surfaceAt(p[0], p[2]);
         if (!carryPoint) carryPoint = { x: p[0], y: p[1], z: p[2], t };
         if (surf === 'water') { result = 'water'; waterEntry = { ...lastDry }; push(); break; }
@@ -262,31 +236,22 @@ export function simulateShot(course, origin, shot, opts) {
         }
         lastDry = { x: p[0], y: p[1], z: p[2] };
         const n = course.normalAt(p[0], p[2]);
-        const vn = v[0] * n[0] + v[1] * n[1] + v[2] * n[2];
-        let tx = v[0] - vn * n[0], ty = v[1] - vn * n[1], tz = v[2] - vn * n[2];
-        const tl = Math.hypot(tx, ty, tz);
         const sp = surfaceParams(surf);
-        // Impact friction (Penner-style): the contact either keeps sliding, losing mu*(1+e)*|vn|,
-        // or friction brings it to rolling at (5v - 2r*w)/7. Backspin (w > 0) can check or spin it back.
-        const backRad = spin * Math.cos(tilt);
-        const e = Math.min(0.78, sp.e * restitution(vn));
-        const sliding = tl - sp.fric * (1 + e) * -vn;
-        const rolling = (5 * tl - 2 * (sp.bite ?? GROUND.spinBite) * BALL_RADIUS * backRad) / 7;
-        let newT;
-        if (sliding > rolling) {
-          newT = sliding;
-          spin = Math.max(0, spin - (2.5 * (tl - newT)) / BALL_RADIUS);
-        } else {
-          newT = Math.max(rolling, -(sp.back ?? 1));             // spin-back, as far as the surface allows
-          spin = 0;
-        }
-        const scale = tl > 1e-6 ? newT / tl : 0;
-        tx *= scale; ty *= scale; tz *= scale;
-        const bounceV = -vn * e;
-        v[0] = tx + bounceV * n[0]; v[1] = ty + bounceV * n[1]; v[2] = tz + bounceV * n[2];
+        if (firstImpact) impactRpm = Math.hypot(...spin) / RPM;
+        // The first landing takes the calibrated landing loss and bite; later hops are roll-out bounces
+        OF.resolveImpact(v, spin, n, sp, firstImpact, launch.landing);
+        firstImpact = false;
         bounces++;
-        if (bounceV < 0.6 || bounces > 12) { phase = 'roll'; p[1] = ground; }
+        if (!OF.hasRebound(v, n, sp) || bounces > 30) { phase = 'roll'; alongGround(); }
         push();
+        // The rest of the step goes on after the bounce, as OpenFairway times its contacts
+        prev[0] = p[0]; prev[1] = p[1]; prev[2] = p[2];
+        p[0] += v[0] * (1 - spent) * DT; p[1] += v[1] * (1 - spent) * DT; p[2] += v[2] * (1 - spent) * DT;
+        t += (1 - spent) * DT;
+        const h = course.heightAt(p[0], p[2]);
+        if (h !== null && (phase === 'roll' || p[1] < h)) p[1] = h;
+        const wall = collider && collider.cast(prev, p, 'obstacle');
+        if (wall) { hitObstacle(wall); if (phase === 'roll') { p[1] = course.heightAt(p[0], p[2]) ?? p[1]; alongGround(); } }
         continue;
       }
     } else {
@@ -296,29 +261,16 @@ export function simulateShot(course, origin, shot, opts) {
       if (surf === null || surf === undefined) { result = 'oob'; push(); break; }
       lastDry = { x: p[0], y: p[1], z: p[2] };
       const sp = surfaceParams(surf);
-      const mu = surf === 'green' ? greenRoll : sp.roll;
       const n = course.normalAt(p[0], p[2]);
-      // Gravity component along the slope: downhill, the way the ground's normal leans
-      // (g - (g.n)n with g = (0, -G, 0): horizontally +G n.y n.x, +G n.y n.z)
-      const gx = G * n[1] * n[0], gz = G * n[1] * n[2];
-      // Keep velocity horizontal; the height follows the terrain.
-      v[1] = 0;
-      const sp2 = Math.hypot(v[0], v[2]);
-      const slopeAcc = Math.hypot(gx, gz);
-      if (sp2 < 0.03 && slopeAcc < mu * G * 1.2) {
+      OF.stepGround(v, spin, n, sp, impactRpm, DT);
+      if (OF.canRest(v, spin, n, sp)) {
         // Stopped over the hole: it falls in
         if (pin && Math.hypot(p[0] - pin.x, p[2] - pin.z) < CUP_RADIUS) { dropIntoCup(); result = 'holed'; break; }
-        v[0] = v[2] = 0; push(); break;
+        v[0] = v[1] = v[2] = 0; push(); break;
       }
-      let ax = gx, az = gz;
-      const dec = mu * G + sp.drag * Math.max(0, sp2 - 2);
-      if (sp2 > 1e-6) { ax -= (dec * v[0]) / sp2; az -= (dec * v[2]) / sp2; }
-      const vx0 = v[0], vz0 = v[2];
-      v[0] += ax * dt; v[2] += az * dt;
-      // Friction must not reverse the motion where the slope can't hold it moving
-      if (v[0] * vx0 + v[2] * vz0 < 0 && slopeAcc < mu * G) v[0] = v[2] = 0;
       prev[0] = p[0]; prev[1] = p[1]; prev[2] = p[2];
-      p[0] += v[0] * dt; p[2] += v[2] * dt;
+      // The height follows the terrain
+      p[0] += v[0] * DT; p[2] += v[2] * DT;
       treeStep(); // a rolling ball can run into a trunk
       const h = course.heightAt(p[0], p[2]);
       if (h === null) { result = 'oob'; push(); break; }
@@ -333,30 +285,32 @@ export function simulateShot(course, origin, shot, opts) {
             if (sp < 1.6 - 1.4 * Math.min(1, off / CUP_RADIUS)) { dropIntoCup(); result = 'holed'; break; }
           }
           hitObstacle(hit);
-          v[1] = 0;
           p[1] = course.heightAt(p[0], p[2]) ?? p[1];
+          alongGround();
+          // Crept up against it (a slope pushing it in): it rests there
+          if (Math.hypot(v[0], v[1], v[2]) < 0.1) { v[0] = v[1] = v[2] = 0; push(); break; }
         }
       }
       if (movers && (v[0] || v[2])) {
         const mh = moverHit();
-        if (mh) { hitObstacle(mh); v[1] = 0; p[1] = course.heightAt(p[0], p[2]) ?? p[1]; }
+        if (mh) { hitObstacle(mh); p[1] = course.heightAt(p[0], p[2]) ?? p[1]; alongGround(); }
       }
-      t += dt;
+      t += DT;
       // The cup: capture, lip-outs and balls curling around the rim
       if (pin) {
-        const c = cup(p, v, pin, cupState, dt);
+        const c = cup(p, v, pin, cupState, DT);
         if (c === 'holed') { dropIntoCup(); result = 'holed'; break; }
       }
     }
-    sampleAcc += dt;
-    if (sampleAcc >= 1 / 60) { sampleAcc = 0; push(); }
+    sampleAcc += DT;
+    if (sampleAcc >= 1 / 60 - 1e-9) { sampleAcc = 0; push(); }
   }
   const last = points[points.length - 1];
   if (last.t !== t) push();
   const rest = { x: p[0], y: p[1], z: p[2] };
   const hd = (q) => Math.hypot(q.x - origin.x, q.z - origin.z);
-  const fx = Math.sin(opts.heading), fz = Math.cos(opts.heading);
-  const offline = (q) => (q.x - origin.x) * fz - (q.z - origin.z) * fx;
+  const ox = Math.sin(opts.heading), oz = Math.cos(opts.heading);
+  const offline = (q) => (q.x - origin.x) * oz - (q.z - origin.z) * ox;
   return {
     points,
     result,
@@ -371,6 +325,7 @@ export function simulateShot(course, origin, shot, opts) {
     duration: t,
     treeHits: treeState.hits,
     spinTilt: tilt, // spin axis tilt (rad, from side spin)
+    regime: launch.regime,
   };
 }
 

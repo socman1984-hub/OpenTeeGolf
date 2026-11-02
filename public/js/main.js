@@ -5,7 +5,7 @@ import { fitRiverBanks, riverPhoto, needsBanks, photoAround } from './riverbanks
 import { fitBunkers, needsBunkerFit } from './bunkerfit.js';
 import { exportForUnreal } from './export-unreal.js';
 import { CourseScene } from './scene.js';
-import { simulateShot, LIE_EFFECT, stimpToRoll, SURFACE_NAMES } from './physics.js';
+import { simulateShot, LIE_EFFECT, puttSpeed, SURFACE_NAMES } from './physics.js';
 import { loadJolt, CollisionWorld } from './collision.js';
 import { PRESETS as WEATHER, fetchLiveWeather, wetness, gustFor, TIMES, timeHour, sunAt, daylight, dayOfYear, clockText } from './weather.js';
 import { PRACTICE_AREAS, makePractice } from './practice.js';
@@ -2000,7 +2000,7 @@ document.querySelectorAll('#test-panel [data-p]').forEach((b) => {
     if (b.dataset.p === 'putt') {
       // Speed to roll ~40 cm past the hole on a flat green
       const d = S.course ? dist(S.ball, pin()) + 0.4 : 3;
-      const v = Math.sqrt(2 * stimpToRoll(S.settings.stimp || 10) * 9.81 * d);
+      const v = puttSpeed(d, S.settings.stimp || 10);
       p = { speed: +(v / 0.44704).toFixed(2), vla: 1, hla: 0, spin: 0, axis: 0 };
     }
     $('t-speed').value = p.speed; $('t-vla').value = p.vla; $('t-hla').value = p.hla;
