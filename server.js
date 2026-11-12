@@ -39,6 +39,7 @@ const BUILDING_TYPE_IDS = new Set(BUILDING_TYPES.map((t) => t.id));
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const HTTP_PORT = +(process.env.PORT || 8080);
 const OC_PORT = +(process.env.OPENCONNECT_PORT || 921);
+const PHOTO_TREES_VERSION = 2;
 
 // ---------------------------------------------------------------- courses
 
@@ -605,7 +606,7 @@ const httpServer = http.createServer(async (req, res) => {
     }
     if ((m = p.match(/^\/api\/courses\/([\w-]+)\/phototrees$/))) {
       // Trees the game saw in the aerial photo, saved by the game so the editor shows the same ones
-      // ({ trees: [[x, z, height, radius], ...] })
+      // ({ version, trees: [[x, z, height, radius], ...] }; an older version's are found again)
       const f = courseFile(m[1]);
       const rf = f && realFile(f);
       if (!rf || !fs.existsSync(rf)) return json(res, { trees: null });
@@ -616,11 +617,12 @@ const httpServer = http.createServer(async (req, res) => {
         const trees = Array.isArray(b?.trees) ? b.trees.slice(0, 60000).filter((t) => Array.isArray(t) && t.length === 4 && t.every(Number.isFinite)).map((t) => t.map(r2)) : null;
         if (!trees) return json(res, { error: 'Bad tree list' }, 400);
         fs.mkdirSync(satDir, { recursive: true });
-        fs.writeFileSync(file, JSON.stringify({ trees }));
+        fs.writeFileSync(file, JSON.stringify({ version: PHOTO_TREES_VERSION, trees }));
         return json(res, { ok: true });
       }
       if (!fs.existsSync(file)) return json(res, { trees: null });
-      return json(res, JSON.parse(fs.readFileSync(file, 'utf8')));
+      const saved = JSON.parse(fs.readFileSync(file, 'utf8'));
+      return json(res, saved.version === PHOTO_TREES_VERSION ? saved : { trees: null });
     }
     if ((m = p.match(/^\/api\/export\/([\w-]+)\/(heightmap\.png|photo\.jpg|layer_[a-z]+\.png|trees\.json|holes\.json|course\.json|tree_\d+\.glb|tree_\d+_leaves\.png|tree_\d+_bark\.jpg|tree_\d+_bark_n\.jpg|tree_models\.json|grass_tuft\.glb|water\.glb|water\.json|water_bodies\.json|props_[a-z_]+\.glb|props\.json)$/)) && req.method === 'PUT') {
       // A course exported for Unreal Engine (public/js/export-unreal.js), written to exports/<id>/

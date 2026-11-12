@@ -27,8 +27,9 @@ export function treesFromCanopy(cm, allowed) {
     cand.push(k);
   }
   cand.sort((a, b) => S[b] - S[a]);
-  // Tallest first; a top too close to a taller tree belongs to it
-  const cell = 4, grid = new Map(), out = [];
+  // Tallest first; a top inside a taller tree's crown belongs to it (the map's 1 m cells show one
+  // crown as several bumps)
+  const cell = 8, grid = new Map(), out = [];
   const key = (gx, gz) => gx * 73856093 ^ gz * 19349663;
   const dirs = Array.from({ length: 8 }, (_, n) => [Math.cos((n * Math.PI) / 4), Math.sin((n * Math.PI) / 4)]);
   for (const k of cand) {
@@ -36,11 +37,10 @@ export function treesFromCanopy(cm, allowed) {
     const x = cm.minX + (i + 0.5) * cm.res, z = cm.maxZ - (j + 0.5) * cm.res;
     let top = 0;
     for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) top = Math.max(top, at(i + di, j + dj));
-    const minD = Math.max(2.2, top * 0.2);
     const gx = Math.floor(x / cell), gz = Math.floor(z / cell);
     let clash = false;
     for (let a = -2; a <= 2 && !clash; a++) for (let b = -2; b <= 2 && !clash; b++) {
-      for (const t of grid.get(key(gx + a, gz + b)) || []) if (Math.hypot(t.x - x, t.z - z) < minD) { clash = true; break; }
+      for (const t of grid.get(key(gx + a, gz + b)) || []) if (Math.hypot(t.x - x, t.z - z) < Math.max(4, t.r, t.h * 0.3)) { clash = true; break; }
     }
     if (clash || !allowed(x, z)) continue;
     // Crown radius: walk out in 8 directions until the canopy falls away or climbs into another tree
@@ -72,20 +72,19 @@ export function treesFromCanopy(cm, allowed) {
 // Tree crowns seen in the aerial photo, to fill the gaps the canopy map and OpenStreetMap leave
 // (the canopy map can be years old, or miss whole groups of trees). photo: { data (RGBA), w, h,
 // res (m per pixel, about 1), minX, maxZ }. Tree crowns are the darkest, most textured vegetation
-// in the photo, with deep shade close by: the cut-offs are learned from the photo itself. Spots on a jittered 3 m grid (the
-// same spots for the same course, so the game and the editor agree) that sit well inside crown
-// cover become trees, unless a tree already stands within 4 m or allowed(x, z) rules the spot out.
+// in the photo, with deep shade close by: the cut-offs are learned from the photo itself. Dark
+// patches are then read as round crowns, one tree each: the biggest circle that fits, then the next
+// biggest clear of it, so a tree 12 m across is one tree of that size, not a dozen small ones. A
+// crown and its shadow make one long dark shape, so the way shadows fall is learned from the photo
+// too: the tree goes at the end the sun comes from, and a circle lying in a tree's shadow is that
+// shadow. No tree where one already stands, or where allowed(x, z) rules the spot out.
 // Returns new trees { x, z, h, r, kind: null, photo: true }; heightAt(x, z) gives a canopy-map
-// height where there is one. With a height map, a spot also needs something at least 3 m tall
-// within 2 m (the map and the photo don't line up exactly): dark patches on open ground - the
+// height where there is one. With a height map, a crown also needs something at least 3 m tall
+// within reach (the map and the photo don't line up exactly): dark patches on open ground - the
 // long shadows of bare trees in a photo taken in winter, dark lush grass - are flat there. Where
 // the map shows nothing at all for 12 m around, though, it simply doesn't know about these trees
 // (planted since, or too slim for it: rows of young spruce between fairways), so the photo is
-// trusted, though it's read differently: a small conifer from above is a compact dark blob (its
-// crown and shadow, near black and often bluish, so not "vegetation" by colour) with lighter
-// ground all round. The tree goes on the blob's darkest spot; the darkest blobs are planted first,
-// 5 m apart, so a lighter neighbouring spot can't take a crown's place. Long dark shade (under a
-// cliff, beside a wood) isn't compact, and isn't taken.
+// trusted if the patch is compact and very dark, with lighter ground around it.
 export function treesFromPhoto(photo, { allowed = () => true, existing = [], heightAt = null } = {}) {
   const { data, w, h, res, minX, maxZ } = photo, N = w * h;
   const L = new Float32Array(N), veg = new Uint8Array(N);
@@ -141,76 +140,114 @@ export function treesFromPhoto(photo, { allowed = () => true, existing = [], hei
     for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) n += crown[(j + dj) * w + i + di];
     cover[j * w + i] = n >= 4 ? 1 : 0;
   }
-  const at = (x, z) => {
-    const i = Math.floor((x - minX) / res), j = Math.floor((maxZ - z) / res);
-    return i >= 0 && j >= 0 && i < w && j < h ? cover[j * w + i] : 0;
-  };
-  // Trees already standing, for keeping new ones 4 m clear of them and of each other
-  const cell = 8, grid = new Map(), key = (a, b) => a * 73856093 ^ b * 19349663;
+  // Where deep shade joins the crowns (a dark conifer is near black, so not "vegetation" by colour).
+  // Deep: well below the typical vegetation, whatever share of the photo is dark
+  const deep = Math.min(shade, vl[Math.floor(vl.length * 0.5)] * 0.6);
+  for (let k = 0; k < N; k++) if (L[k] < deep && data[k * 4 + 3] > 0) cover[k] = 1;
+  // Which way the light comes from: a crown is lit on its sunny side and its shadow lies on the
+  // other, so sunlit crown sits next to deep shade on the sun's side of it. sun: towards the sun in
+  // pixels (x right, y down), or null if the photo doesn't say (overcast, or no clear trees)
+  const OFF = Math.round(4 / res), LIT = OFF * 2;
+  let sun = null, best = 0, shades = 0;
+  const lit = (k) => cover[k] && L[k] >= deep && L[k] < (deep + dark) / 2;
+  for (let a = 0; a < 16; a++) {
+    const ux = Math.cos((a * Math.PI) / 8), uy = Math.sin((a * Math.PI) / 8), di = Math.round(ux * OFF), dj = Math.round(uy * OFF);
+    let sum = 0, n = 0;
+    for (let j = LIT; j < h - LIT; j += 3) for (let i = LIT; i < w - LIT; i += 3) {
+      if (L[j * w + i] >= deep) continue;
+      sum += lit((j + dj) * w + i + di) - lit((j - dj) * w + i - di); n++;
+    }
+    shades = n;
+    if (n && sum / n > best) { best = sum / n; sun = [ux, uy]; }
+  }
+  if (best < 0.008 || shades < 20) sun = null;
+  // Distance from each covered pixel to the nearest uncovered one, in metres (two-pass chamfer)
+  const D = new Float32Array(N), SQ = Math.SQRT2;
+  for (let k = 0; k < N; k++) D[k] = cover[k] ? 1e6 : 0;
+  for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) {
+    const k = j * w + i;
+    if (!D[k]) continue;
+    if (i === 0 || j === 0 || i === w - 1 || j === h - 1) { D[k] = 1; continue; }
+    D[k] = Math.min(D[k], D[k - 1] + 1, D[k - w] + 1, D[k - w - 1] + SQ, D[k - w + 1] + SQ);
+  }
+  for (let j = h - 2; j > 0; j--) for (let i = w - 2; i > 0; i--) {
+    const k = j * w + i;
+    if (D[k]) D[k] = Math.min(D[k], D[k + 1] + 1, D[k + w] + 1, D[k + w + 1] + SQ, D[k + w - 1] + SQ);
+  }
+  // Trees already standing, to keep new ones clear of them and of each other
+  const cell = 12, grid = new Map(), key = (a, b) => a * 73856093 ^ b * 19349663;
   const put = (t) => { const k = key(Math.floor(t.x / cell), Math.floor(t.z / cell)); if (!grid.has(k)) grid.set(k, []); grid.get(k).push(t); };
-  const near = (x, z, d) => {
+  const clashes = (x, z, r) => {
     const gx = Math.floor(x / cell), gz = Math.floor(z / cell);
-    for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) for (const t of grid.get(key(gx + a, gz + b)) || []) if (Math.hypot(t.x - x, t.z - z) < d) return true;
+    for (let a = -2; a <= 2; a++) for (let b = -2; b <= 2; b++) for (const t of grid.get(key(gx + a, gz + b)) || []) if (Math.hypot(t.x - x, t.z - z) < ((t.r || 3) + r) * 0.75) return true;
     return false;
   };
   for (const t of existing) put(t);
-  // 2: something tall within 2 m; 1: nothing tall within 12 m (the map doesn't know); 0: neither
-  const standing = (x, z) => {
+  // 2: something tall within reach; 1: nothing tall within 12 m (the map doesn't know); 0: neither
+  const standing = (x, z, r) => {
     if (!heightAt) return 2;
-    for (const [dx, dz] of [[0, 0], [2, 0], [-2, 0], [0, 2], [0, -2], [1.4, 1.4], [-1.4, 1.4], [1.4, -1.4], [-1.4, -1.4]]) if ((heightAt(x + dx, z + dz) || 0) >= 3) return 2;
-    for (let r = 4; r <= 12; r += 4) {
-      for (let a = 0; a < 12; a++) if ((heightAt(x + r * Math.cos((a * Math.PI) / 6), z + r * Math.sin((a * Math.PI) / 6)) || 0) >= 3) return 0;
-    }
+    for (const k of [0, 0.5, 1]) for (let a = 0; a < 8; a++) if ((heightAt(x + r * k * Math.cos((a * Math.PI) / 4), z + r * k * Math.sin((a * Math.PI) / 4)) || 0) >= 3) return 2;
+    for (let q = 4; q <= 12; q += 4) for (let a = 0; a < 12; a++) if ((heightAt(x + (r + q) * Math.cos((a * Math.PI) / 6), z + (r + q) * Math.sin((a * Math.PI) / 6)) || 0) >= 3) return 0;
     return 1;
   };
-  // The darkest spot (3 x 3 m average) within 3 m: [x, z, brightness]
-  const darkest = (x, z) => {
-    const ci = Math.floor((x - minX) / res), cj = Math.floor((maxZ - z) / res), R = Math.round(3 / res);
-    let best = null;
-    for (let j = Math.max(1, cj - R); j <= Math.min(h - 2, cj + R); j++) for (let i = Math.max(1, ci - R); i <= Math.min(w - 2, ci + R); i++) {
-      if ((i - ci) ** 2 + (j - cj) ** 2 > R * R) continue;
-      const v = box(i, j, Math.max(1, Math.round(1 / res)))[0];
-      if (!best || v < best[2]) best = [minX + (i + 0.5) * res, maxZ - (j + 0.5) * res, v];
-    }
-    return best;
-  };
-  // A compact dark blob near (x, z), on ground the canopy map knows nothing about: kept in loose
-  const blob = (x, z) => {
-    const d = darkest(x, z);
-    if (!d || d[2] >= shade) return;
-    const ci = Math.floor((d[0] - minX) / res), cj = Math.floor((maxZ - d[1]) / res);
-    if (d[2] > around(ci, cj) * 0.62) return;
-    // lighter ground 6 m out in most directions
+  // Only the photo knows about this one: very dark, with lighter ground all round
+  const compact = (i, j, r) => {
+    const m = box(i, j, Math.max(1, Math.round((r * 0.7) / res)))[0];
+    if (m >= shade || m > around(i, j) * 0.8) return false;
     let light = 0;
     for (let a = 0; a < 8; a++) {
-      const i = Math.round(ci + (Math.cos((a * Math.PI) / 4) * 6) / res), j = Math.round(cj - (Math.sin((a * Math.PI) / 4) * 6) / res);
-      if (i >= 0 && j >= 0 && i < w && j < h && L[j * w + i] > d[2] * 1.6) light++;
+      const ii = Math.round(i + (Math.cos((a * Math.PI) / 4) * (r + 3)) / res), jj = Math.round(j + (Math.sin((a * Math.PI) / 4) * (r + 3)) / res);
+      if (ii >= 0 && jj >= 0 && ii < w && jj < h && L[jj * w + ii] > m * 1.4) light++;
     }
-    if (light >= 5) loose.push(d);
+    return light >= 5;
   };
-  // (candidate spots every 3 m, so small single crowns get one near their middle)
-  const out = [], loose = [], STEP = 3;
-  const x0 = Math.ceil(minX / STEP) * STEP, z1 = Math.floor(maxZ / STEP) * STEP;
-  for (let gz = z1; gz > maxZ - h * res; gz -= STEP) for (let gx = x0; gx < minX + w * res; gx += STEP) {
-    const x = gx + (hash(gx, gz, 2.3) - 0.5) * STEP * 0.6, z = gz + (hash(gx, gz, 4.1) - 0.5) * STEP * 0.6;
-    // Well inside crown cover: the spot and most of a ring 2 m around it
-    let n = at(x, z) * 2;
-    for (const [dx, dz] of [[2, 0], [-2, 0], [0, 2], [0, -2], [1.4, 1.4], [-1.4, 1.4], [1.4, -1.4], [-1.4, -1.4]]) n += at(x + dx, z + dz);
-    // (blob candidates: see below)
-    if (heightAt) blob(x, z);
-    if (n < 7 || near(x, z, 4) || !shaded(x, z)) continue;
-    if (standing(x, z) !== 2 || !allowed(x, z)) continue;
-    const canopy = heightAt?.(x, z) || 0, k = hash(x, z, 8.8);
-    const t = { x, z, h: canopy >= 4 ? canopy : 9 + k * 8, r: 2.6 + hash(x, z, 9.9) * 1.6, kind: null, photo: true };
-    out.push(t); put(t);
+  // Candidates: the middles of the dark patches, biggest first (of equal size, nearest the sun)
+  const MIN_R = 2.5 / res, cand = [];
+  for (let j = 1; j < h - 1; j++) for (let i = 1; i < w - 1; i++) {
+    const k = j * w + i, v = D[k];
+    if (v < MIN_R || v < D[k - 1] || v < D[k + 1] || v < D[k - w] || v < D[k + w] || v < D[k - w - 1] || v < D[k - w + 1] || v < D[k + w - 1] || v < D[k + w + 1]) continue;
+    cand.push(k);
   }
-  // The ones only the photo knows: darkest first
-  loose.sort((a, b) => a[2] - b[2]);
-  for (const [x, z] of loose) {
-    if (near(x, z, 5) || !allowed(x, z)) continue;
-    const k = hash(x, z, 8.8);
-    const t = { x, z, h: 9 + k * 8, r: 2.2 + hash(x, z, 9.9) * 1.4, kind: null, photo: true };
+  const towardSun = (k) => (sun ? (k % w) * sun[0] + Math.floor(k / w) * sun[1] : 0);
+  cand.sort((a, b) => Math.round(D[b]) - Math.round(D[a]) || towardSun(b) - towardSun(a));
+  const out = [], shadows = [];
+  const inShadow = (i, j) => shadows.some(([si, sj, len, r]) => {
+    const dx = i - si, dy = j - sj, along = -(dx * sun[0] + dy * sun[1]);
+    return along > 0 && along < len && Math.hypot(dx + along * sun[0], dy + along * sun[1]) < r;
+  });
+  const cells = new Map(), near = 40;
+  for (const k of cand) {
+    let i = k % w, j = (k - i) / w;
+    // (less a metre: the patch's edge takes in some of the texture round the crown)
+    const r0 = Math.min(9, Math.max(2, D[k] * res - 1)), r = r0 / res;
+    if (sun) {
+      shadows.length = 0;
+      for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) shadows.push(...(cells.get(key(Math.floor(i / near) + a, Math.floor(j / near) + b)) || []));
+      // (lit crown shows through: a tree of its own, whatever falls across it)
+      const dark = box(i, j, Math.max(1, Math.round(r * 0.7)))[0] < deep;
+      if (dark && inShadow(i, j)) continue;
+      // All shade, in a patch that runs on towards the sun: the crown is at that end
+      for (let q = 1, ii = i, jj = j, reach = dark ? 26 / res : 0; q <= reach; q++) {
+        ii = Math.round(i + sun[0] * q); jj = Math.round(j + sun[1] * q);
+        if (ii < 0 || jj < 0 || ii >= w || jj >= h || !cover[jj * w + ii]) {
+          const back = Math.max(0, q - r);
+          i = Math.round(i + sun[0] * back); j = Math.round(j + sun[1] * back);
+          break;
+        }
+      }
+    }
+    const x = minX + (i + 0.5) * res, z = maxZ - (j + 0.5) * res;
+    if (clashes(x, z, r0) || !allowed(x, z)) continue;
+    const st = standing(x, z, r0);
+    if (st === 0 || (st === 1 && !compact(i, j, r))) continue;
+    const canopy = heightAt?.(x, z) || 0, q = hash(x, z, 8.8);
+    const t = { x, z, h: canopy >= 4 ? canopy : Math.min(26, Math.max(7, r0 * 2.4 + q * 4)), r: r0, kind: null, photo: true };
     out.push(t); put(t);
+    if (sun) {
+      const c = key(Math.floor(i / near), Math.floor(j / near));
+      if (!cells.has(c)) cells.set(c, []);
+      cells.get(c).push([i, j, (t.h * 1.2 + r0) / res, r * 1.1]);
+    }
   }
   return out;
 }
@@ -261,7 +298,7 @@ export function nearHoles(trees, dist) {
   });
 }
 
-// Trees taken out in the course editor: [[x, z], ...]. Any tree within 3 m of one is left out -
+// Trees taken out in the course editor: [[x, z], ...]. Any tree with one on its crown is left out -
 // found automatically (tree-height map, OpenStreetMap, aerial photo) or planted in one of the
 // player's tree areas - except the single trees the player placed (those are deleted outright).
 export function removeTrees(trees, removed) {
@@ -270,7 +307,7 @@ export function removeTrees(trees, removed) {
   for (const [x, z] of removed) { const k = key(Math.floor(x / cell), Math.floor(z / cell)); if (!grid.has(k)) grid.set(k, []); grid.get(k).push([x, z]); }
   const gone = (t) => {
     const gx = Math.floor(t.x / cell), gz = Math.floor(t.z / cell);
-    for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) for (const [x, z] of grid.get(key(gx + a, gz + b)) || []) if (Math.hypot(t.x - x, t.z - z) < 3) return true;
+    for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) for (const [x, z] of grid.get(key(gx + a, gz + b)) || []) if (Math.hypot(t.x - x, t.z - z) < Math.max(3, (t.r || 0) * 0.7)) return true;
     return false;
   };
   return trees.filter((t) => (t.user && !t.area) || !gone(t));
