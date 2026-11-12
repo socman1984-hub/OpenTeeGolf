@@ -19,6 +19,20 @@ const SIDE = 60;           // how far past a bank (over a gravel bar, an island)
 
 const median = (a) => { const s = [...a].sort((x, y) => x - y); return s.length ? s[s.length >> 1] : NaN; };
 
+// Courses built before rivers were marked as flowing: their ribbons (pairs of banks one width apart,
+// a river mapped as a centre line) marked now. Ponds drawn by hand or mapped as outlines aren't that.
+export function markOldRivers(water) {
+  for (const f of water || []) {
+    const n = f.pts?.length;
+    if (f.hole || f.flow || f.banks || !n || n < 4 || n % 2) continue;
+    const hw = [];
+    for (let i = 0; i < n / 2; i++) hw.push(Math.hypot(f.pts[i][0] - f.pts[n - 1 - i][0], f.pts[i][1] - f.pts[n - 1 - i][1]) / 2);
+    const long = Math.hypot(f.pts[0][0] - f.pts[n / 2 - 1][0], f.pts[0][1] - f.pts[n / 2 - 1][1]);
+    if (hw[0] > 0.5 && long > hw[0] * 2 && hw.every((v) => Math.abs(v - hw[0]) < 0.3)) f.flow = true;
+  }
+  return water;
+}
+
 // Streams in a water list still to be fitted
 export const needsBanks = (water) => (water || []).some((f) => f.flow && !f.hole && !f.banks);
 
@@ -60,9 +74,14 @@ export function fitRiverBanks(water, photo) {
       return { m, tol: Math.min(46, Math.max(20, spread * 3.2)) };
     });
     const far = (q, m) => Math.hypot(q[0] - m[0], q[1] - m[1], q[2] - m[2]);
+    // A river's water can be white over riffles and near black in the shade of its banks, far from
+    // its usual colour, but it stays grey or teal: about as much blue as red, where trees, grass
+    // and sandy paths have clearly less. (Not for a narrow stream: its bed and banks read the same.)
+    const river = hw.some((v) => v > 3);
+    const grey = (q) => river && q[2] >= q[0] * 0.92 && q[1] <= q[0] * 1.5 && q[0] + q[1] + q[2] > 75;
     // Water: like the river's own colour, or (shallows shade off into a lighter, greener colour
     // over the gravel) like the water just crossed and not too unlike the river's
-    const wet = (q, r, run) => q && (far(q, r.m) < r.tol || (run && far(q, run) < r.tol * 0.7 && far(q, r.m) < r.tol * 2.2));
+    const wet = (q, r, run) => q && (far(q, r.m) < r.tol || grey(q) || (run && far(q, run) < r.tol * 0.7 && far(q, r.m) < r.tol * 2.2));
     const mix = (run, q) => (run ? run.map((v, k) => v * 0.8 + q[k] * 0.2) : [...q]);
     // Out from the centre on one side (s = +1 left, -1 right): distance to the bank (or NaN), and
     // a side channel past it as [inner, outer] distances (or null)
@@ -80,13 +99,14 @@ export function fitRiverBanks(water, photo) {
       if (seen < 2) return [NaN, null];
       const bank = last + SCAN / 2;
       // A side channel: at least 6 m of the river's own colour again (strictly: shade under the
-      // trees on the far bank mustn't pass for water), within SIDE of the bank
+      // trees on the far bank mustn't pass for water), within SIDE of the bank. (A river of many colours has a wide tolerance, so
+      // there it must also be the grey of water: grass mustn't pass either)
       let a = -1, b = -1;
       dry = 0;
       for (d = bank + DRY; d <= bank + SIDE; d += SCAN) {
         const q = px(x + nx * d * s, z + nz * d * s);
         if (!q) break;
-        if (far(q, r.m) < r.tol * 0.85) { if (a < 0) a = d; b = d; dry = 0; } else if (a >= 0 && (dry += SCAN) >= DRY) break;
+        if (far(q, r.m) < r.tol * 0.85 && (r.tol <= 30 || grey(q))) { if (a < 0) a = d; b = d; dry = 0; } else if (a >= 0 && (dry += SCAN) >= DRY) break;
       }
       return [bank, a >= 0 && b - a >= 6 ? [a, b + SCAN / 2] : null];
     };

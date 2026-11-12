@@ -1,7 +1,7 @@
 // OpenTeeGolf game loop: course setup, receiving shots, rules and HUD.
 import { buildCourse, TEE_TYPES } from './course.js';
 import { smoothLine } from './roads.js';
-import { fitRiverBanks, riverPhoto, needsBanks, photoAround } from './riverbanks.js';
+import { fitRiverBanks, riverPhoto, needsBanks, markOldRivers, photoAround } from './riverbanks.js';
 import { fitBunkers, needsBunkerFit } from './bunkerfit.js';
 import { exportForUnreal } from './export-unreal.js';
 import { CourseScene } from './scene.js';
@@ -640,7 +640,7 @@ $('btn-start').onclick = async () => {
     }
     // Rivers mapped as a line: their real width from the aerial photo, the first time (kept with
     // the course's map data, so the editor shows them too)
-    if (real && imagery && needsBanks(real.features?.water)) {
+    if (real && imagery && needsBanks(markOldRivers(real.features?.water))) {
       loader.step('riverbanks', 'River banks');
       await breathe();
       try {
