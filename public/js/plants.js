@@ -1,7 +1,7 @@
 // Shrubs, flowers and grasses around the course, beyond the trees and their undergrowth
 // (trees.js) and the reeds (scene.js):
-//   woods edges   - flowering shrubs on the open side of the trees along a wood: azaleas and hollies
-//                   in the Southeast, rhododendrons in the Northwest, saw palmetto in Florida,
+//   woods edges   - shrubs here and there on the open side of the trees along a wood: mostly hollies
+//                   and boxwood with the odd azalea or rhododendron, saw palmetto in Florida,
 //                   creosote, prickly pear and yucca in the desert
 //   woods floor   - ferns (and palmetto in the South) under the trees
 //   tees          - a flower bed behind the back tee of some holes, with grasses or boxwood behind it
@@ -92,7 +92,7 @@ export function placePlants(ctx) {
   for (const t of trees) {
     if (near(t.x, t.z) > 170) continue;
     const r = t.rh || t.coneR || t.r || 3;
-    if (t.edge && R.edge && edges < maxEdge && hash(t.x, t.z, 31.7) < Math.min(0.95, 0.5 * A)) {
+    if (t.edge && R.edge && edges < maxEdge && hash(t.x, t.z, 31.7) < Math.min(0.95, 0.25 * A)) {
       // the open side: away from the trees round it
       let ox = 0, oz = 0;
       for (const o of around(t.x, t.z, cell)) if (o !== t) { const d = Math.hypot(o.x - t.x, o.z - t.z) || 1; ox -= (o.x - t.x) / d; oz -= (o.z - t.z) / d; }
@@ -101,7 +101,7 @@ export function placePlants(ctx) {
       ox /= ol; oz /= ol;
       // (each stretch of woods leans to one kind, as they're planted or spread)
       const patch = hash(Math.floor(t.x / 45), Math.floor(t.z / 45), 32.9);
-      const n = 1 + Math.floor(hash(t.x, t.z, 33.1) * 3);
+      const n = 1 + Math.floor(hash(t.x, t.z, 33.1) * 2);
       for (let i = 0; i < n; i++) {
         const turn = (hash(t.x + i, t.z, 34.3) - 0.5) * 2.2, c = Math.cos(turn), s = Math.sin(turn);
         const d = r * (0.6 + hash(t.x, t.z + i, 35.5) * 0.7) + 0.6;

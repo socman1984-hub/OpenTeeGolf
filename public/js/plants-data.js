@@ -27,20 +27,20 @@ export const PLANTS = {
 
 // What grows where, by the course's region (treeplace.js treeRegion): weighted mixes for woods
 // edges, the woods floor, ornamental grasses, flower bed colours, pond banks and (dry country) the
-// rough. Missing: none of that kind.
+// rough. Missing: none of that kind. Woods edges are mostly green shrubs, with flowering ones as the odd accent.
 export const ARID = { edge: { creosote: 3, sagebrush: 1, pricklypear: 2, yucca: 2 }, grass: { fountaingrass: 2, muhly: 1, yucca: 1 }, beds: ['bedyellow', 'bedred', 'bedpurple'], bank: { fountaingrass: 2, pampas: 1 }, rough: { creosote: 4, sagebrush: 2, pricklypear: 2, yucca: 2 }, hedge: 'boxwood', beds_p: 0.7 };
 export const PLANT_REGIONS = {
-  temperate: { edge: { azalea: 2, rhododendron: 2, holly: 1, boxwood: 1 }, floor: { fern: 1 }, grass: { fountaingrass: 3, pampas: 1 }, beds: ['bedred', 'bedyellow', 'bedpurple', 'bedwhite'], bank: { fountaingrass: 2, bedyellow: 1, bedpurple: 1 }, beds_p: 0.45 },
-  southeast: { edge: { azalea: 6, holly: 2, rhododendron: 1, boxwood: 1 }, floor: { fern: 1 }, grass: { muhly: 3, fountaingrass: 2, pampas: 1 }, beds: ['bedred', 'bedyellow', 'bedwhite', 'bedpurple'], bank: { muhly: 1, pampas: 1, bedyellow: 1 }, beds_p: 0.7 },
+  temperate: { edge: { boxwood: 4, holly: 3, azalea: 1, rhododendron: 1 }, floor: { fern: 1 }, grass: { fountaingrass: 3, pampas: 1 }, beds: ['bedred', 'bedyellow', 'bedpurple', 'bedwhite'], bank: { fountaingrass: 2, bedyellow: 1, bedpurple: 1 }, beds_p: 0.45 },
+  southeast: { edge: { holly: 4, boxwood: 3, azalea: 2, rhododendron: 1 }, floor: { fern: 1 }, grass: { muhly: 3, fountaingrass: 2, pampas: 1 }, beds: ['bedred', 'bedyellow', 'bedwhite', 'bedpurple'], bank: { muhly: 1, pampas: 1, bedyellow: 1 }, beds_p: 0.7 },
   subtropical: { edge: { palmetto: 6, azalea: 1, holly: 1 }, floor: { palmetto: 2, fern: 1 }, grass: { muhly: 2, fountaingrass: 2, pampas: 2 }, beds: ['bedred', 'bedyellow', 'bedwhite', 'bedpurple'], bank: { pampas: 2, fountaingrass: 1, bedyellow: 1 }, beds_p: 0.7 },
   desert: ARID,
   sonoran: ARID,
-  calcoast: { edge: { sagebrush: 2, boxwood: 1, rhododendron: 1 }, floor: { fern: 1 }, grass: { fountaingrass: 2, pampas: 1 }, beds: ['bedpurple', 'bedyellow', 'bedwhite'], bank: { pampas: 1, fountaingrass: 1 }, beds_p: 0.45 },
+  calcoast: { edge: { sagebrush: 3, boxwood: 3, rhododendron: 1 }, floor: { fern: 1 }, grass: { fountaingrass: 2, pampas: 1 }, beds: ['bedpurple', 'bedyellow', 'bedwhite'], bank: { pampas: 1, fountaingrass: 1 }, beds_p: 0.45 },
   socal: { edge: { sagebrush: 2, yucca: 1, boxwood: 1 }, grass: { fountaingrass: 2, muhly: 1 }, beds: ['bedpurple', 'bedred', 'bedyellow'], bank: { pampas: 1, fountaingrass: 1 }, rough: { sagebrush: 3, yucca: 1, pricklypear: 1 }, beds_p: 0.6 },
   mountain: { edge: { sagebrush: 3, boxwood: 1 }, grass: { fountaingrass: 2 }, beds: ['bedpurple', 'bedyellow', 'bedred'], bank: { fountaingrass: 1, bedyellow: 1 }, rough: { sagebrush: 1 }, beds_p: 0.35 },
-  pacificnw: { edge: { rhododendron: 5, holly: 1, boxwood: 1 }, floor: { fern: 3 }, grass: { fountaingrass: 2 }, beds: ['bedpurple', 'bedwhite', 'bedred'], bank: { fountaingrass: 1, bedyellow: 1 }, beds_p: 0.4 },
+  pacificnw: { edge: { holly: 3, boxwood: 3, rhododendron: 2 }, floor: { fern: 3 }, grass: { fountaingrass: 2 }, beds: ['bedpurple', 'bedwhite', 'bedred'], bank: { fountaingrass: 1, bedyellow: 1 }, beds_p: 0.4 },
   mediterranean: { edge: { sagebrush: 1, boxwood: 2 }, grass: { pampas: 1, fountaingrass: 2 }, beds: ['bedpurple', 'bedred', 'bedwhite'], bank: { pampas: 1 }, beds_p: 0.45 },
-  tropical: { edge: { palmetto: 3, azalea: 1 }, floor: { palmetto: 1, fern: 1 }, grass: { fountaingrass: 2, pampas: 1 }, beds: ['bedred', 'bedyellow', 'bedwhite'], bank: { pampas: 1 }, beds_p: 0.7 },
+  tropical: { edge: { palmetto: 5, azalea: 1 }, floor: { palmetto: 1, fern: 1 }, grass: { fountaingrass: 2, pampas: 1 }, beds: ['bedred', 'bedyellow', 'bedwhite'], bank: { pampas: 1 }, beds_p: 0.7 },
 };
 // The groups as the course editor lists them
 export const PLANT_GROUPS = [
