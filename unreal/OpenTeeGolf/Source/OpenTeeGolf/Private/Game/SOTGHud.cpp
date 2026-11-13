@@ -4,6 +4,8 @@
 
 #include "OTGUi.h"
 #include "SOTGMenus.h"
+#include "SOTGMinimap.h"
+#include "SOTGPanels.h"
 #include "Widgets/Layout/SBox.h"
 #include "Widgets/Layout/SGridPanel.h"
 #include "Widgets/SBoxPanel.h"
@@ -24,13 +26,24 @@ void SOTGHud::Construct(const FArguments&)
 				+ SVerticalBox::Slot().AutoHeight().Padding(0, 2)[SAssignNew(Info2, STextBlock).Font(Font(15)).ColorAndOpacity(Soft)]
 				+ SVerticalBox::Slot().AutoHeight().Padding(0, 6, 0, 0)[SAssignNew(ClubText, STextBlock).Font(Font(16, "Bold")).ColorAndOpacity(Gold)])
 		]
-		// who's winning (players together)
+		// on the right: who's winning (players together), the wind, the minimap
 		+ SOverlay::Slot().HAlign(HAlign_Right).VAlign(VAlign_Top).Padding(24)
 		[
-			SAssignNew(StandBox, SBorder).BorderImage(FCoreStyle::Get().GetBrush("WhiteBrush")).BorderBackgroundColor(Panel).Padding(FMargin(14, 8)).Visibility(EVisibility::Collapsed)
+			SNew(SVerticalBox)
+			+ SVerticalBox::Slot().AutoHeight().HAlign(HAlign_Right).Padding(0, 0, 0, 8)
 			[
-				SAssignNew(StandList, SVerticalBox)
+				SAssignNew(StandBox, SBorder).BorderImage(FCoreStyle::Get().GetBrush("WhiteBrush")).BorderBackgroundColor(Panel).Padding(FMargin(14, 8)).Visibility(EVisibility::Collapsed)
+				[
+					SAssignNew(StandList, SVerticalBox)
+				]
 			]
+			+ SVerticalBox::Slot().AutoHeight().HAlign(HAlign_Right).Padding(0, 0, 0, 8)[SAssignNew(WindBox, SOTGWind)]
+			+ SVerticalBox::Slot().AutoHeight().HAlign(HAlign_Right)[SNew(SBox).WidthOverride(250).HeightOverride(360)[SAssignNew(Map, SOTGMinimap)]]
+		]
+		// the test shot panel (T)
+		+ SOverlay::Slot().HAlign(HAlign_Left).VAlign(VAlign_Center).Padding(24, 60, 24, 24)
+		[
+			SAssignNew(Shots, SOTGShotPanel).Visibility(EVisibility::Collapsed)
 		]
 		// the shot data
 		+ SOverlay::Slot().HAlign(HAlign_Center).VAlign(VAlign_Bottom).Padding(24, 24, 24, 48)
@@ -51,7 +64,7 @@ void SOTGHud::Construct(const FArguments&)
 		+ SOverlay::Slot().HAlign(HAlign_Left).VAlign(VAlign_Bottom).Padding(24)
 		[
 			SAssignNew(Keys, STextBlock).Font(Font(12)).ColorAndOpacity(FLinearColor(1, 1, 1, 0.7f)).ShadowOffset(FVector2D(1, 1))
-			.Text(FText::FromString(TEXT("Left / Right: aim     Up / Down: club     Space: test shot     Enter: skip / continue     Tab: scorecard     Backspace: mulligan     Esc: menu")))
+			.Text(FText::FromString(TEXT("Click the ground or the map to aim     Left / Right: fine aim     Up / Down: club     T: test shot panel     Space: quick test shot     Enter: skip / continue     Tab: scorecard     Backspace: mulligan     Esc: menu")))
 		]
 		// banners and toasts
 		+ SOverlay::Slot().HAlign(HAlign_Center).VAlign(VAlign_Top).Padding(0, 140, 0, 0)
@@ -251,6 +264,16 @@ void SOTGHud::ShowPause(FSimpleDelegate OnResume, FSimpleDelegate OnScorecard, F
 				FMargin(28, 22), Solid)
 		]);
 	PauseSlot->SetVisibility(EVisibility::Visible);
+}
+
+void SOTGHud::ShowShotPanel(bool bShow)
+{
+	Shots->SetVisibility(bShow ? EVisibility::Visible : EVisibility::Collapsed);
+}
+
+bool SOTGHud::IsShotPanelShown() const
+{
+	return Shots->GetVisibility() == EVisibility::Visible;
 }
 
 void SOTGHud::HidePause()

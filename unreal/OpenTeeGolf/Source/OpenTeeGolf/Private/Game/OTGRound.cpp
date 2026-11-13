@@ -4,6 +4,17 @@
 #include "Game/OTGRound.h"
 
 #include "Camera/CameraActor.h"
+#include "Components/DirectionalLightComponent.h"
+#include "Components/ExponentialHeightFogComponent.h"
+#include "Components/SkyAtmosphereComponent.h"
+#include "Components/SkyLightComponent.h"
+#include "Components/VolumetricCloudComponent.h"
+#include "Engine/SkyLight.h"
+#include "Engine/Texture2D.h"
+#include "SOTGMinimap.h"
+#include "SOTGPanels.h"
+#include "Engine/DirectionalLight.h"
+#include "Engine/ExponentialHeightFog.h"
 #include "Camera/CameraComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/Engine.h"
@@ -39,6 +50,8 @@ namespace
 	FAutoConsoleCommandWithWorldAndArgs ClubCmd(TEXT("OTG.Round.Club"), TEXT("OTG.Round.Club 1|-1: a longer / shorter club"), FCmd::CreateLambda([](const TArray<FString>& A, UWorld* W) { if (AOTGRound* R = RoundIn(W); R && A.Num()) R->ChangeClub(FCString::Atoi(*A[0])); }));
 	FAutoConsoleCommandWithWorldAndArgs DropCmd(TEXT("OTG.Round.Drop"), TEXT("OTG.Round.Drop <yards>: (testing) the ball that far from the pin, on the line it's on"), FCmd::CreateLambda([](const TArray<FString>& A, UWorld* W) { if (AOTGRound* R = RoundIn(W); R && A.Num()) R->DropNearPin(FCString::Atod(*A[0])); }));
 	FAutoConsoleCommandWithWorldAndArgs PauseCmd(TEXT("OTG.Round.Pause"), TEXT("The pause menu (the Esc key)"), FCmd::CreateLambda([](const TArray<FString>&, UWorld* W) { if (AOTGRound* R = RoundIn(W)) R->TogglePause(); }));
+	FAutoConsoleCommandWithWorldAndArgs CastCmd(TEXT("OTG.Round.CastTest"), TEXT("(testing) what a ball meets flying at the flagstick and at the nearest trunk"), FCmd::CreateLambda([](const TArray<FString>&, UWorld* W) { if (AOTGRound* R = RoundIn(W)) R->CastTest(); }));
+	FAutoConsoleCommandWithWorldAndArgs PanelCmd(TEXT("OTG.Round.ShotPanel"), TEXT("The test shot panel (the T key)"), FCmd::CreateLambda([](const TArray<FString>&, UWorld* W) { if (AOTGRound* R = RoundIn(W)) R->ToggleShotPanel(); }));
 	FAutoConsoleCommandWithWorldAndArgs CardCmd(TEXT("OTG.Round.Scorecard"), TEXT("Show / hide the scorecard (the Tab key)"), FCmd::CreateLambda([](const TArray<FString>&, UWorld* W) { if (AOTGRound* R = RoundIn(W)) R->ToggleScorecard(); }));
 
 	constexpr double M_TO_YD = 1.09361, M_TO_FT = 3.28084;
@@ -134,6 +147,10 @@ AOTGRound::AOTGRound()
 	TracerMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	TracerMesh->SetCastShadow(false);
 	TracerMesh->bUseAsyncCooking = true;
+	RainMesh = CreateDefaultSubobject<UProceduralMeshComponent>(TEXT("Rain"));
+	RainMesh->SetupAttachment(RootComponent);
+	RainMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	RainMesh->SetCastShadow(false);
 }
 
 // ------------------------------------------------------------------ setting up
@@ -144,6 +161,16 @@ void AOTGRound::Setup(UOTGCourseData* InData, const FOTGRoundSetup& InSetup)
 	Setup_ = InSetup;
 	Data->FillPlayCourse(Course);
 	Data->FillTrees(Trees);
+	std::vector<otg::Solid> Solids;
+	for (const FOTGSolid& S : Data->Solids)
+	{
+		otg::Solid O;
+		O.h = S.Height;
+		O.kind = TCHAR_TO_UTF8(*S.Kind);
+		for (const FVector2D& Q : S.Footprint) O.pts.emplace_back(Q.X, Q.Y);
+		Solids.push_back(O);
+	}
+	Collider.Build(Course, Trees.all, Solids);
 	SetActorLocation(FVector::ZeroVector);
 	TeeName = Setup_.Tee.IsEmpty() ? FString(TEXT("White")) : Setup_.Tee;
 	PinName = Setup_.Pin.IsEmpty() ? FString(TEXT("Saturday")) : Setup_.Pin;
@@ -224,7 +251,31 @@ void AOTGRound::Setup(UOTGCourseData* InData, const FOTGRoundSetup& InSetup)
 	{
 		Hud = SNew(SOTGHud);
 		GEngine->GameViewport->AddViewportWidgetContent(Hud.ToSharedRef(), 10);
+		// the minimap: the course photo, over the landscape's area
+		const FString PhotoPath = FString::Printf(TEXT("/Game/Courses/%s/Build/Textures/T_CoursePhoto.T_CoursePhoto"), *Data->CourseId);
+		UTexture2D* Photo = LoadObject<UTexture2D>(nullptr, *PhotoPath);
+		if (!Photo) UE_LOG(LogOTGRound, Warning, TEXT("No course photo for the minimap (%s)"), *PhotoPath);
+		TWeakObjectPtr<AOTGRound> Self(this);
+		Hud->Minimap()->SetCourse(Photo, Data->HeightX0, Data->HeightZ1, (Data->HeightSamples - 1) * Data->MetresPerSample, [Self](double X, double Z) {
+			return Self.IsValid() ? SurfaceDisplay(Self->Course.SurfaceAt(X, Z)) : FString();
+		});
+		Hud->Minimap()->OnAim = [Self](double X, double Z) { if (Self.IsValid()) Self->AimAt(X, Z); };
+		// the test shot panel (T): hit as if the launch monitor had sent it
+		Hud->ShotPanel()->PuttMph = [Self]() {
+			return Self.IsValid() ? otg::of::PuttSpeed(Self->DistToPin() + 0.4, Self->Data->DefaultStimp) / 0.44704 : 5.0;
+		};
+		Hud->ShotPanel()->OnHit = [Self](double Mph, double Vla, double Hla, double Spin, double Axis) {
+			if (!Self.IsValid()) return;
+			if (UOTGLaunchMonitorSubsystem* LM = Self->GetGameInstance()->GetSubsystem<UOTGLaunchMonitorSubsystem>()) LM->InjectShot(Mph, Vla, Hla, Spin, Axis);
+		};
 	}
+	UMaterialInterface* Rain = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/OpenTeeGolf/Game/M_Rain.M_Rain"));
+	if (Rain)
+	{
+		RainMat = UMaterialInstanceDynamic::Create(Rain, this);
+		RainMesh->SetMaterial(0, RainMat);
+	}
+	else UE_LOG(LogOTGRound, Warning, TEXT("No rain material (make_pack.ps1 -Assets makes it)"));
 
 	// Shots
 	if (UOTGLaunchMonitorSubsystem* LM = GetGameInstance()->GetSubsystem<UOTGLaunchMonitorSubsystem>())
@@ -243,7 +294,8 @@ void AOTGRound::Setup(UOTGCourseData* InData, const FOTGRoundSetup& InSetup)
 			if (I.Split(TEXT(":"), &At, &Command)) ExecAt.Emplace(FCString::Atod(*At), Command.TrimStartAndEnd());
 		}
 	}
-	UE_LOG(LogOTGRound, Display, TEXT("Round on %s: %d holes, %d trees; %s, %d side(s), %s tees, %s pins"), *Data->CourseName, Data->Holes.Num(), int32(Trees.all.size()),
+	SetupWeather();
+	UE_LOG(LogOTGRound, Display, TEXT("Round on %s: %d holes, %d trunks and buildings to hit; %s, %d side(s), %s tees, %s pins"), *Data->CourseName, Data->Holes.Num(), int32(Collider.Count()),
 		*Game->F.Name, Game->Sides.Num(), *TeeName, *PinName);
 	StartHole(First);
 }
@@ -469,6 +521,154 @@ void AOTGRound::DropNearPin(double Yards)
 	Toast(FString::Printf(TEXT("(testing) dropped %s from the pin, %s"), *Len(M), *SurfaceDisplay(Lie).ToLower()));
 }
 
+void AOTGRound::CastTest()
+{
+	auto Report = [&](const TCHAR* What, const otg::V3& From, const otg::V3& To) {
+		otg::Hit H;
+		const bool bHit = Collider.Cast(From, To, false, H);
+		UE_LOG(LogOTGRound, Display, TEXT("CastTest %s: %s at (%.2f, %.2f, %.2f), normal (%.2f, %.2f, %.2f)"), What, bHit ? UTF8_TO_TCHAR(H.kind.c_str()) : TEXT("nothing"),
+			H.point.x, H.point.y, H.point.z, H.normal.x, H.normal.y, H.normal.z);
+	};
+	const otg::V3 P = Pin();
+	Collider.SetPin(&P);
+	// at the flagstick, a metre up, from 5 m short of it
+	const double D = FMath::Max(0.1, DistToPin());
+	const double UX = (P.x - Ball.x) / D, UZ = (P.z - Ball.z) / D;
+	Report(TEXT("flagstick"), otg::V3{ P.x - UX * 5, P.y + 1, P.z - UZ * 5 }, otg::V3{ P.x + UX, P.y + 1, P.z + UZ });
+	// at the nearest trunk, a metre up
+	const otg::Tree* Near = nullptr;
+	double Best = 1e18;
+	for (const otg::Tree& T : Trees.all) { const double DD = (T.x - Ball.x) * (T.x - Ball.x) + (T.z - Ball.z) * (T.z - Ball.z); if (DD < Best) { Best = DD; Near = &T; } }
+	if (Near)
+	{
+		const double G = Course.HeightAt(Near->x, Near->z);
+		Report(TEXT("trunk"), otg::V3{ Near->x - 5, G + 1, Near->z }, otg::V3{ Near->x + 5, G + 1, Near->z });
+	}
+	// straight down onto the ground at the ball
+	Report(TEXT("ground"), otg::V3{ Ball.x, Ball.y + 10, Ball.z }, otg::V3{ Ball.x, Ball.y - 10, Ball.z });
+	UE_LOG(LogOTGRound, Display, TEXT("CastTest: ground at the ball %.3f"), Course.HeightAt(Ball.x, Ball.z));
+}
+
+// Aim at a spot (course metres): the minimap, or a click on the ground
+void AOTGRound::AimAt(double X, double Z)
+{
+	if (Phase != EPhase::Ready || bPaused) return;
+	const double D = FMath::Sqrt((X - Ball.x) * (X - Ball.x) + (Z - Ball.z) * (Z - Ball.z));
+	if (D < 1) return;
+	Heading = HeadingTo(Ball, X, Z);
+	AimDist = D;
+	ShowAim();
+	AddressView(false);
+}
+
+void AOTGRound::AimAtWorld(const FVector& W)
+{
+	const FVector C = Data->WorldToCourse(W);
+	AimAt(C.X, C.Z);
+}
+
+void AOTGRound::ToggleShotPanel()
+{
+	if (Hud) Hud->ShowShotPanel(!Hud->IsShotPanelShown());
+}
+
+void AOTGRound::UpdateMap()
+{
+	if (!Hud || !Hud->Minimap()) return;
+	FOTGMapState S;
+	S.bValid = true;
+	const otg::V3 P = Pin(), T = TeeOf(Hole(), TeeName), A = AimPoint();
+	S.Ball = FVector2D(BallShown.x, BallShown.z);
+	S.Pin = FVector2D(P.x, P.z);
+	S.Tee = FVector2D(T.x, T.z);
+	S.Aim = FVector2D(A.x, A.z);
+	S.bOnGreen = OnGreen();
+	if (!Game->Single())
+	{
+		S.Ring = Game->Sides[SideIdx].Colour;
+		for (int32 i = 0; i < Game->Sides.Num(); i++)
+			if (i != SideIdx && !Game->Sides[i].bHoled) S.Others.Emplace(FVector2D(Game->Sides[i].Ball.x, Game->Sides[i].Ball.z), Game->Sides[i].Colour);
+	}
+	Hud->Minimap()->SetState(S);
+}
+
+// The wind box: an arrow against the aim (up: helping), its speed and gusts, how it plays, the weather
+void AOTGRound::UpdateWindBox()
+{
+	if (!Hud || !Hud->Wind()) return;
+	double Mps, FromDeg;
+	HoleWind(Mps, FromDeg);
+	const double TempF = Weather.TempC * 1.8 + 32;
+	const FString Line2 = FString::Printf(TEXT("%s%s  ·  %d\u00B0F%s"), Weather.bLive ? TEXT("Live: ") : TEXT(""), *Weather.Label, FMath::RoundToInt(TempF), Weather.Wetness() > 0 ? TEXT("  ·  wet ground") : TEXT(""));
+	if (Mps <= 0)
+	{
+		Hud->Wind()->Set(0, true, TEXT("Calm"), Line2);
+		return;
+	}
+	const double BlowRel = FromDeg + 180 - FMath::RadiansToDegrees(Heading);
+	const double Along = FMath::Cos(FMath::DegreesToRadians(BlowRel));
+	const FString Feel = FMath::Abs(Along) < 0.4 ? TEXT("cross") : Along > 0 ? TEXT("helping") : TEXT("into you");
+	const FString Gust = Weather.GustMph > Weather.WindMph + 3 ? FString::Printf(TEXT(", gusts %d"), FMath::RoundToInt(Weather.GustMph)) : FString();
+	Hud->Wind()->Set(BlowRel, false, FString::Printf(TEXT("%d mph%s  ·  %s"), FMath::RoundToInt(Weather.WindMph), *Gust, *Feel), Line2);
+}
+
+// Rain: streaks round the camera, falling and blown with the wind (M_Rain: make_game_assets.py)
+void AOTGRound::UpdateRain(float Dt)
+{
+	const double Mm = Weather.RainMm;
+	if (Mm <= 0.05 || !RainMat || !Cam)
+	{
+		if (RainVerts) { RainMesh->ClearAllMeshSections(); RainVerts = 0; RainDrops.Reset(); }
+		return;
+	}
+	const int32 N = FMath::Clamp(int32(700 + Mm * 320), 700, 3200);
+	const FVector Half(2200, 2200, 1300);
+	const FVector C = CamPos;
+	if (RainDrops.Num() != N)
+	{
+		RainDrops.SetNum(N);
+		for (FVector& D : RainDrops) D = C + FVector(FMath::FRandRange(-Half.X, Half.X), FMath::FRandRange(-Half.Y, Half.Y), FMath::FRandRange(-400, Half.Z));
+	}
+	double Mps, FromDeg;
+	HoleWind(Mps, FromDeg);
+	const double F = FMath::DegreesToRadians(FromDeg);
+	// (blowing away from where it comes from: course (-sin, -cos) is world (-sin, +cos))
+	const FVector V(-FMath::Sin(F) * Mps * 60, FMath::Cos(F) * Mps * 60, -950);
+	const FVector Dir = V.GetSafeNormal();
+	TArray<FVector> Verts;
+	TArray<int32> Tris;
+	TArray<FVector2D> UV;
+	Verts.Reserve(N * 4);
+	Tris.Reserve(N * 6);
+	UV.Reserve(N * 4);
+	for (FVector& D : RainDrops)
+	{
+		D += V * Dt;
+		FVector R = D - C;
+		if (R.Z < -400) { R.Z += Half.Z + 400; R.X = FMath::FRandRange(-Half.X, Half.X); R.Y = FMath::FRandRange(-Half.Y, Half.Y); }
+		if (R.X < -Half.X) R.X += 2 * Half.X; else if (R.X > Half.X) R.X -= 2 * Half.X;
+		if (R.Y < -Half.Y) R.Y += 2 * Half.Y; else if (R.Y > Half.Y) R.Y -= 2 * Half.Y;
+		D = C + R;
+		// (none right in front of the lens: a drop there is a blur across the view)
+		if ((D - C).SizeSquared() < 250 * 250) D += FVector(0, 0, Half.Z);
+		const FVector ToCam = (C - D).GetSafeNormal();
+		const FVector Side = FVector::CrossProduct(Dir, ToCam).GetSafeNormal() * 0.35;
+		const FVector Bottom = D + Dir * 70;
+		const int32 B = Verts.Num();
+		Verts.Append({ D - Side, D + Side, Bottom - Side, Bottom + Side });
+		UV.Append({ FVector2D(0, 0), FVector2D(1, 0), FVector2D(0, 1), FVector2D(1, 1) });
+		Tris.Append({ B, B + 2, B + 1, B + 1, B + 2, B + 3 });
+	}
+	if (RainVerts != Verts.Num())
+	{
+		RainMesh->CreateMeshSection_LinearColor(0, Verts, Tris, TArray<FVector>(), UV, TArray<FLinearColor>(), TArray<FProcMeshTangent>(), false);
+		RainMesh->SetMaterial(0, RainMat);
+		RainVerts = Verts.Num();
+	}
+	else RainMesh->UpdateMeshSection_LinearColor(0, Verts, TArray<FVector>(), UV, TArray<FLinearColor>(), TArray<FProcMeshTangent>());
+	RainMat->SetScalarParameterValue(TEXT("Opacity"), float(FMath::Clamp(0.18 + Mm * 0.04, 0.18, 0.45)));
+}
+
 void AOTGRound::ToggleScorecard()
 {
 	ShowScorecard(!bScorecard);
@@ -523,10 +723,29 @@ void AOTGRound::OnShot(const FOTGShot& Shot)
 	otg::ShotOptions O;
 	O.heading = Heading;
 	O.altitudeM = Data->AltitudeM;
+	// the wind for this shot (the hole's, with a gust), and the air and the ground
+	{
+		double Mps, FromDeg;
+		HoleWind(Mps, FromDeg);
+		if (Mps > 0)
+		{
+			double GustMph, Wobble;
+			Weather.Gust(GustMph, Wobble);
+			Mps = GustMph * 0.44704;
+			FromDeg += Wobble;
+		}
+		O.windMps = Mps;
+		O.windFromDeg = FromDeg;
+		O.tempC = Weather.TempC;
+		O.humidity = Weather.Humidity;
+		O.pressureHpa = Weather.PressureHpa;
+		O.wet = Weather.Wetness();
+	}
 	O.stimp = Data->DefaultStimp;
 	O.hasPin = true;
 	O.pin = Pin();
 	O.trees = &Trees;
+	O.collider = &Collider;
 	O.random = []() { return double(FMath::FRand()); };
 	const double T0 = FPlatformTime::Seconds();
 	Res = otg::SimulateShot(Course, Ball, Play, O);
@@ -822,6 +1041,8 @@ void AOTGRound::Tick(float Dt)
 		if (OverviewLeft <= 0 && Phase == EPhase::Ready) AddressView(false);
 	}
 	UpdateCamera(Dt);
+	UpdateMap();
+	UpdateRain(Dt);
 	// the ball a little bigger the further off it is, so it can be followed
 	const float CamDist = FVector::Dist(CamPos, BallMesh->GetComponentLocation());
 	const float K = FMath::Clamp(CamDist / 700.f, 1.f, 12.f);
@@ -981,7 +1202,8 @@ void AOTGRound::UpdateHudInfo()
 	else if (Phase == EPhase::Flying) L2 = FString::Printf(TEXT("%sStroke %d  ·  on its way"), *Who, Strokes);
 	else L2 = FString::Printf(TEXT("%sStroke %d  ·  %s to the pin  ·  %s"), *Who, Strokes + 1, OnGreen() ? *Putt(D) : *Len(D), *SurfaceDisplay(Lie));
 	const FClub& C = Clubs[ClubIndex(Club)];
-	const FString L3 = OnGreen() || Club == TEXT("PT") ? FString(C.Name) : FString::Printf(TEXT("%s  ·  aim %s"), C.Name, *Len(AimDist));
+	FString L3 = OnGreen() || Club == TEXT("PT") ? FString(C.Name) : FString::Printf(TEXT("%s  ·  aim %s"), C.Name, *Len(AimDist));
+	UpdateWindBox();
 	Hud->SetInfo(L1, L2, L3);
 	// (players together: who's winning)
 	if (!Game->Single())
@@ -1036,6 +1258,139 @@ void AOTGRound::ShowScorecard(bool bShow)
 	for (const FOTGSide& S : Game->Sides) Card.Sides.Add(FOTGCard::FSide{ Game->Single() ? FString(TEXT("Score")) : S.Name, S.Colour, S.Scores });
 	if (!Game->Single()) Card.Standings = Game->Standings(Card.Summary);
 	Hud->ShowScorecard(Card);
+}
+
+// ------------------------------------------------------------------ the weather
+
+void AOTGRound::SetupWeather()
+{
+	FString Mode = Setup_.Weather.IsEmpty() ? FString(TEXT("live")) : Setup_.Weather;
+	FParse::Value(FCommandLine::Get(), TEXT("weather="), Mode);
+	WindRel.Reset();
+	for (int32 i = 0; i < Data->Holes.Num(); i++) WindRel.Add(Setup_.WindDir == TEXT("rand") ? FMath::FRand() * 360 : FCString::Atod(*Setup_.WindDir));
+	if (Mode == TEXT("custom")) Weather = FOTGWeather::Custom(Setup_.WindMph);
+	else Weather = FOTGWeather::Preset(Mode);
+	if (Mode == TEXT("live"))
+	{
+		// (breezy until the course's real weather arrives, or if it can't)
+		Weather = FOTGWeather::Preset(TEXT("breezy"));
+		if (Data->Latitude == 0 && Data->Longitude == 0) Toast(TEXT("This course has no location: breezy weather"), 4.f);
+		else
+		{
+			TWeakObjectPtr<AOTGRound> Self(this);
+			FOTGWeather::FetchLive(Data->Latitude, Data->Longitude, [Self](bool bOk, const FOTGWeather& W, const FString& Why) {
+				AOTGRound* R = Self.Get();
+				if (!R) return;
+				if (!bOk)
+				{
+					R->Toast(FString::Printf(TEXT("Live weather unavailable (%s): breezy"), *Why), 4.f);
+					return;
+				}
+				R->Weather = W;
+				R->ApplyWeatherToScene();
+				R->UpdateHudInfo();
+				R->Toast(FString::Printf(TEXT("Weather at the course: %s, %.0f\u00B0C, wind %.0f mph"), *W.Label, W.TempC, W.WindMph), 4.f);
+			});
+		}
+	}
+	ApplyWeatherToScene();
+	UE_LOG(LogOTGRound, Display, TEXT("Weather: %s, wind %.0f mph (gusts %.0f), %.0f C"), *Weather.Label, Weather.WindMph, Weather.GustMph, Weather.TempC);
+}
+
+// Fog thickens the level's height fog (rain a little too); cloud dims the sun and covers the sky;
+// a storm darkens the clouds
+void AOTGRound::ApplyWeatherToScene()
+{
+	for (TActorIterator<AVolumetricCloud> It(GetWorld()); It; ++It)
+	{
+		UVolumetricCloudComponent* VC = It->FindComponentByClass<UVolumetricCloudComponent>();
+		if (!VC) continue;
+		if (!CloudMat)
+		{
+			UMaterialInterface* Base = VC->GetMaterial();
+			if (!Base) break;
+			Base->GetScalarParameterValue(FHashedMaterialParameterInfo(TEXT("Cloud_GlobalCoverage")), BaseCoverage);
+			Base->GetScalarParameterValue(FHashedMaterialParameterInfo(TEXT("Cloud_GlobalDensity")), BaseDensity);
+			CloudMat = UMaterialInstanceDynamic::Create(Base, this);
+			VC->SetMaterial(CloudMat);
+			UE_LOG(LogOTGRound, Display, TEXT("Clouds: coverage %.2f, density %.2f in the level"), BaseCoverage, BaseDensity);
+		}
+		const float Cl = float(Weather.Cloud);
+		// (coverage is an offset: the level's own about right for a fair day's few clouds)
+		CloudMat->SetScalarParameterValue(TEXT("Cloud_GlobalCoverage"), BaseCoverage + FMath::Lerp(-0.25f, 1.5f, Cl));
+		CloudMat->SetScalarParameterValue(TEXT("Cloud_GlobalDensity"), BaseDensity * FMath::Lerp(0.8f, 4.f, Cl));
+		CloudMat->SetScalarParameterValue(TEXT("StormClouds"), Weather.RainMm >= 5 ? 1.f : Weather.RainMm > 0.05 ? 0.4f : 0.f);
+		break;
+	}
+	for (TActorIterator<AExponentialHeightFog> It(GetWorld()); It; ++It)
+	{
+		UExponentialHeightFogComponent* F = It->GetComponent();
+		if (!F) continue;
+		if (BaseFogDensity < 0) BaseFogDensity = F->FogDensity;
+		F->SetFogDensity(FMath::Lerp(BaseFogDensity, 0.25f, float(FMath::Min(1.0, Weather.Fog + (Weather.RainMm > 0.05 ? 0.06 : 0.0)))));
+		break;
+	}
+	// an overcast sky: grey rather than blue (less of the air's blue scattering, more haze), and less
+	// light from it
+	const float Over = float(FMath::Clamp((Weather.Cloud - 0.5) / 0.5, 0.0, 1.0));
+	for (TObjectIterator<USkyAtmosphereComponent> It; It; ++It)
+	{
+		if (It->GetWorld() != GetWorld()) continue;
+		if (BaseRayleigh < 0) { BaseRayleigh = It->RayleighScatteringScale; BaseMie = It->MieScatteringScale; }
+		It->SetRayleighScatteringScale(BaseRayleigh * FMath::Lerp(1.f, 0.3f, Over));
+		It->SetMieScatteringScale(BaseMie * FMath::Lerp(1.f, 6.f, Over));
+		break;
+	}
+	for (TActorIterator<ASkyLight> It(GetWorld()); It; ++It)
+	{
+		USkyLightComponent* SL = It->GetLightComponent();
+		if (!SL) continue;
+		if (BaseSkyLight < 0) BaseSkyLight = SL->Intensity;
+		SL->SetIntensity(BaseSkyLight * FMath::Lerp(1.f, 0.7f, Over));
+		break;
+	}
+	for (TActorIterator<ADirectionalLight> It(GetWorld()); It; ++It)
+	{
+		UDirectionalLightComponent* L = Cast<UDirectionalLightComponent>(It->GetLightComponent());
+		if (!L) continue;
+		if (BaseSun < 0) BaseSun = L->Intensity;
+		L->SetIntensity(BaseSun * FMath::Lerp(1.f, 0.35f, float(FMath::Clamp(Weather.Cloud - 0.3, 0.0, 0.7) / 0.7)));
+		break;
+	}
+}
+
+// The steady wind on this hole, in course space (FromDeg: where it blows from, as the aim's heading)
+void AOTGRound::HoleWind(double& Mps, double& FromDeg) const
+{
+	Mps = 0;
+	FromDeg = 0;
+	if (Weather.WindMph < 0.5) return;
+	Mps = Weather.WindMph * 0.44704;
+	if (Weather.bRelative)
+	{
+		const FOTGHole& H = Hole();
+		const otg::V3 T = TeeOf(H, TeeName);
+		FromDeg = FMath::RadiansToDegrees(HeadingTo(T, H.GreenCenter.X, H.GreenCenter.Z)) + (WindRel.IsValidIndex(HoleIndex) ? WindRel[HoleIndex] : 0);
+	}
+	else FromDeg = Weather.WindFromMet; // (the course's z is north)
+}
+
+// "Wind 9 mph, into you from the left": against the way the shot is aimed
+FString AOTGRound::WindText() const
+{
+	double Mps, FromDeg;
+	HoleWind(Mps, FromDeg);
+	if (Mps < 0.5 * 0.44704) return TEXT("No wind");
+	double Rel = FMath::Fmod(FromDeg - FMath::RadiansToDegrees(Heading) + 540.0, 360.0) - 180.0; // (0: from straight ahead, + from the right)
+	const double A = FMath::Abs(Rel);
+	const FString SideS = Rel > 0 ? TEXT("right") : TEXT("left");
+	FString Where;
+	if (A < 22.5) Where = TEXT("into you");
+	else if (A < 67.5) Where = TEXT("into you from the ") + SideS;
+	else if (A < 112.5) Where = TEXT("from the ") + SideS;
+	else if (A < 157.5) Where = TEXT("helping, from the ") + SideS;
+	else Where = TEXT("helping");
+	return FString::Printf(TEXT("Wind %.0f mph %s"), Weather.WindMph, *Where);
 }
 
 // ------------------------------------------------------------------ players taking turns

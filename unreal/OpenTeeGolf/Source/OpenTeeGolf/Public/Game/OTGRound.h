@@ -15,6 +15,7 @@
 #include "GameFramework/Actor.h"
 #include "LaunchMonitor/OTGLaunchMonitorTypes.h"
 #include "Game/OTGPlayers.h"
+#include "Game/OTGWeather.h"
 #include "Physics/OTGPlayCourse.h"
 #include "OTGRound.generated.h"
 
@@ -45,6 +46,10 @@ public:
 	void ToggleScorecard();
 	void Mulligan();
 	void DropNearPin(double Yards);    // (testing)
+	void CastTest();                   // (testing)
+	void AimAt(double X, double Z);    // (course metres: the minimap, a click on the ground)
+	void AimAtWorld(const FVector& W);
+	void ToggleShotPanel();
 	void TogglePause();
 	bool IsPaused() const { return bPaused; }
 	void QuitToMenu();
@@ -70,6 +75,14 @@ private:
 	void RecordRound();
 	void ShowOtherBalls();
 	double PinDist(const otg::V3& B) const;
+	// the weather (main.js setupWeather, wind, shotWind)
+	void SetupWeather();
+	void ApplyWeatherToScene();
+	void HoleWind(double& Mps, double& FromDeg) const;
+	FString WindText() const;
+	void UpdateMap();
+	void UpdateWindBox();
+	void UpdateRain(float Dt);
 	void HoleOut(bool bPickedUp, const FString& Note);
 	void NextHole();
 	bool WaterDrop(otg::V3& Out) const;
@@ -123,6 +136,7 @@ private:
 
 	otg::PlayCourse Course;
 	otg::PlayTrees Trees;
+	otg::PlayCollider Collider;          // (the ground, trunks, buildings and the flagstick)
 
 	// the round
 	EPhase Phase = EPhase::Ready;
@@ -131,6 +145,14 @@ private:
 	TUniquePtr<FOTGGame> Game;
 	int32 SideIdx = 0, NextSide = 0, LastHole = 0;  // (LastHole: one past the last to play)
 	bool bPaused = false;
+	FOTGWeather Weather;
+	TArray<double> WindRel;             // (custom wind: its direction relative to each hole)
+	float BaseFogDensity = -1, BaseSun = -1, BaseCoverage = -1, BaseDensity = -1, BaseRayleigh = -1, BaseMie = -1, BaseSkyLight = -1;
+	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> CloudMat;
+	UPROPERTY() TObjectPtr<UProceduralMeshComponent> RainMesh;
+	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> RainMat;
+	TArray<FVector> RainDrops;
+	int32 RainVerts = 0;
 	otg::V3 Ball, PrevBall, BallShown;  // (BallShown: where it's drawn, its contact point)
 	otg::Surface Lie = otg::Surface::Tee;
 	double Heading = 0, AimDist = 100;  // radians (0 = north, + toward east), metres

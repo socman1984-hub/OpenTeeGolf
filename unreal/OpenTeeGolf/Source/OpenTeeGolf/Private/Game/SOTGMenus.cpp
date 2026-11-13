@@ -10,6 +10,7 @@
 #include "OTGCourseData.h"
 #include "OTGLaunchMonitorSubsystem.h"
 #include "OTGUi.h"
+#include "Game/OTGWeather.h"
 #include "Widgets/Input/SCheckBox.h"
 #include "Widgets/Input/SEditableTextBox.h"
 #include "Widgets/Input/SSpinBox.h"
@@ -284,6 +285,25 @@ TSharedRef<SWidget> SOTGMainMenu::PlayPage()
 			+ SHorizontalBox::Slot().AutoWidth().Padding(18, 0, 6, 0)[Button(TEXT("18 holes"), [this]() { Setup.Holes = 18; Remember(); Rebuild(); }, 14, Setup.Holes != 9)]
 			+ SHorizontalBox::Slot().AutoWidth()[Button(TEXT("9 holes"), [this]() { Setup.Holes = 9; Remember(); Rebuild(); }, 14, Setup.Holes == 9)]
 		];
+	}
+	// the weather
+	{
+		TArray<FString> Keys, Names;
+		for (const auto& C : FOTGWeather::Choices()) { Keys.Add(C.Key); Names.Add(C.Value); }
+		Choices(TEXT("Conditions"), Keys, [this]() { return Setup.Weather; }, [this](const FString& V) { Setup.Weather = V; },
+			[Keys, Names](const FString& K) { const int32 I = Keys.IndexOfByKey(K); return I >= 0 ? Names[I] : K; });
+		if (Setup.Weather == TEXT("custom"))
+		{
+			TSharedRef<SHorizontalBox> Dir = SNew(SHorizontalBox);
+			const TPair<FString, FString> Dirs[] = { { TEXT("0"), TEXT("Into you") }, { TEXT("180"), TEXT("Behind you") }, { TEXT("90"), TEXT("Right to left") }, { TEXT("270"), TEXT("Left to right") }, { TEXT("rand"), TEXT("Random") } };
+			for (const auto& D : Dirs)
+			{
+				const FString K = D.Key;
+				Dir->AddSlot().AutoWidth().Padding(0, 0, 6, 0)[Button(D.Value, [this, K]() { Setup.WindDir = K; Remember(); Rebuild(); }, 13, Setup.WindDir == K)];
+			}
+			Opts->AddSlot().AutoHeight().Padding(0, 4)[Row(TEXT("Wind (mph)"), Number(0, 40, 1, [this]() { return Setup.WindMph; }, [this](double X) { Setup.WindMph = FMath::RoundToDouble(X); Remember(); }))];
+			Opts->AddSlot().AutoHeight().Padding(0, 2)[Row(TEXT("Wind from"), Dir)];
+		}
 	}
 	// who's playing: click to add (the order picked is the order they tee off)
 	const FOTGFormat& F = FOTGGame::FormatOf(Setup.Format);

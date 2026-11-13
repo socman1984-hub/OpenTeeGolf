@@ -174,8 +174,45 @@ runs inside the game, in C++.
   Esc pauses the round: Resume, Scorecard, Quit to the menu, and the launch monitor panel.
   Profiles and the last setup are kept in `Saved/OpenTeeGolf/players.json` and `setup.json`.
   Console: `OTG.Menu.Start`, `OTG.Menu.Page play|players|lm`, `OTG.Round.Pause`.
-- Next: the packaged build's turf, the colliders for buildings and the flagstick, and weather and
-  wind.
+- Turf in the packaged game: the grass maps are built at runtime (`grass.GrassMap.UseRuntimeGeneration`
+  in `DefaultEngine.ini`), since the headless pack builder never bakes them. Every material
+  `build_course.py` makes declares its Nanite and instanced-mesh use up front (`with_usage`): the
+  editor adds a missing flag as it goes, but a packaged game draws such a material as the grey
+  default. The blade data (height up the blade, shade, dry tip) and the buildings' colours also go
+  in UV channels as well as vertex colours (`colours_in_uvs`), and the materials read the UVs.
+- What the ball hits (`PlayCollider`, `OTGPlayCollider.cpp`): the web game's collision world without
+  Jolt.
+  - The ground: the heightmap.
+  - Tree trunks: a metre into the ground.
+  - Buildings and cars: their footprint's convex outline.
+  - The flagstick.
+
+  Each is grown by the ball's radius and cast analytically. With it the physics bounces off
+  trunks, walls and the pin as the web game does ("Off the flagstick!").
+- Weather (`OTGWeather`): the menu's Conditions are Live (Open-Meteo at the course's location; breezy
+  until it answers or if it can't), Calm, Breezy, Windy, Overcast, Fog, Rain, Storm, or Custom
+  (mph, and into you / behind / right to left / left to right / random per hole).
+  - The physics plays a gust each shot, the air (temperature, humidity, pressure) and a wet ground
+    in rain.
+  - The HUD gives the wind against your aim ("Wind 18 mph from the right").
+  - The sky follows it: cloud cover thickens the level's volumetric clouds and greys the sky
+    (less blue scattering, more haze, a dimmer sun and sky light). Rain falls as streaks round the
+    camera, blown by the wind (`M_Rain`, made by `make_game_assets.py`: `make_pack.ps1 -Assets`, and
+    before every `-Package`). A storm darkens the clouds, and fog and rain thicken the fog.
+- On the round's screen (as the web version's):
+  - The minimap: the course photo turned so the hole runs up it, with the ball, the aim line and
+    point, the pin, the other players' balls and the yardages (to the aim point and what it leaves,
+    or under the cursor). Click or drag on it to aim, or click the ground itself.
+  - The wind box: an arrow against the aim (up: helping), speed and gusts, "into you / helping /
+    cross", and the weather.
+  - T opens the test shot panel: Driver, 7 iron, Wedge, Chip and Putt (sized to the hole) presets,
+    ball speed, launch, direction, spin and axis to change, and Hit, played as if the launch
+    monitor had sent it.
+
+  `-weather=<key>` overrides it for a run; `OTG.Round.CastTest` (testing) logs what a ball flying
+  at the flagstick, the nearest trunk and the ground meets.
+- Next: a packaged release (step 7). Still to come in the game itself: drawn rain and clouds, the
+  time of day, putting aids, the Mevo+ camera view.
 
 Build: `Engine\Build\BatchFiles\Build.bat OpenTeeGolf Win64 Development -Project=<path>\OpenTeeGolf.uproject`
 (the editor target, `OpenTeeGolfEditor`, can't build while another Unreal Editor with Live Coding is

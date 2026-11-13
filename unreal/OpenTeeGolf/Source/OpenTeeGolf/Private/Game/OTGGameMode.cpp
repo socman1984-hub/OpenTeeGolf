@@ -64,10 +64,11 @@ void AOTGGameMode::StartPlay()
 	FParse::Value(Cmd, TEXT("hole="), Setup.StartHole);
 	FParse::Value(Cmd, TEXT("tee="), Setup.Tee);
 	FParse::Value(Cmd, TEXT("pin="), Setup.Pin);
+	// (the mouse aims: on the minimap, or a click on the ground)
 	if (APlayerController* PC = GetWorld()->GetFirstPlayerController())
 	{
-		PC->SetShowMouseCursor(false);
-		PC->SetInputMode(FInputModeGameOnly());
+		PC->SetShowMouseCursor(true);
+		PC->SetInputMode(FInputModeGameAndUI().SetHideCursorDuringCapture(false));
 	}
 	AOTGRound* Round = GetWorld()->SpawnActor<AOTGRound>();
 	Round->Setup(Course, Setup);
@@ -127,12 +128,12 @@ void AOTGPlayerController::SetupInputComponent()
 	Bind(EKeys::Enter, [](AOTGRound* R) { R->Continue(); });
 	Bind(EKeys::Tab, [](AOTGRound* R) { R->ToggleScorecard(); });
 	Bind(EKeys::BackSpace, [](AOTGRound* R) { R->Mulligan(); });
-	Bind(EKeys::Escape, [this](AOTGRound* R) {
-		R->TogglePause();
-		// (the pause menu wants the mouse)
-		SetShowMouseCursor(R->IsPaused());
-		if (R->IsPaused()) SetInputMode(FInputModeGameAndUI().SetHideCursorDuringCapture(false));
-		else SetInputMode(FInputModeGameOnly());
+	Bind(EKeys::Escape, [](AOTGRound* R) { R->TogglePause(); });
+	Bind(EKeys::T, [](AOTGRound* R) { R->ToggleShotPanel(); });
+	// a click on the ground aims there
+	Bind(EKeys::LeftMouseButton, [this](AOTGRound* R) {
+		FHitResult Hit;
+		if (GetHitResultUnderCursor(ECC_Visibility, false, Hit) && Hit.bBlockingHit) R->AimAtWorld(Hit.Location);
 	});
 }
 

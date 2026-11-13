@@ -3,11 +3,12 @@
 #
 #   powershell -File unreal/make_pack.ps1 Majestic_Springs_Golf_Club [more course ids]   (build their content)
 #   powershell -File unreal/make_pack.ps1 -Package                                      (package the game)
+#   powershell -File unreal/make_pack.ps1 -Assets                                       (just the game's own assets)
 #
 # Building a course's content runs Unreal headless on the game project (pack_course.py); packaging
 # cooks the game with every course built so far, each in a pak of its own, into unreal/OpenTeeGolf/Dist.
 
-param([switch]$Package, [Parameter(ValueFromRemainingArguments = $true)][string[]]$Courses)
+param([switch]$Package, [switch]$Assets, [Parameter(ValueFromRemainingArguments = $true)][string[]]$Courses)
 $ErrorActionPreference = 'Stop'
 $Here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Root = Split-Path -Parent $Here
@@ -31,6 +32,19 @@ foreach ($id in $Courses) {
   $ok = Test-Path (Join-Path $export 'pack_done.txt')
   Select-String -Path $log -Pattern '\[OpenTeeGolf( pack)?\]|LogOTGPack|Error:' | Select-Object -Last 40 | ForEach-Object { $_.Line }
   if (-not $ok) { throw "Building ${id} failed: see ${log}" }
+}
+
+# The game's own assets (make_game_assets.py: the rain), before packaging
+if ($Package -or $Assets) {
+  $scripts = Join-Path ([IO.Path]::GetTempPath()) 'OTGPack'
+  New-Item -ItemType Directory -Force $scripts | Out-Null
+  Copy-Item (Join-Path $Here 'make_game_assets.py') $scripts -Force
+  $env:OTG_SCRIPT_DIR = $scripts
+  Remove-Item (Join-Path $scripts 'assets_done.txt') -ErrorAction SilentlyContinue
+  $log = Join-Path $Here 'OpenTeeGolf\Saved\game_assets.log'
+  & $Editor $Project -run=pythonscript "-script=$(Join-Path $scripts 'make_game_assets.py')" -unattended -nosplash -RenderOffscreen -stdout "-LogCmds=LogPython Log" | Out-File -Encoding utf8 $log
+  if (-not (Test-Path (Join-Path $scripts 'assets_done.txt'))) { throw "Making the game's assets failed: see ${log}" }
+  Write-Host "The game's assets made"
 }
 
 if ($Package) {

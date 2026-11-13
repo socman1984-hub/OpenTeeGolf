@@ -58,6 +58,9 @@ struct FOTGRoundSetup
 	UPROPERTY() bool bHandicaps = false;
 	UPROPERTY() TArray<FString> Picked;            // profile ids, in playing order (none: a round on your own)
 	UPROPERTY() TMap<FString, FString> Teams;      // profile id -> A / B
+	UPROPERTY() FString Weather = TEXT("live");    // live, a preset (OTGWeather.h), or custom
+	UPROPERTY() double WindMph = 8;                // (custom)
+	UPROPERTY() FString WindDir = TEXT("0");       // (custom: from ahead 0, behind 180, right 90, left 270, or rand)
 };
 
 struct OPENTEEGOLF_API FOTGPlayers

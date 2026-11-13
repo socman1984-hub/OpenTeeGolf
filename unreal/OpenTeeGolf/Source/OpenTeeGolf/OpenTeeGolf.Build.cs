@@ -10,6 +10,6 @@ public class OpenTeeGolf : ModuleRules
 		// (the launch monitors: OpenConnect and Mevo+ sockets, JSON, FRP WebSockets)
 		PrivateDependencyModuleNames.AddRange(new string[] { "Sockets", "Networking", "Json", "WebSockets" });
 		// (the round: the tracer, the HUD)
-		PrivateDependencyModuleNames.AddRange(new string[] { "ProceduralMeshComponent", "Slate", "SlateCore", "JsonUtilities" });
+		PrivateDependencyModuleNames.AddRange(new string[] { "ProceduralMeshComponent", "Slate", "SlateCore", "JsonUtilities", "HTTP" });
 	}
 }

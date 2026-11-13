@@ -10,6 +10,9 @@
 #include "Widgets/SCompoundWidget.h"
 
 class STextBlock;
+class SOTGMinimap;
+class SOTGWind;
+class SOTGShotPanel;
 class SBox;
 class SBorder;
 class SVerticalBox;
@@ -48,6 +51,11 @@ public:
 	void HideScorecard();
 	void ShowPause(FSimpleDelegate OnResume, FSimpleDelegate OnScorecard, FSimpleDelegate OnQuit);
 	void HidePause();
+	TSharedPtr<SOTGMinimap> Minimap() const { return Map; }
+	TSharedPtr<SOTGWind> Wind() const { return WindBox; }
+	TSharedPtr<SOTGShotPanel> ShotPanel() const { return Shots; }
+	void ShowShotPanel(bool bShow);
+	bool IsShotPanelShown() const;
 
 private:
 	TSharedPtr<STextBlock> Info1, Info2, ClubText, Shot1, Shot2, Status, BannerTitle, BannerSmall, ToastText, Keys;
@@ -55,5 +63,8 @@ private:
 	TSharedPtr<SVerticalBox> StandList;
 	TSharedPtr<SBox> CardSlot, PauseSlot;
 	float BannerLeft = 0, ToastLeft = 0;
+	TSharedPtr<SOTGMinimap> Map;
+	TSharedPtr<SOTGWind> WindBox;
+	TSharedPtr<SOTGShotPanel> Shots;
 	FString StandKey;
 };

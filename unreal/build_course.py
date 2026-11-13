@@ -213,9 +213,21 @@ def new_material(name):
                     mat.set_editor_property(prop, val)
                 except Exception:
                     pass
-            return mat
+            return with_usage(mat)
         unreal.EditorAssetLibrary.delete_asset(path)
-    return assets.create_asset(name, CONTENT, unreal.Material, unreal.MaterialFactoryNew())
+    return with_usage(assets.create_asset(name, CONTENT, unreal.Material, unreal.MaterialFactoryNew()))
+
+
+def with_usage(mat):
+    """The ways the course's meshes use a material (Nanite meshes, instanced grass and trees),
+    declared up front: the editor adds a missing one as it goes, but a packaged game draws the
+    material as the grey default instead"""
+    for prop in ("used_with_nanite", "used_with_instanced_static_meshes"):
+        try:
+            mat.set_editor_property(prop, True)
+        except Exception:
+            warn("%s: %s not set" % (mat.get_name(), prop))
+    return mat
 
 
 def spawn_mesh(mesh, loc):
@@ -417,30 +429,39 @@ def build_ground(land):
 
 def write_glb(path, pos, nrm, col, idx):
     """A glTF binary with one mesh: positions and normals (metres, y up), vertex colours (linear RGBA),
-    triangles."""
+    triangles. The colours' red and green also go in the first UV channel and blue in the second:
+    an importer may drop vertex colours (the game project's does), never UVs."""
     import struct
     bp = struct.pack("<%df" % len(pos), *pos)
     bn = struct.pack("<%df" % len(nrm), *nrm)
     bc = struct.pack("<%df" % len(col), *col)
+    uv0, uv1 = [], []
+    for i in range(0, len(col), 4):
+        uv0 += [col[i], col[i + 1]]
+        uv1 += [col[i + 2], 0.0]
+    bu0 = struct.pack("<%df" % len(uv0), *uv0)
+    bu1 = struct.pack("<%df" % len(uv1), *uv1)
     bi = struct.pack("<%dI" % len(idx), *idx)
-    blob = bp + bn + bc + bi
+    blob = bp + bn + bc + bu0 + bu1 + bi
     nv = len(pos) // 3
     xs, ys, zs = pos[0::3], pos[1::3], pos[2::3]
     views, off = [], 0
-    for b in (bp, bn, bc, bi):
+    for b in (bp, bn, bc, bu0, bu1, bi):
         views.append({"buffer": 0, "byteOffset": off, "byteLength": len(b)})
         off += len(b)
     gj = {
         "asset": {"version": "2.0", "generator": "OpenTeeGolf build_course.py"},
         "scene": 0, "scenes": [{"nodes": [0]}], "nodes": [{"mesh": 0, "name": "Turf"}],
-        "meshes": [{"name": "Turf", "primitives": [{"attributes": {"POSITION": 0, "NORMAL": 1, "COLOR_0": 2}, "indices": 3, "material": 0}]}],
+        "meshes": [{"name": "Turf", "primitives": [{"attributes": {"POSITION": 0, "NORMAL": 1, "COLOR_0": 2, "TEXCOORD_0": 3, "TEXCOORD_1": 4}, "indices": 5, "material": 0}]}],
         "materials": [{"name": "Turf", "doubleSided": True}],
         "buffers": [{"byteLength": len(blob)}], "bufferViews": views,
         "accessors": [
             {"bufferView": 0, "componentType": 5126, "count": nv, "type": "VEC3", "min": [min(xs), min(ys), min(zs)], "max": [max(xs), max(ys), max(zs)]},
             {"bufferView": 1, "componentType": 5126, "count": nv, "type": "VEC3"},
             {"bufferView": 2, "componentType": 5126, "count": nv, "type": "VEC4"},
-            {"bufferView": 3, "componentType": 5125, "count": len(idx), "type": "SCALAR"},
+            {"bufferView": 3, "componentType": 5126, "count": nv, "type": "VEC2"},
+            {"bufferView": 4, "componentType": 5126, "count": nv, "type": "VEC2"},
+            {"bufferView": 5, "componentType": 5125, "count": len(idx), "type": "SCALAR"},
         ],
     }
     js = json.dumps(gj).encode("utf-8")
@@ -559,16 +580,26 @@ def turf_material(kind, land_size_cm):
     # the blade's colour: root to tip (red: how far up), a dry tip on a few (blue), each blade
     # lighter or darker (green: its own random value)
     cfg = TURF_GRASS[kind]
-    vc = E(unreal.MaterialExpressionVertexColor, -1300, 300)
+    # (from the UVs the patch carries them in: first channel how far up and the random value, the
+    # second whether the tip is dry)
+    def channel(index, comp, x, y):
+        tc = E(unreal.MaterialExpressionTextureCoordinate, x - 150, y)
+        tc.set_editor_property("coordinate_index", index)
+        m = E(unreal.MaterialExpressionComponentMask, x, y)
+        m.set_editor_property("r", comp == "r")
+        m.set_editor_property("g", comp == "g")
+        mel.connect_material_expressions(tc, "", m, "")
+        return m
+    t_up, t_rand, t_dry = channel(0, "r", -1300, 260), channel(0, "g", -1300, 320), channel(1, "r", -1300, 380)
     up = E(unreal.MaterialExpressionLinearInterpolate, -1100, 300)
     mel.connect_material_expressions(const3(cfg["root"], -1250, 220), "", up, "A")
     mel.connect_material_expressions(const3(cfg["tip"], -1250, 260), "", up, "B")
-    mel.connect_material_expressions(vc, "R", up, "Alpha")
+    mel.connect_material_expressions(t_up, "", up, "Alpha")
     dried = E(unreal.MaterialExpressionLinearInterpolate, -950, 300)
     mel.connect_material_expressions(up, "", dried, "A")
-    mel.connect_material_expressions(op(unreal.MaterialExpressionMultiply, const3(cfg["dry"], -1100, 420), vc, -1000, 420, "", "R"), "", dried, "B")
-    mel.connect_material_expressions(vc, "B", dried, "Alpha")
-    vary = op(unreal.MaterialExpressionAdd, const(1.0 - cfg["vary"], -1000, 480), op(unreal.MaterialExpressionMultiply, vc, const(2 * cfg["vary"], -1100, 520), -1000, 520, "G", ""), -900, 480)
+    mel.connect_material_expressions(op(unreal.MaterialExpressionMultiply, const3(cfg["dry"], -1100, 420), t_up, -1000, 420), "", dried, "B")
+    mel.connect_material_expressions(t_dry, "", dried, "Alpha")
+    vary = op(unreal.MaterialExpressionAdd, const(1.0 - cfg["vary"], -1000, 480), op(unreal.MaterialExpressionMultiply, t_rand, const(2 * cfg["vary"], -1100, 520), -1000, 520), -900, 480)
     col = op(unreal.MaterialExpressionMultiply, op(unreal.MaterialExpressionMultiply, dried, vary, -800, 350), shade, -650, 400)
     mel.connect_material_property(col, "", unreal.MaterialProperty.MP_BASE_COLOR)
     mel.connect_material_property(op(unreal.MaterialExpressionMultiply, col, const(0.7, -650, 560), -500, 520), "", unreal.MaterialProperty.MP_SUBSURFACE_COLOR)
@@ -1216,8 +1247,17 @@ def prop_material(kind):
         mel.connect_material_property(mul, "", unreal.MaterialProperty.MP_BASE_COLOR)
         rough = 0.85
     else:
-        vc = E(unreal.MaterialExpressionVertexColor, -400, 0)
-        mel.connect_material_property(vc, "RGB", unreal.MaterialProperty.MP_BASE_COLOR)
+        # (the vertex colours, from the UVs colours_in_uvs put them in)
+        rg = E(unreal.MaterialExpressionTextureCoordinate, -800, 0)
+        b = E(unreal.MaterialExpressionTextureCoordinate, -800, 100)
+        b.set_editor_property("coordinate_index", 1)
+        bm = E(unreal.MaterialExpressionComponentMask, -650, 100)
+        bm.set_editor_property("r", True)
+        mel.connect_material_expressions(b, "", bm, "")
+        vc = E(unreal.MaterialExpressionAppendVector, -400, 0)
+        mel.connect_material_expressions(rg, "", vc, "A")
+        mel.connect_material_expressions(bm, "", vc, "B")
+        mel.connect_material_property(vc, "", unreal.MaterialProperty.MP_BASE_COLOR)
         rough = 0.35 if kind == "car" else 0.85
     mel.connect_material_property(const(rough, -400, 300), "", unreal.MaterialProperty.MP_ROUGHNESS)
     if kind == "car":
@@ -1225,6 +1265,63 @@ def prop_material(kind):
     mel.recompile_material(mat)
     unreal.EditorAssetLibrary.save_loaded_asset(mat)
     return mat
+
+
+def colours_in_uvs(src):
+    """A copy of a glTF binary whose vertex colours are also in its UV channels (red and green in the
+    first, blue in the second; the materials read them there): an importer may drop vertex colours
+    (the game project's does), never UVs. Returns the copy's path (the same file name, in a temp
+    folder), or src when there's nothing to copy."""
+    import struct, tempfile
+    data = open(src, "rb").read()
+    jlen, _ = struct.unpack_from("<II", data, 12)
+    gj = json.loads(data[20:20 + jlen].decode("utf-8"))
+    boff = 20 + jlen
+    blen, _ = struct.unpack_from("<II", data, boff)
+    bin_ = bytearray(data[boff + 8:boff + 8 + blen])
+    comp = {5126: ("f", 4, 1.0), 5123: ("H", 2, 65535.0), 5121: ("B", 1, 255.0)}
+    changed = False
+    for mesh in gj.get("meshes", []):
+        for prim in mesh.get("primitives", []):
+            at = prim.get("attributes", {})
+            if "COLOR_0" not in at or "TEXCOORD_0" in at or "TEXCOORD_1" in at:
+                continue
+            acc = gj["accessors"][at["COLOR_0"]]
+            view = gj["bufferViews"][acc["bufferView"]]
+            fmt, size, scale = comp[acc["componentType"]]
+            n = 4 if acc["type"] == "VEC4" else 3
+            stride = view.get("byteStride") or size * n
+            start = view.get("byteOffset", 0) + acc.get("byteOffset", 0)
+            uv0, uv1 = [], []
+            for i in range(acc["count"]):
+                c = struct.unpack_from("<%d%s" % (n, fmt), bin_, start + i * stride)
+                c = [x / scale for x in c] if acc["componentType"] != 5126 else list(c)
+                uv0 += [c[0], c[1]]
+                uv1 += [c[2], 0.0]
+            for k, vals in ((0, uv0), (1, uv1)):
+                while len(bin_) % 4:
+                    bin_.append(0)
+                off = len(bin_)
+                bin_ += struct.pack("<%df" % len(vals), *vals)
+                gj["bufferViews"].append({"buffer": 0, "byteOffset": off, "byteLength": len(vals) * 4})
+                gj["accessors"].append({"bufferView": len(gj["bufferViews"]) - 1, "componentType": 5126, "count": acc["count"], "type": "VEC2"})
+                at["TEXCOORD_%d" % k] = len(gj["accessors"]) - 1
+            changed = True
+    if not changed:
+        return src
+    while len(bin_) % 4:
+        bin_.append(0)
+    gj["buffers"][0]["byteLength"] = len(bin_)
+    js = json.dumps(gj).encode("utf-8")
+    js += b" " * (-len(js) % 4)
+    folder = os.path.join(tempfile.gettempdir(), "OTG_Props")
+    os.makedirs(folder, exist_ok=True)
+    out = os.path.join(folder, os.path.basename(src))
+    with open(out, "wb") as f:
+        f.write(struct.pack("<III", 0x46546C67, 2, 12 + 8 + len(js) + 8 + len(bin_)))
+        f.write(struct.pack("<II", len(js), 0x4E4F534A) + js)
+        f.write(struct.pack("<II", len(bin_), 0x004E4942) + bytes(bin_))
+    return out
 
 
 def build_props():
@@ -1237,7 +1334,7 @@ def build_props():
             actors.destroy_actor(old)
     for info in load("props.json"):
         kind = info["kind"]
-        meshes = static_meshes(import_file(os.path.join(EXPORT_DIR, info["file"]), "%s/Props/%s" % (CONTENT, kind)))
+        meshes = static_meshes(import_file(colours_in_uvs(os.path.join(EXPORT_DIR, info["file"])), "%s/Props/%s" % (CONTENT, kind)))
         if not meshes:
             warn("%s didn't import" % info["file"])
             continue
