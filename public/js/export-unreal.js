@@ -44,7 +44,7 @@ import { pointInPoly } from './course.js';
 
 const SIZES = [505, 1009, 2017, 4033, 8129];
 
-export async function exportForUnreal({ course, scene, id, status = () => {} }) {
+export async function exportForUnreal({ course, scene, id, solids = [], status = () => {} }) {
   const { minX, maxX, minZ, maxZ } = course.bounds;
   const W = maxX - minX, H = maxZ - minZ;
   // Samples a side: the smallest size that covers the course at 1 m, else 2 m between samples
@@ -346,6 +346,49 @@ export async function exportForUnreal({ course, scene, id, status = () => {} }) 
     aims: h.aims.map(P3), green: P3(h.greenCenter),
   }));
   await put('holes.json', JSON.stringify(holes, null, 1), 'application/json');
+
+  // ---- what playing the course needs (the Unreal game, unreal/OpenTeeGolf): the course's surfaces
+  // as the game's own surfaceAt has them (map outlines, fairways and paths found in the photo, out
+  // of bounds, water) every PLAY_RES metres; and in play.json, in the game's course metres (x east,
+  // z north, y up), the holes, drop zones, the trees' and buildings' shapes for the ball to hit,
+  // and how that frame sits on the export's heightmap. (The game plays on the heightmap's ground.)
+  status('Exporting play data…');
+  await tick();
+  const sw = Math.ceil(W / PLAY_RES), sh = Math.ceil(H / PLAY_RES);
+  const codes = new Uint8Array(sw * sh);
+  for (let j = 0; j < sh; j++) {
+    const z = maxZ - (j + 0.5) * PLAY_RES;
+    for (let i = 0; i < sw; i++) {
+      const s = course.surfaceAt(minX + (i + 0.5) * PLAY_RES, z);
+      codes[j * sw + i] = s == null ? 0 : SURFACE_CODES.indexOf(s) > 0 ? SURFACE_CODES.indexOf(s) : SURFACE_CODES.indexOf('rough');
+    }
+    if ((j & 127) === 0) { status(`Exporting play data… ${Math.round((100 * j) / sh)}%`); await tick(); }
+  }
+  await put('surfaces.png', await png8(codes, sw, sh), 'image/png');
+  const r3 = (v) => Math.round(v * 1000) / 1000;
+  const PT = (p) => (p ? { x: r3(p.x), y: r3(course.heightAt(p.x, p.z) ?? p.y), z: r3(p.z) } : null);
+  const map = (o) => Object.fromEntries(Object.entries(o || {}).map(([k, p]) => [k, PT(p)]));
+  const bboxOf = (poly) => { const xs = poly.map((q) => q[0]), zs = poly.map((q) => q[1]); return [Math.min(...xs), Math.min(...zs), Math.max(...xs), Math.max(...zs)].map(r3); };
+  const play = {
+    version: 1, name: course.name, id, location: course.location || '', lat: course.lat ?? null, lon: course.lon ?? null,
+    altitudeM: course.altitudeM || 0, defaultStimp: course.defaultStimp || 10,
+    bounds: { minX, maxX, minZ, maxZ },
+    // (the heightmap: sample i, j at x0 + i * metresPerSample, z1 - j * metresPerSample; value v at
+    // heightBaseMetres + v / 65535 * heightRangeMetres)
+    heightmap: { file: 'heightmap.png', x0, z1, metresPerSample: step, samples: N, heightBaseMetres: base, heightRangeMetres: range },
+    surfaces: { file: 'surfaces.png', minX, maxZ, res: PLAY_RES, w: sw, h: sh, codes: SURFACE_CODES },
+    holes: course.holes.map((h) => ({
+      number: h.number, par: h.par, index: h.index ?? null, greenR: r3(h.greenR || 0),
+      tees: map(h.tees), pins: map(h.pins), greenCenter: PT(h.greenCenter), aims: (h.aims || []).map(PT), path: (h.path || []).map(PT),
+    })),
+    dropZones: (course.hazards || []).filter((z) => z.dropZone).map((z) => ({ ...PT(z.dropZone), bbox: z.poly?.length ? bboxOf(z.poly) : null })),
+    // trees: [x, z, trunkTop, trunkR, kind, cone ? 1 : 0, coneBase | cy, coneH | rh, coneR | rv]
+    trees: (scene.trees?.all || []).filter((t) => t.trunkTop != null).map((t) => t.coneBase != null
+      ? [r3(t.x), r3(t.z), r3(t.trunkTop), r3(t.trunkR), t.kind || '', 1, r3(t.coneBase), r3(t.coneH), r3(t.coneR)]
+      : [r3(t.x), r3(t.z), r3(t.trunkTop), r3(t.trunkR), t.kind || '', 0, r3(t.cy), r3(t.rh), r3(t.rv)]),
+    solids: solids.filter((b) => b.pts?.length >= 3).map((b) => ({ h: r3(b.h), kind: b.kind || 'building', pts: b.pts.map(([x, z]) => [r3(x), r3(z)]) })),
+  };
+  await put('play.json', JSON.stringify(play), 'application/json');
   const meta = {
     name: course.name, id, lat: course.lat ?? null, lon: course.lon ?? null,
     samples: N, metresPerSample: step, sizeMetres: span,
@@ -363,6 +406,11 @@ export async function exportForUnreal({ course, scene, id, status = () => {} }) 
 }
 
 const tick = () => new Promise((r) => setTimeout(r, 0));
+
+// The play data's surfaces, every PLAY_RES metres, as codes into this list (0: off the course);
+// the same order as the game's C++ (OTGBallPhysics.h, otg::Surface)
+const PLAY_RES = 0.5;
+const SURFACE_CODES = ['', 'water', 'green', 'fringe', 'fairway', 'tee', 'firstcut', 'rough', 'deeprough', 'native', 'path', 'sand', 'oob'];
 
 // A texture's picture as a file (up to 2048 px), optionally with its pixels changed (d: RGBA)
 async function picture(tex, type, change = null) {

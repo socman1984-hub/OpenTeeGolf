@@ -631,7 +631,7 @@ const httpServer = http.createServer(async (req, res) => {
       const saved = JSON.parse(fs.readFileSync(file, 'utf8'));
       return json(res, saved.version === PHOTO_TREES_VERSION ? saved : { trees: null });
     }
-    if ((m = p.match(/^\/api\/export\/([\w-]+)\/(heightmap\.png|photo\.jpg|layer_[a-z]+\.png|trees\.json|holes\.json|course\.json|tree_\d+\.glb|tree_\d+_leaves\.png|tree_\d+_bark\.jpg|tree_\d+_bark_n\.jpg|tree_models\.json|grass_tuft\.glb|water\.glb|water\.json|water_bodies\.json|props_[a-z_]+\.glb|props\.json)$/)) && req.method === 'PUT') {
+    if ((m = p.match(/^\/api\/export\/([\w-]+)\/(heightmap\.png|photo\.jpg|layer_[a-z]+\.png|trees\.json|holes\.json|course\.json|tree_\d+\.glb|tree_\d+_leaves\.png|tree_\d+_bark\.jpg|tree_\d+_bark_n\.jpg|tree_models\.json|grass_tuft\.glb|water\.glb|water\.json|water_bodies\.json|props_[a-z_]+\.glb|props\.json|play\.json|surfaces\.png)$/)) && req.method === 'PUT') {
       // A course exported for Unreal Engine (public/js/export-unreal.js), written to exports/<id>/
       if (!courseFile(m[1])) return json(res, { error: 'No such course' }, 404);
       const body = await readRaw(req, 300e6).catch(() => null);

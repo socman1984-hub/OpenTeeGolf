@@ -684,7 +684,9 @@ $('btn-start').onclick = async () => {
       fetch(`/api/courses/${id}/heather`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(scene.heatherMap) }).catch(() => {});
       scene.heatherMap = null;
     }
-    await buildCollisions(buildings.concat(scene.carBoxes || []));
+    // (also what the Unreal export writes for the game's ball to hit: export-unreal.js)
+    S.solids = buildings.concat(scene.carBoxes || []);
+    await buildCollisions(S.solids);
     $('credits').textContent = [
       scene.imagery?.attribution,
       real ? 'Map data © OpenStreetMap contributors' : '',
@@ -2031,7 +2033,7 @@ window.addEventListener('keydown', (e) => {
   if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'u') {
     e.preventDefault();
     if (practiceKind()) { toast('Export works on real courses, not the practice areas', 3000); return; }
-    exportForUnreal({ course: S.course, scene, id: S.selected.id, status: (m) => toast(m, 4000) })
+    exportForUnreal({ course: S.course, scene, id: S.selected.id, solids: S.solids || [], status: (m) => toast(m, 4000) })
       .catch((err) => toast(`Export failed: ${err.message}`, 5000));
     return;
   }

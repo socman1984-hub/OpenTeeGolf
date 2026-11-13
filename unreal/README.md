@@ -26,6 +26,7 @@ still need work; see "Where it stands" below.
 | `props_*.glb`, `props.json` | Cart paths, bridges, buildings and cars |
 | `holes.json` | Tees, pins and aim points per hole |
 | `course.json` | Sizes, the Landscape import settings, how the coordinates map |
+| `play.json`, `surfaces.png` | What the Unreal game needs to play the course: holes, drop zones, trees' and buildings' shapes, and the surfaces every half metre |
 
 ## 2. Unreal project setup (once)
 
@@ -106,8 +107,14 @@ runs inside the game, in C++.
 - `node unreal/tests/physics/parity.mjs` plays the same shots on the same test holes through both
   (with the same random numbers) and fails if any differ. Run it after changing the physics on
   either side, and change the other side to match.
-- Next: play data in the export, course packs, the launch monitor connections, and the game itself
-  (menus, rounds, aiming, putting, cameras, scoring).
+- Play data: the export also writes `play.json` (holes, tees, pins, drop zones, the trees' and
+  buildings' shapes for the ball, in the game's course metres) and `surfaces.png` (the game's own
+  surfaces every half metre). `OTGPlayCourse` plays on them, on the export's heightmap: the ground
+  Unreal draws. `node unreal/tests/physics/course_check.mjs [course id]` plays shots from every hole
+  through the JS and the C++ on that data (they must agree), and says how far the ball finishes from
+  where the web game's own course puts it.
+- Next: course packs, the launch monitor connections, and the game itself (menus, rounds, aiming,
+  putting, cameras, scoring).
 
 Build: `Engine\Build\BatchFiles\Build.bat OpenTeeGolf Win64 Development -Project=<path>\OpenTeeGolf.uproject`
 (the editor target, `OpenTeeGolfEditor`, can't build while another Unreal Editor with Live Coding is
