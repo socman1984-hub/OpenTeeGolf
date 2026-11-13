@@ -34,6 +34,7 @@ import { ensureFarLand } from './lib/farland.js';
 import { MevoClient, DEFAULT_SETUP } from './lib/mevo.js';
 import { FrpController } from './lib/frp.js';
 import { BridgeProcess, BRIDGES } from './lib/bridges.js';
+import { UnrealRound } from './lib/unrealplay.js';
 const BUILDING_TYPE_IDS = new Set(BUILDING_TYPES.map((t) => t.id));
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -118,7 +119,13 @@ const sseClients = new Set();
 function broadcast(type, data) {
   const msg = `event: ${type}\ndata: ${JSON.stringify(data)}\n\n`;
   for (const res of sseClients) res.write(msg);
+  // (a round being played in Unreal Engine plays every shot too)
+  if (type === 'shot' && unrealRound) {
+    try { unrealRound.onShot(data); } catch (err) { console.error('[unreal] shot failed:', err); }
+  }
 }
+// The round being played in Unreal Engine, if any (lib/unrealplay.js, unreal/play_course.py)
+let unrealRound = null;
 
 // How much each loading step has downloaded, for the loading screen: every fetch made while a step
 // runs (inside withTask) counts its bytes towards that step, and about once a second the step's
@@ -796,6 +803,40 @@ const httpServer = http.createServer(async (req, res) => {
         if (isGame && gameClients.delete(res) && !gameClients.size) { gameTurn = false; applyTurn(); }
       });
       return;
+    }
+    // ---- a round in Unreal Engine (unreal/play_course.py): start it on a course exported for
+    // Unreal, then Unreal asks for the state (and the last shot's path) a few times a second
+    if (p === '/api/unreal/start' && req.method === 'POST') {
+      const b = await readBody(req);
+      const f = courseFile(b.course);
+      if (!f) return json(res, { error: 'No such course' }, 404);
+      const exportDir = path.join(EXPORTS, b.course);
+      if (!fs.existsSync(path.join(exportDir, 'course.json'))) return json(res, { error: 'Export the course for Unreal first (Ctrl+Shift+U in the game)' }, 409);
+      try {
+        unrealRound = new UnrealRound({ id: b.course, dataFile: f, realFile: realFile(f), exportDir, startHole: +b.hole || 1 });
+      } catch (err) {
+        console.error('[unreal] start failed:', err);
+        return json(res, { error: err.message }, 500);
+      }
+      console.log(`[unreal] round started: ${unrealRound.course.name}, hole ${unrealRound.hole().number}`);
+      gameTurn = true; applyTurn();
+      return json(res, unrealRound.state());
+    }
+    if (p === '/api/unreal/state') {
+      if (!unrealRound) return json(res, { error: 'No round' }, 404);
+      unrealRound.seen = Date.now();
+      return json(res, unrealRound.state());
+    }
+    if (p === '/api/unreal/next' && req.method === 'POST') {
+      if (!unrealRound) return json(res, { error: 'No round' }, 404);
+      unrealRound.nextHole();
+      return json(res, unrealRound.state());
+    }
+    if (p === '/api/unreal/stop' && req.method === 'POST') {
+      if (unrealRound) console.log('[unreal] round stopped');
+      unrealRound = null;
+      if (!gameClients.size) { gameTurn = false; applyTurn(); }
+      return json(res, { ok: true });
     }
     if (p === '/api/turn' && req.method === 'POST') {
       // The game says whether it's the player's turn to hit (with the club and distance, so the
