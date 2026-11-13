@@ -42,6 +42,31 @@ private:
 	TSharedPtr<STextBlock> Text1, Text2;
 };
 
+// What the weather panel shows
+struct FOTGWeatherView
+{
+	FString Key, Label;
+	double WindMph = 0, From = 0, Cloud = 0, RainMm = 0, Fog = 0, TempC = 20;
+};
+
+// The weather panel (L): the conditions changed as you play - a preset (or the course's live
+// weather), then the wind's speed and direction, the cloud, rain, fog and temperature, each seen at once
+class SOTGWeatherPanel : public SCompoundWidget
+{
+public:
+	SLATE_BEGIN_ARGS(SOTGWeatherPanel) {}
+	SLATE_END_ARGS()
+	void Construct(const FArguments& Args);
+	TFunction<void(const FString&)> OnKey;
+	TFunction<void(double)> OnWind, OnFrom, OnCloud, OnRain, OnFog, OnTemp;
+	TFunction<void(FOTGWeatherView&)> Current;
+
+private:
+	FOTGWeatherView View() const { FOTGWeatherView V; if (Current) Current(V); return V; }
+	void Rebuild();
+	TSharedPtr<class SBox> Body;
+};
+
 class SOTGShotPanel : public SCompoundWidget
 {
 public:

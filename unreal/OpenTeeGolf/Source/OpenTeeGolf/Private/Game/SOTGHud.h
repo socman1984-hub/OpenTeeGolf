@@ -13,6 +13,7 @@ class STextBlock;
 class SOTGMinimap;
 class SOTGWind;
 class SOTGShotPanel;
+class SOTGWeatherPanel;
 class SBox;
 class SBorder;
 class SVerticalBox;
@@ -56,6 +57,11 @@ public:
 	TSharedPtr<SOTGShotPanel> ShotPanel() const { return Shots; }
 	void ShowShotPanel(bool bShow);
 	bool IsShotPanelShown() const;
+	TSharedPtr<SOTGWeatherPanel> WeatherPanel() const { return WxPanel; }
+	void ShowWeatherPanel(bool bShow);
+	bool IsWeatherPanelShown() const;
+	void ShowPerf(bool bShow);
+	bool IsPerfShown() const;
 
 private:
 	TSharedPtr<STextBlock> Info1, Info2, ClubText, Shot1, Shot2, Status, BannerTitle, BannerSmall, ToastText, Keys;
@@ -66,5 +72,9 @@ private:
 	TSharedPtr<SOTGMinimap> Map;
 	TSharedPtr<SOTGWind> WindBox;
 	TSharedPtr<SOTGShotPanel> Shots;
+	TSharedPtr<SOTGWeatherPanel> WxPanel;
+	TSharedPtr<SBorder> PerfBox;
+	TSharedPtr<STextBlock> PerfText;
+	double PerfShown = 0;
 	FString StandKey;
 };

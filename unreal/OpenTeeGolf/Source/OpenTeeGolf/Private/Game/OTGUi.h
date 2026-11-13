@@ -3,7 +3,9 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Brushes/SlateRoundedBoxBrush.h"
 #include "Styling/CoreStyle.h"
+#include "Styling/SlateTypes.h"
 #include "Widgets/Input/SButton.h"
 #include "Widgets/Layout/SBorder.h"
 #include "Widgets/Text/STextBlock.h"
@@ -27,10 +29,28 @@ namespace otg::ui
 	{
 		return SNew(STextBlock).Text(FText::FromString(S)).Font(Font(Size, Weight)).ColorAndOpacity(Colour).AutoWrapText(false);
 	}
+	// Rounded buttons: dark glass, lighter under the mouse; "on" ones in the accent green
+	inline const FButtonStyle& ButtonStyle(bool bOn)
+	{
+		static const FButtonStyle Off = FButtonStyle()
+			.SetNormal(FSlateRoundedBoxBrush(FLinearColor(0.10f, 0.14f, 0.11f, 0.88f), 7.f, FLinearColor(1, 1, 1, 0.08f), 1.f))
+			.SetHovered(FSlateRoundedBoxBrush(FLinearColor(0.18f, 0.25f, 0.19f, 0.95f), 7.f, FLinearColor(1, 1, 1, 0.25f), 1.f))
+			.SetPressed(FSlateRoundedBoxBrush(FLinearColor(0.07f, 0.10f, 0.08f, 0.95f), 7.f, FLinearColor(1, 1, 1, 0.25f), 1.f))
+			.SetDisabled(FSlateRoundedBoxBrush(FLinearColor(0.10f, 0.12f, 0.11f, 0.5f), 7.f))
+			.SetNormalPadding(FMargin(0)).SetPressedPadding(FMargin(0, 1, 0, 0));
+		static const FButtonStyle On = FButtonStyle()
+			.SetNormal(FSlateRoundedBoxBrush(FLinearColor(0.20f, 0.52f, 0.26f, 0.95f), 7.f, FLinearColor(0.6f, 1.f, 0.6f, 0.35f), 1.f))
+			.SetHovered(FSlateRoundedBoxBrush(FLinearColor(0.26f, 0.62f, 0.32f, 1.f), 7.f, FLinearColor(0.7f, 1.f, 0.7f, 0.5f), 1.f))
+			.SetPressed(FSlateRoundedBoxBrush(FLinearColor(0.16f, 0.44f, 0.22f, 1.f), 7.f, FLinearColor(0.7f, 1.f, 0.7f, 0.5f), 1.f))
+			.SetDisabled(FSlateRoundedBoxBrush(FLinearColor(0.16f, 0.30f, 0.19f, 0.5f), 7.f))
+			.SetNormalPadding(FMargin(0)).SetPressedPadding(FMargin(0, 1, 0, 0));
+		return bOn ? On : Off;
+	}
+
 	inline TSharedRef<SButton> Button(const FString& Label, TFunction<void()> OnClick, int32 Size = 15, bool bOn = false)
 	{
 		return SNew(SButton)
-			.ButtonColorAndOpacity(bOn ? FLinearColor(0.25f, 0.55f, 0.3f, 1.f) : FLinearColor(0.18f, 0.22f, 0.19f, 1.f))
+			.ButtonStyle(&ButtonStyle(bOn))
 			.ContentPadding(FMargin(12, 6))
 			.OnClicked_Lambda([OnClick]() { if (OnClick) OnClick(); return FReply::Handled(); })
 			[SNew(STextBlock).Text(FText::FromString(Label)).Font(Font(Size, bOn ? "Bold" : "Regular")).ColorAndOpacity(Ink)];

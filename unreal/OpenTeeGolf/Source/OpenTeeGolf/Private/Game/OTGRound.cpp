@@ -69,6 +69,36 @@ namespace
 	FAutoConsoleCommandWithWorldAndArgs PauseCmd(TEXT("OTG.Round.Pause"), TEXT("The pause menu (the Esc key)"), FCmd::CreateLambda([](const TArray<FString>&, UWorld* W) { if (AOTGRound* R = RoundIn(W)) R->TogglePause(); }));
 	FAutoConsoleCommandWithWorldAndArgs CastCmd(TEXT("OTG.Round.CastTest"), TEXT("(testing) what a ball meets flying at the flagstick and at the nearest trunk"), FCmd::CreateLambda([](const TArray<FString>&, UWorld* W) { if (AOTGRound* R = RoundIn(W)) R->CastTest(); }));
 	FAutoConsoleCommandWithWorldAndArgs PanelCmd(TEXT("OTG.Round.ShotPanel"), TEXT("The test shot panel (the T key)"), FCmd::CreateLambda([](const TArray<FString>&, UWorld* W) { if (AOTGRound* R = RoundIn(W)) R->ToggleShotPanel(); }));
+	FAutoConsoleCommandWithWorldAndArgs FreeCmd(TEXT("OTG.Round.FreeView"), TEXT("The free view (the F key)"), FCmd::CreateLambda([](const TArray<FString>&, UWorld* W) { if (AOTGRound* R = RoundIn(W)) R->ToggleFreeView(); }));
+	FAutoConsoleCommandWithWorldAndArgs FlyCmd(TEXT("OTG.Round.Fly"), TEXT("OTG.Round.Fly <forward m> <right m> <up m> [yaw] [pitch]: (testing) move the free view"), FCmd::CreateLambda([](const TArray<FString>& A, UWorld* W) {
+		AOTGRound* R = RoundIn(W);
+		if (!R || A.Num() < 3) return;
+		auto Arg = [&](int32 i) { return A.IsValidIndex(i) ? FCString::Atod(*A[i]) : 0.0; };
+		R->FreeFly(1.f / 60, FVector(0, 0, 0), FVector2D(Arg(3), Arg(4)), false);
+		for (int32 k = 0; k < 60; k++) R->FreeFly(1.f / 60, FVector(Arg(0), Arg(1), Arg(2)).GetClampedToMaxSize(1.0), FVector2D::ZeroVector, false);
+	}));
+	FAutoConsoleCommandWithWorldAndArgs LookAtCmd(TEXT("OTG.Round.LookAt"), TEXT("OTG.Round.LookAt <X> <Y> <Z> [distance cm] [height cm] [yaw]: (testing) the free view looking at a spot in the level, or 'pin' for the flag"),
+		FCmd::CreateLambda([](const TArray<FString>& A, UWorld* W) {
+			AOTGRound* R = RoundIn(W);
+			if (!R || !A.Num()) return;
+			auto Arg = [&](int32 i, double D) { return A.IsValidIndex(i) ? FCString::Atod(*A[i]) : D; };
+			const bool bPin = A[0] == TEXT("pin");
+			const int32 O = bPin ? 1 : 3;
+			R->FreeLookAt(bPin ? R->PinWorld() + FVector(0, 0, 200) : FVector(Arg(0, 0), Arg(1, 0), Arg(2, 0)), Arg(O, 800), Arg(O + 1, 300), Arg(O + 2, 30));
+		}));
+	FAutoConsoleCommandWithWorldAndArgs PerfCmd(TEXT("OTG.Round.Perf"), TEXT("Frame rate and timings (the P key)"), FCmd::CreateLambda([](const TArray<FString>&, UWorld* W) { if (AOTGRound* R = RoundIn(W)) R->TogglePerf(); }));
+	FAutoConsoleCommandWithWorldAndArgs WxCmd(TEXT("OTG.Round.WeatherPanel"), TEXT("The weather panel (the L key)"), FCmd::CreateLambda([](const TArray<FString>&, UWorld* W) { if (AOTGRound* R = RoundIn(W)) R->ToggleWeatherPanel(); }));
+	FAutoConsoleCommandWithWorldAndArgs WxSetCmd(TEXT("OTG.Round.Weather"), TEXT("OTG.Round.Weather <key> | wind <mph> | from <deg> | cloud <0-1> | rain <mm> | fog <0-1>"), FCmd::CreateLambda([](const TArray<FString>& A, UWorld* W) {
+		AOTGRound* R = RoundIn(W);
+		if (!R || !A.Num()) return;
+		const double V = A.Num() > 1 ? FCString::Atod(*A[1]) : 0;
+		if (A[0] == TEXT("wind")) R->SetWindMph(V);
+		else if (A[0] == TEXT("from")) R->SetWindFrom(V);
+		else if (A[0] == TEXT("cloud")) R->SetCloud(V);
+		else if (A[0] == TEXT("rain")) R->SetRain(V);
+		else if (A[0] == TEXT("fog")) R->SetFog(V);
+		else R->SetWeatherKey(A[0]);
+	}));
 	FAutoConsoleCommandWithWorldAndArgs CardCmd(TEXT("OTG.Round.Scorecard"), TEXT("Show / hide the scorecard (the Tab key)"), FCmd::CreateLambda([](const TArray<FString>&, UWorld* W) { if (AOTGRound* R = RoundIn(W)) R->ToggleScorecard(); }));
 
 	constexpr double M_TO_YD = 1.09361, M_TO_FT = 3.28084;
@@ -164,6 +194,9 @@ AOTGRound::AOTGRound()
 	TracerMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	TracerMesh->SetCastShadow(false);
 	TracerMesh->bUseAsyncCooking = true;
+	FlagCloth = CreateDefaultSubobject<UProceduralMeshComponent>(TEXT("FlagCloth"));
+	FlagCloth->SetupAttachment(RootComponent);
+	FlagCloth->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	RainMesh = CreateDefaultSubobject<UProceduralMeshComponent>(TEXT("Rain"));
 	RainMesh->SetupAttachment(RootComponent);
 	RainMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
@@ -281,6 +314,19 @@ void AOTGRound::Setup(UOTGCourseData* InData, const FOTGRoundSetup& InSetup)
 		Hud->ShotPanel()->PuttMph = [Self]() {
 			return Self.IsValid() ? otg::of::PuttSpeed(Self->DistToPin() + 0.4, Self->Data->DefaultStimp) / 0.44704 : 5.0;
 		};
+		Hud->WeatherPanel()->OnKey = [Self](const FString& K) { if (Self.IsValid()) Self->SetWeatherKey(K); };
+		Hud->WeatherPanel()->OnWind = [Self](double V) { if (Self.IsValid()) Self->SetWindMph(V); };
+		Hud->WeatherPanel()->OnFrom = [Self](double V) { if (Self.IsValid()) Self->SetWindFrom(V); };
+		Hud->WeatherPanel()->OnCloud = [Self](double V) { if (Self.IsValid()) Self->SetCloud(V); };
+		Hud->WeatherPanel()->OnRain = [Self](double V) { if (Self.IsValid()) Self->SetRain(V); };
+		Hud->WeatherPanel()->OnFog = [Self](double V) { if (Self.IsValid()) Self->SetFog(V); };
+		Hud->WeatherPanel()->OnTemp = [Self](double V) { if (Self.IsValid()) Self->SetTemp(V); };
+		Hud->WeatherPanel()->Current = [Self](FOTGWeatherView& Out) {
+			if (!Self.IsValid()) return;
+			const FOTGWeather& W = Self->GetWeather();
+			Out.Key = W.bLive ? FString(TEXT("live")) : W.Key; Out.Label = W.Label; Out.WindMph = W.WindMph; Out.From = Self->WindFromRelative();
+			Out.Cloud = W.Cloud; Out.RainMm = W.RainMm; Out.Fog = W.Fog; Out.TempC = W.TempC;
+		};
 		Hud->ShotPanel()->OnHit = [Self](double Mph, double Vla, double Hla, double Spin, double Axis) {
 			if (!Self.IsValid()) return;
 			if (UOTGLaunchMonitorSubsystem* LM = Self->GetGameInstance()->GetSubsystem<UOTGLaunchMonitorSubsystem>()) LM->InjectShot(Mph, Vla, Hla, Spin, Axis);
@@ -397,9 +443,8 @@ void AOTGRound::StartHole(int32 Index)
 	// the flag, and a marker on the tee
 	const otg::V3 P = Pin();
 	PinMesh->SetWorldLocation(World(P) + FVector(0, 0, 115));
-	PinMesh->SetWorldScale3D(FVector(0.025, 0.025, 2.3));
-	FlagMesh->SetWorldLocation(World(P) + FVector(0, 26, 205));
-	FlagMesh->SetWorldScale3D(FVector(0.01, 0.5, 0.34));
+	PinMesh->SetWorldScale3D(FVector(0.02, 0.02, 2.3));
+	FlagMesh->SetVisibility(false);   // (the cloth flag instead: UpdateFlag)
 	// (the cup: a dark disc 10.8 cm across, just above the green)
 	CupMesh->SetWorldLocation(World(P) + FVector(0, 0, 0.3));
 	CupMesh->SetWorldScale3D(FVector(0.108, 0.108, 0.002));
@@ -583,6 +628,25 @@ void AOTGRound::AimAtWorld(const FVector& W)
 {
 	const FVector C = Data->WorldToCourse(W);
 	AimAt(C.X, C.Z);
+}
+
+void AOTGRound::TogglePerf()
+{
+	if (Hud) Hud->ShowPerf(!Hud->IsPerfShown());
+}
+
+FVector AOTGRound::PinWorld() const
+{
+	return World(Pin());
+}
+
+void AOTGRound::FreeLookAt(const FVector& Target, double Dist, double Height, double YawDeg)
+{
+	if (!bFreeView) ToggleFreeView();
+	const double Y = FMath::DegreesToRadians(YawDeg);
+	FreePos = Target - FVector(FMath::Cos(Y), FMath::Sin(Y), 0) * Dist + FVector(0, 0, Height);
+	FreeRot = (Target - FreePos).Rotation();
+	if (Cam) Cam->SetActorLocationAndRotation(FreePos, FreeRot);
 }
 
 void AOTGRound::ToggleShotPanel()
@@ -1066,7 +1130,8 @@ void AOTGRound::Tick(float Dt)
 		Stamp = HashCombine(Stamp, GetTypeHash(HoleIndex));
 		if (Stamp != LookStamp) { ApplyLook(); ApplyWeatherToScene(); }
 	}
-	UpdateCamera(Dt);
+	if (!bFreeView) UpdateCamera(Dt);   // (the free view moves it itself: FreeFly)
+	UpdateFlag(Dt);
 	UpdateMap();
 	UpdateRain(Dt);
 	// the ball a little bigger the further off it is, so it can be followed
@@ -1374,7 +1439,12 @@ void AOTGRound::ApplyLook()
 void AOTGRound::SetupWeather()
 {
 	FString Mode = Setup_.Weather.IsEmpty() ? FString(TEXT("live")) : Setup_.Weather;
-	FParse::Value(FCommandLine::Get(), TEXT("weather="), Mode);
+	// (-weather=<key> on the command line: for the round's start only, so the weather panel can change it)
+	if (!bWeatherFromCommandLine)
+	{
+		bWeatherFromCommandLine = true;
+		if (FParse::Value(FCommandLine::Get(), TEXT("weather="), Mode)) Setup_.Weather = Mode;
+	}
 	WindRel.Reset();
 	for (int32 i = 0; i < Data->Holes.Num(); i++) WindRel.Add(Setup_.WindDir == TEXT("rand") ? FMath::FRand() * 360 : FCString::Atod(*Setup_.WindDir));
 	if (Mode == TEXT("custom")) Weather = FOTGWeather::Custom(Setup_.WindMph);

@@ -50,6 +50,24 @@ public:
 	void AimAt(double X, double Z);    // (course metres: the minimap, a click on the ground)
 	void AimAtWorld(const FVector& W);
 	void ToggleShotPanel();
+	// the free view (F): fly round the course
+	void ToggleFreeView();
+	bool IsFreeView() const { return bFreeView; }
+	void FreeFly(float Dt, const FVector& Move, const FVector2D& Look, bool bFast);
+	void FreeLookAt(const FVector& Target, double Dist, double Height, double YawDeg);   // (testing)
+	FVector PinWorld() const;
+	void TogglePerf();                 // (P: frame rate and timings)
+	// the weather panel (L): the weather changed as you play
+	void ToggleWeatherPanel();
+	void SetWeatherKey(const FString& Key);
+	void SetWindMph(double Mph);
+	void SetWindFrom(double RelDeg);
+	void SetCloud(double Cloud);
+	void SetRain(double Mm);
+	void SetFog(double Fog);
+	void SetTemp(double C);
+	double WindFromRelative() const;
+	const FOTGWeather& GetWeather() const { return Weather; }
 	void TogglePause();
 	bool IsPaused() const { return bPaused; }
 	void QuitToMenu();
@@ -84,6 +102,8 @@ private:
 	void UpdateMap();
 	void UpdateWindBox();
 	void UpdateRain(float Dt);
+	void UpdateFlag(float Dt);
+	void WeatherChanged();
 	void HoleOut(bool bPickedUp, const FString& Note);
 	void NextHole();
 	bool WaterDrop(otg::V3& Out) const;
@@ -156,6 +176,13 @@ private:
 	FLinearColor OrigSunColour = FLinearColor::White;
 	uint32 LookStamp = 0;
 	UPROPERTY() TObjectPtr<UProceduralMeshComponent> RainMesh;
+	UPROPERTY() TObjectPtr<UProceduralMeshComponent> FlagCloth;
+	double FlagTime = 0;
+	bool bFlagMade = false;
+	bool bFreeView = false;
+	bool bWeatherFromCommandLine = false;
+	FVector FreePos = FVector::ZeroVector;
+	FRotator FreeRot = FRotator::ZeroRotator;
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> RainMat;
 	TArray<FVector> RainDrops;
 	int32 RainVerts = 0;

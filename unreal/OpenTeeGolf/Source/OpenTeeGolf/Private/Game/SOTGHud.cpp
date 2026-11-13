@@ -6,6 +6,10 @@
 #include "SOTGMenus.h"
 #include "SOTGMinimap.h"
 #include "SOTGPanels.h"
+#include "GameFramework/GameUserSettings.h"
+#include "Engine/Engine.h"
+#include "RenderCore.h"
+#include "RHI.h"
 #include "Widgets/Layout/SBox.h"
 #include "Widgets/Layout/SGridPanel.h"
 #include "Widgets/SBoxPanel.h"
@@ -40,6 +44,19 @@ void SOTGHud::Construct(const FArguments&)
 			+ SVerticalBox::Slot().AutoHeight().HAlign(HAlign_Right).Padding(0, 0, 0, 8)[SAssignNew(WindBox, SOTGWind)]
 			+ SVerticalBox::Slot().AutoHeight().HAlign(HAlign_Right)[SNew(SBox).WidthOverride(250).HeightOverride(360)[SAssignNew(Map, SOTGMinimap)]]
 		]
+		// the weather panel (L)
+		+ SOverlay::Slot().HAlign(HAlign_Center).VAlign(VAlign_Center)
+		[
+			SAssignNew(WxPanel, SOTGWeatherPanel).Visibility(EVisibility::Collapsed)
+		]
+		// the frame rate and timings (P)
+		+ SOverlay::Slot().HAlign(HAlign_Center).VAlign(VAlign_Top).Padding(0, 24, 0, 0)
+		[
+			SAssignNew(PerfBox, SBorder).BorderImage(FCoreStyle::Get().GetBrush("WhiteBrush")).BorderBackgroundColor(Panel).Padding(FMargin(12, 5)).Visibility(EVisibility::Collapsed)
+			[
+				SAssignNew(PerfText, STextBlock).Font(FCoreStyle::GetDefaultFontStyle("Mono", 12)).ColorAndOpacity(Ink)
+			]
+		]
 		// the test shot panel (T)
 		+ SOverlay::Slot().HAlign(HAlign_Left).VAlign(VAlign_Center).Padding(24, 60, 24, 24)
 		[
@@ -64,7 +81,7 @@ void SOTGHud::Construct(const FArguments&)
 		+ SOverlay::Slot().HAlign(HAlign_Left).VAlign(VAlign_Bottom).Padding(24)
 		[
 			SAssignNew(Keys, STextBlock).Font(Font(12)).ColorAndOpacity(FLinearColor(1, 1, 1, 0.7f)).ShadowOffset(FVector2D(1, 1))
-			.Text(FText::FromString(TEXT("Click the ground or the map to aim     Left / Right: fine aim     Up / Down: club     T: test shot panel     Space: quick test shot     Enter: skip / continue     Tab: scorecard     Backspace: mulligan     Esc: menu")))
+			.Text(FText::FromString(TEXT("Click the ground or the map to aim     Left / Right: fine aim     Up / Down: club     T: test shot panel     Space: quick test shot     Enter: skip / continue     Tab: scorecard     Backspace: mulligan     F: free view     L: weather     P: frame rate     Esc: menu")))
 		]
 		// banners and toasts
 		+ SOverlay::Slot().HAlign(HAlign_Center).VAlign(VAlign_Top).Padding(0, 140, 0, 0)
@@ -107,6 +124,28 @@ void SOTGHud::Tick(const FGeometry& Geometry, const double Time, const float Dt)
 	};
 	Fade(BannerLeft, BannerBox);
 	Fade(ToastLeft, ToastBox);
+	// the frame rate and where the time goes (twice a second)
+	if (PerfBox->GetVisibility() != EVisibility::Collapsed && Time - PerfShown > 0.5)
+	{
+		PerfShown = Time;
+		extern ENGINE_API float GAverageFPS;
+		extern ENGINE_API float GAverageMS;
+		const double GameMs = FPlatformTime::ToMilliseconds(GGameThreadTime), RenderMs = FPlatformTime::ToMilliseconds(GRenderThreadTime);
+		const double GpuMs = FPlatformTime::ToMilliseconds(RHIGetGPUFrameCycles(0));
+		FString Quality = TEXT("?");
+		FIntPoint Res(0, 0);
+		if (UGameUserSettings* GS = GEngine ? GEngine->GetGameUserSettings() : nullptr)
+		{
+			const TCHAR* Names[] = { TEXT("Low"), TEXT("Medium"), TEXT("High"), TEXT("Epic"), TEXT("Cinematic") };
+			const int32 Q = GS->GetOverallScalabilityLevel();
+			Quality = Q >= 0 && Q < 5 ? Names[Q] : TEXT("Custom");
+			Res = GS->GetScreenResolution();
+		}
+		PerfText->SetText(FText::FromString(FString::Printf(TEXT("%3.0f fps  %5.1f ms   game %4.1f  draw %4.1f  GPU %4.1f ms   %dx%d  %s"),
+			GAverageFPS, GAverageMS, GameMs, RenderMs, GpuMs, Res.X, Res.Y, *Quality)));
+		const FLinearColor C = GAverageFPS >= 55 ? FLinearColor(0.6f, 1.f, 0.6f) : GAverageFPS >= 30 ? FLinearColor(1.f, 0.85f, 0.4f) : FLinearColor(1.f, 0.5f, 0.45f);
+		PerfText->SetColorAndOpacity(C);
+	}
 }
 
 void SOTGHud::SetInfo(const FString& Line1, const FString& Line2, const FString& ClubLine)
@@ -264,6 +303,27 @@ void SOTGHud::ShowPause(FSimpleDelegate OnResume, FSimpleDelegate OnScorecard, F
 				FMargin(28, 22), Solid)
 		]);
 	PauseSlot->SetVisibility(EVisibility::Visible);
+}
+
+void SOTGHud::ShowWeatherPanel(bool bShow)
+{
+	WxPanel->SetVisibility(bShow ? EVisibility::Visible : EVisibility::Collapsed);
+}
+
+bool SOTGHud::IsWeatherPanelShown() const
+{
+	return WxPanel->GetVisibility() == EVisibility::Visible;
+}
+
+void SOTGHud::ShowPerf(bool bShow)
+{
+	PerfBox->SetVisibility(bShow ? EVisibility::HitTestInvisible : EVisibility::Collapsed);
+	PerfShown = -1;
+}
+
+bool SOTGHud::IsPerfShown() const
+{
+	return PerfBox->GetVisibility() != EVisibility::Collapsed;
 }
 
 void SOTGHud::ShowShotPanel(bool bShow)

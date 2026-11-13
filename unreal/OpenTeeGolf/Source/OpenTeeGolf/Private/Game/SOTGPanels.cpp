@@ -4,7 +4,10 @@
 
 #include "OTGUi.h"
 #include "Rendering/DrawElements.h"
+#include "Game/OTGWeather.h"
+#include "Widgets/Input/SSlider.h"
 #include "Widgets/Input/SSpinBox.h"
+#include "Widgets/Layout/SWrapBox.h"
 #include "Widgets/Layout/SBox.h"
 #include "Widgets/Layout/SGridPanel.h"
 #include "Widgets/SBoxPanel.h"
@@ -51,6 +54,65 @@ void SOTGWind::Set(double ArrowDeg, bool bCalm, const FString& Line1, const FStr
 	Arrow->SetAngle(ArrowDeg, bCalm);
 	Text1->SetText(FText::FromString(Line1));
 	Text2->SetText(FText::FromString(Line2));
+}
+
+// ------------------------------------------------------------------ the weather panel
+
+void SOTGWeatherPanel::Construct(const FArguments&)
+{
+	ChildSlot[SAssignNew(Body, SBox).WidthOverride(380)];
+	Rebuild();
+}
+
+void SOTGWeatherPanel::Rebuild()
+{
+	const FOTGWeatherView W = View();
+	TSharedRef<SVerticalBox> V = SNew(SVerticalBox);
+	V->AddSlot().AutoHeight().Padding(0, 0, 0, 6)
+	[
+		SNew(SHorizontalBox)
+		+ SHorizontalBox::Slot().AutoWidth()[Text(TEXT("Weather"), 18, Ink, "Bold")]
+		+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Bottom).Padding(8, 0, 0, 2)[Text(TEXT("changes at once  \u00B7  L: close"), 12, Soft)]
+	];
+	TSharedRef<SWrapBox> Keys = SNew(SWrapBox).UseAllottedSize(true);
+	for (const auto& C : FOTGWeather::Choices())
+	{
+		if (C.Key == TEXT("custom")) continue;
+		const FString K = C.Key;
+		const FString Label = K == TEXT("live") ? FString(TEXT("Live")) : C.Value;
+		Keys->AddSlot().Padding(0, 0, 4, 4)[Button(Label, [this, K]() { if (OnKey) OnKey(K); Rebuild(); }, 12, W.Key == K)];
+	}
+	V->AddSlot().AutoHeight()[Keys];
+	// a slider: its label and value (shown live), 0..1 mapped to Lo..Hi
+	auto Slider = [&](const FString& Label, double Lo, double Hi, TFunction<double(const FOTGWeatherView&)> Get, TFunction<FString(double)> Fmt, TFunction<void(double)>* Set) {
+		V->AddSlot().AutoHeight().Padding(0, 6, 0, 0)
+		[
+			SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)[SNew(SBox).WidthOverride(110)[Text(Label, 13, Soft)]]
+			+ SHorizontalBox::Slot().FillWidth(1).VAlign(VAlign_Center)
+			[
+				SNew(SSlider)
+				.Value_Lambda([this, Lo, Hi, Get]() { return float((Get(View()) - Lo) / (Hi - Lo)); })
+				.OnValueChanged_Lambda([Lo, Hi, Set](float X) { if (*Set) (*Set)(Lo + (Hi - Lo) * X); })
+			]
+			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(8, 0, 0, 0)
+			[
+				SNew(SBox).WidthOverride(92)[SNew(STextBlock).Font(Font(13, "Bold")).ColorAndOpacity(Ink).Text_Lambda([this, Get, Fmt]() { return FText::FromString(Fmt(Get(View()))); })]
+			]
+		];
+	};
+	Slider(TEXT("Wind"), 0, 40, [](const FOTGWeatherView& X) { return X.WindMph; }, [](double D) { return FString::Printf(TEXT("%d mph"), FMath::RoundToInt(D)); }, &OnWind);
+	Slider(TEXT("Wind from"), 0, 360, [](const FOTGWeatherView& X) { return X.From; }, [](double D) {
+		const double A = FMath::Fmod(D + 360.0, 360.0);
+		return A < 22.5 || A >= 337.5 ? FString(TEXT("into you")) : A < 67.5 ? FString(TEXT("ahead right")) : A < 112.5 ? FString(TEXT("the right")) : A < 157.5 ? FString(TEXT("behind right"))
+			: A < 202.5 ? FString(TEXT("behind")) : A < 247.5 ? FString(TEXT("behind left")) : A < 292.5 ? FString(TEXT("the left")) : FString(TEXT("ahead left"));
+	}, &OnFrom);
+	Slider(TEXT("Cloud"), 0, 1, [](const FOTGWeatherView& X) { return X.Cloud; }, [](double D) { return FString::Printf(TEXT("%d%%"), FMath::RoundToInt(D * 100)); }, &OnCloud);
+	Slider(TEXT("Rain"), 0, 8, [](const FOTGWeatherView& X) { return X.RainMm; }, [](double D) { return D < 0.05 ? FString(TEXT("none")) : FString::Printf(TEXT("%.1f mm/h"), D); }, &OnRain);
+	Slider(TEXT("Fog"), 0, 1, [](const FOTGWeatherView& X) { return X.Fog; }, [](double D) { return D < 0.02 ? FString(TEXT("none")) : FString::Printf(TEXT("%d%%"), FMath::RoundToInt(D * 100)); }, &OnFog);
+	Slider(TEXT("Temperature"), -5, 40, [](const FOTGWeatherView& X) { return X.TempC; }, [](double D) { return FString::Printf(TEXT("%d\u00B0F"), FMath::RoundToInt(D * 1.8 + 32)); }, &OnTemp);
+	V->AddSlot().AutoHeight().Padding(0, 8, 0, 0)[Text(TEXT("The wind, air and wet ground play in every shot."), 11, Soft)];
+	Body->SetContent(Box(V, FMargin(14, 10), Solid));
 }
 
 // ------------------------------------------------------------------ the shot panel

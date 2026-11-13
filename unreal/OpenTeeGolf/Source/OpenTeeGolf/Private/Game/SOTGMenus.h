@@ -66,5 +66,10 @@ private:
 	TArray<FOTGCourseInfo> CourseList;
 	FOTGRoundSetup Setup;
 	TArray<FOTGPlayerProfile> Profiles, Draft;
+	// each course's aerial photo: its card's picture, and the backdrop for the one chosen
+	const FSlateBrush* PhotoOf(const FString& Id, bool bCrop);
+	TMap<FString, TSharedPtr<FSlateBrush>> Photos;
+	TSharedPtr<class SImage> Backdrop;
+	TSharedPtr<SBox> TabBar;
 	int32 ConfirmRemove = -1;
 };

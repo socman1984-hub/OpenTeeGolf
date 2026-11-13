@@ -241,7 +241,32 @@ runs inside the game, in C++.
 
   `build_course.py` grows wild grass there: clumps of tall thin blades (35-75 cm), some gone to
   straw, many with seed heads, drawn to 130 m.
-- Still to come in the game itself: the time of day, putting aids, the Mevo+ camera view.
+- In the round, as well:
+  - F, the free view: fly round the course.
+    - W A S D or the arrows fly; Q and E (or Space) go down and up; Shift goes faster.
+    - Hold the right mouse button to look round.
+    - It flies faster the higher you are. F or Esc comes back.
+  - P, the frame rate: frames a second and ms a frame; the game, draw and GPU ms; the
+    resolution and the quality level. Green from 55 fps, amber from 30, red below.
+  - L, the weather panel: the conditions change at once.
+    - A preset, or the course's live weather.
+    - Sliders for the wind's speed and direction against the hole, the cloud, rain, fog and the
+      temperature.
+    - The physics plays them from the next shot.
+  - The flag is cloth (`AOTGRound::UpdateFlag`): it hangs limp in calm air and flies out downwind,
+    rippling and fluttering more the harder it blows and with each gust.
+- Running water: the water material reads a stream from its own surface's slope.
+  - Running water is roughened, and its ripple pattern travels downstream: two copies half a
+    cycle apart, crossfaded so it never visibly resets. Flat ponds keep their wind ripples.
+  - `STREAM_*` in `build_course.py` set how steep a stream must be to run fully, how fast it
+    runs, the ripples' size and how rough it is.
+  - The turf now stops at the water (it used to grow in the creek beds).
+- The menu: the chosen course's aerial photo behind it, a course card with its picture, rounded
+  buttons that light under the mouse, and the page shown lit in the tabs.
+- Testing commands: `OTG.Round.FreeView`, `OTG.Round.Fly`, `OTG.Round.LookAt <X Y Z | pin>`,
+  `OTG.Round.Perf`, `OTG.Round.WeatherPanel`, `OTG.Round.Weather <key | wind | from | cloud | rain | fog> [value]`.
+- Still to come in the game itself: the time of day, putting aids, the Mevo+ camera view, a darker
+  stony bed under the creeks.
 
 Build: `Engine\Build\BatchFiles\Build.bat OpenTeeGolf Win64 Development -Project=<path>\OpenTeeGolf.uproject`
 (the editor target, `OpenTeeGolfEditor`, can't build while another Unreal Editor with Live Coding is

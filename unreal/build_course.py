@@ -418,7 +418,12 @@ def build_ground(land):
             mel.connect_material_expressions(op(unreal.MaterialExpressionMultiply,
                                                 op(unreal.MaterialExpressionSubtract, w, const(0.33, -800, 900), -700, 850, wout, ""),
                                                 const(12.0, -700, 950), -650, 850), "", sat, "")
-            mel.connect_material_expressions(sat, "", go, kind.capitalize())
+            # (never in the water: the rough and the wild grass run under a creek's outline)
+            dry = E(unreal.MaterialExpressionSaturate, -600, 950)
+            mel.connect_material_expressions(op(unreal.MaterialExpressionMultiply,
+                                                op(unreal.MaterialExpressionSubtract, const(0.45, -800, 1000), raw["water"], -700, 1000, "", "R"),
+                                                const(10.0, -700, 1050), -650, 1000), "", dry, "")
+            mel.connect_material_expressions(op(unreal.MaterialExpressionMultiply, sat, dry, -550, 900), "", go, kind.capitalize())
         log("Turf: on %s" % ", ".join(TURF_GRASS))
     except Exception:
         warn("Turf skipped:\n" + traceback.format_exc())
@@ -946,6 +951,14 @@ WATER_ABSORPTION = (0.5, 0.11, 0.16)
 WATER_SCATTERING = (0.008, 0.02, 0.014)
 WATER_RIPPLES = 0.55  # how rough the water is in a gust: 0 a mirror .. 1 the full ripple picture
 WATER_CALM = 0.12     # .. and between gusts
+# Running water: where the water's surface slopes (a stream, falling with the land) its own normal
+# leans downstream - the material reads which way and how fast from that (ponds, being flat, don't
+# run). STREAM_SLOPE: the slope at which it's fully running; STREAM_SPEED: metres a second at full
+# run; STREAM_TILE_M: the ripple picture's size; STREAM_RIPPLE: how rough running water is
+STREAM_SLOPE = 0.025
+STREAM_SPEED = 1.1
+STREAM_TILE_M = 2.5
+STREAM_RIPPLE = 0.9
 # ripple layers: (metres across, metres a second, direction in degrees)
 WATER_RIPPLE_LAYERS = ((7.0, 0.28, 20.0), (2.4, 0.17, -35.0), (0.8, 0.09, 75.0))
 
@@ -1212,7 +1225,64 @@ def water_material():
         mel.connect_material_expressions(strength, "", calm, "Alpha")
         nrm = E(unreal.MaterialExpressionNormalize, -600, 1000)
         mel.connect_material_expressions(calm, "", nrm, "")
-        mel.connect_material_property(nrm, "", unreal.MaterialProperty.MP_NORMAL)
+        # ---- running water (streams): which way and how fast, from the surface's own slope
+        try:
+            vn = E(unreal.MaterialExpressionVertexNormalWS, -2000, 2300)
+            vxy = E(unreal.MaterialExpressionComponentMask, -1850, 2300)
+            vxy.set_editor_property("r", True)
+            vxy.set_editor_property("g", True)
+            mel.connect_material_expressions(vn, "", vxy, "")
+            vlen = E(unreal.MaterialExpressionLength, -1700, 2400)
+            mel.connect_material_expressions(vxy, "", vlen, "")
+            flow_dir = op(unreal.MaterialExpressionDivide, vxy, op(unreal.MaterialExpressionMax, vlen, const(1e-4, -1700, 2500), -1600, 2450), -1500, 2300)
+            run = E(unreal.MaterialExpressionSaturate, -1400, 2400)   # (0 still .. 1 running)
+            mel.connect_material_expressions(op(unreal.MaterialExpressionDivide, vlen, const(STREAM_SLOPE, -1600, 2550), -1500, 2500), "", run, "")
+            # two copies of the ripples carried downstream, half a cycle apart, each faded out as
+            # it jumps back (so the current runs on for ever without a visible reset)
+            tm = E(unreal.MaterialExpressionTime, -1900, 2700)
+            cycle = op(unreal.MaterialExpressionMultiply, tm, const(0.6, -1900, 2800), -1750, 2700)
+            ph0 = E(unreal.MaterialExpressionFrac, -1600, 2700)
+            mel.connect_material_expressions(cycle, "", ph0, "")
+            ph1 = E(unreal.MaterialExpressionFrac, -1600, 2800)
+            mel.connect_material_expressions(op(unreal.MaterialExpressionAdd, cycle, const(0.5, -1750, 2900), -1700, 2800), "", ph1, "")
+            base_uv = op(unreal.MaterialExpressionDivide, xy, const(STREAM_TILE_M * 100.0, -1750, 3000), -1600, 3000)
+            # (a cycle's drift: the water's speed over 0.6 cycles a second, in texture widths)
+            reach = op(unreal.MaterialExpressionMultiply, flow_dir, op(unreal.MaterialExpressionMultiply, run, const(STREAM_SPEED / 0.6 / STREAM_TILE_M, -1500, 3150), -1400, 3100), -1300, 3050)
+
+            def carried(ph, offset, y):
+                shift = op(unreal.MaterialExpressionMultiply, reach, ph, -1200, y)
+                uv = op(unreal.MaterialExpressionSubtract, op(unreal.MaterialExpressionAdd, base_uv, const(offset, -1200, y + 80), -1100, y + 40), shift, -1000, y)
+                t = E(unreal.MaterialExpressionTextureSample, -850, y)
+                t.set_editor_property("texture", nt)
+                t.set_editor_property("sampler_type", unreal.MaterialSamplerType.SAMPLERTYPE_NORMAL)
+                mel.connect_material_expressions(uv, "", t, "UVs")
+                return t
+            fa = carried(ph0, 0.0, 3300)
+            fb = carried(ph1, 0.37, 3500)
+            blend = E(unreal.MaterialExpressionAbs, -900, 3700)
+            mel.connect_material_expressions(op(unreal.MaterialExpressionSubtract, op(unreal.MaterialExpressionMultiply, ph0, const(2.0, -1100, 3750), -1000, 3700), const(1.0, -1000, 3800), -950, 3700), "", blend, "")
+            flowing = E(unreal.MaterialExpressionLinearInterpolate, -700, 3400)
+            mel.connect_material_expressions(fa, "RGB", flowing, "A")
+            mel.connect_material_expressions(fb, "RGB", flowing, "B")
+            mel.connect_material_expressions(blend, "", flowing, "Alpha")
+            # (running water is rougher than a pond: the flowing ripples' slopes made steeper)
+            steep = op(unreal.MaterialExpressionMultiply, flowing, const3((STREAM_RIPPLE, STREAM_RIPPLE, 1.0), -700, 3550), -550, 3450)
+            mix_n = E(unreal.MaterialExpressionLinearInterpolate, -450, 1100)
+            mel.connect_material_expressions(nrm, "", mix_n, "A")
+            mel.connect_material_expressions(steep, "", mix_n, "B")
+            mel.connect_material_expressions(run, "", mix_n, "Alpha")
+            nrm2 = E(unreal.MaterialExpressionNormalize, -350, 1100)
+            mel.connect_material_expressions(mix_n, "", nrm2, "")
+            mel.connect_material_property(nrm2, "", unreal.MaterialProperty.MP_NORMAL)
+            # and its sheen broken up a little where it runs
+            rough = E(unreal.MaterialExpressionLinearInterpolate, -450, 120)
+            mel.connect_material_expressions(const(0.02, -600, 80), "", rough, "A")
+            mel.connect_material_expressions(const(0.09, -600, 160), "", rough, "B")
+            mel.connect_material_expressions(run, "", rough, "Alpha")
+            mel.connect_material_property(rough, "", unreal.MaterialProperty.MP_ROUGHNESS)
+        except Exception:
+            warn("Running water skipped:\n" + traceback.format_exc())
+            mel.connect_material_property(nrm, "", unreal.MaterialProperty.MP_NORMAL)
     except Exception:
         warn("Water ripples skipped:\n" + traceback.format_exc())
     mel.recompile_material(mat)

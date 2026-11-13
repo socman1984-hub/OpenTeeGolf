@@ -115,9 +115,10 @@ AOTGRound* AOTGPlayerController::Round()
 void AOTGPlayerController::SetupInputComponent()
 {
 	Super::SetupInputComponent();
-	auto Bind = [this](const FKey& Key, TFunction<void(AOTGRound*)> Fn) {
+	// (in the free view W A S D, Q / E and Space fly the camera: the round's keys wait)
+	auto Bind = [this](const FKey& Key, TFunction<void(AOTGRound*)> Fn, bool bInFreeView = false) {
 		FInputKeyBinding B(FInputChord(Key), IE_Pressed);
-		B.KeyDelegate.GetDelegateForManualSet().BindLambda([this, Fn]() { if (AOTGRound* R = Round()) Fn(R); });
+		B.KeyDelegate.GetDelegateForManualSet().BindLambda([this, Fn, bInFreeView]() { if (AOTGRound* R = Round(); R && (bInFreeView || !R->IsFreeView())) Fn(R); });
 		InputComponent->KeyBindings.Add(B);
 	};
 	Bind(EKeys::Up, [](AOTGRound* R) { R->ChangeClub(1); });
@@ -128,8 +129,11 @@ void AOTGPlayerController::SetupInputComponent()
 	Bind(EKeys::Enter, [](AOTGRound* R) { R->Continue(); });
 	Bind(EKeys::Tab, [](AOTGRound* R) { R->ToggleScorecard(); });
 	Bind(EKeys::BackSpace, [](AOTGRound* R) { R->Mulligan(); });
-	Bind(EKeys::Escape, [](AOTGRound* R) { R->TogglePause(); });
+	Bind(EKeys::Escape, [](AOTGRound* R) { if (R->IsFreeView()) R->ToggleFreeView(); else R->TogglePause(); }, true);
 	Bind(EKeys::T, [](AOTGRound* R) { R->ToggleShotPanel(); });
+	Bind(EKeys::F, [](AOTGRound* R) { R->ToggleFreeView(); }, true);
+	Bind(EKeys::P, [](AOTGRound* R) { R->TogglePerf(); }, true);
+	Bind(EKeys::L, [](AOTGRound* R) { R->ToggleWeatherPanel(); }, true);
 	// a click on the ground aims there
 	Bind(EKeys::LeftMouseButton, [this](AOTGRound* R) {
 		FHitResult Hit;
@@ -140,6 +144,24 @@ void AOTGPlayerController::SetupInputComponent()
 void AOTGPlayerController::PlayerTick(float Dt)
 {
 	Super::PlayerTick(Dt);
+	// the free view: fly with the keys, look with the mouse (right button held)
+	if (AOTGRound* R = Round(); R && R->IsFreeView())
+	{
+		auto Axis = [this](const FKey& Plus, const FKey& Plus2, const FKey& Minus, const FKey& Minus2) {
+			return float((IsInputKeyDown(Plus) || IsInputKeyDown(Plus2) ? 1 : 0) - (IsInputKeyDown(Minus) || IsInputKeyDown(Minus2) ? 1 : 0));
+		};
+		const FVector Move(Axis(EKeys::W, EKeys::Up, EKeys::S, EKeys::Down), Axis(EKeys::D, EKeys::Right, EKeys::A, EKeys::Left),
+			Axis(EKeys::E, EKeys::SpaceBar, EKeys::Q, EKeys::Q));
+		FVector2D Look = FVector2D::ZeroVector;
+		if (IsInputKeyDown(EKeys::RightMouseButton))
+		{
+			float DX = 0, DY = 0;
+			GetInputMouseDelta(DX, DY);
+			Look = FVector2D(DX, DY) * 2.0;
+		}
+		R->FreeFly(Dt, Move.GetClampedToMaxSize(1.0), Look, IsInputKeyDown(EKeys::LeftShift) || IsInputKeyDown(EKeys::RightShift));
+		return;
+	}
 	// aiming: held keys turn it (faster with Shift)
 	const bool bLeft = IsInputKeyDown(EKeys::Left) || IsInputKeyDown(EKeys::A);
 	const bool bRight = IsInputKeyDown(EKeys::Right) || IsInputKeyDown(EKeys::D);

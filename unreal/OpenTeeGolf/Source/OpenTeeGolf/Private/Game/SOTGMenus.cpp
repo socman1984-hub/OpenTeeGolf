@@ -21,6 +21,9 @@
 #include "Widgets/Layout/SWrapBox.h"
 #include "Widgets/SBoxPanel.h"
 #include "Widgets/SOverlay.h"
+#include "Widgets/Images/SImage.h"
+#include "Widgets/Layout/SScaleBox.h"
+#include "Engine/Texture2D.h"
 
 using namespace otg::ui;
 
@@ -199,6 +202,25 @@ UOTGCourseSubsystem* SOTGMainMenu::Courses() const
 	return GI ? GI->GetSubsystem<UOTGCourseSubsystem>() : nullptr;
 }
 
+const FSlateBrush* SOTGMainMenu::PhotoOf(const FString& Id, bool bCrop)
+{
+	const FString Key = Id + (bCrop ? TEXT("#card") : TEXT(""));
+	if (const TSharedPtr<FSlateBrush>* B = Photos.Find(Key)) return B->Get();
+	UTexture2D* Tex = LoadObject<UTexture2D>(nullptr, *FString::Printf(TEXT("/Game/Courses/%s/Build/Textures/T_CoursePhoto.T_CoursePhoto"), *Id));
+	TSharedPtr<FSlateBrush> Brush = MakeShared<FSlateBrush>();
+	if (Tex)
+	{
+		Brush->SetResourceObject(Tex);
+		Brush->ImageSize = bCrop ? FVector2D(132, 88) : FVector2D(1920, 1920);
+		// (a card: the middle of the course; the backdrop: most of it)
+		Brush->SetUVRegion(bCrop ? FBox2f(FVector2f(0.33f, 0.36f), FVector2f(0.67f, 0.59f)) : FBox2f(FVector2f(0.15f, 0.15f), FVector2f(0.85f, 0.85f)));
+		Tex->SetForceMipLevelsToBeResident(600.f);
+	}
+	else Brush->TintColor = FLinearColor(0.05f, 0.1f, 0.06f, 1.f);
+	Photos.Add(Key, Brush);
+	return Brush.Get();
+}
+
 void SOTGMainMenu::Construct(const FArguments&)
 {
 	Setup = FOTGPlayers::LoadSetup();
@@ -208,17 +230,29 @@ void SOTGMainMenu::Construct(const FArguments&)
 	if (CourseList.Num() && !CourseList.ContainsByPredicate([&](const FOTGCourseInfo& I) { return I.Id == Setup.CourseId; })) Setup.CourseId = CourseList[0].Id;
 	ChildSlot
 	[
-		SNew(SBorder).BorderImage(FCoreStyle::Get().GetBrush("WhiteBrush")).BorderBackgroundColor(FLinearColor(0.035f, 0.07f, 0.045f, 1.f)).Padding(FMargin(40, 30))
+		SNew(SOverlay)
+		// the chosen course from the air, behind everything, darkened
+		+ SOverlay::Slot()
+		[
+			SNew(SBorder).BorderImage(FCoreStyle::Get().GetBrush("WhiteBrush")).BorderBackgroundColor(FLinearColor(0.02f, 0.04f, 0.03f, 1.f)).Padding(0)
+			[
+				SNew(SScaleBox).Stretch(EStretch::ScaleToFill)[SAssignNew(Backdrop, SImage).ColorAndOpacity(FLinearColor(0.45f, 0.5f, 0.45f, 1.f))]
+			]
+		]
+		+ SOverlay::Slot()[SNew(SBorder).BorderImage(FCoreStyle::Get().GetBrush("WhiteBrush")).BorderBackgroundColor(FLinearColor(0.01f, 0.03f, 0.02f, 0.4f))]
+		+ SOverlay::Slot().Padding(FMargin(48, 30))
 		[
 			SNew(SVerticalBox)
-			+ SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 16)
+			+ SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 22)
 			[
 				SNew(SHorizontalBox)
-				+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0, 0, 36, 0)[Text(TEXT("OpenTeeGolf"), 34, Ink, "Bold")]
-				+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0, 0, 6, 0)[Button(TEXT("Play"), [this]() { Page = EPage::Play; Rebuild(); }, 16)]
-				+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0, 0, 6, 0)[Button(TEXT("Players"), [this]() { Page = EPage::Players; Draft = Profiles; ConfirmRemove = -1; Rebuild(); }, 16)]
-				+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0, 0, 6, 0)[Button(TEXT("Launch monitor"), [this]() { Page = EPage::LaunchMonitor; Rebuild(); }, 16)]
-				+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0, 0, 6, 0)[Button(TEXT("Settings"), [this]() { Page = EPage::Settings; Rebuild(); }, 16)]
+				+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0, 0, 44, 0)
+				[
+					SNew(SVerticalBox)
+					+ SVerticalBox::Slot().AutoHeight()[SNew(STextBlock).Text(FText::FromString(TEXT("OpenTeeGolf"))).Font(Font(46, "Bold")).ColorAndOpacity(Ink).ShadowOffset(FVector2D(2, 2)).ShadowColorAndOpacity(FLinearColor(0, 0, 0, 0.6f))]
+					+ SVerticalBox::Slot().AutoHeight()[SNew(STextBlock).Text(FText::FromString(TEXT("Real courses. Your launch monitor."))).Font(Font(15, "Italic")).ColorAndOpacity(Gold).ShadowOffset(FVector2D(1, 1)).ShadowColorAndOpacity(FLinearColor(0, 0, 0, 0.6f))]
+				]
+				+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)[SAssignNew(TabBar, SBox)]
 				+ SHorizontalBox::Slot().FillWidth(1)[SNullWidget::NullWidget]
 				+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)[Button(TEXT("Quit"), []() {
 					if (UGameInstance* GI = GameInstance()) UKismetSystemLibrary::QuitGame(GI->GetWorld(), nullptr, EQuitPreference::Quit, false);
@@ -228,7 +262,7 @@ void SOTGMainMenu::Construct(const FArguments&)
 			// the version, and where the course data comes from
 			+ SVerticalBox::Slot().AutoHeight().Padding(0, 10, 0, 0)
 			[
-				SNew(STextBlock).Font(Font(11)).ColorAndOpacity(FLinearColor(1, 1, 1, 0.55f)).AutoWrapText(true)
+				SNew(STextBlock).Font(Font(11)).ColorAndOpacity(FLinearColor(1, 1, 1, 0.65f)).AutoWrapText(true).ShadowOffset(FVector2D(1, 1))
 				.Text(FText::FromString(FString::Printf(TEXT("OpenTeeGolf %s  \u00B7  Courses: \u00A9 OpenStreetMap contributors (ODbL); elevation and aerial photos from USGS/USDA (US) or as credited in NOTICE.md; tree heights: Meta & WRI (CC BY 4.0); live weather: Open-Meteo (CC BY 4.0)  \u00B7  Made with Unreal Engine"),
 					*GetDefault<UGeneralProjectSettings>()->ProjectVersion)))
 			]
@@ -239,6 +273,21 @@ void SOTGMainMenu::Construct(const FArguments&)
 
 void SOTGMainMenu::Rebuild()
 {
+	// the tabs, the page shown lit
+	TSharedRef<SHorizontalBox> Tabs = SNew(SHorizontalBox);
+	const TPair<FString, EPage> Pages[] = { { TEXT("Play"), EPage::Play }, { TEXT("Players"), EPage::Players }, { TEXT("Launch monitor"), EPage::LaunchMonitor }, { TEXT("Settings"), EPage::Settings } };
+	for (const auto& T : Pages)
+	{
+		const EPage P = T.Value;
+		Tabs->AddSlot().AutoWidth().Padding(0, 0, 8, 0)
+		[
+			SNew(SButton).ButtonStyle(&ButtonStyle(Page == P)).ContentPadding(FMargin(18, 8))
+			.OnClicked_Lambda([this, P]() { Page = P; if (P == EPage::Players) { Draft = Profiles; ConfirmRemove = -1; } Rebuild(); return FReply::Handled(); })
+			[SNew(STextBlock).Text(FText::FromString(T.Key)).Font(Font(16, "Bold")).ColorAndOpacity(Ink)]
+		];
+	}
+	if (TabBar) TabBar->SetContent(Tabs);
+	if (Backdrop) Backdrop->SetImage(Setup.CourseId.IsEmpty() ? nullptr : PhotoOf(Setup.CourseId, false));
 	if (Page == EPage::Play) Body->SetContent(PlayPage());
 	else if (Page == EPage::Players) Body->SetContent(PlayersPage());
 	else if (Page == EPage::Settings) Body->SetContent(SettingsPage());
@@ -255,7 +304,23 @@ TSharedRef<SWidget> SOTGMainMenu::PlayPage()
 	for (const FOTGCourseInfo& I : CourseList)
 	{
 		const FString Id = I.Id;
-		List->AddSlot().AutoHeight().Padding(0, 2)[Button(FString::Printf(TEXT("%s\n%s  ·  %d holes"), *I.Name, *I.Location, I.Holes), [this, Id]() { Setup.CourseId = Id; Remember(); Rebuild(); }, 15, Setup.CourseId == Id)];
+		const bool bOn = Setup.CourseId == Id;
+		List->AddSlot().AutoHeight().Padding(0, 3)
+		[
+			SNew(SButton).ButtonStyle(&ButtonStyle(bOn)).ContentPadding(FMargin(6))
+			.OnClicked_Lambda([this, Id]() { Setup.CourseId = Id; Remember(); Rebuild(); return FReply::Handled(); })
+			[
+				SNew(SHorizontalBox)
+				+ SHorizontalBox::Slot().AutoWidth().Padding(0, 0, 12, 0)[SNew(SBox).WidthOverride(132).HeightOverride(88)[SNew(SImage).Image(PhotoOf(Id, true))]]
+				+ SHorizontalBox::Slot().FillWidth(1).VAlign(VAlign_Center)
+				[
+					SNew(SVerticalBox)
+					+ SVerticalBox::Slot().AutoHeight()[SNew(STextBlock).Text(FText::FromString(I.Name)).Font(Font(17, "Bold")).ColorAndOpacity(Ink).AutoWrapText(true)]
+					+ SVerticalBox::Slot().AutoHeight().Padding(0, 2)[SNew(STextBlock).Text(FText::FromString(I.Location)).Font(Font(13)).ColorAndOpacity(Soft).AutoWrapText(true)]
+					+ SVerticalBox::Slot().AutoHeight().Padding(0, 2)[Text(FString::Printf(TEXT("%d holes"), I.Holes), 13, Gold, "Bold")]
+				]
+			]
+		];
 	}
 	UOTGCourseData* Course = Courses() && !Setup.CourseId.IsEmpty() ? Courses()->LoadCourse(Setup.CourseId) : nullptr;
 
