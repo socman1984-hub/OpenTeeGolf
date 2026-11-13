@@ -67,6 +67,12 @@ public:
 	// A shot as if from the launch monitor (no device needed)
 	UFUNCTION(BlueprintCallable, Category = "OpenTeeGolf") void InjectShot(double SpeedMph, double VLA, double HLA, double TotalSpin, double SpinAxis);
 
+	UFUNCTION(BlueprintCallable, Category = "OpenTeeGolf") FString GetMevoHost() const { return MevoHost; }
+	UFUNCTION(BlueprintCallable, Category = "OpenTeeGolf") FString GetFrpUrl() const { return FrpUrl; }
+	UFUNCTION(BlueprintCallable, Category = "OpenTeeGolf") bool GetArmOnTurn() const { return bArmOnTurn; }
+	UFUNCTION(BlueprintCallable, Category = "OpenTeeGolf") bool IsDeviceOff() const { return bDeviceOff; }
+	UFUNCTION(BlueprintCallable, Category = "OpenTeeGolf") int32 GetOpenConnectPort() const { return OpenConnectPort; }
+
 	// The Mevo+ detection mode for the player's club and distance (server.js mevoMode)
 	FString MevoMode() const;
 

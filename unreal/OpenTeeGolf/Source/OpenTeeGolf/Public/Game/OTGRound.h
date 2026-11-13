@@ -4,6 +4,9 @@
 // (OTGLaunchMonitorSubsystem). Shows it: the ball, its tracer, the aim marker, the cameras (the
 // hole from above the tee, behind the ball at address, following it in flight) and the HUD.
 //
+// Players take turns as in the web version (FOTGGame, OTGPlayers.h): whoever's away plays next,
+// the others' balls lie where they are, and the game's format scores it.
+//
 // Spawned by AOTGGameMode in a course's level; AOTGPlayerController sends it the keys.
 
 #pragma once
@@ -11,6 +14,7 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
 #include "LaunchMonitor/OTGLaunchMonitorTypes.h"
+#include "Game/OTGPlayers.h"
 #include "Physics/OTGPlayCourse.h"
 #include "OTGRound.generated.h"
 
@@ -28,7 +32,7 @@ class OPENTEEGOLF_API AOTGRound : public AActor
 
 public:
 	AOTGRound();
-	void Setup(UOTGCourseData* InData, int32 FirstHole);
+	void Setup(UOTGCourseData* InData, const FOTGRoundSetup& InSetup);
 
 	virtual void Tick(float Dt) override;
 	virtual void EndPlay(const EEndPlayReason::Type Reason) override;
@@ -41,12 +45,15 @@ public:
 	void ToggleScorecard();
 	void Mulligan();
 	void DropNearPin(double Yards);    // (testing)
+	void TogglePause();
+	bool IsPaused() const { return bPaused; }
+	void QuitToMenu();
 
 	// ---- shots
 	void OnShot(const FOTGShot& Shot);
 
 private:
-	enum class EPhase : uint8 { Ready, Flying, Resting, Holed, Done };
+	enum class EPhase : uint8 { Ready, Flying, Resting, Between, Holed, Done };
 
 	// the golf
 	void StartHole(int32 Index);
@@ -55,6 +62,14 @@ private:
 	void SetClub(const FString& Code);
 	void FinishShot();
 	void NextShot();
+	// players taking turns (main.js loadSide, saveSide, roundAfterShot, beginTurn)
+	void LoadSide(int32 I);
+	void SaveSide();
+	bool RoundAfterShot();
+	void BeginTurn(int32 I, bool bSameSpot);
+	void RecordRound();
+	void ShowOtherBalls();
+	double PinDist(const otg::V3& B) const;
 	void HoleOut(bool bPickedUp, const FString& Note);
 	void NextHole();
 	bool WaterDrop(otg::V3& Out) const;
@@ -62,7 +77,7 @@ private:
 
 	const struct FOTGHole& Hole() const;
 	otg::V3 Pin() const;
-	otg::V3 TeeOf(const struct FOTGHole& H) const;
+	otg::V3 TeeOf(const struct FOTGHole& H, const FString& Tee) const;
 	otg::V3 OnGround(double X, double Z) const;
 	otg::V3 AimPoint() const;
 	double DistToPin() const;
@@ -102,6 +117,7 @@ private:
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> PinMat;
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> FlagMat;
 	UPROPERTY() TObjectPtr<ACameraActor> Cam;
+	UPROPERTY() TArray<TObjectPtr<UStaticMeshComponent>> OtherBalls; // (one per side)
 	TSharedPtr<SOTGHud> Hud;
 	FDelegateHandle ShotHandle;
 
@@ -111,7 +127,10 @@ private:
 	// the round
 	EPhase Phase = EPhase::Ready;
 	int32 HoleIndex = 0, Strokes = 0;
-	TArray<int32> Scores;               // per hole (-1: not played)
+	FOTGRoundSetup Setup_;
+	TUniquePtr<FOTGGame> Game;
+	int32 SideIdx = 0, NextSide = 0, LastHole = 0;  // (LastHole: one past the last to play)
+	bool bPaused = false;
 	otg::V3 Ball, PrevBall, BallShown;  // (BallShown: where it's drawn, its contact point)
 	otg::Surface Lie = otg::Surface::Tee;
 	double Heading = 0, AimDist = 100;  // radians (0 = north, + toward east), metres

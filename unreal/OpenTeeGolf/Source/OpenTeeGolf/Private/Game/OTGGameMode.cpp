@@ -12,12 +12,19 @@
 #include "Misc/Paths.h"
 #include "OTGCourseData.h"
 #include "OTGCourseSubsystem.h"
+#include "Engine/GameViewportClient.h"
+#include "SOTGMenus.h"
 #include "UnrealClient.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogOTGGame, Log, All);
 
 namespace
 {
+	TWeakPtr<SOTGMainMenu> TheMenu;
+	FAutoConsoleCommand MenuStartCmd(TEXT("OTG.Menu.Start"), TEXT("Start the round set up in the menu (the Start button)"),
+		FConsoleCommandDelegate::CreateLambda([]() { if (TSharedPtr<SOTGMainMenu> M = TheMenu.Pin()) M->Start(); }));
+	FAutoConsoleCommand MenuPageCmd(TEXT("OTG.Menu.Page"), TEXT("OTG.Menu.Page play|players|lm"),
+		FConsoleCommandWithArgsDelegate::CreateLambda([](const TArray<FString>& A) { if (TSharedPtr<SOTGMainMenu> M = TheMenu.Pin(); M && A.Num()) M->ShowPage(A[0]); }));
 	FAutoConsoleCommand ShotCmd(TEXT("OTG.Shot"), TEXT("OTG.Shot <name>: a screenshot, HUD and all, in Saved/Screenshots/<name>.png"),
 		FConsoleCommandWithArgsDelegate::CreateLambda([](const TArray<FString>& Args) {
 			const FString Name = Args.Num() ? Args[0] : TEXT("otg");
@@ -42,19 +49,52 @@ void AOTGGameMode::StartPlay()
 	Super::StartPlay();
 	UOTGCourseSubsystem* Courses = GetGameInstance() ? GetGameInstance()->GetSubsystem<UOTGCourseSubsystem>() : nullptr;
 	UOTGCourseData* Course = Courses ? Courses->Current.Get() : nullptr;
-	if (!Course) return;
-	// (only in that course's level)
-	const FString Level = Course->Level.ToSoftObjectPath().GetLongPackageName();
+	// (a round only in the course's own level; anywhere else, the menu)
 	const FString Here = UWorld::RemovePIEPrefix(GetWorld()->GetOutermost()->GetName());
-	if (Level != Here)
+	if (!Course || Course->Level.ToSoftObjectPath().GetLongPackageName() != Here)
 	{
-		UE_LOG(LogOTGGame, Display, TEXT("Not the course's level (%s, not %s): no round"), *Here, *Level);
+		ShowMenu();
 		return;
 	}
-	int32 Hole = 1;
-	FParse::Value(FCommandLine::Get(), TEXT("hole="), Hole);
+	// What the menu set up (or, opened from the command line, what it was last set to)
+	FOTGRoundSetup Setup = Courses->bHasPendingSetup && Courses->PendingSetup.CourseId == Course->CourseId ? Courses->PendingSetup : FOTGPlayers::LoadSetup();
+	Courses->bHasPendingSetup = false;
+	Setup.CourseId = Course->CourseId;
+	const TCHAR* Cmd = FCommandLine::Get();
+	FParse::Value(Cmd, TEXT("hole="), Setup.StartHole);
+	FParse::Value(Cmd, TEXT("tee="), Setup.Tee);
+	FParse::Value(Cmd, TEXT("pin="), Setup.Pin);
+	if (APlayerController* PC = GetWorld()->GetFirstPlayerController())
+	{
+		PC->SetShowMouseCursor(false);
+		PC->SetInputMode(FInputModeGameOnly());
+	}
 	AOTGRound* Round = GetWorld()->SpawnActor<AOTGRound>();
-	Round->Setup(Course, Hole - 1);
+	Round->Setup(Course, Setup);
+}
+
+void AOTGGameMode::ShowMenu()
+{
+	if (!GEngine || !GEngine->GameViewport) return;
+	TSharedRef<SOTGMainMenu> M = SNew(SOTGMainMenu);
+	Menu = M;
+	TheMenu = M;
+	GEngine->GameViewport->AddViewportWidgetContent(M, 5);
+	if (APlayerController* PC = GetWorld()->GetFirstPlayerController())
+	{
+		PC->SetShowMouseCursor(true);
+		FInputModeUIOnly Mode;
+		Mode.SetWidgetToFocus(M);
+		PC->SetInputMode(Mode);
+	}
+	UE_LOG(LogOTGGame, Display, TEXT("Menu"));
+}
+
+void AOTGGameMode::EndPlay(const EEndPlayReason::Type Reason)
+{
+	if (Menu && GEngine && GEngine->GameViewport) GEngine->GameViewport->RemoveViewportWidgetContent(Menu.ToSharedRef());
+	Menu.Reset();
+	Super::EndPlay(Reason);
 }
 
 // ------------------------------------------------------------------ the keys
@@ -87,6 +127,13 @@ void AOTGPlayerController::SetupInputComponent()
 	Bind(EKeys::Enter, [](AOTGRound* R) { R->Continue(); });
 	Bind(EKeys::Tab, [](AOTGRound* R) { R->ToggleScorecard(); });
 	Bind(EKeys::BackSpace, [](AOTGRound* R) { R->Mulligan(); });
+	Bind(EKeys::Escape, [this](AOTGRound* R) {
+		R->TogglePause();
+		// (the pause menu wants the mouse)
+		SetShowMouseCursor(R->IsPaused());
+		if (R->IsPaused()) SetInputMode(FInputModeGameAndUI().SetHideCursorDuringCapture(false));
+		else SetInputMode(FInputModeGameOnly());
+	});
 }
 
 void AOTGPlayerController::PlayerTick(float Dt)

@@ -38,6 +38,7 @@ namespace
 	FAutoConsoleCommandWithWorldAndArgs AimCmd(TEXT("OTG.Round.Aim"), TEXT("OTG.Round.Aim <degrees>: turn the aim (+ right)"), FCmd::CreateLambda([](const TArray<FString>& A, UWorld* W) { if (AOTGRound* R = RoundIn(W); R && A.Num()) R->AimBy(FCString::Atod(*A[0])); }));
 	FAutoConsoleCommandWithWorldAndArgs ClubCmd(TEXT("OTG.Round.Club"), TEXT("OTG.Round.Club 1|-1: a longer / shorter club"), FCmd::CreateLambda([](const TArray<FString>& A, UWorld* W) { if (AOTGRound* R = RoundIn(W); R && A.Num()) R->ChangeClub(FCString::Atoi(*A[0])); }));
 	FAutoConsoleCommandWithWorldAndArgs DropCmd(TEXT("OTG.Round.Drop"), TEXT("OTG.Round.Drop <yards>: (testing) the ball that far from the pin, on the line it's on"), FCmd::CreateLambda([](const TArray<FString>& A, UWorld* W) { if (AOTGRound* R = RoundIn(W); R && A.Num()) R->DropNearPin(FCString::Atod(*A[0])); }));
+	FAutoConsoleCommandWithWorldAndArgs PauseCmd(TEXT("OTG.Round.Pause"), TEXT("The pause menu (the Esc key)"), FCmd::CreateLambda([](const TArray<FString>&, UWorld* W) { if (AOTGRound* R = RoundIn(W)) R->TogglePause(); }));
 	FAutoConsoleCommandWithWorldAndArgs CardCmd(TEXT("OTG.Round.Scorecard"), TEXT("Show / hide the scorecard (the Tab key)"), FCmd::CreateLambda([](const TArray<FString>&, UWorld* W) { if (AOTGRound* R = RoundIn(W)) R->ToggleScorecard(); }));
 
 	constexpr double M_TO_YD = 1.09361, M_TO_FT = 3.28084;
@@ -137,13 +138,43 @@ AOTGRound::AOTGRound()
 
 // ------------------------------------------------------------------ setting up
 
-void AOTGRound::Setup(UOTGCourseData* InData, int32 FirstHole)
+void AOTGRound::Setup(UOTGCourseData* InData, const FOTGRoundSetup& InSetup)
 {
 	Data = InData;
+	Setup_ = InSetup;
 	Data->FillPlayCourse(Course);
 	Data->FillTrees(Trees);
-	Scores.Init(-1, Data->Holes.Num());
 	SetActorLocation(FVector::ZeroVector);
+	TeeName = Setup_.Tee.IsEmpty() ? FString(TEXT("White")) : Setup_.Tee;
+	PinName = Setup_.Pin.IsEmpty() ? FString(TEXT("Saturday")) : Setup_.Pin;
+
+	// The players and the game (nobody picked: a round on your own)
+	TArray<FOTGGamePlayer> Players;
+	const TArray<FOTGPlayerProfile> Profiles = FOTGPlayers::Load();
+	for (const FString& Id : Setup_.Picked)
+		for (const FOTGPlayerProfile& P : Profiles)
+			if (P.Id == Id)
+			{
+				FOTGGamePlayer G;
+				G.Id = P.Id; G.Name = P.Name; G.Colour = P.Colour; G.Handicap = P.Handicap; G.bLeftHanded = P.bLeftHanded; G.Tee = P.Tee;
+				G.Team = Setup_.Teams.Contains(Id) ? Setup_.Teams[Id] : TEXT("A");
+				Players.Add(G);
+			}
+	if (!Players.Num() || !FOTGGame::Problem(Setup_.Format, Setup_.Picked, Setup_.Teams).IsEmpty())
+	{
+		if (Players.Num()) UE_LOG(LogOTGRound, Warning, TEXT("%s: playing on your own"), *FOTGGame::Problem(Setup_.Format, Setup_.Picked, Setup_.Teams));
+		Players.Reset();
+		FOTGGamePlayer You;
+		You.Name = TEXT("You");
+		You.Colour = FLinearColor(0.85f, 0.85f, 0.85f);
+		Players.Add(You);
+		Setup_.Format = TEXT("stroke");
+	}
+	TArray<FOTGHoleInfo> HoleInfo;
+	for (const FOTGHole& H : Data->Holes) HoleInfo.Add(FOTGHoleInfo{ H.Par, H.Index });
+	Game = MakeUnique<FOTGGame>(Players, Setup_.Format, Setup_.bHandicaps, HoleInfo);
+	const int32 First = FMath::Clamp(Setup_.StartHole - 1, 0, FMath::Max(0, Data->Holes.Num() - 1));
+	LastHole = Setup_.Holes == 9 ? FMath::Min(First + 9, Data->Holes.Num()) : Data->Holes.Num();
 
 	// (the level's own markers: every tee and every pin day; the round shows its own)
 	for (TActorIterator<AActor> It(GetWorld()); It; ++It)
@@ -158,6 +189,21 @@ void AOTGRound::Setup(UOTGCourseData* InData, int32 FirstHole)
 		return M;
 	};
 	BallMat = Mat(BallMesh, FLinearColor(0.85f, 0.85f, 0.85f));
+	// (the other sides' balls, in their colours)
+	UStaticMesh* SphereMesh = BallMesh->GetStaticMesh();
+	if (!Game->Single())
+		for (int32 i = 0; i < Game->Sides.Num(); i++)
+		{
+			UStaticMeshComponent* C = NewObject<UStaticMeshComponent>(this);
+			C->SetStaticMesh(SphereMesh);
+			C->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+			C->SetMobility(EComponentMobility::Movable);
+			C->SetupAttachment(RootComponent);
+			C->RegisterComponent();
+			Mat(C, Game->Sides[i].Colour);
+			C->SetVisibility(false);
+			OtherBalls.Add(C);
+		}
 	AimMat = Mat(AimMesh, FLinearColor(1.f, 0.78f, 0.15f));
 	PinMat = Mat(PinMesh, FLinearColor(0.9f, 0.9f, 0.85f));
 	FlagMat = Mat(FlagMesh, FLinearColor(0.85f, 0.05f, 0.04f));
@@ -197,8 +243,9 @@ void AOTGRound::Setup(UOTGCourseData* InData, int32 FirstHole)
 			if (I.Split(TEXT(":"), &At, &Command)) ExecAt.Emplace(FCString::Atod(*At), Command.TrimStartAndEnd());
 		}
 	}
-	UE_LOG(LogOTGRound, Display, TEXT("Round on %s: %d holes, %d trees"), *Data->CourseName, Data->Holes.Num(), int32(Trees.all.size()));
-	StartHole(FMath::Clamp(FirstHole, 0, FMath::Max(0, Data->Holes.Num() - 1)));
+	UE_LOG(LogOTGRound, Display, TEXT("Round on %s: %d holes, %d trees; %s, %d side(s), %s tees, %s pins"), *Data->CourseName, Data->Holes.Num(), int32(Trees.all.size()),
+		*Game->F.Name, Game->Sides.Num(), *TeeName, *PinName);
+	StartHole(First);
 }
 
 void AOTGRound::EndPlay(const EEndPlayReason::Type Reason)
@@ -233,14 +280,15 @@ otg::V3 AOTGRound::Pin() const
 	return OnGround(Q.X, Q.Z);
 }
 
-otg::V3 AOTGRound::TeeOf(const FOTGHole& H) const
+otg::V3 AOTGRound::TeeOf(const FOTGHole& H, const FString& TeeWanted) const
 {
-	const FVector* T = H.Tees.Find(TeeName);
+	const FString TeeName_ = TeeWanted.IsEmpty() ? TeeName : TeeWanted;
+	const FVector* T = H.Tees.Find(TeeName_);
 	if (!T)
 	{
 		// the closest tee in the standard order
 		int32 I = 2;
-		for (int32 k = 0; k < UE_ARRAY_COUNT(TeeTypes); k++) if (TeeName == TeeTypes[k]) I = k;
+		for (int32 k = 0; k < UE_ARRAY_COUNT(TeeTypes); k++) if (TeeName_ == TeeTypes[k]) I = k;
 		for (int32 D = 1; D < UE_ARRAY_COUNT(TeeTypes) && !T; D++)
 			for (int32 J : { I + D, I - D })
 				if (!T && J >= 0 && J < UE_ARRAY_COUNT(TeeTypes)) T = H.Tees.Find(TeeTypes[J]);
@@ -251,6 +299,7 @@ otg::V3 AOTGRound::TeeOf(const FOTGHole& H) const
 }
 
 double AOTGRound::DistToPin() const { return Dist(Ball, Pin()); }
+double AOTGRound::PinDist(const otg::V3& B) const { return Dist(B, Pin()); }
 int32 AOTGRound::MaxStrokes() const { return Hole().Par + 5; }
 otg::V3 AOTGRound::AimPoint() const { return OnGround(Ball.x + FMath::Sin(Heading) * AimDist, Ball.z + FMath::Cos(Heading) * AimDist); }
 
@@ -263,11 +312,12 @@ void AOTGRound::StartHole(int32 Index)
 {
 	HoleIndex = Index;
 	const FOTGHole& H = Hole();
-	Strokes = 0;
-	Lie = otg::Surface::Tee;
-	Ball = TeeOf(H);
-	PrevBall = Ball;
-	Undo.Reset();
+	// every side on its tee (a player's own tees, or the round's), the honour first
+	Game->StartHole(Index, [&](const FOTGSide& S) {
+		const FString Own = S.Members.Num() == 1 ? Game->Players[S.Members[0]].Tee : FString();
+		return TeeOf(H, Own);
+	});
+	LoadSide(Game->Next([this](const otg::V3& B) { return PinDist(B); }));
 	PendingShot.Reset();
 	bHasRes = false;
 	Phase = EPhase::Ready;
@@ -283,13 +333,14 @@ void AOTGRound::StartHole(int32 Index)
 	// (the cup: a dark disc 10.8 cm across, just above the green)
 	CupMesh->SetWorldLocation(World(P) + FVector(0, 0, 0.3));
 	CupMesh->SetWorldScale3D(FVector(0.108, 0.108, 0.002));
-	TeeMesh->SetWorldLocation(World(Ball) + FVector(0, 0, 1));
+	TeeMesh->SetWorldLocation(World(TeeOf(H, TeeName)) + FVector(0, 0, 1));
 	TeeMesh->SetWorldScale3D(FVector(0.05, 0.05, 0.02));
 	ResetAim(false);
 	PlaceBall(Ball);
 	OverviewView();
 	const double LenM = Dist(Ball, P);
-	Banner(FString::Printf(TEXT("Hole %d"), H.Number), FString::Printf(TEXT("Par %d  ·  %s"), H.Par, *Len(LenM)), 3.f);
+	Banner(FString::Printf(TEXT("Hole %d"), H.Number), FString::Printf(TEXT("Par %d  ·  %s%s"), H.Par, *Len(LenM),
+		Game->Single() ? TEXT("") : *FString::Printf(TEXT("  ·  %s to play"), *Game->SideLabel(SideIdx))), 3.f);
 	UpdateHudInfo();
 	TellLaunchMonitor(true);
 	UE_LOG(LogOTGRound, Display, TEXT("Hole %d, par %d, %s"), H.Number, H.Par, *Len(LenM));
@@ -335,7 +386,8 @@ void AOTGRound::TellLaunchMonitor(bool bTurn)
 	if (!Data) return;
 	if (UOTGLaunchMonitorSubsystem* LM = GetGameInstance()->GetSubsystem<UOTGLaunchMonitorSubsystem>())
 	{
-		LM->SetPlayer(Club, DistToPin() * M_TO_YD, false);
+		const bool bLeft = Game && Game->Sides.IsValidIndex(SideIdx) ? Game->Players[Game->Hitter(Game->Sides[SideIdx])].bLeftHanded : false;
+		LM->SetPlayer(Club, DistToPin() * M_TO_YD, bLeft);
 		LM->SetTurn(bTurn);
 	}
 }
@@ -362,7 +414,13 @@ void AOTGRound::ChangeClub(int32 Step)
 void AOTGRound::TestShot()
 {
 	// A strike as a launch monitor would send it: the club's typical one, or for a wedge (or a putt)
-	// one sized to the distance, a little off line
+	// one sized to the distance, a little off line (only on the player's turn: it's made for their
+	// club and distance)
+	if (Phase != EPhase::Ready || bPaused)
+	{
+		Toast(TEXT("Test shot: wait for your turn"), 1.5f);
+		return;
+	}
 	const FClub& C = Clubs[ClubIndex(Club)];
 	FOTGBallData B;
 	const double D = DistToPin();
@@ -392,7 +450,7 @@ void AOTGRound::Continue()
 {
 	if (Phase == EPhase::Flying) AnimT = 1e9;
 	else if (Phase == EPhase::Holed) NextHole();
-	else if (Phase == EPhase::Done) UGameplayStatics::OpenLevel(this, TEXT("/Engine/Maps/Entry"));
+	else if (Phase == EPhase::Done) QuitToMenu();
 }
 
 void AOTGRound::DropNearPin(double Yards)
@@ -434,6 +492,11 @@ void AOTGRound::Mulligan()
 
 void AOTGRound::OnShot(const FOTGShot& Shot)
 {
+	if (bPaused)
+	{
+		Toast(TEXT("Paused: the shot wasn't played"));
+		return;
+	}
 	// A swing while the last ball is still moving: finish that one at once, then play this one
 	// from where it stops (rather than losing it)
 	if (Phase == EPhase::Flying || Phase == EPhase::Resting)
@@ -627,14 +690,42 @@ bool AOTGRound::WaterDrop(otg::V3& Out) const
 void AOTGRound::HoleOut(bool bPickedUp, const FString& Note)
 {
 	const FOTGHole& H = Hole();
-	Phase = EPhase::Holed;
 	PendingShot.Reset();
 	const int32 Total = bPickedUp ? MaxStrokes() : Strokes;
-	Scores[HoleIndex] = Total;
+	FOTGSide& Sd = Game->Sides[SideIdx];
+	Sd.Attempts.Reset();
+	Strokes = Total;
+	SaveSide();
+	Game->HoleOut(Sd, Total, bPickedUp);
+	Sd.Ball = Pin();
 	const FString ToPar = Total == H.Par ? TEXT("E") : FString::Printf(TEXT("%+d"), Total - H.Par);
-	Banner(bPickedUp ? TEXT("Picked up") : ScoreName(Total, H.Par), FString::Printf(TEXT("Hole %d: %d (%s)%s"), H.Number, Total, *ToPar, Note.IsEmpty() ? TEXT("") : *(TEXT("  ·  ") + Note)), 3.8f);
-	UE_LOG(LogOTGRound, Display, TEXT("Hole %d: %d (%s)"), H.Number, Total, *ToPar);
+	const FString Who = Game->Single() ? FString() : Sd.Name + TEXT(": ");
+	const FString Title = Who + (bPickedUp ? FString(TEXT("Picked up")) : ScoreName(Total, H.Par));
+	FString Small = FString::Printf(TEXT("Hole %d: %d (%s)%s"), H.Number, Total, *ToPar, Note.IsEmpty() ? TEXT("") : *(TEXT("  ·  ") + Note));
+	UE_LOG(LogOTGRound, Display, TEXT("Hole %d: %s%d (%s)"), H.Number, *Who, Total, *ToPar);
 	AimMesh->SetVisibility(false);
+	// Someone else still to finish the hole: their turn next
+	const int32 Next = Game->Next([this](const otg::V3& B) { return PinDist(B); });
+	if (Next >= 0)
+	{
+		Phase = EPhase::Between;
+		NextSide = Next;
+		PhaseTimer = 2.4;
+		Banner(Title, Small, 2.6f);
+		TellLaunchMonitor(false);
+		UpdateHudInfo();
+		return;
+	}
+	// everyone's in
+	Game->EndHole();
+	Phase = EPhase::Holed;
+	if (!Game->Single())
+	{
+		const FString News = Game->HoleNews(HoleIndex);
+		if (!News.IsEmpty()) Small += TEXT("\n") + News;
+		UE_LOG(LogOTGRound, Display, TEXT("%s"), *News);
+	}
+	Banner(Title, Small, 3.8f);
 	TellLaunchMonitor(false);
 	PhaseTimer = 2.6;
 	bScorecardAuto = true;
@@ -644,8 +735,9 @@ void AOTGRound::HoleOut(bool bPickedUp, const FString& Note)
 void AOTGRound::NextHole()
 {
 	ShowScorecard(false);
-	if (HoleIndex + 1 < Data->Holes.Num()) return StartHole(HoleIndex + 1);
+	if (HoleIndex + 1 < LastHole) return StartHole(HoleIndex + 1);
 	Phase = EPhase::Done;
+	RecordRound();
 	ShowScorecard(true);
 	TellLaunchMonitor(false);
 	UE_LOG(LogOTGRound, Display, TEXT("Round complete"));
@@ -666,7 +758,8 @@ void AOTGRound::Tick(float Dt)
 		UE_LOG(LogOTGRound, Display, TEXT("(roundexec) %s"), *Command);
 		if (GEngine) GEngine->Exec(GetWorld(), *Command);
 	}
-	if (Phase == EPhase::Flying)
+	if (bPaused) {} // (everything waits)
+	else if (Phase == EPhase::Flying)
 	{
 		AnimT += Dt;
 		const std::vector<otg::PathPoint>& Pts = Res.points;
@@ -705,7 +798,12 @@ void AOTGRound::Tick(float Dt)
 	else if (Phase == EPhase::Resting)
 	{
 		PhaseTimer -= Dt;
-		if (PhaseTimer <= 0) NextShot();
+		if (PhaseTimer <= 0 && !RoundAfterShot()) NextShot();
+	}
+	else if (Phase == EPhase::Between)
+	{
+		PhaseTimer -= Dt;
+		if (PhaseTimer <= 0) BeginTurn(NextSide, false);
 	}
 	else if (Phase == EPhase::Holed)
 	{
@@ -874,14 +972,23 @@ void AOTGRound::UpdateHudInfo()
 	if (!Hud || !Data) return;
 	const FOTGHole& H = Hole();
 	const double D = DistToPin();
-	const FString L1 = FString::Printf(TEXT("Hole %d  ·  Par %d  ·  %s"), H.Number, H.Par, *Len(Dist(TeeOf(H), Pin())));
+	const FString L1 = FString::Printf(TEXT("Hole %d  ·  Par %d  ·  %s"), H.Number, H.Par, *Len(Dist(TeeOf(H, TeeName), Pin())));
 	FString L2;
-	if (Phase == EPhase::Holed || Phase == EPhase::Done) L2 = FString::Printf(TEXT("%d stroke%s"), Scores[HoleIndex], Scores[HoleIndex] == 1 ? TEXT("") : TEXT("s"));
-	else if (Phase == EPhase::Flying) L2 = FString::Printf(TEXT("Stroke %d  ·  on its way"), Strokes);
-	else L2 = FString::Printf(TEXT("Stroke %d  ·  %s to the pin  ·  %s"), Strokes + 1, OnGreen() ? *Putt(D) : *Len(D), *SurfaceDisplay(Lie));
+	const FOTGSide& Sd = Game->Sides[SideIdx];
+	const FString Who = Game->Single() ? FString() : Game->SideLabel(SideIdx) + TEXT("  ·  ");
+	if (Phase == EPhase::Holed || Phase == EPhase::Done) L2 = FString::Printf(TEXT("%d stroke%s"), Sd.Scores[HoleIndex], Sd.Scores[HoleIndex] == 1 ? TEXT("") : TEXT("s"));
+	else if (Phase == EPhase::Between) L2 = FString::Printf(TEXT("%sholed out"), *Who);
+	else if (Phase == EPhase::Flying) L2 = FString::Printf(TEXT("%sStroke %d  ·  on its way"), *Who, Strokes);
+	else L2 = FString::Printf(TEXT("%sStroke %d  ·  %s to the pin  ·  %s"), *Who, Strokes + 1, OnGreen() ? *Putt(D) : *Len(D), *SurfaceDisplay(Lie));
 	const FClub& C = Clubs[ClubIndex(Club)];
 	const FString L3 = OnGreen() || Club == TEXT("PT") ? FString(C.Name) : FString::Printf(TEXT("%s  ·  aim %s"), C.Name, *Len(AimDist));
 	Hud->SetInfo(L1, L2, L3);
+	// (players together: who's winning)
+	if (!Game->Single())
+	{
+		FString Summary;
+		Hud->SetStandings(Game->F.Name, Game->Standings(Summary), Summary);
+	}
 }
 
 void AOTGRound::ShowShotData(bool bWithResult)
@@ -921,7 +1028,149 @@ void AOTGRound::ShowScorecard(bool bShow)
 	bScorecard = bShow;
 	if (!Hud) return;
 	if (!bShow) return Hud->HideScorecard();
-	TArray<FOTGScoreRow> Rows;
-	for (int32 i = 0; i < Data->Holes.Num(); i++) Rows.Add(FOTGScoreRow{ Data->Holes[i].Number, Data->Holes[i].Par, Scores[i] });
-	Hud->ShowScorecard(Data->CourseName, Rows, Phase == EPhase::Done);
+	FOTGCard Card;
+	Card.Course = Data->CourseName;
+	Card.Format = Game->Single() ? FString() : Game->F.Name;
+	Card.bFinal = Phase == EPhase::Done;
+	for (int32 i = 0; i < Data->Holes.Num(); i++) Card.Holes.Add(FOTGScoreRow{ Data->Holes[i].Number, Data->Holes[i].Par });
+	for (const FOTGSide& S : Game->Sides) Card.Sides.Add(FOTGCard::FSide{ Game->Single() ? FString(TEXT("Score")) : S.Name, S.Colour, S.Scores });
+	if (!Game->Single()) Card.Standings = Game->Standings(Card.Summary);
+	Hud->ShowScorecard(Card);
+}
+
+// ------------------------------------------------------------------ players taking turns
+
+// Side I plays: its ball, lie and strokes into the round's own, the others' balls where they lie
+void AOTGRound::LoadSide(int32 I)
+{
+	SideIdx = FMath::Max(0, I);
+	const FOTGSide& S = Game->Sides[SideIdx];
+	Ball = S.Ball; PrevBall = S.PrevBall; Lie = S.Lie; Strokes = S.Strokes;
+	Undo.Reset();
+	PlaceBall(Ball);
+	ShowOtherBalls();
+}
+
+// The playing side's ball, lie and strokes back into its own record
+void AOTGRound::SaveSide()
+{
+	FOTGSide& S = Game->Sides[SideIdx];
+	S.Ball = Ball; S.PrevBall = PrevBall; S.Lie = Lie; S.Strokes = Strokes;
+}
+
+void AOTGRound::ShowOtherBalls()
+{
+	for (int32 i = 0; i < OtherBalls.Num(); i++)
+	{
+		const FOTGSide& S = Game->Sides[i];
+		// (not one sharing the spot with this ball - the same tee - where it would hide it)
+		const bool bShow = i != SideIdx && !S.bHoled && Dist(S.Ball, Ball) > 1.0;
+		OtherBalls[i]->SetVisibility(bShow);
+		if (bShow)
+		{
+			OtherBalls[i]->SetWorldScale3D(FVector(0.0427 * 2));
+			OtherBalls[i]->SetWorldLocation(World(S.Ball) + FVector(0, 0, 2.135 * 2));
+		}
+	}
+}
+
+// After a shot with several sides: the scramble's next player from the same spot (or the team's
+// best shot once everyone's hit), then whoever's away. False: the same player plays on.
+bool AOTGRound::RoundAfterShot()
+{
+	FOTGSide& Sd = Game->Sides[SideIdx];
+	if (Game->Single())
+	{
+		SaveSide();
+		Sd.Shots++;
+		return false;
+	}
+	auto D = [this](const otg::V3& B) { return PinDist(B); };
+	if (Game->F.Shared == TEXT("scramble"))
+	{
+		FOTGAttempt A;
+		A.Ball = Ball; A.Lie = Lie; A.Strokes = Strokes;
+		const TOptional<FOTGAttempt> Best = Game->ScrambleAttempt(Sd, A, D);
+		if (!Best)
+		{
+			// (back to the spot for the next player in the team)
+			BeginTurn(SideIdx, true);
+			return true;
+		}
+		Sd.PrevBall = Sd.Ball;
+		Sd.Ball = Best->Ball; Sd.Lie = Best->Lie; Sd.Strokes = Best->Strokes;
+		Sd.Shots++;
+		Toast(FString::Printf(TEXT("%s plays %s's shot"), *Sd.Name, *Game->Players[Best->By].Name), 3.f);
+	}
+	else
+	{
+		SaveSide();
+		Sd.Shots++;
+	}
+	const int32 Next = Game->Next(D);
+	if (Next < 0) return false;
+	BeginTurn(Next, false);
+	return true;
+}
+
+// The next player steps up: their ball, the view behind it, whose turn it is
+void AOTGRound::BeginTurn(int32 I, bool bSameSpot)
+{
+	LoadSide(I);
+	Phase = EPhase::Ready;
+	ClearTracer();
+	ResetAim(Strokes > 0);
+	AddressView(false);
+	Banner(Game->SideLabel(SideIdx), bSameSpot ? FString(TEXT("from the same spot")) : FString::Printf(TEXT("%s to the pin  ·  %s"), OnGreen() ? *Putt(DistToPin()) : *Len(DistToPin()), *SurfaceDisplay(Lie)), 2.2f);
+	UpdateHudInfo();
+	TellLaunchMonitor(true);
+	if (PendingShot)
+	{
+		const FOTGShot S = *PendingShot;
+		PendingShot.Reset();
+		OnShot(S);
+	}
+}
+
+// Each player's round kept with their profile
+void AOTGRound::RecordRound()
+{
+	if (Setup_.Picked.IsEmpty()) return;
+	TArray<FOTGPlayerProfile> Profiles = FOTGPlayers::Load();
+	for (const FOTGGamePlayer& P : Game->Players)
+	{
+		const FOTGSide* S = nullptr;
+		for (const FOTGSide& X : Game->Sides) for (int32 M : X.Members) if (Game->Players[M].Id == P.Id) S = &X;
+		FOTGPlayerProfile* Prof = Profiles.FindByPredicate([&](const FOTGPlayerProfile& X) { return X.Id == P.Id; });
+		if (!S || !Prof) continue;
+		FOTGPlayedRound R;
+		R.At = FDateTime::Now();
+		R.Course = Data->CourseName;
+		R.Format = Game->F.Key;
+		for (int32 H = 0; H < S->Scores.Num(); H++)
+			if (S->Scores[H] >= 0) { R.Holes++; R.Strokes += S->Scores[H]; R.Par += Data->Holes[H].Par; }
+		if (R.Holes) Prof->Rounds.Add(R);
+	}
+	FOTGPlayers::Save(Profiles);
+}
+
+// ------------------------------------------------------------------ the pause menu
+
+void AOTGRound::TogglePause()
+{
+	if (Phase == EPhase::Done) return;
+	bPaused = !bPaused;
+	if (Hud)
+	{
+		if (bPaused) Hud->ShowPause(FSimpleDelegate::CreateUObject(this, &AOTGRound::TogglePause), FSimpleDelegate::CreateUObject(this, &AOTGRound::ToggleScorecard),
+			FSimpleDelegate::CreateUObject(this, &AOTGRound::QuitToMenu));
+		else Hud->HidePause();
+	}
+	TellLaunchMonitor(!bPaused && Phase == EPhase::Ready);
+}
+
+void AOTGRound::QuitToMenu()
+{
+	TellLaunchMonitor(false);
+	UGameplayStatics::OpenLevel(this, TEXT("/Engine/Maps/Entry"));
 }

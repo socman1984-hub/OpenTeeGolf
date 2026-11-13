@@ -1,4 +1,5 @@
-// The game mode for every level (DefaultEngine.ini GlobalDefaultGameMode). In a course's level
+// The game mode for every level (DefaultEngine.ini GlobalDefaultGameMode). Anywhere but a course's
+// level it shows the menu (SOTGMenus.h). In a course's level
 // (the course the course subsystem opened, UOTGCourseSubsystem::Current) it starts a round
 // (AOTGRound) on hole 1, or the hole -hole=<n> names. No pawn: the round moves its own camera.
 //
@@ -24,6 +25,11 @@ public:
 	AOTGGameMode();
 	virtual void StartPlay() override;
 	virtual void HandleStartingNewPlayer_Implementation(APlayerController* NewPlayer) override;
+	virtual void EndPlay(const EEndPlayReason::Type Reason) override;
+
+private:
+	void ShowMenu();
+	TSharedPtr<class SOTGMainMenu> Menu;
 };
 
 UCLASS()

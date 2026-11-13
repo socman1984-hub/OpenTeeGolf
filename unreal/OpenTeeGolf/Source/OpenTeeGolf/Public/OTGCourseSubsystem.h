@@ -8,6 +8,7 @@
 
 #include "CoreMinimal.h"
 #include "Subsystems/GameInstanceSubsystem.h"
+#include "Game/OTGPlayers.h"
 #include "OTGCourseSubsystem.generated.h"
 
 class UOTGCourseData;
@@ -43,4 +44,8 @@ public:
 
 	UPROPERTY(BlueprintReadOnly, Category = "OpenTeeGolf")
 	TObjectPtr<UOTGCourseData> Current;
+
+	// What the menu set up for the round (the round reads it when the course's level opens)
+	UPROPERTY() FOTGRoundSetup PendingSetup;
+	bool bHasPendingSetup = false;
 };

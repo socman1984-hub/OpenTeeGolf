@@ -160,9 +160,22 @@ runs inside the game, in C++.
   `OTG.Round.Club 1|-1`, `OTG.Round.Continue`, `OTG.Round.Drop <yd>` (testing), `OTG.Shot <name>`
   (a screenshot). For checking without anyone at the keyboard, `-roundexec="<s>:<command>|..."` runs
   commands at set times after the round starts, and `-RenderOffscreen` renders without a window.
-- Next: the menus (course choice, tees and pins, players and turns, the launch monitor and Mevo+
-  setup screens), then the packaged build's turf and the colliders for buildings and the
-  flagstick.
+- Menus and players (`SOTGMenus`, `OTGPlayers`): the game starts on a menu with three pages.
+  - Play: the course pack, tees, pins, starting hole, 18 or 9 holes, who's playing (in tee-off
+    order, with teams), the game and whether handicaps count.
+  - Players: name, colour, handicap, hand and own tees.
+  - Launch monitor: the connection, its live status, and the Mevo+ setup and arm-on-turn.
+
+  `FOTGGame` is `players.js`'s round in C++, with all seven formats and handicap strokes by stroke
+  index. Whoever's away plays next, and the honour goes to the best score on the hole before. The
+  other balls lie in their colours, a leaderboard shows at the top right, and the scorecard has a
+  row per side. Each player's finished rounds are added to their profile.
+
+  Esc pauses the round: Resume, Scorecard, Quit to the menu, and the launch monitor panel.
+  Profiles and the last setup are kept in `Saved/OpenTeeGolf/players.json` and `setup.json`.
+  Console: `OTG.Menu.Start`, `OTG.Menu.Page play|players|lm`, `OTG.Round.Pause`.
+- Next: the packaged build's turf, the colliders for buildings and the flagstick, and weather and
+  wind.
 
 Build: `Engine\Build\BatchFiles\Build.bat OpenTeeGolf Win64 Development -Project=<path>\OpenTeeGolf.uproject`
 (the editor target, `OpenTeeGolfEditor`, can't build while another Unreal Editor with Live Coding is
