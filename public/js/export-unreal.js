@@ -4,11 +4,13 @@
 //
 //   heightmap.png      16-bit greyscale, a size Unreal's Landscape takes as it is (505 .. 8129
 //                      samples a side), 1 m (or 2 m for big courses) between samples; row 0 north
+//                      (pond beds carved deeper than the game's, and a low bank where the land
+//                      outside the water is lower than it)
 //   photo.jpg          the course picture over exactly the heightmap's area (for the landscape's
 //                      material: its UVs run 0..1 over the whole landscape)
 //   layer_*.png        fairway, green, tee, bunker, water and rough as distance fields (0.5 on each
 //                      outline, more inside, less outside, 0..1 over 3 m either side), over the same
-//                      square at twice the heightmap's samples
+//                      square, a power of two pixels a side (about twice the heightmap's samples)
 //   trees.json         [{ x, y, z, h, r, kind, variant, yaw, sx, sy, sz }] in Unreal centimetres
 //                      (variant: which tree_N.glb; yaw degrees; sx, sy, sz its scale as the game
 //                      draws it: sx, sy across, sz up)
@@ -38,6 +40,7 @@ import * as THREE from 'three/webgpu';
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
 import { hash } from './treeplace.js';
 import { tuftGeometry } from './grass.js';
+import { pointInPoly } from './course.js';
 
 const SIZES = [505, 1009, 2017, 4033, 8129];
 
@@ -94,21 +97,66 @@ export async function exportForUnreal({ course, scene, id, status = () => {} }) 
     // import settings stay the same and a re-import of the heightmap is enough)
     for (let k = 0; k < hts.length; k++) if (D[k] && D[k] < 1e5) hts[k] = Math.max(lo - 4, hts[k] - Math.min(2.5, 0.25 * D[k]));
   }
+  // The shores, re-cut along the water's smoothed outlines (smoothOutline: the map's outlines are
+  // straight runs between corners, or steps traced from the photo): each grid point's nearest pond
+  // or stream, its level there and how far inside or outside it (wg, also for waterMesh). Across
+  // the outline the ground is an even slope (SHORE_SLOPE: at the water's level exactly on the
+  // outline), SHORE_M either side - so the shoreline Unreal draws, where the water meets the
+  // ground, follows the smooth outline: with a steep bank on one side the crossing would sit
+  // almost on the grid's points and follow its steps. Beyond, it eases back to the game's ground
+  // over 2 m - and where the land beside the water is lower than the water (a pond held up by a
+  // dam, a stream's end), a low bank keeps it in: level on top past the reach of the water's
+  // squares, then down at 1 in 2 to the land's own height. Inside, the bed only ever deepens.
+  const crest = Math.max(SHORE_M + 2, WATER_REACH_M + 1.5 * step), bankM = crest + 4;
+  const wg = waterGrid(course, N, step, x0, z1, bankM + step);
+  // Bunkers' hollows and ponds' banks come from the lidar or the game's 2 m grid, with stepped rims
+  // that Unreal's lighting draws as a jagged outline: the ground blurred (SMOOTH_GROUND_M) within
+  // 3 m of every bunker and water outline, easing back to its own shape by 6 m
+  {
+    const near = new Float32Array(N * N).fill(Infinity);
+    const sandPolys = (course.features || []).filter((f) => f.surface === 'sand' && !f.inner && f.poly?.length > 2).map((f) => smoothOutline(f.poly, EDGE_SMOOTH_M));
+    outlineDistance(sandPolys, near, N, step, x0, z1, 6);
+    for (let k = 0; k < near.length; k++) if (Number.isFinite(wg.sd[k])) near[k] = Math.min(near[k], Math.abs(wg.sd[k]));
+    const soft = blurGrid(hts, N, SMOOTH_GROUND_M / step);
+    for (let k = 0; k < hts.length; k++) {
+      const d = near[k];
+      if (!(d < 6)) continue;
+      const t = d <= 3 ? 1 : 1 - (d - 3) / 3, w = t * t * (3 - 2 * t);
+      hts[k] += (soft[k] - hts[k]) * w;
+    }
+  }
+  for (let k = 0; k < hts.length; k++) {
+    const s = wg.sd[k], L = wg.lvl[k];
+    if (!Number.isFinite(s) || !Number.isFinite(L)) continue;
+    const even = L + SHORE_SLOPE * s;
+    // (inside, past the even slope: the bed no steeper than 1 in 2 - the clear water shows steps in it)
+    if (s <= 0) { hts[k] = s >= -SHORE_M ? even : Math.max(Math.min(hts[k], even), L - SHORE_SLOPE * SHORE_M - 0.5 * (-s - SHORE_M)); continue; }
+    if (s > bankM) continue;
+    const bank = Math.max(hts[k], L + (s <= crest ? SHORE_SLOPE * SHORE_M : SHORE_SLOPE * SHORE_M - 0.5 * (s - crest)));
+    const t = Math.min(1, Math.max(0, (s - SHORE_M) / 2));
+    hts[k] = even + (bank - even) * t * t * (3 - 2 * t);
+  }
   // Unreal: a 16-bit value v sits at (v - 32768) / 128 * (Z scale / 100) metres. Z scale chosen so
   // the course's whole height range (plus a margin) fits in the 16 bits.
   const range = Math.max(10, hi - lo + 10);
   const zScale = (range / 512) * 100;
   const base = lo - 5;                                 // metres at value 0
   const v16 = new Uint16Array(N * N);
-  for (let k = 0; k < hts.length; k++) v16[k] = Math.round(((hts[k] - base) / range) * 65535);
+  for (let k = 0; k < hts.length; k++) v16[k] = Math.max(0, Math.min(65535, Math.round(((hts[k] - base) / range) * 65535)));
   await put('heightmap.png', await png16(v16, N, N), 'image/png');
 
   // ---- the course picture over the landscape's area
   status('Exporting the aerial photo…');
   await tick();
-  const src = scene.courseCanvas;
+  // (the photo as taken - shadows and parked carts cleaned out - when the game has it: the course
+  // canvas has the game's own fairway tint painted on, whose edges follow the 1 m grid the game
+  // found the fairways on, and Unreal shades the turf by the photo's light and dark)
+  const clean = scene.imagery?.clean, cw = scene.courseCanvas?.width, ch = scene.courseCanvas?.height;
+  const src = clean?.naturalWidth && clean.naturalWidth === cw && clean.naturalHeight === ch ? clean : scene.courseCanvas;
   if (src) {
-    const P = Math.min(8192, Math.round(span * 2)); // (about 0.5 m a pixel, up to 8192)
+    // (about 0.5 m a pixel, up to 8192; a power of two, so Unreal gives it mips - the ground reads
+    // the photo's light and shade from a blurred one, not its pixels)
+    const P = Math.min(8192, 2 ** Math.ceil(Math.log2(span * 2)));
     const c = document.createElement('canvas');
     c.width = c.height = P;
     const g = c.getContext('2d');
@@ -132,15 +180,23 @@ export async function exportForUnreal({ course, scene, id, status = () => {} }) 
   status('Exporting surface outlines…');
   await tick();
   const SDF_M = 3, FRINGE_M = 1.5;
-  const M = Math.min(8192, (N - 1) * 2 + 1), ms = span / (M - 1);
+  // (a power of two, about twice the heightmap's samples: Unreal mipmaps and filters those as it
+  // should - other sizes get no mips and can come out in steps; each pixel's centre at
+  // x0 + (i + 0.5) * ms, so the texture's 0..1 runs over exactly the landscape)
+  const M = Math.min(8192, 2 ** Math.ceil(Math.log2((N - 1) * 2))), ms = span / M;
   const feats = course.features || [];
+  // (each outline smoothed, see smoothOutline; the outlines filled - holes cut out, overlapping
+  // outlines one shape - and blurred by FIELD_BLUR_M; for a straight edge a Gaussian blur gives
+  // Phi(distance / sigma), so the distance from the edge is sigma * probit(value). Distances taken
+  // to every edge of every outline instead came out in notches wherever outlines overlap.)
   const field = (surfaces, grow = 0) => {
-    // inside: the outlines filled (holes cut out) on a canvas, one pixel a sample
     const c = document.createElement('canvas');
     c.width = c.height = M;
-    const g = c.getContext('2d', { willReadFrequently: true });
-    const px = (x) => (x - x0) / ms + 0.5, py = (z) => (z1 - z) / ms + 0.5;
-    const polys = feats.filter((f) => surfaces.includes(f.surface) && f.poly?.length > 2);
+    const g = c.getContext('2d');
+    const px = (x) => (x - x0) / ms, py = (z) => (z1 - z) / ms;
+    const polys = feats.filter((f) => surfaces.includes(f.surface) && f.poly?.length > 2)
+      .map((f) => ({ inner: f.inner, poly: smoothOutline(f.poly, f.surface === 'water' ? WATER_SMOOTH_M : EDGE_SMOOTH_M) }));
+    g.fillStyle = '#000'; g.fillRect(0, 0, M, M);
     for (const inner of [false, true]) {
       g.fillStyle = inner ? '#000' : '#fff';
       for (const f of polys) if (!!f.inner === inner) {
@@ -149,41 +205,59 @@ export async function exportForUnreal({ course, scene, id, status = () => {} }) 
         g.closePath(); g.fill();
       }
     }
-    const inside = g.getImageData(0, 0, M, M).data;
-    // distance to the nearest outline, worked out only near the outlines (SDF_M + grow around each edge)
-    const R = SDF_M + grow, d = new Float32Array(M * M).fill(R);
-    for (const f of polys) {
-      const P = f.poly;
-      for (let k = 0; k < P.length; k++) {
-        const [ax, az] = P[k], [bx, bz] = P[(k + 1) % P.length];
-        const i0 = Math.max(0, Math.floor((Math.min(ax, bx) - R - x0) / ms)), i1 = Math.min(M - 1, Math.ceil((Math.max(ax, bx) + R - x0) / ms));
-        const j0 = Math.max(0, Math.floor((z1 - Math.max(az, bz) - R) / ms)), j1 = Math.min(M - 1, Math.ceil((z1 - Math.min(az, bz) + R) / ms));
-        const dx = bx - ax, dz = bz - az, l2 = dx * dx + dz * dz || 1e-9;
-        for (let j = j0; j <= j1; j++) {
-          const z = z1 - j * ms;
-          for (let i = i0; i <= i1; i++) {
-            const x = x0 + i * ms;
-            const t = Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / l2));
-            const e = Math.hypot(x - ax - dx * t, z - az - dz * t), q = j * M + i;
-            if (e < d[q]) d[q] = e;
-          }
-        }
-      }
-    }
-    // signed (inside +), grown outward by grow metres, as 0..1 with the outline at 0.5
-    const out = new Float32Array(M * M);
+    return blurredField(c, FIELD_BLUR_M, grow);
+  };
+  // A filled shape (white on black, M x M) as a distance field: blurred by sigma metres, the
+  // distance read back from the blur (see field), grown outward by grow metres
+  function blurredField(src, sigma, grow = 0) {
+    const c = document.createElement('canvas');
+    c.width = c.height = M;
+    const g = c.getContext('2d', { willReadFrequently: true });
+    g.fillStyle = '#000'; g.fillRect(0, 0, M, M);
+    g.filter = `blur(${sigma / ms}px)`;
+    g.drawImage(src, 0, 0);
+    const d = g.getImageData(0, 0, M, M).data, out = new Float32Array(M * M);
     for (let q = 0; q < out.length; q++) {
-      const sd = (inside[q * 4] > 127 ? d[q] : -d[q]) + grow;
-      out[q] = Math.max(0, Math.min(1, 0.5 + sd / (2 * SDF_M)));
+      const b = Math.min(0.9995, Math.max(0.0005, d[q * 4] / 255));
+      out[q] = Math.max(0, Math.min(1, 0.5 + (sigma * probit(b) + grow) / (2 * SDF_M)));
     }
     return out;
-  };
+  }
   const F = {
     green: field(['green']), tee: field(['tee']), bunker: field(['sand']), water: field(['water']),
   };
+  // Fairways the map is missing, found by the game in the aerial photo (scene.imagery.overlay,
+  // code 1, on a 1 m grid): that grid blurred (FAIRWAY_PHOTO_BLUR_M), and how far each pixel is
+  // from the edge read back from the blur - for a straight edge a Gaussian blur gives
+  // Phi(distance / sigma), so distance = sigma * probit(value). The grid's steps come out as a
+  // smooth outline.
+  const photoFair = (() => {
+    const o = scene.imagery?.overlay;
+    if (!o?.codes) return null;
+    const oc = document.createElement('canvas');
+    oc.width = o.w; oc.height = o.h;
+    const id = oc.getContext('2d').createImageData(o.w, o.h);
+    let any = false;
+    for (let i = 0; i < o.codes.length; i++) {
+      const v = o.codes[i] === 1 ? 255 : 0;
+      if (v) any = true;
+      id.data[i * 4] = id.data[i * 4 + 1] = id.data[i * 4 + 2] = v; id.data[i * 4 + 3] = 255;
+    }
+    if (!any) return null;
+    oc.getContext('2d').putImageData(id, 0, 0);
+    const c = document.createElement('canvas');
+    c.width = c.height = M;
+    const g = c.getContext('2d');
+    g.fillStyle = '#000'; g.fillRect(0, 0, M, M);
+    g.imageSmoothingEnabled = true;
+    g.drawImage(oc, (o.minX - x0) / ms, (z1 - o.maxZ) / ms, (o.w * o.res) / ms, (o.h * o.res) / ms);
+    return blurredField(c, FAIRWAY_PHOTO_BLUR_M);
+  })();
   // fairways, and a fringe of fairway-cut grass round every green (where it isn't green itself)
   const fair = field(['fairway']), fringe = field(['green'], FRINGE_M);
-  F.fairway = fair.map((v, q) => Math.max(v, Math.min(fringe[q], 1 - F.green[q])));
+  F.fairway = fair.map((v, q) => Math.max(v,
+    photoFair ? Math.min(photoFair[q], 1 - F.green[q], 1 - F.bunker[q], 1 - F.water[q], 1 - F.tee[q]) : 0,
+    Math.min(fringe[q], 1 - F.green[q])));
   await tick();
   // the rough: everything the others aren't
   F.rough = new Float32Array(M * M);
@@ -250,7 +324,7 @@ export async function exportForUnreal({ course, scene, id, status = () => {} }) 
   }
   status('Exporting water…');
   await tick();
-  const water = waterMesh(scene, x0, z1, base);
+  const water = waterMesh(scene, wg, { hts, N, step, base });
   if (water) {
     await put('water.glb', await glb(water.mesh), 'model/gltf-binary');
     await put('water.json', JSON.stringify(water.info, null, 1), 'application/json');
@@ -445,18 +519,47 @@ function propMeshes(scene, x0, z1, base) {
   return out;
 }
 
-// Every water surface (not the sea) as one mesh in the landscape's frame: x east and z south of
-// the north-west corner, y up from the export's base height, metres
-function waterMesh(scene, x0, z1, base) {
+// Every water surface as one mesh in the landscape's frame: x east and z south of the north-west
+// corner, y up from the export's base height, metres.
+//
+// Ponds and streams are laid on the landscape's own grid rather than taken from the game's meshes
+// (each pond's bare outline, each piece of a stream its own ribbon): those leave gaps in Unreal
+// wherever the bank dips below the water just outside the outline (the landscape's samples don't
+// fall on the outline, and the export carves the beds deeper), and seams where two pieces of a
+// stream meet. Here every grid point within WATER_REACH_M of some water takes that water's level
+// (the nearest: inside it first), and a square is water if any corner is inside the outline or
+// already lies below its level. The surface so reaches past the outline until the bank rises above
+// it, its edge tucked under the ground, and neighbouring pieces share their points. The sea keeps
+// the game's own surface (already grown under the beach). (wg: waterGrid's levels and distances)
+const WATER_REACH_M = 2; // (within the top of the bank the export gives low shores: see exportForUnreal)
+function waterMesh(scene, wg, { hts, N, step, base }) {
   const parts = [];
+  // ---- ponds, lakes and streams on the landscape's grid
+  const { lvl, dist } = wg;
+  const wet = (k) => dist[k] === 0 || (dist[k] <= WATER_REACH_M && hts[k] < lvl[k] + 0.03);
+  const vid = new Int32Array(N * N).fill(-1), gpos = [], gidx = [];
+  const vert = (i, j) => {
+    const k = j * N + i;
+    if (vid[k] < 0) { vid[k] = gpos.length / 3; gpos.push(i * step, lvl[k] - base, j * step); }
+    return vid[k];
+  };
+  for (let j = 0; j < N - 1; j++) for (let i = 0; i < N - 1; i++) {
+    const a = j * N + i, b = a + 1, c = a + N, e = c + 1;
+    if (Number.isNaN(lvl[a]) || Number.isNaN(lvl[b]) || Number.isNaN(lvl[c]) || Number.isNaN(lvl[e])) continue;
+    if (!wet(a) && !wet(b) && !wet(c) && !wet(e)) continue;
+    const va = vert(i, j), vb = vert(i + 1, j), vc = vert(i, j + 1), ve = vert(i + 1, j + 1);
+    gidx.push(va, vc, vb, vb, vc, ve); // (facing up: x east, z south)
+  }
+  if (gidx.length) parts.push({ pos: new Float32Array(gpos), index: gidx, n: gpos.length / 3 });
+  // ---- the sea, as the game draws it
   for (const m of scene.waterMeshes || []) {
-    if (!m.geometry?.attributes?.position) continue;
+    if (!m.geometry?.attributes?.position || !m.geometry.attributes.shore) continue;
     m.updateWorldMatrix(true, false);
     const g = m.geometry.clone().applyMatrix4(m.matrixWorld);
     const p = g.attributes.position, out = new Float32Array(p.count * 3);
     for (let i = 0; i < p.count; i++) {
       // (scene x is the course's mirrored)
-      out[i * 3] = -p.getX(i) - x0; out[i * 3 + 1] = p.getY(i) - base; out[i * 3 + 2] = z1 - p.getZ(i);
+      out[i * 3] = -p.getX(i) - wg.x0; out[i * 3 + 1] = p.getY(i) - base; out[i * 3 + 2] = wg.z1 - p.getZ(i);
     }
     parts.push({ pos: out, index: g.index ? g.index.array : null, n: p.count });
   }
@@ -490,6 +593,154 @@ function waterMesh(scene, x0, z1, base) {
   // (its bounds in Unreal terms - X east, Y south, Z up, centimetres - to line the import up with)
   const info = { min: { x: b.min.x * 100, y: b.min.z * 100, z: b.min.y * 100 }, max: { x: b.max.x * 100, y: b.max.z * 100, z: b.max.y * 100 }, triangles: idx.length / 3 };
   return { mesh, info };
+}
+
+// For every point of the landscape's grid, the nearest pond, lake or stream (not the sea) within R
+// metres of its smoothed outline: lvl, its level there (NaN: none), sd, how far outside the outline
+// the point is (negative inside; Infinity: none), and dist, the same but 0 anywhere inside. A point
+// inside some water takes the one it is deepest inside; otherwise the nearest.
+function waterGrid(course, N, step, x0, z1, R) {
+  const lvl = new Float32Array(N * N).fill(NaN), sd = new Float32Array(N * N).fill(Infinity);
+  for (const wb of course.waterBodies || []) {
+    if (wb.sea || !(wb.poly?.length > 2)) continue;
+    const poly = smoothOutline(wb.poly, WATER_SMOOTH_M);
+    const xs = poly.map((q) => q[0]), zs = poly.map((q) => q[1]);
+    const i0 = Math.max(0, Math.floor((Math.min(...xs) - R - x0) / step)), i1 = Math.min(N - 1, Math.ceil((Math.max(...xs) + R - x0) / step));
+    const j0 = Math.max(0, Math.floor((z1 - Math.max(...zs) - R) / step)), j1 = Math.min(N - 1, Math.ceil((z1 - Math.min(...zs) + R) / step));
+    if (i1 < i0 || j1 < j0) continue;
+    const w = i1 - i0 + 1, h = j1 - j0 + 1;
+    // inside: the outline filled on a canvas whose pixel centres are the grid's points
+    const c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    const g = c.getContext('2d', { willReadFrequently: true });
+    g.fillStyle = '#fff'; g.beginPath();
+    poly.forEach(([x, z], k) => { const px = (x - x0) / step - i0 + 0.5, py = (z1 - z) / step - j0 + 0.5; if (k) g.lineTo(px, py); else g.moveTo(px, py); });
+    g.closePath(); g.fill();
+    const inside = g.getImageData(0, 0, w, h).data;
+    // exact distance to the outline, worked out only within R of each of its edges
+    const d = new Float32Array(w * h).fill(Infinity);
+    for (let k = 0; k < poly.length; k++) {
+      const [ax, az] = poly[k], [bx, bz] = poly[(k + 1) % poly.length];
+      const a0 = Math.max(0, Math.floor((Math.min(ax, bx) - R - x0) / step) - i0), a1 = Math.min(w - 1, Math.ceil((Math.max(ax, bx) + R - x0) / step) - i0);
+      const b0 = Math.max(0, Math.floor((z1 - Math.max(az, bz) - R) / step) - j0), b1 = Math.min(h - 1, Math.ceil((z1 - Math.min(az, bz) + R) / step) - j0);
+      const dx = bx - ax, dz = bz - az, l2 = dx * dx + dz * dz || 1e-9;
+      for (let j = b0; j <= b1; j++) {
+        const z = z1 - (j0 + j) * step;
+        for (let i = a0; i <= a1; i++) {
+          const x = x0 + (i0 + i) * step;
+          const t = Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / l2));
+          const e = Math.hypot(x - ax - dx * t, z - az - dz * t), q = j * w + i;
+          if (e < d[q]) d[q] = e;
+        }
+      }
+    }
+    for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) {
+      const q = j * w + i, isIn = inside[q * 4] > 127;
+      if (!isIn && d[q] > R) continue;
+      // (inside, further than R from the outline: -R)
+      const s = isIn ? -Math.min(d[q], R) : d[q], k = (j0 + j) * N + i0 + i;
+      if (s >= sd[k]) continue;
+      const x = x0 + (i0 + i) * step, z = z1 - (j0 + j) * step;
+      const L = wb.levelAt ? wb.levelAt(x, z) : wb.level;
+      if (!Number.isFinite(L)) continue;
+      lvl[k] = L; sd[k] = s;
+    }
+  }
+  const dist = sd.map((s) => Math.max(0, s));
+  return { lvl, sd, dist, x0, z1 };
+}
+
+// An outline with its corners rounded and its steps smoothed out: walked at 0.5 m, each point the
+// average of those within about win metres either side (two box passes), kept about 1 m apart.
+// (The map's ponds are straight runs between a few corners; outlines traced from the photo have
+// steps a metre high.) The same outline always comes out the same (the water's mesh, banks and
+// mask all use it).
+const EDGE_SMOOTH_M = 1.5, WATER_SMOOTH_M = 2.5, FAIRWAY_PHOTO_BLUR_M = 1.6, FIELD_BLUR_M = 1.0;
+const SHORE_M = 1.5, SHORE_SLOPE = 0.2; // (the even slope across every shoreline: metres either side, rise per metre)
+const SMOOTH_GROUND_M = 1.5;            // (how much the ground round bunkers and water is blurred: the Gaussian's sigma)
+
+// For every grid point within R metres of one of the outlines, that distance (into out, where smaller)
+function outlineDistance(polys, out, N, step, x0, z1, R) {
+  for (const poly of polys) {
+    for (let k = 0; k < poly.length; k++) {
+      const [ax, az] = poly[k], [bx, bz] = poly[(k + 1) % poly.length];
+      const i0 = Math.max(0, Math.floor((Math.min(ax, bx) - R - x0) / step)), i1 = Math.min(N - 1, Math.ceil((Math.max(ax, bx) + R - x0) / step));
+      const j0 = Math.max(0, Math.floor((z1 - Math.max(az, bz) - R) / step)), j1 = Math.min(N - 1, Math.ceil((z1 - Math.min(az, bz) + R) / step));
+      const dx = bx - ax, dz = bz - az, l2 = dx * dx + dz * dz || 1e-9;
+      for (let j = j0; j <= j1; j++) {
+        const z = z1 - j * step;
+        for (let i = i0; i <= i1; i++) {
+          const x = x0 + i * step;
+          const t = Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / l2));
+          const e = Math.hypot(x - ax - dx * t, z - az - dz * t), q = j * N + i;
+          if (e < out[q]) out[q] = e;
+        }
+      }
+    }
+  }
+}
+
+// A Gaussian blur of an N x N grid (sigma in samples), separable, edges clamped
+function blurGrid(src, N, sigma) {
+  const r = Math.max(1, Math.ceil(sigma * 3)), w = [];
+  let sum = 0;
+  for (let k = -r; k <= r; k++) { const v = Math.exp(-(k * k) / (2 * sigma * sigma)); w.push(v); sum += v; }
+  for (let k = 0; k < w.length; k++) w[k] /= sum;
+  const tmp = new Float32Array(N * N), out = new Float32Array(N * N);
+  for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
+    let s = 0;
+    for (let k = -r; k <= r; k++) s += src[j * N + Math.min(N - 1, Math.max(0, i + k))] * w[k + r];
+    tmp[j * N + i] = s;
+  }
+  for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
+    let s = 0;
+    for (let k = -r; k <= r; k++) s += tmp[Math.min(N - 1, Math.max(0, j + k)) * N + i] * w[k + r];
+    out[j * N + i] = s;
+  }
+  return out;
+}
+const smoothed = new WeakMap();
+function smoothOutline(poly, win) {
+  const key = `${win}`, have = smoothed.get(poly);
+  if (have?.[key]) return have[key];
+  const pts = [];
+  for (let k = 0; k < poly.length; k++) {
+    const [ax, az] = poly[k], [bx, bz] = poly[(k + 1) % poly.length];
+    const n = Math.max(1, Math.ceil(Math.hypot(bx - ax, bz - az) / 0.5));
+    for (let t = 0; t < n; t++) pts.push([ax + ((bx - ax) * t) / n, az + ((bz - az) * t) / n]);
+  }
+  const n = pts.length, r = Math.max(1, Math.round(win / 0.5 / 2));
+  let out = poly;
+  if (n >= 4 * r + 4) {
+    let cur = pts;
+    for (let pass = 0; pass < 2; pass++) {
+      const nxt = new Array(n);
+      let sx = 0, sz = 0;
+      for (let k = -r; k <= r; k++) { const p = cur[(k + n) % n]; sx += p[0]; sz += p[1]; }
+      for (let i = 0; i < n; i++) {
+        nxt[i] = [sx / (2 * r + 1), sz / (2 * r + 1)];
+        const a = cur[(i - r + n) % n], b = cur[(i + r + 1) % n];
+        sx += b[0] - a[0]; sz += b[1] - a[1];
+      }
+      cur = nxt;
+    }
+    out = cur.filter((_, i) => i % 2 === 0);
+  }
+  smoothed.set(poly, { ...have, [key]: out });
+  return out;
+}
+
+// The inverse of the standard normal distribution (Acklam's approximation, to about 1e-9)
+function probit(p) {
+  const a = [-39.69683028665376, 220.9460984245205, -275.9285104469687, 138.357751867269, -30.66479806614716, 2.506628277459239];
+  const b = [-54.47609879822406, 161.5858368580409, -155.6989798598866, 66.80131188771972, -13.28068155211839];
+  const c = [-0.007784894002430293, -0.3223964580411365, -2.400758277161838, -2.549732539343734, 4.374664141464968, 2.938163982698783];
+  const d = [0.007784695709041462, 0.3224671290700398, 2.445134137142996, 3.754408661907416];
+  const lo = 0.02425;
+  if (p < lo) { const q = Math.sqrt(-2 * Math.log(p)); return (((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) / ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1); }
+  if (p > 1 - lo) { const q = Math.sqrt(-2 * Math.log(1 - p)); return -(((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) / ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1); }
+  const q = p - 0.5, r = q * q;
+  return ((((((a[0] * r + a[1]) * r + a[2]) * r + a[3]) * r + a[4]) * r + a[5]) * q) / (((((b[0] * r + b[1]) * r + b[2]) * r + b[3]) * r + b[4]) * r + 1);
 }
 
 // ---- PNG writing (greyscale, 8 or 16 bits), deflated by the browser

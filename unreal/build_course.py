@@ -27,7 +27,7 @@ EXPORT_DIR = r"C:\Users\rartz\Desktop\Claude Projects\GolfSim\exports\Majestic_S
 
 # Which parts to build on this run (False: leave what's in the level as it is). Building only what
 # changed is much quicker: the ground's material takes the longest (Unreal compiles its shaders).
-BUILD = {"ground": True, "trees": False, "water": False, "markers": False, "props": False}
+BUILD = {"ground": True, "trees": True, "water": True, "markers": True, "props": True}
 # Imported pictures and models are reused on later runs; True imports them all again (after a new
 # export of the course from the game)
 REIMPORT = True
@@ -40,9 +40,11 @@ GROUND_MEAN = {"lawn": (0.131, 0.23, 0.025), "rough": (0.118, 0.152, 0.03), "san
 DETAIL_TILE_M = 2.5       # metres each ground texture covers
 # The game's turf colours (linear; scene.js terrain shader): the photo gives only light and shade on
 # the grass, the colour is the turf's own - deep, even greens rather than the photo's lime and grey
-TURF = {"fairway": (0.06, 0.112, 0.022), "green": (0.074, 0.136, 0.026), "rough": (0.04, 0.072, 0.024), "bunker": (0.52, 0.41, 0.25),
+TURF = {"fairway": (0.055, 0.105, 0.03), "green": (0.065, 0.125, 0.034), "rough": (0.027, 0.05, 0.016), "bunker": (0.52, 0.41, 0.25),
         "water": (0.03, 0.03, 0.018)}   # (the pond floor under Unreal's water: dark silt, not the photo's pale water)
 TURF_AMOUNT = 0.88        # how much of the turf colour over the photo's (the rest the photo's own)
+WET_BANK = (0.4, 0.55)   # the ground darkens towards the water from 0.6 m out (mask 0.4), to this much at the edge
+EDGE_SOFT_M = 0.3         # how wide the blend is at the edge of each surface
 TREE_CULL_CM = (90000, 130000)   # trees fade out between 900 and 1300 m
 CONIFERS = {"pine", "loblolly", "redcedar", "douglasfir", "ponderosa", "spruce", "cypress", "baldcypress", "hemlock", "juniper", "holly"}
 
@@ -57,16 +59,20 @@ UE_TREE_KINDS = ("_Forest_", "_Field_")      # (not the saplings and seedlings)
 # there are none. (Only meshes named Tree_ or SM_: not the branch and twig parts beside them.)
 UE_CONIFER_FOLDERS = ["/Game/OTG_Conifers", "/Game/Megaplant_Library/Tree_Norway_Spruce", "/Game/Megaplant_Library/Tree_Baltic_Pine"]
 UE_CONIFER_NAMES = ("Tree_", "SM_")
-# Grass for the rough: an existing LandscapeGrassType (the MW Landscape Auto Material's), or our own
-# tuft if it isn't there
-UE_GRASS_TYPE = "/Game/MWLandscapeAutoMaterial/Procedurals/LGT_MWAM_Grass"
-# Golf rough, built from those grass meshes (MW's own grass type is meadow grass, 25-58 cm and
-# wild): mown to ROUGH_HEIGHT_CM, thick and even. ROUGH_DENSITY: tufts per 10 x 10 m; ROUGH_DRAW_M:
-# how far out it's drawn (beyond, the ground's colour carries the rough).
-ROUGH_MESHES = ["/Game/MWLandscapeAutoMaterial/Meshes/Plants/SM_MWAM_GrassD", "/Game/MWLandscapeAutoMaterial/Meshes/Plants/SM_MWAM_GrassC"]
-ROUGH_HEIGHT_CM = (6, 11)
-ROUGH_DENSITY = 9000
-ROUGH_DRAW_M = (25, 40)
+# Turf: real blades of grass, made by this script (turf_patch) - a patch of separate blades, each
+# tapering to a point and leaning over, in the turf's own colours - grown by Unreal's landscape grass
+# over each surface and cut off exactly at its edge (turf_material). Per surface: the blades'
+# heights and widths, how many a patch, the patch size, patches per 10 x 10 m, how far out it's
+# drawn (fading out between the two: beyond, the ground's colour carries it on), and the colours
+# (linear: root, tip, dry tips and their share). More blades, patches and distance cost frame rate.
+TURF_GRASS = {
+    "rough": {"masks": ["rough"], "height_cm": (5.0, 10.0), "width_mm": (3.0, 5.5), "lean": 0.45, "blades": 300,
+              "patch_cm": 30, "density": 2400, "draw_m": (65, 90),
+              "root": (0.02, 0.038, 0.012), "tip": (0.08, 0.145, 0.04), "dry": (0.2, 0.18, 0.07), "dry_share": 0.05, "vary": 0.22},
+    "fairway": {"masks": ["fairway", "tee"], "height_cm": (1.4, 2.4), "width_mm": (2.0, 3.0), "lean": 0.25, "blades": 420,
+                "patch_cm": 24, "density": 2200, "draw_m": (25, 35),
+                "root": (0.03, 0.062, 0.016), "tip": (0.09, 0.17, 0.045), "dry": (0.15, 0.17, 0.05), "dry_share": 0.02, "vary": 0.15},
+}
 
 
 def load(name):
@@ -174,7 +180,12 @@ def import_texture(path, name, kind="color"):
                               unreal.TextureCompressionSettings.TC_GRAYSCALE if kind == "mask" else unreal.TextureCompressionSettings.TC_NORMALMAP)
         if kind == "mask":
             # (always at full detail: streamed down to a smaller copy, the course's edges go blocky)
-            for prop, val in (("never_stream", True), ("lod_group", unreal.TextureGroup.TEXTUREGROUP_TERRAIN_WEIGHTMAP)):
+            # (and filtered smoothly with mips: the masks are distance fields, so blending between
+            # pixels follows the true outline; a point-filtered or mip-less copy comes out in steps)
+            for prop, val in (("never_stream", True), ("lod_group", unreal.TextureGroup.TEXTUREGROUP_WORLD),
+                              ("filter", unreal.TextureFilter.TF_TRILINEAR),
+                              ("mip_gen_settings", unreal.TextureMipGenSettings.TMGS_FROM_TEXTURE_GROUP),
+                              ("power_of_two_mode", unreal.TexturePowerOfTwoSetting.NONE)):
                 try:
                     t.set_editor_property(prop, val)
                 except Exception:
@@ -184,8 +195,22 @@ def import_texture(path, name, kind="color"):
 
 
 def new_material(name):
+    """An empty material: an existing one cleared and set back to plain lit and opaque (an existing
+    one can't be deleted while the level uses it), or a new one"""
     path = CONTENT + "/" + name
     if unreal.EditorAssetLibrary.does_asset_exist(path):
+        mat = unreal.load_asset(path)
+        if isinstance(mat, unreal.Material):
+            mel.delete_all_material_expressions(mat)
+            for e in list(mel.get_material_expressions(mat)):   # (some, like the grass output, stay behind)
+                mel.delete_material_expression(mat, e)
+            for prop, val in (("shading_model", unreal.MaterialShadingModel.MSM_DEFAULT_LIT), ("blend_mode", unreal.BlendMode.BLEND_OPAQUE),
+                              ("two_sided", False)):
+                try:
+                    mat.set_editor_property(prop, val)
+                except Exception:
+                    pass
+            return mat
         unreal.EditorAssetLibrary.delete_asset(path)
     return assets.create_asset(name, CONTENT, unreal.Material, unreal.MaterialFactoryNew())
 
@@ -206,6 +231,18 @@ def mesh_box(meshes):
 
 
 # ------------------------------------------------------------------ the ground
+
+PHOTO_BLUR_MIPS = 2.0     # the photo read this many mips down (each halves it: 2 = about 2 m), so its pixels don't show as steps
+
+
+def photo_blur(s):
+    """A texture sample of the photo read PHOTO_BLUR_MIPS further down its mips: its light and shade
+    without its pixels (aerial photos are about a metre a pixel; mown areas' edges come out in steps)"""
+    try:
+        s.set_editor_property("mip_value_mode", unreal.TextureMipValueMode.TMVM_MIP_BIAS)
+        s.set_editor_property("const_mip_value", int(PHOTO_BLUR_MIPS))
+    except Exception:
+        warn("Photo blur not set: " + traceback.format_exc().splitlines()[-1])
 
 def build_ground(land):
     """Landscape material: the photo for colour; lawn, rough and sand textures for detail and
@@ -254,13 +291,20 @@ def build_ground(land):
     big = coords(N - 1, 0)                                      # 0..1 over the whole landscape
     fine = coords(DETAIL_TILE_M / meta["metresPerSample"], 900)  # one texture every few metres
     ph = sample(photo, big, -1800, -400, S.SAMPLERTYPE_COLOR)
+    photo_blur(ph)
     m = {k: sample(t, big, -2000, 200 + i * 220, S.SAMPLERTYPE_LINEAR_GRAYSCALE) for i, (k, t) in enumerate(masks.items())}
+    raw = dict(m)   # (the distance fields themselves, before the edge step)
     # Crisp, smooth edges: the masks are distance fields (0.5 on each outline, 3 m either side
-    # spread over 0..1), so a narrow step round 0.5 - about 30 cm wide - follows the true outline
+    # spread over 0..1), so a narrow step round 0.5 - EDGE_SOFT_M wide - follows the true outline.
+    # (Far off, the masks' mips blur the field, and the step still follows the outline. A step
+    # widened by the screen-space change of the mask, DDX/DDY, came out metres wide on the
+    # landscape: the edges went jagged.)
+    half = EDGE_SOFT_M / (4.0 * 3.0)   # (3 m = 0.5 of the mask)
     for i, k in enumerate(list(m)):
-        ss = E(unreal.MaterialExpressionSmoothStep, -1800, 200 + i * 220)
-        mel.connect_material_expressions(const(0.475, -1950, 150 + i * 220), "", ss, "Min")
-        mel.connect_material_expressions(const(0.525, -1950, 250 + i * 220), "", ss, "Max")
+        y = 200 + i * 220
+        ss = E(unreal.MaterialExpressionSmoothStep, -1800, y)
+        mel.connect_material_expressions(const(0.5 - half, -1950, y - 50), "", ss, "Min")
+        mel.connect_material_expressions(const(0.5 + half, -1950, y + 50), "", ss, "Max")
         mel.connect_material_expressions(m[k], "R", ss, "Value")
         m[k] = ss
     mown = op(unreal.MaterialExpressionAdd, op(unreal.MaterialExpressionAdd, m["fairway"], m["green"], -1500, 300, "", ""), m["tee"], -1300, 300, "", "")
@@ -303,23 +347,47 @@ def build_ground(land):
     mel.connect_material_expressions(turf, "", graded, "B")
     mel.connect_material_expressions(amount, "", graded, "Alpha")
     base = op(unreal.MaterialExpressionMultiply, graded, mix, -400, 0)
+    wetk = E(unreal.MaterialExpressionSaturate, -600, 150)
+    mel.connect_material_expressions(op(unreal.MaterialExpressionMultiply,
+                                        op(unreal.MaterialExpressionSubtract, raw["water"], const(WET_BANK[0], -800, 200), -700, 150, "R", ""),
+                                        const(1.0 / max(1e-3, 0.5 - WET_BANK[0]), -700, 250), -650, 150), "", wetk, "")
+    wet = E(unreal.MaterialExpressionLinearInterpolate, -500, 100)
+    mel.connect_material_expressions(const(1.0, -600, 50), "", wet, "A")
+    mel.connect_material_expressions(const(WET_BANK[1], -600, 80), "", wet, "B")
+    mel.connect_material_expressions(wetk, "", wet, "Alpha")
+    base = op(unreal.MaterialExpressionMultiply, base, wet, -350, 0)
     mel.connect_material_property(base, "", unreal.MaterialProperty.MP_BASE_COLOR)
     mel.connect_material_property(normal, "", unreal.MaterialProperty.MP_NORMAL)
     mel.connect_material_property(const(0.88, -400, 400), "", unreal.MaterialProperty.MP_ROUGHNESS)
 
-    # 3D grass on the rough
+    # Turf on the rough and the fairways (and tees): grown a metre past each edge (Unreal places
+    # grass by a coarse map, one value a landscape sample), and cut off at the edge itself by the
+    # blades' own material
     try:
-        gt = make_grass_type()
-        if gt:
-            go = E(unreal.MaterialExpressionLandscapeGrassOutput, -400, 700)
+        go = E(unreal.MaterialExpressionLandscapeGrassOutput, -400, 700)
+        inputs = []
+        for kind, cfg in TURF_GRASS.items():
+            gt = make_turf_type(kind)
             gi = unreal.GrassInput()
-            gi.set_editor_property("name", "Rough")
+            gi.set_editor_property("name", kind.capitalize())
             gi.set_editor_property("grass_type", gt)
-            go.set_editor_property("grass_types", [gi])
-            mel.connect_material_expressions(m["rough"], "", go, "Rough")
-            log("Grass on the rough: set up")
+            inputs.append((gi, kind, cfg))
+        go.set_editor_property("grass_types", [gi for gi, _, _ in inputs])
+        for gi, kind, cfg in inputs:
+            w = raw[cfg["masks"][0]]
+            wout = "R"
+            for nm in cfg["masks"][1:]:
+                w = op(unreal.MaterialExpressionMax, w, raw[nm], -800, 800, wout, "R")
+                wout = ""
+            # (0.33: a metre outside the edge)
+            sat = E(unreal.MaterialExpressionSaturate, -600, 800)
+            mel.connect_material_expressions(op(unreal.MaterialExpressionMultiply,
+                                                op(unreal.MaterialExpressionSubtract, w, const(0.33, -800, 900), -700, 850, wout, ""),
+                                                const(12.0, -700, 950), -650, 850), "", sat, "")
+            mel.connect_material_expressions(sat, "", go, kind.capitalize())
+        log("Turf: on %s" % ", ".join(TURF_GRASS))
     except Exception:
-        warn("Grass skipped:\n" + traceback.format_exc())
+        warn("Turf skipped:\n" + traceback.format_exc())
 
     mel.recompile_material(mat)
     unreal.EditorAssetLibrary.save_loaded_asset(mat)
@@ -332,95 +400,220 @@ def build_ground(land):
     log("Ground material: turf colours, the photo's light and shade, detail textures and masks")
 
 
-def grass_material():
-    """The rough's grass blades: the rough's green, both sides, little shine."""
-    mat = new_material("M_Grass")
+# ------------------------------------------------------------------ turf: real blades of grass
+
+def write_glb(path, pos, nrm, col, idx):
+    """A glTF binary with one mesh: positions and normals (metres, y up), vertex colours (linear RGBA),
+    triangles."""
+    import struct
+    bp = struct.pack("<%df" % len(pos), *pos)
+    bn = struct.pack("<%df" % len(nrm), *nrm)
+    bc = struct.pack("<%df" % len(col), *col)
+    bi = struct.pack("<%dI" % len(idx), *idx)
+    blob = bp + bn + bc + bi
+    nv = len(pos) // 3
+    xs, ys, zs = pos[0::3], pos[1::3], pos[2::3]
+    views, off = [], 0
+    for b in (bp, bn, bc, bi):
+        views.append({"buffer": 0, "byteOffset": off, "byteLength": len(b)})
+        off += len(b)
+    gj = {
+        "asset": {"version": "2.0", "generator": "OpenTeeGolf build_course.py"},
+        "scene": 0, "scenes": [{"nodes": [0]}], "nodes": [{"mesh": 0, "name": "Turf"}],
+        "meshes": [{"name": "Turf", "primitives": [{"attributes": {"POSITION": 0, "NORMAL": 1, "COLOR_0": 2}, "indices": 3, "material": 0}]}],
+        "materials": [{"name": "Turf", "doubleSided": True}],
+        "buffers": [{"byteLength": len(blob)}], "bufferViews": views,
+        "accessors": [
+            {"bufferView": 0, "componentType": 5126, "count": nv, "type": "VEC3", "min": [min(xs), min(ys), min(zs)], "max": [max(xs), max(ys), max(zs)]},
+            {"bufferView": 1, "componentType": 5126, "count": nv, "type": "VEC3"},
+            {"bufferView": 2, "componentType": 5126, "count": nv, "type": "VEC4"},
+            {"bufferView": 3, "componentType": 5125, "count": len(idx), "type": "SCALAR"},
+        ],
+    }
+    js = json.dumps(gj).encode("utf-8")
+    js += b" " * (-len(js) % 4)
+    blob += b"\0" * (-len(blob) % 4)
+    with open(path, "wb") as f:
+        f.write(struct.pack("<III", 0x46546C67, 2, 12 + 8 + len(js) + 8 + len(blob)))
+        f.write(struct.pack("<II", len(js), 0x4E4F534A) + js)
+        f.write(struct.pack("<II", len(blob), 0x004E4942) + blob)
+
+
+def turf_patch(kind, cfg, seed=7):
+    """A square patch of turf, cfg["patch_cm"] across, of separate blades: each a narrow strip that
+    tapers to a point, leaning and curving over, darker at the root. Normals lean up towards the
+    sky (as lawns are shaded: a blade's face alone would light the turf in speckles)."""
+    import math, random
+    rnd = random.Random(seed)
+    P = cfg["patch_cm"] / 100.0
+    pos, nrm, col, idx = [], [], [], []
+    for _ in range(cfg["blades"]):
+        x, z = (rnd.random() - 0.5) * P, (rnd.random() - 0.5) * P
+        h = rnd.uniform(*cfg["height_cm"]) / 100.0
+        w = rnd.uniform(*cfg["width_mm"]) / 1000.0
+        face = rnd.random() * math.tau                 # which way the blade's flat side faces
+        bend = rnd.random() * math.tau                 # which way it leans
+        lean = rnd.uniform(0.15, 1.0) * cfg["lean"] * h
+        fx, fz = math.cos(face), math.sin(face)        # across the blade
+        bx, bz = math.cos(bend), math.sin(bend)
+        # (the vertex colours carry where on the blade, the blade's own random value and whether its
+        # tip is dry - the material makes the colours from them: Unreal reads vertex colours as sRGB)
+        v = rnd.random()
+        dry = 1.0 if rnd.random() < cfg["dry_share"] else 0.0
+        base = len(pos) // 3
+        levels = (0.0, 0.35, 0.7, 1.0)
+        for li, t in enumerate(levels):
+            cx, cz = x + bx * lean * t * t, z + bz * lean * t * t
+            cy = h * t * (1 - 0.25 * (lean / max(h, 1e-6)) * t)
+            half = 0.5 * w * (1 - t ** 1.5) if t < 1 else 0.0
+            pts = [(cx - fx * half, cy, cz - fz * half), (cx + fx * half, cy, cz + fz * half)] if t < 1 else [(cx, cy, cz)]
+            # (the face's normal, leaned well up towards the sky)
+            nx, nz = -fz, fx
+            n = (nx * 0.3, 0.95, nz * 0.3)
+            ln = math.sqrt(n[0] ** 2 + n[1] ** 2 + n[2] ** 2)
+            c = [t, v, dry]
+            for p in pts:
+                pos += [p[0], p[1], p[2]]
+                nrm += [n[0] / ln, n[1] / ln, n[2] / ln]
+                col += [c[0], c[1], c[2], 1.0]
+        # (levels 0..2 two points each, the tip one)
+        a0, a1, b0, b1, c0, c1, tp = base, base + 1, base + 2, base + 3, base + 4, base + 5, base + 6
+        idx += [a0, b0, a1, a1, b0, b1, b0, c0, b1, b1, c0, c1, c0, tp, c1]
+    return pos, nrm, col, idx
+
+
+def turf_material(kind, land_size_cm):
+    """The blades: their own colours (the vertex colours), lit through like real leaves (two-sided
+    foliage), lighter and darker with the photo's light and shade like the ground under them - and
+    cut off exactly at the edge of their surface (the mask, read where each pixel of a blade is), so
+    the line between rough and fairway is as crisp as the masks."""
+    mat = new_material("M_Turf_" + kind)
     mat.set_editor_property("two_sided", True)
+    mat.set_editor_property("blend_mode", unreal.BlendMode.BLEND_MASKED)
+    first_ok(mat, ("shading_model",), unreal.MaterialShadingModel.MSM_TWO_SIDED_FOLIAGE)
     E = lambda cls, x, y: mel.create_material_expression(mat, cls, x, y)
-    col = E(unreal.MaterialExpressionConstant3Vector, -400, 0)
-    col.set_editor_property("constant", unreal.LinearColor(0.055, 0.1, 0.03, 1))
-    mel.connect_material_property(col, "", unreal.MaterialProperty.MP_BASE_COLOR)
-    for prop, v, y in ((unreal.MaterialProperty.MP_ROUGHNESS, 0.85, 200), (unreal.MaterialProperty.MP_SPECULAR, 0.15, 300)):
-        c = E(unreal.MaterialExpressionConstant, -400, y)
+
+    def const(v, x, y):
+        c = E(unreal.MaterialExpressionConstant, x, y)
         c.set_editor_property("r", v)
-        mel.connect_material_property(c, "", prop)
+        return c
+
+    def const3(rgb, x, y):
+        c = E(unreal.MaterialExpressionConstant3Vector, x, y)
+        c.set_editor_property("constant", unreal.LinearColor(rgb[0], rgb[1], rgb[2], 1))
+        return c
+
+    def op(cls, a, b, x, y, a_out="", b_out=""):
+        n = E(cls, x, y)
+        mel.connect_material_expressions(a, a_out, n, "A")
+        mel.connect_material_expressions(b, b_out, n, "B")
+        return n
+
+    def tex(name, uv, x, y, gray=True):
+        s = E(unreal.MaterialExpressionTextureSample, x, y)
+        s.set_editor_property("texture", unreal.load_asset(CONTENT + "/Textures/" + name))
+        s.set_editor_property("sampler_type", unreal.MaterialSamplerType.SAMPLERTYPE_LINEAR_GRAYSCALE if gray else unreal.MaterialSamplerType.SAMPLERTYPE_COLOR)
+        mel.connect_material_expressions(uv, "", s, "UVs")
+        return s
+
+    # where this pixel is on the landscape, 0..1 (X east, Y south from the north-west corner)
+    wp = E(unreal.MaterialExpressionWorldPosition, -2200, 0)
+    xy = E(unreal.MaterialExpressionComponentMask, -2000, 0)
+    xy.set_editor_property("r", True)
+    xy.set_editor_property("g", True)
+    mel.connect_material_expressions(wp, "", xy, "")
+    corner = E(unreal.MaterialExpressionConstant2Vector, -2000, 120)
+    corner.set_editor_property("r", OFFSET.x)
+    corner.set_editor_property("g", OFFSET.y)
+    uv = op(unreal.MaterialExpressionDivide, op(unreal.MaterialExpressionSubtract, xy, corner, -1850, 0), const(land_size_cm, -1850, 120), -1700, 0)
+    # the surface the blades belong to
+    names = TURF_GRASS[kind]["masks"]
+    mask = tex("T_Mask_" + names[0], uv, -1500, 0)
+    mval = mask
+    for i, nm in enumerate(names[1:]):
+        mval = op(unreal.MaterialExpressionMax, mval, tex("T_Mask_" + nm, uv, -1500, 200 + i * 200), -1300, 100 + i * 200, "R" if mval is mask else "", "R")
+    mel.connect_material_property(mval, "R" if mval is mask else "", unreal.MaterialProperty.MP_OPACITY_MASK)
+    mat.set_editor_property("opacity_mask_clip_value", 0.5)
+    # colour: the blade's own, times the photo's light and shade there (as the ground's)
+    ph = tex("T_CoursePhoto", uv, -1500, 600, gray=False)
+    photo_blur(ph)
+    lum = E(unreal.MaterialExpressionDotProduct, -1300, 600)
+    mel.connect_material_expressions(ph, "RGB", lum, "A")
+    mel.connect_material_expressions(const3((0.2126, 0.7152, 0.0722), -1500, 800), "", lum, "B")
+    shade = op(unreal.MaterialExpressionMin,
+               op(unreal.MaterialExpressionMax, op(unreal.MaterialExpressionDivide, lum, const(0.3, -1300, 750), -1150, 600), const(0.7, -1150, 750), -1000, 600),
+               const(1.3, -1000, 750), -850, 600)
+    # the blade's colour: root to tip (red: how far up), a dry tip on a few (blue), each blade
+    # lighter or darker (green: its own random value)
+    cfg = TURF_GRASS[kind]
+    vc = E(unreal.MaterialExpressionVertexColor, -1300, 300)
+    up = E(unreal.MaterialExpressionLinearInterpolate, -1100, 300)
+    mel.connect_material_expressions(const3(cfg["root"], -1250, 220), "", up, "A")
+    mel.connect_material_expressions(const3(cfg["tip"], -1250, 260), "", up, "B")
+    mel.connect_material_expressions(vc, "R", up, "Alpha")
+    dried = E(unreal.MaterialExpressionLinearInterpolate, -950, 300)
+    mel.connect_material_expressions(up, "", dried, "A")
+    mel.connect_material_expressions(op(unreal.MaterialExpressionMultiply, const3(cfg["dry"], -1100, 420), vc, -1000, 420, "", "R"), "", dried, "B")
+    mel.connect_material_expressions(vc, "B", dried, "Alpha")
+    vary = op(unreal.MaterialExpressionAdd, const(1.0 - cfg["vary"], -1000, 480), op(unreal.MaterialExpressionMultiply, vc, const(2 * cfg["vary"], -1100, 520), -1000, 520, "G", ""), -900, 480)
+    col = op(unreal.MaterialExpressionMultiply, op(unreal.MaterialExpressionMultiply, dried, vary, -800, 350), shade, -650, 400)
+    mel.connect_material_property(col, "", unreal.MaterialProperty.MP_BASE_COLOR)
+    mel.connect_material_property(op(unreal.MaterialExpressionMultiply, col, const(0.7, -650, 560), -500, 520), "", unreal.MaterialProperty.MP_SUBSURFACE_COLOR)
+    mel.connect_material_property(const(0.62, -500, 700), "", unreal.MaterialProperty.MP_ROUGHNESS)
+    mel.connect_material_property(const(0.35, -500, 780), "", unreal.MaterialProperty.MP_SPECULAR)
     mel.recompile_material(mat)
     unreal.EditorAssetLibrary.save_loaded_asset(mat)
     return mat
 
 
-def make_rough_type():
-    """A grass type for mown golf rough from ROUGH_MESHES (see there), or None without them."""
-    meshes = [unreal.load_asset(p) for p in ROUGH_MESHES if unreal.EditorAssetLibrary.does_asset_exist(p)]
-    meshes = [m for m in meshes if isinstance(m, unreal.StaticMesh)]
+def make_turf_type(kind):
+    """The grass type for one surface: a turf patch mesh (made here, Nanite), its material, and how
+    thick and how far out it grows."""
+    cfg = TURF_GRASS[kind]
+    folder = CONTENT + "/Turf/" + kind
+    import tempfile
+    tmp = os.path.join(tempfile.gettempdir(), "OTG_Turf_%s.glb" % kind)
+    write_glb(tmp, *turf_patch(kind, cfg))
+    meshes = static_meshes(import_file(tmp, folder, "SM_Turf_" + kind))
     if not meshes:
-        return None
-    path = CONTENT + "/GT_MownRough"
-    if unreal.EditorAssetLibrary.does_asset_exist(path):
-        unreal.EditorAssetLibrary.delete_asset(path)
-    gt = assets.create_asset("GT_MownRough", CONTENT, unreal.LandscapeGrassType, unreal.LandscapeGrassTypeFactory())
-    varieties = []
-    for m in meshes:
-        b = m.get_bounding_box()
-        h = max(1.0, b.max.z - b.min.z)
-        v = unreal.GrassVariety()
-        v.set_editor_property("grass_mesh", m)
-        for prop, val in (("grass_density", unreal.PerPlatformFloat(default=float(ROUGH_DENSITY) / len(meshes))),
-                          ("start_cull_distance", unreal.PerPlatformInt(default=int(ROUGH_DRAW_M[0] * 100))),
-                          ("end_cull_distance", unreal.PerPlatformInt(default=int(ROUGH_DRAW_M[1] * 100))),
-                          ("random_rotation", True), ("align_to_surface", True), ("use_grid", True),
-                          ("placement_jitter", 1.0), ("scaling", unreal.GrassScaling.UNIFORM),
-                          ("scale_x", unreal.FloatInterval(ROUGH_HEIGHT_CM[0] / h, ROUGH_HEIGHT_CM[1] / h)),
-                          ("cast_dynamic_shadow", False)):
-            try:
-                v.set_editor_property(prop, val)
-            except Exception:
-                warn("Rough setting %s not set" % prop)
-        varieties.append(v)
-    gt.set_editor_property("grass_varieties", varieties)
-    unreal.EditorAssetLibrary.save_loaded_asset(gt)
-    log("Grass: mown rough, %d-%d cm, %d tufts per 100 m2, drawn to %d m" % (ROUGH_HEIGHT_CM[0], ROUGH_HEIGHT_CM[1], ROUGH_DENSITY, ROUGH_DRAW_M[1]))
-    return gt
-
-
-def make_grass_type():
+        raise RuntimeError("the %s turf patch didn't import" % kind)
+    mesh = [m for m in meshes if m.get_name() == "SM_Turf_" + kind] or meshes
+    mesh = mesh[0]
+    mat = turf_material(kind, meta["sizeMetres"] * 100.0)
+    for i in range(len(mesh.get_editor_property("static_materials"))):
+        mesh.set_material(i, mat)
+    # Nanite: millions of blades drawn as cheaply as a few thousand cards
     try:
-        gt = make_rough_type()
-        if gt:
-            return gt
+        ns = mesh.get_editor_property("nanite_settings")
+        ns.set_editor_property("enabled", True)
+        try:
+            unreal.get_editor_subsystem(unreal.StaticMeshEditorSubsystem).set_nanite_settings(mesh, ns, True)
+        except Exception:
+            mesh.set_editor_property("nanite_settings", ns)
     except Exception:
-        warn("Mown rough not made, using the grass type instead: " + traceback.format_exc())
-    if UE_GRASS_TYPE and unreal.EditorAssetLibrary.does_asset_exist(UE_GRASS_TYPE):
-        log("Grass: " + UE_GRASS_TYPE)
-        return unreal.load_asset(UE_GRASS_TYPE)
-    if not exists("grass_tuft.glb"):
-        return None
-    found = static_meshes(import_file(os.path.join(EXPORT_DIR, "grass_tuft.glb"), CONTENT + "/Grass"))
-    if not found:
-        warn("Grass tuft didn't import")
-        return None
-    tuft = found[0]
-    try:
-        tuft.set_material(0, grass_material())
-    except Exception:
-        warn("Grass material not set:\n" + traceback.format_exc())
-    path = CONTENT + "/GT_Rough"
-    if unreal.EditorAssetLibrary.does_asset_exist(path):
-        unreal.EditorAssetLibrary.delete_asset(path)
-    gt = assets.create_asset("GT_Rough", CONTENT, unreal.LandscapeGrassType, unreal.LandscapeGrassTypeFactory())
+        warn("Turf %s: Nanite not turned on (%s)" % (kind, traceback.format_exc().splitlines()[-1]))
+    unreal.EditorAssetLibrary.save_loaded_asset(mesh)
+    path = CONTENT + "/GT_Turf_" + kind
+    gt = unreal.load_asset(path) if unreal.EditorAssetLibrary.does_asset_exist(path) else None
+    if not isinstance(gt, unreal.LandscapeGrassType):
+        gt = assets.create_asset("GT_Turf_" + kind, CONTENT, unreal.LandscapeGrassType, unreal.LandscapeGrassTypeFactory())
     v = unreal.GrassVariety()
-    v.set_editor_property("grass_mesh", tuft)
-    for prop, val in (("grass_density", unreal.PerPlatformFloat(default=1500.0)),
-                      ("start_cull_distance", unreal.PerPlatformInt(default=3000)),
-                      ("end_cull_distance", unreal.PerPlatformInt(default=6000)),
-                      ("random_rotation", True), ("align_to_surface", True), ("use_grid", False),
-                      ("scale_x", unreal.FloatInterval(0.8, 1.6))):
+    v.set_editor_property("grass_mesh", mesh)
+    for prop, val in (("grass_density", unreal.PerPlatformFloat(default=float(cfg["density"]))),
+                      ("start_cull_distance", unreal.PerPlatformInt(default=int(cfg["draw_m"][0] * 100))),
+                      ("end_cull_distance", unreal.PerPlatformInt(default=int(cfg["draw_m"][1] * 100))),
+                      ("random_rotation", True), ("align_to_surface", True), ("use_grid", True),
+                      ("placement_jitter", 1.0), ("scaling", unreal.GrassScaling.UNIFORM),
+                      ("scale_x", unreal.FloatInterval(0.85, 1.2)),
+                      ("cast_dynamic_shadow", cfg.get("shadows", False)), ("receives_decals", False)):
         try:
             v.set_editor_property(prop, val)
         except Exception:
-            warn("Grass setting %s not set" % prop)
+            warn("Turf %s: %s not set" % (kind, prop))
     gt.set_editor_property("grass_varieties", [v])
     unreal.EditorAssetLibrary.save_loaded_asset(gt)
+    log("Turf %s: %d blades a patch %d cm across, %d patches per 100 m2, drawn to %d m" % (
+        kind, cfg["blades"], cfg["patch_cm"], cfg["density"], cfg["draw_m"][1]))
     return gt
 
 
@@ -672,9 +865,12 @@ def plant_placeholders(trees):
 USE_WATER_BODIES = False
 # How the water takes up light per metre (red, green, blue): red goes first, so deep water turns
 # blue-green; and how much it scatters back (a little, green-blue: a clean pond, not milky)
-WATER_ABSORPTION = (0.45, 0.075, 0.11)
-WATER_SCATTERING = (0.012, 0.03, 0.028)
-WATER_RIPPLES = 0.3   # 0 a mirror .. 1 the full ripple picture
+WATER_ABSORPTION = (0.5, 0.11, 0.16)
+WATER_SCATTERING = (0.008, 0.02, 0.014)
+WATER_RIPPLES = 0.55  # how rough the water is in a gust: 0 a mirror .. 1 the full ripple picture
+WATER_CALM = 0.12     # .. and between gusts
+# ripple layers: (metres across, metres a second, direction in degrees)
+WATER_RIPPLE_LAYERS = ((7.0, 0.28, 20.0), (2.4, 0.17, -35.0), (0.8, 0.09, 75.0))
 
 
 def build_water():
@@ -867,6 +1063,12 @@ def water_material():
         c.set_editor_property("constant", unreal.LinearColor(rgb[0], rgb[1], rgb[2], 1))
         return c
 
+    def op(cls, a, b, x, y, a_out="", b_out=""):
+        n = E(cls, x, y)
+        mel.connect_material_expressions(a, a_out, n, "A")
+        mel.connect_material_expressions(b, b_out, n, "B")
+        return n
+
     mel.connect_material_property(const3((0.0, 0.0, 0.0), -400, 0), "", unreal.MaterialProperty.MP_BASE_COLOR)
     mel.connect_material_property(const(0.02, -400, 120), "", unreal.MaterialProperty.MP_ROUGHNESS)
     mel.connect_material_property(const(1.0, -400, 200), "", unreal.MaterialProperty.MP_SPECULAR)
@@ -884,37 +1086,53 @@ def water_material():
     pin(const3(WATER_SCATTERING, -500, 450), ("Scattering Coefficients", "ScatteringCoefficients"))
     pin(const3(WATER_ABSORPTION, -500, 550), ("Absorption Coefficients", "AbsorptionCoefficients"))
     pin(const(0.1, -500, 650), ("Phase G", "PhaseG"))
-    # ripples: the game's ripple picture twice, at two sizes drifting different ways, averaged
+    # Ripples, moving as a pond's do in a breeze: the game's ripple picture at three sizes
+    # (WATER_RIPPLE_LAYERS: metres across, metres a second, which way), added together - and the
+    # wind isn't even over a pond: a much larger, slower copy of the picture, read as a patchwork
+    # of gusts, sets how rough the water is from place to place, between WATER_CALM (mirror-calm
+    # patches) and WATER_RIPPLES
     try:
         nt = import_texture(os.path.join(GAME_TEXTURES, "water_normal.jpg"), "T_water_normal", "normal")
-        wp = E(unreal.MaterialExpressionWorldPosition, -1800, 900)
-        xy = E(unreal.MaterialExpressionComponentMask, -1600, 900)
+        wp = E(unreal.MaterialExpressionWorldPosition, -2000, 900)
+        xy = E(unreal.MaterialExpressionComponentMask, -1800, 900)
         xy.set_editor_property("r", True)
         xy.set_editor_property("g", True)
         mel.connect_material_expressions(wp, "", xy, "")
-        layers = []
-        for k, (size, sx, sy) in enumerate(((300.0, 0.008, 0.005), (110.0, -0.006, 0.009))):
-            div = E(unreal.MaterialExpressionDivide, -1400, 900 + k * 250)
+
+        def layer(size_m, speed_ms, angle_deg, y, sampler=unreal.MaterialSamplerType.SAMPLERTYPE_NORMAL):
+            import math
+            div = E(unreal.MaterialExpressionDivide, -1600, y)
             mel.connect_material_expressions(xy, "", div, "A")
-            mel.connect_material_expressions(const(size, -1600, 1000 + k * 250), "", div, "B")
-            pan = E(unreal.MaterialExpressionPanner, -1200, 900 + k * 250)
-            pan.set_editor_property("speed_x", sx)
-            pan.set_editor_property("speed_y", sy)
+            mel.connect_material_expressions(const(size_m * 100.0, -1800, y + 100), "", div, "B")
+            pan = E(unreal.MaterialExpressionPanner, -1400, y)
+            v = speed_ms / size_m   # (texture widths a second)
+            pan.set_editor_property("speed_x", v * math.cos(math.radians(angle_deg)))
+            pan.set_editor_property("speed_y", v * math.sin(math.radians(angle_deg)))
             mel.connect_material_expressions(div, "", pan, "Coordinate")
-            n = E(unreal.MaterialExpressionTextureSample, -1000, 900 + k * 250)
+            n = E(unreal.MaterialExpressionTextureSample, -1200, y)
             n.set_editor_property("texture", nt)
-            n.set_editor_property("sampler_type", unreal.MaterialSamplerType.SAMPLERTYPE_NORMAL)
+            n.set_editor_property("sampler_type", sampler)
             mel.connect_material_expressions(pan, "", n, "UVs")
-            layers.append(n)
-        add = E(unreal.MaterialExpressionAdd, -800, 1000)
-        mel.connect_material_expressions(layers[0], "RGB", add, "A")
-        mel.connect_material_expressions(layers[1], "RGB", add, "B")
-        # calm water: the ripples a third as strong (the normal mostly straight up), so the surface
-        # mirrors the sky and the trees round it rather than breaking them up
+            return n
+
+        total = None
+        for k, (size, speed, ang) in enumerate(WATER_RIPPLE_LAYERS):
+            n = layer(size, speed, ang, 900 + k * 260)
+            total = n if total is None else op(unreal.MaterialExpressionAdd, total, n, -1000, 900 + k * 260, "" if k > 1 else "RGB", "RGB")
+        # gusts: the picture 60 m across and drifting, its slope one way (-1..1) read as 0..1
+        gust = layer(60.0, 1.2, 25.0, 1800)
+        gk = E(unreal.MaterialExpressionSaturate, -900, 1800)
+        mel.connect_material_expressions(op(unreal.MaterialExpressionMultiply,
+                                            op(unreal.MaterialExpressionSubtract, gust, const(-0.05, -1100, 1900), -1000, 1800, "R", ""),
+                                            const(2.5, -1000, 1950), -950, 1850), "", gk, "")
+        strength = E(unreal.MaterialExpressionLinearInterpolate, -800, 1700)
+        mel.connect_material_expressions(const(WATER_CALM, -900, 1650), "", strength, "A")
+        mel.connect_material_expressions(const(WATER_RIPPLES, -900, 1700), "", strength, "B")
+        mel.connect_material_expressions(gk, "", strength, "Alpha")
         calm = E(unreal.MaterialExpressionLinearInterpolate, -700, 1000)
-        mel.connect_material_expressions(const3((0.0, 0.0, 2.0), -900, 1150), "", calm, "A")
-        mel.connect_material_expressions(add, "", calm, "B")
-        mel.connect_material_expressions(const(WATER_RIPPLES, -900, 1250), "", calm, "Alpha")
+        mel.connect_material_expressions(const3((0.0, 0.0, float(len(WATER_RIPPLE_LAYERS))), -900, 1150), "", calm, "A")
+        mel.connect_material_expressions(total, "", calm, "B")
+        mel.connect_material_expressions(strength, "", calm, "Alpha")
         nrm = E(unreal.MaterialExpressionNormalize, -600, 1000)
         mel.connect_material_expressions(calm, "", nrm, "")
         mel.connect_material_property(nrm, "", unreal.MaterialProperty.MP_NORMAL)
@@ -1015,7 +1233,7 @@ def build_props():
         for k, mesh in enumerate(meshes):
             for i in range(len(mesh.get_editor_property("static_materials"))):
                 mesh.set_material(i, mat)
-            a = actors.spawn_actor_from_object(mesh, loc + unreal.Vector(0, 0, 2 if kind.startswith("path") else 0))
+            a = actors.spawn_actor_from_object(mesh, loc + unreal.Vector(0, 0, 5 if kind.startswith("path") else 0))
             a.set_actor_label("OTG_Prop_%s_%d" % (kind, k))
             a.set_actor_rotation(unreal.Rotator(0, 0, yaw), False)
             a.set_actor_scale3d(unreal.Vector(scale * mirror, scale, scale))
