@@ -261,6 +261,18 @@ runs inside the game, in C++.
   - `STREAM_*` in `build_course.py` set how steep a stream must be to run fully, how fast it
     runs, the ripples' size and how rough it is.
   - The turf now stops at the water (it used to grow in the creek beds).
+- See-through water and a real stream bed.
+  - The water used to be opaque (a dark mirror) for two reasons, both fixed in `build_course.py`:
+    - Nanite can't draw Single Layer Water, so the water mesh is now a non-Nanite mesh.
+    - With Substrate on, a material made by script keeps the Default Lit conversion it got when
+      it was new. The water is now wired to Substrate's own Single Layer Water node.
+  - The water's coefficients are written per metre and converted to Unreal's per centimetre.
+  - Streams get their own clearer, slightly amber water (`STREAM_ABSORPTION`, `STREAM_SCATTERING`).
+    Ponds stay a murky green (`WATER_*`).
+  - Under all water there's a bed of rounded pebbles and gravel over silt. Two sizes of stones
+    in patches, silt in other patches, darker toward the middle (`BED_*`).
+  - The pebbles come from `make_bed_texture.py`, which writes `textures/creekbed_color.png` and
+    `creekbed_normal.png`. It's generated from scratch, with no outside images.
 - The menu: the chosen course's aerial photo behind it, a course card with its picture, rounded
   buttons that light under the mouse, and the page shown lit in the tabs.
 - Testing commands: `OTG.Round.FreeView`, `OTG.Round.Fly`, `OTG.Round.LookAt <X Y Z | pin>`,

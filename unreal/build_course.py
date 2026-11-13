@@ -41,6 +41,20 @@ GAME_TEXTURES = os.path.normpath(os.path.join(EXPORT_DIR, "..", "..", "public", 
 # the photo's colour and adds only the textures' detail
 GROUND_MEAN = {"lawn": (0.131, 0.23, 0.025), "rough": (0.118, 0.152, 0.03), "sand": (0.462, 0.342, 0.165)}
 DETAIL_TILE_M = 2.5       # metres each ground texture covers
+# The bed under ponds and streams (seen through the clear water): stones and gravel in patches
+# over silt, darker toward the middle where it's deeper. The pebbles are make_bed_texture.py's
+# (unreal/textures). BED_TILE_M: metres one copy of the pebbles covers (a second copy, BED_BIG
+# times larger, makes the patches of bigger stones); BED_PATCH_M: how big the patches are;
+# BED_SILT: the silt's colour and BED_SILT_MAX how much of the bed it covers at most; BED_TINT:
+# the stones' colour (x the texture's); BED_DEEP: how dark the middle gets (x)
+BED_TILE_M = 1.3
+BED_BIG = 2.4
+BED_PATCH_M = 9.0
+BED_SILT = (0.30, 0.26, 0.20)
+BED_SILT_MAX = 0.55
+BED_TINT = (0.95, 0.92, 0.86)
+BED_DEEP = 0.7
+BED_TEXTURES = os.path.normpath(os.path.join(os.path.dirname(os.path.dirname(GAME_TEXTURES)), "unreal", "textures"))
 # The game's turf colours (linear; scene.js terrain shader): the photo gives only light and shade on
 # the grass, the colour is the turf's own - deep, even greens rather than the photo's lime and grey
 TURF = {"fairway": (0.10, 0.18, 0.03), "green": (0.085, 0.2, 0.04), "rough": (0.05, 0.08, 0.016), "bunker": (0.52, 0.41, 0.25),
@@ -284,6 +298,14 @@ def build_ground(land):
     for k in ("lawn", "rough", "sand"):
         tex[k] = import_texture(os.path.join(GAME_TEXTURES, k + "_color.jpg"), "T_%s_color" % k)
         tex[k + "_n"] = import_texture(os.path.join(GAME_TEXTURES, k + "_normal.jpg"), "T_%s_normal" % k, "normal")
+    # (the stream bed's)
+    tex["rock"] = import_texture(os.path.join(GAME_TEXTURES, "rock_color.jpg"), "T_rock_color")
+    if os.path.exists(os.path.join(BED_TEXTURES, "creekbed_color.png")):
+        tex["bed"] = import_texture(os.path.join(BED_TEXTURES, "creekbed_color.png"), "T_creekbed_color")
+        tex["bed_n"] = import_texture(os.path.join(BED_TEXTURES, "creekbed_normal.png"), "T_creekbed_normal", "normal")
+    else:
+        warn("No stream-bed pebbles (run make_bed_texture.py): the bed is plain rock")
+        tex["bed"], tex["bed_n"] = tex["rock"], tex["sand_n"]
 
     mat = new_material("M_CourseGround")
     E = lambda cls, x, y: mel.create_material_expression(mat, cls, x, y)
@@ -387,6 +409,68 @@ def build_ground(land):
     mel.connect_material_expressions(const(WET_BANK[1], -600, 80), "", wet, "B")
     mel.connect_material_expressions(wetk, "", wet, "Alpha")
     base = op(unreal.MaterialExpressionMultiply, base, wet, -350, 0)
+    # The bed under the water: pebbles and gravel over silt - two sizes of the pebbles in patches,
+    # silt settled over them in other patches (both from much larger copies of the rock texture's
+    # light and dark), the stones' relief, darker toward the middle - in place of the ground's own
+    # colours wherever it's water (there the photo shows the trees over a creek, and the rough's
+    # green runs under it)
+    try:
+        bed_uv = coords(BED_TILE_M / meta["metresPerSample"], 3400)
+        big_uv = coords(BED_TILE_M * BED_BIG / meta["metresPerSample"], 3500)
+        patch_uv = coords(BED_PATCH_M / meta["metresPerSample"], 3600)
+        silt_uv = coords(BED_PATCH_M * 2.7 / meta["metresPerSample"], 3700)
+        small = sample(tex["bed"], bed_uv, -1800, 3400, S.SAMPLERTYPE_COLOR)
+        large = sample(tex["bed"], big_uv, -1800, 3600, S.SAMPLERTYPE_COLOR)
+        patches = sample(tex["rock"], patch_uv, -1800, 3800, S.SAMPLERTYPE_COLOR)
+        silt_p = sample(tex["rock"], silt_uv, -1800, 4000, S.SAMPLERTYPE_COLOR)
+
+        def patchy(src, lo, hi, x, y):
+            """0..1 patches from a texture's lightness (between lo and hi)"""
+            k = E(unreal.MaterialExpressionSmoothStep, x, y)
+            mel.connect_material_expressions(const(lo, x - 150, y + 100), "", k, "Min")
+            mel.connect_material_expressions(const(hi, x - 150, y + 150), "", k, "Max")
+            lum = E(unreal.MaterialExpressionDotProduct, x - 100, y)
+            mel.connect_material_expressions(src, "RGB", lum, "A")
+            mel.connect_material_expressions(const3((0.3, 0.4, 0.3), x - 200, y + 200), "", lum, "B")
+            mel.connect_material_expressions(lum, "", k, "Value")
+            return k
+
+        bigger = patchy(patches, 0.30, 0.42, -1600, 3800)
+        bed = E(unreal.MaterialExpressionLinearInterpolate, -1400, 3500)
+        mel.connect_material_expressions(small, "RGB", bed, "A")
+        mel.connect_material_expressions(large, "RGB", bed, "B")
+        mel.connect_material_expressions(bigger, "", bed, "Alpha")
+        bed = op(unreal.MaterialExpressionMultiply, bed, const3(BED_TINT, -1400, 3700), -1250, 3500)
+        silty = op(unreal.MaterialExpressionMultiply, patchy(silt_p, 0.26, 0.44, -1600, 4100), const(BED_SILT_MAX, -1500, 4250), -1400, 4100)
+        silted = E(unreal.MaterialExpressionLinearInterpolate, -1150, 3500)
+        mel.connect_material_expressions(bed, "", silted, "A")
+        mel.connect_material_expressions(const3(BED_SILT, -1300, 4200), "", silted, "B")
+        mel.connect_material_expressions(silty, "", silted, "Alpha")
+        bed = silted
+        # deeper toward the middle: the water's distance field runs 0.5 on the shore to 1 three metres in
+        deep = E(unreal.MaterialExpressionSaturate, -1300, 3900)
+        mel.connect_material_expressions(op(unreal.MaterialExpressionMultiply,
+                                            op(unreal.MaterialExpressionSubtract, raw["water"], const(0.5, -1500, 4000), -1400, 3950, "R", ""),
+                                            const(2.0, -1400, 4050), -1350, 3950), "", deep, "")
+        dark = E(unreal.MaterialExpressionLinearInterpolate, -1150, 3800)
+        mel.connect_material_expressions(const(1.0, -1300, 3750), "", dark, "A")
+        mel.connect_material_expressions(const(BED_DEEP, -1300, 3800), "", dark, "B")
+        mel.connect_material_expressions(deep, "", dark, "Alpha")
+        bed = op(unreal.MaterialExpressionMultiply, bed, dark, -1050, 3600)
+        bed_col = E(unreal.MaterialExpressionLinearInterpolate, -250, 0)
+        mel.connect_material_expressions(base, "", bed_col, "A")
+        mel.connect_material_expressions(bed, "", bed_col, "B")
+        mel.connect_material_expressions(m["water"], "", bed_col, "Alpha")
+        base = bed_col
+        # (the stones' relief)
+        bed_n = sample(tex["bed_n"], bed_uv, -1800, 4400, S.SAMPLERTYPE_NORMAL)
+        bed_nrm = E(unreal.MaterialExpressionLinearInterpolate, -250, 300)
+        mel.connect_material_expressions(normal, "", bed_nrm, "A")
+        mel.connect_material_expressions(bed_n, "RGB", bed_nrm, "B")
+        mel.connect_material_expressions(m["water"], "", bed_nrm, "Alpha")
+        normal = bed_nrm
+    except Exception:
+        warn("Stream bed skipped:\n" + traceback.format_exc())
     mel.connect_material_property(base, "", unreal.MaterialProperty.MP_BASE_COLOR)
     mel.connect_material_property(normal, "", unreal.MaterialProperty.MP_NORMAL)
     mel.connect_material_property(const(0.88, -400, 400), "", unreal.MaterialProperty.MP_ROUGHNESS)
@@ -946,9 +1030,10 @@ def plant_placeholders(trees):
 # setting up than a script can do reliably.
 USE_WATER_BODIES = False
 # How the water takes up light per metre (red, green, blue): red goes first, so deep water turns
-# blue-green; and how much it scatters back (a little, green-blue: a clean pond, not milky)
-WATER_ABSORPTION = (0.5, 0.11, 0.16)
-WATER_SCATTERING = (0.008, 0.02, 0.014)
+# blue-green; and how much it scatters back (green: a golf-course pond, a little murky). (Unreal's
+# water measures depth in centimetres: the material takes these x 0.01.)
+WATER_ABSORPTION = (0.9, 0.45, 0.6)
+WATER_SCATTERING = (0.012, 0.026, 0.016)
 WATER_RIPPLES = 0.55  # how rough the water is in a gust: 0 a mirror .. 1 the full ripple picture
 WATER_CALM = 0.12     # .. and between gusts
 # Running water: where the water's surface slopes (a stream, falling with the land) its own normal
@@ -957,8 +1042,12 @@ WATER_CALM = 0.12     # .. and between gusts
 # run; STREAM_TILE_M: the ripple picture's size; STREAM_RIPPLE: how rough running water is
 STREAM_SLOPE = 0.025
 STREAM_SPEED = 1.1
-STREAM_TILE_M = 2.5
-STREAM_RIPPLE = 0.9
+STREAM_TILE_M = 3.5
+STREAM_RIPPLE = 0.35
+# A stream is shallow and clear, a little amber with silt (blue goes first, not red as in a deep
+# pond), so its stones show through: its own absorption and scattering, per metre
+STREAM_ABSORPTION = (0.35, 0.4, 0.6)
+STREAM_SCATTERING = (0.12, 0.11, 0.08)
 # ripple layers: (metres across, metres a second, direction in degrees)
 WATER_RIPPLE_LAYERS = ((7.0, 0.28, 20.0), (2.4, 0.17, -35.0), (0.8, 0.09, 75.0))
 
@@ -1095,6 +1184,16 @@ def build_water_mesh():
         warn("Water didn't import")
         return
     mesh = meshes[0]
+    # Nanite can't draw Single Layer Water (it falls back to an opaque surface, hiding the bed and
+    # the water's depth): the water mesh is an ordinary one
+    try:
+        ns = mesh.get_editor_property("nanite_settings")
+        if ns.get_editor_property("enabled"):
+            ns.set_editor_property("enabled", False)
+            mesh.set_editor_property("nanite_settings", ns)
+            unreal.EditorAssetLibrary.save_loaded_asset(mesh)
+    except Exception:
+        warn("Water mesh: Nanite not turned off:\n" + traceback.format_exc())
     lo, hi = mesh_box([mesh])
     # Line the import up with where the water should be: try each quarter turn, mirrored or not,
     # with the scale from the sizes, and keep the one whose bounds match best
@@ -1127,6 +1226,7 @@ def build_water_mesh():
     a.set_actor_scale3d(unreal.Vector(scale * mirror, scale, scale))
     try:
         a.static_mesh_component.set_material(0, water_material())
+        first_ok(a.static_mesh_component, ("disallow_nanite",), True)
     except Exception:
         warn("Water material not set:\n" + traceback.format_exc())
     log("Water: %d triangles (lined up: turn %d, %s, scale %.3g, fit error %.0f cm)" % (
@@ -1173,9 +1273,12 @@ def water_material():
         warn("Water: no '%s' input on the water output" % names[0])
         return False
 
-    pin(const3(WATER_SCATTERING, -500, 450), ("Scattering Coefficients", "ScatteringCoefficients"))
-    pin(const3(WATER_ABSORPTION, -500, 550), ("Absorption Coefficients", "AbsorptionCoefficients"))
+    per_cm = lambda rgb: tuple(c * 0.01 for c in rgb)   # (per metre, as written above, to per centimetre)
+    pin(const3(per_cm(WATER_SCATTERING), -500, 450), ("Scattering Coefficients", "ScatteringCoefficients"))
+    pin(const3(per_cm(WATER_ABSORPTION), -500, 550), ("Absorption Coefficients", "AbsorptionCoefficients"))
     pin(const(0.1, -500, 650), ("Phase G", "PhaseG"))
+    # (what the Substrate water below reads: the final normal and roughness, and how much it runs)
+    final = {"normal": None, "rough": None, "run": None}
     # Ripples, moving as a pond's do in a breeze: the game's ripple picture at three sizes
     # (WATER_RIPPLE_LAYERS: metres across, metres a second, which way), added together - and the
     # wind isn't even over a pond: a much larger, slower copy of the picture, read as a patchwork
@@ -1274,17 +1377,71 @@ def water_material():
             nrm2 = E(unreal.MaterialExpressionNormalize, -350, 1100)
             mel.connect_material_expressions(mix_n, "", nrm2, "")
             mel.connect_material_property(nrm2, "", unreal.MaterialProperty.MP_NORMAL)
+            final["normal"], final["run"] = nrm2, run
             # and its sheen broken up a little where it runs
             rough = E(unreal.MaterialExpressionLinearInterpolate, -450, 120)
             mel.connect_material_expressions(const(0.02, -600, 80), "", rough, "A")
-            mel.connect_material_expressions(const(0.09, -600, 160), "", rough, "B")
+            mel.connect_material_expressions(const(0.14, -600, 160), "", rough, "B")
             mel.connect_material_expressions(run, "", rough, "Alpha")
             mel.connect_material_property(rough, "", unreal.MaterialProperty.MP_ROUGHNESS)
+            final["rough"] = rough
+            # and clearer, shallower-looking water where it runs (the bed shows through)
+            for k, (pond, stream, names) in enumerate((
+                    (WATER_ABSORPTION, STREAM_ABSORPTION, ("Absorption Coefficients", "AbsorptionCoefficients")),
+                    (WATER_SCATTERING, STREAM_SCATTERING, ("Scattering Coefficients", "ScatteringCoefficients")))):
+                mixc = E(unreal.MaterialExpressionLinearInterpolate, -350, 450 + k * 100)
+                mel.connect_material_expressions(const3(per_cm(pond), -500, 750 + k * 100), "", mixc, "A")
+                mel.connect_material_expressions(const3(per_cm(stream), -500, 800 + k * 100), "", mixc, "B")
+                mel.connect_material_expressions(run, "", mixc, "Alpha")
+                pin(mixc, names)
         except Exception:
             warn("Running water skipped:\n" + traceback.format_exc())
             mel.connect_material_property(nrm, "", unreal.MaterialProperty.MP_NORMAL)
+            final["normal"] = nrm
     except Exception:
         warn("Water ripples skipped:\n" + traceback.format_exc())
+    # With Substrate (this project) a material made by script keeps the conversion Unreal made when
+    # it was new - Default Lit, black, a mirror - so the water output above goes unused and the
+    # water is opaque. The water is wired to Substrate's own Single Layer Water instead: its colour
+    # from the scattering over the extinction, both per centimetre, the stream's where it runs.
+    if hasattr(unreal, "MaterialExpressionSubstrateSingleLayerWaterBSDF"):
+        try:
+            slw = E(unreal.MaterialExpressionSubstrateSingleLayerWaterBSDF, 0, 800)
+
+            def wire(node, names, out=""):
+                for n in names:
+                    if mel.connect_material_expressions(node, out, slw, n):
+                        return True
+                warn("Water: no '%s' input on Substrate's water" % names[0])
+                return False
+
+            def water_coeffs(scat, absorb):
+                ext = tuple((sc + ab) * 0.01 for sc, ab in zip(scat, absorb))
+                alb = tuple(sc / max(1e-6, sc + ab) for sc, ab in zip(scat, absorb))
+                return alb, ext
+
+            pond = water_coeffs(WATER_SCATTERING, WATER_ABSORPTION)
+            stream = water_coeffs(STREAM_SCATTERING, STREAM_ABSORPTION)
+            for k, names in enumerate((("Water Albedo", "WaterAlbedo"), ("Water Extinction", "WaterExtinction"))):
+                if final["run"] is not None:
+                    v = E(unreal.MaterialExpressionLinearInterpolate, -150, 800 + k * 120)
+                    mel.connect_material_expressions(const3(pond[k], -300, 800 + k * 120), "", v, "A")
+                    mel.connect_material_expressions(const3(stream[k], -300, 850 + k * 120), "", v, "B")
+                    mel.connect_material_expressions(final["run"], "", v, "Alpha")
+                else:
+                    v = const3(pond[k], -300, 800 + k * 120)
+                wire(v, names)
+            wire(const(0.1, -150, 1050), ("Water Phase G", "WaterPhaseG"))
+            wire(const(0.5, -150, 1100), ("Specular",))
+            wire(final["rough"] or const(0.02, -150, 1150), ("Roughness",))
+            if final["normal"] is not None:
+                wire(final["normal"], ("Normal",))
+            if not mel.connect_material_property(slw, "", unreal.MaterialProperty.MP_FRONT_MATERIAL):
+                warn("Water: Substrate's water not connected to the front material")
+            else:
+                log("Water: Substrate Single Layer Water")
+        except Exception:
+            warn("Substrate water skipped:\n" + traceback.format_exc())
     mel.recompile_material(mat)
     unreal.EditorAssetLibrary.save_loaded_asset(mat)
     return mat
