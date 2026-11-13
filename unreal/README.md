@@ -121,8 +121,29 @@ runs inside the game, in C++.
   `OTG.Courses`, `OTG.Play <id>`; `-course=<id>` on the command line opens one at start).
   The game project needs the Fab trees in its `Content` folder (copied from the test project, not in
   git). A pack is made with the game it's packaged with: add a course, package again.
-- Next: the launch monitor connections, and the game itself (menus, rounds, aiming, putting,
-  cameras, scoring).
+- Launch monitors: `OTGLaunchMonitorSubsystem` takes shots the same ways the web version does,
+  ported from `server.js`, `lib/mevo.js` and `lib/frp.js`:
+  - OpenConnect on TCP 921, for FS Golf. It's always listening, and it reports when another
+    program already has the port.
+  - The Mevo+ directly over its Wi-Fi. The client handshakes, sets the detection mode by club and
+    distance, applies the saved setup, arms on the player's turn, and stays disarmed after a shot
+    until the next turn. It reconnects when the Mevo+ drops, disarms it when the game quits, and
+    logs every frame to `Saved/Logs/mevo-log.txt`.
+  - A Garmin R10 or Square Golf through their bridge programs. The game looks for the program in a
+    `bridges` folder next to the game, in the game project, or in the web version's `bridges`
+    folder, which the web version fills on first use. The game doesn't download it itself yet.
+  - Any Flight Relay Protocol device at an address.
+
+  The choice of connection and the Mevo+ setup are saved in `GameUserSettings.ini`. Console
+  commands: `OTG.LM.Status`, `OTG.LM.Connect fsgolf|direct|r10|square|frp [address]`,
+  `OTG.LM.Player <club> [yards] [RH|LH]`, `OTG.LM.Turn 0|1`, `OTG.LM.TestShot [mph vla hla spin
+  axis]`. On the command line, `-lm=<kind>` picks the connection for one run.
+  `node unreal/tests/launchmonitor/lm_check.mjs` runs the game headless against the web version's
+  fake Mevo+, fake FRP device and fake bridge, plus an OpenConnect shot, and checks every shot
+  against what the web version makes of it. It also checks the Mevo+ dropping out and quitting
+  while armed. It needs the editor target built and no editor open.
+- Next: the game itself (menus, rounds, aiming, putting, cameras, scoring), with the Mevo+ setup
+  and connection screens.
 
 Build: `Engine\Build\BatchFiles\Build.bat OpenTeeGolf Win64 Development -Project=<path>\OpenTeeGolf.uproject`
 (the editor target, `OpenTeeGolfEditor`, can't build while another Unreal Editor with Live Coding is
