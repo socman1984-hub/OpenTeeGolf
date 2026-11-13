@@ -1271,6 +1271,7 @@ def mark_holes():
             a = spawn_mesh(cube, at(p["x"], p["y"], p["z"] + 2))
             a.set_actor_scale3d(unreal.Vector(0.4, 0.4, 0.04))
             a.set_actor_label("OTG_Hole%d %s tee" % (h["number"], kind))
+            a.tags = [unreal.Name("OTG_TeeMarker")]  # (the game hides these and puts out its own)
             n += 1
         for day, p in (h.get("pins") or {}).items():
             if not p:
@@ -1278,6 +1279,7 @@ def mark_holes():
             a = spawn_mesh(cyl, at(p["x"], p["y"], p["z"] + 115))
             a.set_actor_scale3d(unreal.Vector(0.03, 0.03, 2.3))
             a.set_actor_label("OTG_Hole%d %s pin" % (h["number"], day))
+            a.tags = [unreal.Name("OTG_PinMarker")]
             n += 1
     log("Marked %d tees and pins on %d holes" % (n, len(holes)))
 

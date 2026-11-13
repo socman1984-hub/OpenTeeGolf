@@ -142,8 +142,27 @@ runs inside the game, in C++.
   fake Mevo+, fake FRP device and fake bridge, plus an OpenConnect shot, and checks every shot
   against what the web version makes of it. It also checks the Mevo+ dropping out and quitting
   while armed. It needs the editor target built and no editor open.
-- Next: the game itself (menus, rounds, aiming, putting, cameras, scoring), with the Mevo+ setup
-  and connection screens.
+- The round (`Source/OpenTeeGolf/.../Game/`): `OTGGameMode` starts a round when a course's level
+  opens (`-course=<id>`, optionally `-hole=<n>`). `AOTGRound` plays it the way `main.js` does:
+  - The hole flow and aiming, with the auto club and the lie's effect on the strike.
+  - Penalties: stroke and distance for out of bounds, and a drop for water (at the export's drop
+    zone).
+  - Free relief from cart paths, holing out, picking up at par + 5, the scorecard, then the next
+    hole.
+
+  Shots come from the launch monitor, and the physics is the C++ port. You see the ball, its
+  tracer, the aim marker, the flag and cup, three cameras (the hole from above the tee, behind the
+  ball, following it in flight) and a Slate HUD: the hole, the lie, the club, the shot data, the
+  launch monitor's status, banners and the scorecard.
+
+  Keys: Left/Right aim (Shift: faster), Up/Down club, Space test shot, Enter skip / next hole,
+  Tab scorecard, Backspace mulligan. Console: `OTG.Round.TestShot`, `OTG.Round.Aim <deg>`,
+  `OTG.Round.Club 1|-1`, `OTG.Round.Continue`, `OTG.Round.Drop <yd>` (testing), `OTG.Shot <name>`
+  (a screenshot). For checking without anyone at the keyboard, `-roundexec="<s>:<command>|..."` runs
+  commands at set times after the round starts, and `-RenderOffscreen` renders without a window.
+- Next: the menus (course choice, tees and pins, players and turns, the launch monitor and Mevo+
+  setup screens), then the packaged build's turf and the colliders for buildings and the
+  flagstick.
 
 Build: `Engine\Build\BatchFiles\Build.bat OpenTeeGolf Win64 Development -Project=<path>\OpenTeeGolf.uproject`
 (the editor target, `OpenTeeGolfEditor`, can't build while another Unreal Editor with Live Coding is
