@@ -43,7 +43,7 @@ GROUND_MEAN = {"lawn": (0.131, 0.23, 0.025), "rough": (0.118, 0.152, 0.03), "san
 DETAIL_TILE_M = 2.5       # metres each ground texture covers
 # The game's turf colours (linear; scene.js terrain shader): the photo gives only light and shade on
 # the grass, the colour is the turf's own - deep, even greens rather than the photo's lime and grey
-TURF = {"fairway": (0.055, 0.105, 0.03), "green": (0.065, 0.125, 0.034), "rough": (0.027, 0.05, 0.016), "bunker": (0.52, 0.41, 0.25),
+TURF = {"fairway": (0.10, 0.18, 0.03), "green": (0.085, 0.2, 0.04), "rough": (0.05, 0.08, 0.016), "bunker": (0.52, 0.41, 0.25),
         "water": (0.03, 0.03, 0.018)}   # (the pond floor under Unreal's water: dark silt, not the photo's pale water)
 TURF_AMOUNT = 0.88        # how much of the turf colour over the photo's (the rest the photo's own)
 WET_BANK = (0.4, 0.55)   # the ground darkens towards the water from 0.6 m out (mask 0.4), to this much at the edge
@@ -71,10 +71,16 @@ UE_CONIFER_NAMES = ("Tree_", "SM_")
 TURF_GRASS = {
     "rough": {"masks": ["rough"], "height_cm": (5.0, 10.0), "width_mm": (3.0, 5.5), "lean": 0.45, "blades": 300,
               "patch_cm": 30, "density": 2400, "draw_m": (65, 90),
-              "root": (0.02, 0.038, 0.012), "tip": (0.08, 0.145, 0.04), "dry": (0.2, 0.18, 0.07), "dry_share": 0.05, "vary": 0.22},
+              "root": (0.025, 0.04, 0.008), "tip": (0.11, 0.17, 0.025), "dry": (0.28, 0.24, 0.08), "dry_share": 0.07, "vary": 0.22},
     "fairway": {"masks": ["fairway", "tee"], "height_cm": (1.4, 2.4), "width_mm": (2.0, 3.0), "lean": 0.25, "blades": 420,
                 "patch_cm": 24, "density": 2200, "draw_m": (25, 35),
-                "root": (0.03, 0.062, 0.016), "tip": (0.09, 0.17, 0.045), "dry": (0.15, 0.17, 0.05), "dry_share": 0.02, "vary": 0.15},
+                "root": (0.045, 0.08, 0.012), "tip": (0.17, 0.28, 0.035), "dry": (0.22, 0.24, 0.06), "dry_share": 0.02, "vary": 0.15},
+    # Tall wild grass (fescue) where the web game has deep rough and native grass - under the trees
+    # and out of play (layer_native.png, from derive_layers.py): clumps of long thin blades, some
+    # gone to straw, many carrying a seed head
+    "native": {"masks": ["native"], "height_cm": (35.0, 75.0), "width_mm": (2.0, 3.5), "lean": 0.65, "blades": 110,
+               "patch_cm": 60, "density": 320, "draw_m": (90, 130), "clumps": 4, "clump_cm": 9, "seed_share": 0.3,
+               "root": (0.03, 0.05, 0.01), "tip": (0.13, 0.19, 0.04), "dry": (0.4, 0.33, 0.13), "dry_share": 0.18, "vary": 0.25},
 }
 
 
@@ -273,7 +279,7 @@ def build_ground(land):
     N = meta["samples"]
     photo = import_texture(os.path.join(EXPORT_DIR, "photo.jpg"), "T_CoursePhoto")
     masks = {k: import_texture(os.path.join(EXPORT_DIR, "layer_%s.png" % k), "T_Mask_" + k, "mask")
-             for k in ("fairway", "green", "tee", "bunker", "water", "rough")}
+             for k in ("fairway", "green", "tee", "bunker", "water", "rough", "native") if exists("layer_%s.png" % k)}
     tex = {}
     for k in ("lawn", "rough", "sand"):
         tex[k] = import_texture(os.path.join(GAME_TEXTURES, k + "_color.jpg"), "T_%s_color" % k)
@@ -392,6 +398,9 @@ def build_ground(land):
         go = E(unreal.MaterialExpressionLandscapeGrassOutput, -400, 700)
         inputs = []
         for kind, cfg in TURF_GRASS.items():
+            if any(nm not in raw for nm in cfg["masks"]):
+                log("Turf %s: no %s mask in this export (derive_layers.py makes it)" % (kind, "/".join(cfg["masks"])))
+                continue
             gt = make_turf_type(kind)
             gi = unreal.GrassInput()
             gi.set_editor_property("name", kind.capitalize())
@@ -481,8 +490,15 @@ def turf_patch(kind, cfg, seed=7):
     rnd = random.Random(seed)
     P = cfg["patch_cm"] / 100.0
     pos, nrm, col, idx = [], [], [], []
+    # (wild grass grows in clumps: blades round a few centres)
+    clumps = [((rnd.random() - 0.5) * P * 0.8, (rnd.random() - 0.5) * P * 0.8) for _ in range(cfg.get("clumps", 0))]
     for _ in range(cfg["blades"]):
-        x, z = (rnd.random() - 0.5) * P, (rnd.random() - 0.5) * P
+        if clumps:
+            cxz = clumps[rnd.randrange(len(clumps))]
+            x = max(-P / 2, min(P / 2, cxz[0] + rnd.gauss(0, cfg["clump_cm"] / 100.0)))
+            z = max(-P / 2, min(P / 2, cxz[1] + rnd.gauss(0, cfg["clump_cm"] / 100.0)))
+        else:
+            x, z = (rnd.random() - 0.5) * P, (rnd.random() - 0.5) * P
         h = rnd.uniform(*cfg["height_cm"]) / 100.0
         w = rnd.uniform(*cfg["width_mm"]) / 1000.0
         face = rnd.random() * math.tau                 # which way the blade's flat side faces
@@ -513,6 +529,23 @@ def turf_patch(kind, cfg, seed=7):
         # (levels 0..2 two points each, the tip one)
         a0, a1, b0, b1, c0, c1, tp = base, base + 1, base + 2, base + 3, base + 4, base + 5, base + 6
         idx += [a0, b0, a1, a1, b0, b1, b0, c0, b1, b1, c0, c1, c0, tp, c1]
+        # a seed head on some: a slim spindle, straw coloured, carried on past the tip and nodding
+        # over the way the blade leans
+        if rnd.random() < cfg.get("seed_share", 0):
+            tx, ty, tz = pos[(base + 6) * 3], pos[(base + 6) * 3 + 1], pos[(base + 6) * 3 + 2]
+            L = rnd.uniform(0.06, 0.11)
+            hx, hy, hz = tx + bx * L * 0.45, ty + L * 0.85, tz + bz * L * 0.45
+            sb = len(pos) // 3
+            for (ax, az) in ((fx, fz), (-fz, fx)):          # (two crossed cards, so it reads from any side)
+                wd = rnd.uniform(0.004, 0.007)
+                for (px_, py_, pz_), half in (((tx, ty, tz), 0.0), (((tx + hx) / 2, (ty + hy) / 2, (tz + hz) / 2), wd), ((hx, hy, hz), 0.0)):
+                    for sgn in (-1, 1):
+                        pos += [px_ + ax * half * sgn, py_, pz_ + az * half * sgn]
+                        nrm += [0.0, 1.0, 0.0]
+                        col += [1.0, v, 1.0, 1.0]
+            for k in (0, 6):
+                q = sb + k
+                idx += [q, q + 2, q + 1, q + 1, q + 2, q + 3, q + 2, q + 4, q + 3, q + 3, q + 4, q + 5]
     return pos, nrm, col, idx
 
 

@@ -78,6 +78,7 @@ private:
 	// the weather (main.js setupWeather, wind, shotWind)
 	void SetupWeather();
 	void ApplyWeatherToScene();
+	void ApplyLook();                   // (the course's colour and light: OTG.Look.* console variables)
 	void HoleWind(double& Mps, double& FromDeg) const;
 	FString WindText() const;
 	void UpdateMap();
@@ -149,6 +150,11 @@ private:
 	TArray<double> WindRel;             // (custom wind: its direction relative to each hole)
 	float BaseFogDensity = -1, BaseSun = -1, BaseCoverage = -1, BaseDensity = -1, BaseRayleigh = -1, BaseMie = -1, BaseSkyLight = -1;
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> CloudMat;
+	UPROPERTY() TObjectPtr<class APostProcessVolume> LookVolume;
+	float OrigSun = -1, OrigMie = -1, OrigRayleigh = -1, OrigFog = -1, OrigSky = -1;
+	FRotator OrigSunRot = FRotator::ZeroRotator;
+	FLinearColor OrigSunColour = FLinearColor::White;
+	uint32 LookStamp = 0;
 	UPROPERTY() TObjectPtr<UProceduralMeshComponent> RainMesh;
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> RainMat;
 	TArray<FVector> RainDrops;

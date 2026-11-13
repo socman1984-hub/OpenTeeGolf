@@ -10,6 +10,7 @@
 #include "Components/SkyLightComponent.h"
 #include "Components/VolumetricCloudComponent.h"
 #include "Engine/SkyLight.h"
+#include "Engine/PostProcessVolume.h"
 #include "Engine/Texture2D.h"
 #include "SOTGMinimap.h"
 #include "SOTGPanels.h"
@@ -35,6 +36,22 @@
 #include "UObject/ConstructorHelpers.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogOTGRound, Log, All);
+
+// The course's look: a clear summer day, rich warm greens and a deep blue sky (tunable live)
+static TAutoConsoleVariable<float> CVarLookExposure(TEXT("OTG.Look.Exposure"), -0.45f, TEXT("Exposure bias (stops; - darker)"));
+static TAutoConsoleVariable<float> CVarLookSaturation(TEXT("OTG.Look.Saturation"), 1.1f, TEXT("Colour saturation (1: as is)"));
+static TAutoConsoleVariable<float> CVarLookContrast(TEXT("OTG.Look.Contrast"), 1.1f, TEXT("Contrast (1: as is)"));
+static TAutoConsoleVariable<float> CVarLookTemp(TEXT("OTG.Look.Temp"), 6900.f, TEXT("White balance (K; 6500 neutral, higher warmer)"));
+static TAutoConsoleVariable<float> CVarLookSun(TEXT("OTG.Look.Sun"), 1.35f, TEXT("Sunlight strength (x the level's)"));
+static TAutoConsoleVariable<float> CVarLookSunWarm(TEXT("OTG.Look.SunWarm"), 0.35f, TEXT("Sunlight warmth (0 white .. 1 golden)"));
+static TAutoConsoleVariable<float> CVarLookSunPitch(TEXT("OTG.Look.SunPitch"), -42.f, TEXT("Sun height (degrees below the horizon's pitch; 999: the level's)"));
+static TAutoConsoleVariable<float> CVarLookSunSide(TEXT("OTG.Look.SunSide"), 40.f, TEXT("The sun from behind the tee, this many degrees to the left (999: the level's own direction)"));
+static TAutoConsoleVariable<float> CVarLookHaze(TEXT("OTG.Look.Haze"), 0.35f, TEXT("Haze in the air (x the level's; lower: a deeper blue sky)"));
+static TAutoConsoleVariable<float> CVarLookFog(TEXT("OTG.Look.Fog"), 0.5f, TEXT("Height fog (x the level's)"));
+static TAutoConsoleVariable<float> CVarLookTreeLift(TEXT("OTG.Look.TreeLift"), 0.25f, TEXT("Sky light let into shade (Lumen skylight leaking: lighter tree crowns; 0 none)"));
+static TAutoConsoleVariable<float> CVarLookShadows(TEXT("OTG.Look.Shadows"), 1.18f, TEXT("The darkest tones lifted (gain; 1: as is)"));
+static TAutoConsoleVariable<float> CVarLookSky(TEXT("OTG.Look.Sky"), 1.3f, TEXT("Sky light (x the level's)"));
+static TAutoConsoleVariable<float> CVarLookVignette(TEXT("OTG.Look.Vignette"), 0.3f, TEXT("Vignette"));
 
 namespace
 {
@@ -294,6 +311,7 @@ void AOTGRound::Setup(UOTGCourseData* InData, const FOTGRoundSetup& InSetup)
 			if (I.Split(TEXT(":"), &At, &Command)) ExecAt.Emplace(FCString::Atod(*At), Command.TrimStartAndEnd());
 		}
 	}
+	ApplyLook();
 	SetupWeather();
 	UE_LOG(LogOTGRound, Display, TEXT("Round on %s: %d holes, %d trunks and buildings to hit; %s, %d side(s), %s tees, %s pins"), *Data->CourseName, Data->Holes.Num(), int32(Collider.Count()),
 		*Game->F.Name, Game->Sides.Num(), *TeeName, *PinName);
@@ -1040,6 +1058,14 @@ void AOTGRound::Tick(float Dt)
 		OverviewLeft -= Dt;
 		if (OverviewLeft <= 0 && Phase == EPhase::Ready) AddressView(false);
 	}
+	// (a look setting changed: again)
+	{
+		uint32 Stamp = 0;
+		for (const auto* V : { &CVarLookExposure, &CVarLookSaturation, &CVarLookContrast, &CVarLookTemp, &CVarLookSun, &CVarLookSunWarm, &CVarLookSunPitch, &CVarLookSunSide, &CVarLookHaze, &CVarLookFog, &CVarLookVignette, &CVarLookTreeLift, &CVarLookShadows, &CVarLookSky })
+			Stamp = HashCombine(Stamp, GetTypeHash(V->GetValueOnGameThread()));
+		Stamp = HashCombine(Stamp, GetTypeHash(HoleIndex));
+		if (Stamp != LookStamp) { ApplyLook(); ApplyWeatherToScene(); }
+	}
 	UpdateCamera(Dt);
 	UpdateMap();
 	UpdateRain(Dt);
@@ -1258,6 +1284,89 @@ void AOTGRound::ShowScorecard(bool bShow)
 	for (const FOTGSide& S : Game->Sides) Card.Sides.Add(FOTGCard::FSide{ Game->Single() ? FString(TEXT("Score")) : S.Name, S.Colour, S.Scores });
 	if (!Game->Single()) Card.Standings = Game->Standings(Card.Summary);
 	Hud->ShowScorecard(Card);
+}
+
+// ------------------------------------------------------------------ the look
+
+// A clear summer day as golf games show one: the level's sun stronger, warmer and higher, less haze
+// (a deeper blue), and the picture graded richer - more saturated and contrasty, a little warm,
+// exposed a touch darker so the greens aren't washed out. The weather then works from this.
+void AOTGRound::ApplyLook()
+{
+	uint32 Stamp = 0;
+	for (const auto* V : { &CVarLookExposure, &CVarLookSaturation, &CVarLookContrast, &CVarLookTemp, &CVarLookSun, &CVarLookSunWarm, &CVarLookSunPitch, &CVarLookSunSide, &CVarLookHaze, &CVarLookFog, &CVarLookVignette, &CVarLookTreeLift, &CVarLookShadows, &CVarLookSky })
+		Stamp = HashCombine(Stamp, GetTypeHash(V->GetValueOnGameThread()));
+	LookStamp = HashCombine(Stamp, GetTypeHash(HoleIndex));
+	if (!LookVolume)
+	{
+		LookVolume = GetWorld()->SpawnActor<APostProcessVolume>();
+		LookVolume->bUnbound = true;
+		LookVolume->Priority = 10;
+	}
+	FPostProcessSettings& P = LookVolume->Settings;
+	P.bOverride_AutoExposureBias = true;
+	P.AutoExposureBias = CVarLookExposure.GetValueOnGameThread();
+	const float Sat = CVarLookSaturation.GetValueOnGameThread(), Con = CVarLookContrast.GetValueOnGameThread();
+	P.bOverride_ColorSaturation = true;
+	P.ColorSaturation = FVector4(Sat, Sat, Sat, 1);
+	P.bOverride_ColorContrast = true;
+	P.ColorContrast = FVector4(Con, Con, Con, 1);
+	P.bOverride_WhiteTemp = true;
+	P.WhiteTemp = CVarLookTemp.GetValueOnGameThread();
+	P.bOverride_VignetteIntensity = true;
+	P.VignetteIntensity = CVarLookVignette.GetValueOnGameThread();
+	// (lighter trees: their crowns' insides get some of the sky's light, and the darkest tones lift)
+	P.bOverride_LumenSkylightLeaking = true;
+	P.LumenSkylightLeaking = CVarLookTreeLift.GetValueOnGameThread();
+	const float Sh = CVarLookShadows.GetValueOnGameThread();
+	P.bOverride_ColorGainShadows = true;
+	P.ColorGainShadows = FVector4(Sh, Sh, Sh, 1);
+	for (TActorIterator<ADirectionalLight> It(GetWorld()); It; ++It)
+	{
+		UDirectionalLightComponent* L = Cast<UDirectionalLightComponent>(It->GetLightComponent());
+		if (!L) continue;
+		if (OrigSun < 0) { OrigSun = L->Intensity; OrigSunRot = It->GetActorRotation(); OrigSunColour = L->GetLightColor(); }
+		L->SetIntensity(OrigSun * CVarLookSun.GetValueOnGameThread());
+		L->SetLightColor(FMath::Lerp(OrigSunColour, FLinearColor(1.f, 0.86f, 0.68f), CVarLookSunWarm.GetValueOnGameThread()));
+		// (lit from behind the player on every hole, a little to one side, as golf games light them:
+		// looking into the sun the trees are dark shapes)
+		const float Pitch = CVarLookSunPitch.GetValueOnGameThread(), Side = CVarLookSunSide.GetValueOnGameThread();
+		double Yaw = OrigSunRot.Yaw;
+		if (Side < 900 && Data && Data->Holes.IsValidIndex(HoleIndex))
+		{
+			const FOTGHole& H = Hole();
+			const otg::V3 T = TeeOf(H, TeeName);
+			const double Hd = HeadingTo(T, H.GreenCenter.X, H.GreenCenter.Z);
+			Yaw = FMath::RadiansToDegrees(FMath::Atan2(-FMath::Cos(Hd), FMath::Sin(Hd))) + Side; // (the light travelling down the hole)
+		}
+		It->SetActorRotation(FRotator(Pitch > 900 ? OrigSunRot.Pitch : Pitch, Yaw, OrigSunRot.Roll));
+		break;
+	}
+	for (TObjectIterator<USkyAtmosphereComponent> It; It; ++It)
+	{
+		if (It->GetWorld() != GetWorld()) continue;
+		if (OrigMie < 0) { OrigMie = It->MieScatteringScale; OrigRayleigh = It->RayleighScatteringScale; }
+		It->SetMieScatteringScale(OrigMie * CVarLookHaze.GetValueOnGameThread());
+		break;
+	}
+	for (TActorIterator<ASkyLight> It(GetWorld()); It; ++It)
+	{
+		USkyLightComponent* SL = It->GetLightComponent();
+		if (!SL) continue;
+		if (OrigSky < 0) OrigSky = SL->Intensity;
+		SL->SetIntensity(OrigSky * CVarLookSky.GetValueOnGameThread());
+		break;
+	}
+	for (TActorIterator<AExponentialHeightFog> It(GetWorld()); It; ++It)
+	{
+		UExponentialHeightFogComponent* F = It->GetComponent();
+		if (!F) continue;
+		if (OrigFog < 0) OrigFog = F->FogDensity;
+		F->SetFogDensity(OrigFog * CVarLookFog.GetValueOnGameThread());
+		break;
+	}
+	// (the weather works from these now)
+	BaseSun = BaseFogDensity = BaseRayleigh = BaseMie = BaseSkyLight = -1;
 }
 
 // ------------------------------------------------------------------ the weather

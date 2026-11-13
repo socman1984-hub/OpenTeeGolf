@@ -211,8 +211,37 @@ runs inside the game, in C++.
 
   `-weather=<key>` overrides it for a run; `OTG.Round.CastTest` (testing) logs what a ball flying
   at the flagstick, the nearest trunk and the ground meets.
-- Next: a packaged release (step 7). Still to come in the game itself: drawn rain and clouds, the
-  time of day, putting aids, the Mevo+ camera view.
+- Settings (the menu's last page): full screen or a window, the resolution, the graphics quality
+  (Unreal's scalability levels, or "Pick for this PC"), vertical sync - saved in
+  `GameUserSettings.ini`. The menu's footer gives the version and where the course data comes from.
+- The release: `powershell -ExecutionPolicy Bypass -File unreal\make_release.ps1` packages the game
+  in Shipping with every course pack built so far (and the version from `package.json`, the
+  window icon `Build/Windows/Application.ico`). It then adds the Garmin R10 and Square Golf
+  bridges (`bridges/`, beside the game, where it looks for them) with their licences, a player
+  README and the game's notices (`release/README.txt`, `release/NOTICE.md`) and the licence,
+  into `dist/OpenTeeGolf-Unreal-<version>-win-x64.zip`. Unzip anywhere and run `OpenTeeGolf.exe`
+  (a PC without the Visual C++ runtime needs Microsoft's redistributable; the player README says
+  where). The Shipping game keeps its saves in `%LOCALAPPDATA%\OpenTeeGolf\Saved`. Before sharing
+  it, read `release/NOTICE.md`:
+  a pack of a course outside the US carries Esri imagery (personal, non-commercial use only), and
+  the Fab trees may only ship inside the game.
+- The look (`AOTGRound::ApplyLook`): a clear summer day, as golf games show one. The round
+  grades the picture (a touch darker exposure, more saturation and contrast, warmer white
+  balance, a light vignette), strengthens and warms the sun and lights each hole from behind the
+  player, takes haze out of the sky, and lifts the trees' shade (Lumen sky light let into the
+  crowns, lifted shadows, a stronger sky light). Every setting is a console variable
+  (`OTG.Look.Exposure`, `Saturation`, `Contrast`, `Temp`, `Sun`, `SunWarm`, `SunPitch`, `SunSide`,
+  `Haze`, `Fog`, `Vignette`, `TreeLift`, `Shadows`, `Sky`), applied live. The turf and ground colours
+  (`TURF`, `TURF_GRASS` in `build_course.py`) are warm yellow-green fairways and greens and a
+  darker olive rough.
+- Tall native grass: `derive_layers.py` (run by `make_pack.ps1`, system Python with numpy and
+  Pillow) writes `layer_native.png` from the export's play data:
+  - the web game's deep rough and native ground, and the ground under every tree's crown;
+  - never a fairway, tee, green, fringe, first cut, path, bunker or water.
+
+  `build_course.py` grows wild grass there: clumps of tall thin blades (35-75 cm), some gone to
+  straw, many with seed heads, drawn to 130 m.
+- Still to come in the game itself: the time of day, putting aids, the Mevo+ camera view.
 
 Build: `Engine\Build\BatchFiles\Build.bat OpenTeeGolf Win64 Development -Project=<path>\OpenTeeGolf.uproject`
 (the editor target, `OpenTeeGolfEditor`, can't build while another Unreal Editor with Live Coding is
@@ -224,7 +253,6 @@ open).
   terrain, the cart paths, and ponds with smooth shorelines, moving ripples and reflections.
 - Far off, past where the rough's blades are drawn, the rough is a little lighter than up close.
 - Steep pond banks seen from high up can still show small steps along the shore.
-- The whole picture is bright (the level's own sky and exposure).
 - Mown turf: no mowing stripes yet; bunkers have no lip.
 - Conifers exported as static meshes don't sway.
 - Not started: the land beyond the course on the horizon.

@@ -50,13 +50,14 @@ public:
 	void Construct(const FArguments& Args);
 	void Start();      // the round as set up
 	virtual bool SupportsKeyboardFocus() const override { return true; }
-	void ShowPage(const FString& Name);   // play, players, lm
+	void ShowPage(const FString& Name);   // play, players, lm, settings
 
 private:
-	enum class EPage : uint8 { Play, Players, LaunchMonitor };
+	enum class EPage : uint8 { Play, Players, LaunchMonitor, Settings };
 	void Rebuild();
 	TSharedRef<SWidget> PlayPage();
 	TSharedRef<SWidget> PlayersPage();
+	TSharedRef<SWidget> SettingsPage();
 	UOTGCourseSubsystem* Courses() const;
 	void Remember() { FOTGPlayers::SaveSetup(Setup); }
 

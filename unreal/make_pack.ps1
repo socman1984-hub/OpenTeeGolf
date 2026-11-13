@@ -20,6 +20,9 @@ foreach ($id in $Courses) {
   $export = Join-Path $Root "exports\$id"
   if (-not (Test-Path (Join-Path $export 'play.json'))) { throw "No play data for ${id} in ${export}: export it from the game (Ctrl+Shift+U)" }
   Write-Host "Building $id ..."
+  # (masks the export doesn't write: the native grass, from its surfaces; needs Python with numpy and Pillow)
+  & python (Join-Path $Here 'derive_layers.py') $export
+  if ($LASTEXITCODE -ne 0) { Write-Warning "derive_layers.py failed: no tall native grass on ${id}" }
   $env:OTG_EXPORT_DIR = $export
   # (Unreal cuts a script path at its first space: the scripts run from a copy in a folder without one)
   $scripts = Join-Path ([IO.Path]::GetTempPath()) 'OTGPack'

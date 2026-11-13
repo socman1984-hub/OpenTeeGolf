@@ -6,6 +6,8 @@
 #include "Engine/Engine.h"
 #include "Engine/GameInstance.h"
 #include "Engine/GameViewportClient.h"
+#include "GameFramework/GameUserSettings.h"
+#include "GeneralProjectSettings.h"
 #include "Kismet/KismetSystemLibrary.h"
 #include "OTGCourseData.h"
 #include "OTGLaunchMonitorSubsystem.h"
@@ -216,12 +218,20 @@ void SOTGMainMenu::Construct(const FArguments&)
 				+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0, 0, 6, 0)[Button(TEXT("Play"), [this]() { Page = EPage::Play; Rebuild(); }, 16)]
 				+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0, 0, 6, 0)[Button(TEXT("Players"), [this]() { Page = EPage::Players; Draft = Profiles; ConfirmRemove = -1; Rebuild(); }, 16)]
 				+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0, 0, 6, 0)[Button(TEXT("Launch monitor"), [this]() { Page = EPage::LaunchMonitor; Rebuild(); }, 16)]
+				+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0, 0, 6, 0)[Button(TEXT("Settings"), [this]() { Page = EPage::Settings; Rebuild(); }, 16)]
 				+ SHorizontalBox::Slot().FillWidth(1)[SNullWidget::NullWidget]
 				+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)[Button(TEXT("Quit"), []() {
 					if (UGameInstance* GI = GameInstance()) UKismetSystemLibrary::QuitGame(GI->GetWorld(), nullptr, EQuitPreference::Quit, false);
 				}, 16)]
 			]
 			+ SVerticalBox::Slot().FillHeight(1)[SAssignNew(Body, SBox)]
+			// the version, and where the course data comes from
+			+ SVerticalBox::Slot().AutoHeight().Padding(0, 10, 0, 0)
+			[
+				SNew(STextBlock).Font(Font(11)).ColorAndOpacity(FLinearColor(1, 1, 1, 0.55f)).AutoWrapText(true)
+				.Text(FText::FromString(FString::Printf(TEXT("OpenTeeGolf %s  \u00B7  Courses: \u00A9 OpenStreetMap contributors (ODbL); elevation and aerial photos from USGS/USDA (US) or as credited in NOTICE.md; tree heights: Meta & WRI (CC BY 4.0); live weather: Open-Meteo (CC BY 4.0)  \u00B7  Made with Unreal Engine"),
+					*GetDefault<UGeneralProjectSettings>()->ProjectVersion)))
+			]
 		]
 	];
 	Rebuild();
@@ -231,6 +241,7 @@ void SOTGMainMenu::Rebuild()
 {
 	if (Page == EPage::Play) Body->SetContent(PlayPage());
 	else if (Page == EPage::Players) Body->SetContent(PlayersPage());
+	else if (Page == EPage::Settings) Body->SetContent(SettingsPage());
 	else Body->SetContent(SNew(SScrollBox) + SScrollBox::Slot()[Box(SNew(SOTGLaunchMonitorPanel), FMargin(20, 16), Solid)]);
 }
 
@@ -428,9 +439,67 @@ TSharedRef<SWidget> SOTGMainMenu::PlayersPage()
 
 void SOTGMainMenu::ShowPage(const FString& Name)
 {
-	Page = Name == TEXT("players") ? EPage::Players : Name == TEXT("lm") ? EPage::LaunchMonitor : EPage::Play;
+	Page = Name == TEXT("players") ? EPage::Players : Name == TEXT("lm") ? EPage::LaunchMonitor : Name == TEXT("settings") ? EPage::Settings : EPage::Play;
 	if (Page == EPage::Players) { Draft = Profiles; ConfirmRemove = -1; }
 	Rebuild();
+}
+
+// Display and graphics, applied and saved at once (GameUserSettings.ini)
+TSharedRef<SWidget> SOTGMainMenu::SettingsPage()
+{
+	UGameUserSettings* GS = GEngine ? GEngine->GetGameUserSettings() : nullptr;
+	TSharedRef<SVerticalBox> V = SNew(SVerticalBox);
+	V->AddSlot().AutoHeight().Padding(0, 0, 0, 8)[Text(TEXT("Settings"), 22, Ink, "Bold")];
+	if (!GS) return Box(V, FMargin(20, 16), Solid);
+	auto Apply = [this, GS]() { GS->ApplySettings(false); GS->SaveSettings(); Rebuild(); };
+	auto Row2 = [&](const FString& Label, const TSharedRef<SWidget>& W) {
+		V->AddSlot().AutoHeight().Padding(0, 6, 0, 2)[Heading(Label)];
+		V->AddSlot().AutoHeight()[W];
+	};
+	// how the game fills the screen
+	{
+		TSharedRef<SWrapBox> W = SNew(SWrapBox).UseAllottedSize(true);
+		const TPair<EWindowMode::Type, FString> Modes[] = { { EWindowMode::WindowedFullscreen, TEXT("Full screen (borderless)") }, { EWindowMode::Fullscreen, TEXT("Full screen") }, { EWindowMode::Windowed, TEXT("In a window") } };
+		for (const auto& M : Modes)
+		{
+			const EWindowMode::Type Mode = M.Key;
+			W->AddSlot().Padding(0, 0, 6, 6)[Button(M.Value, [GS, Mode, Apply]() { GS->SetFullscreenMode(Mode); Apply(); }, 14, GS->GetFullscreenMode() == Mode)];
+		}
+		Row2(TEXT("Display"), W);
+	}
+	// the resolution (the screen's own sizes)
+	{
+		TArray<FIntPoint> Sizes;
+		UKismetSystemLibrary::GetSupportedFullscreenResolutions(Sizes);
+		Sizes.Sort([](const FIntPoint& A, const FIntPoint& B) { return A.X * A.Y > B.X * B.Y; });
+		TSharedRef<SWrapBox> W = SNew(SWrapBox).UseAllottedSize(true);
+		const FIntPoint Now = GS->GetScreenResolution();
+		int32 Shown = 0;
+		for (const FIntPoint& S : Sizes)
+		{
+			if (S.X < 1280 || ++Shown > 8) continue;
+			W->AddSlot().Padding(0, 0, 6, 6)[Button(FString::Printf(TEXT("%d x %d"), S.X, S.Y), [GS, S, Apply]() { GS->SetScreenResolution(S); Apply(); }, 13, Now == S)];
+		}
+		Row2(TEXT("Resolution"), W);
+	}
+	// graphics quality (Unreal's scalability levels: shadows, foliage, effects, view distance)
+	{
+		TSharedRef<SWrapBox> W = SNew(SWrapBox).UseAllottedSize(true);
+		const FString Names[] = { TEXT("Low"), TEXT("Medium"), TEXT("High"), TEXT("Epic") };
+		const int32 Level = GS->GetOverallScalabilityLevel();
+		for (int32 i = 0; i < 4; i++)
+			W->AddSlot().Padding(0, 0, 6, 6)[Button(Names[i], [GS, i, Apply]() { GS->SetOverallScalabilityLevel(i); Apply(); }, 14, Level == i)];
+		W->AddSlot().Padding(8, 0, 6, 6)[Button(TEXT("Pick for this PC"), [GS, Apply]() { GS->RunHardwareBenchmark(); GS->ApplyHardwareBenchmarkResults(); Apply(); }, 13)];
+		Row2(TEXT("Graphics quality"), W);
+		V->AddSlot().AutoHeight().Padding(0, 2)[Text(TEXT("Lower it if the game runs slowly: the grass, trees and shadows cost the most."), 12, Soft)];
+	}
+	V->AddSlot().AutoHeight().Padding(0, 8)
+	[
+		SNew(SCheckBox).IsChecked_Lambda([GS]() { return GS->IsVSyncEnabled() ? ECheckBoxState::Checked : ECheckBoxState::Unchecked; })
+		.OnCheckStateChanged_Lambda([GS, Apply](ECheckBoxState S) { GS->SetVSyncEnabled(S == ECheckBoxState::Checked); Apply(); })
+		[Text(TEXT("Vertical sync (no tearing; caps the frame rate at the screen's)"), 14, Ink)]
+	];
+	return SNew(SScrollBox) + SScrollBox::Slot()[Box(V, FMargin(20, 16), Solid)];
 }
 
 void SOTGMainMenu::Start()
