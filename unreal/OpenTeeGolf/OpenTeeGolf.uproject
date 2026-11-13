@@ -1,0 +1,17 @@
+{
+	"FileVersion": 3,
+	"EngineAssociation": "5.8",
+	"Category": "",
+	"Description": "OpenTeeGolf: the golf simulator as a standalone Unreal Engine game",
+	"Modules": [
+		{
+			"Name": "OpenTeeGolf",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		}
+	],
+	"Plugins": [
+		{ "Name": "PythonScriptPlugin", "Enabled": true, "TargetAllowList": ["Editor"] },
+		{ "Name": "ProceduralVegetationEditor", "Enabled": true }
+	]
+}

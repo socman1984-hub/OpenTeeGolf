@@ -1,0 +1,11 @@
+# Unreal's own output and caches
+Binaries/
+Intermediate/
+Saved/
+DerivedDataCache/
+.vs/
+*.sln
+*.slnx
+# Content: courses and third-party assets (Fab, Megascans) stay out of git - their licences allow
+# shipping them in the game, not publishing them in this repository
+Content/

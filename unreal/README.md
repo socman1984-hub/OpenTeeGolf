@@ -93,6 +93,26 @@ No launch monitor? `POST /api/test-shot` with `{"Speed": 150, "VLA": 12, "HLA": 
 Not yet: trees (the ball flies through them), aiming (every shot is aimed at the pin), wind,
 several players, a scorecard on screen, and playing as a game (Play in Editor / a packaged game).
 
+## 5. The standalone game (in progress)
+
+`unreal/OpenTeeGolf/` is the start of OpenTeeGolf as a game of its own: courses made in the web
+version, built into course packs, played without a browser or the editor. Everything the golf needs
+runs inside the game, in C++.
+
+- Done: the project (Unreal 5.8, C++; needs Visual Studio with "Game development with C++"), and
+  the ball physics, `Source/OpenTeeGolf/.../Physics/OTGBallPhysics.*`: `public/js/openfairway.js`
+  and `public/js/physics.js` line for line (flight, wind, bounce, roll, surfaces, the cup, trees,
+  solid things).
+- `node unreal/tests/physics/parity.mjs` plays the same shots on the same test holes through both
+  (with the same random numbers) and fails if any differ. Run it after changing the physics on
+  either side, and change the other side to match.
+- Next: play data in the export, course packs, the launch monitor connections, and the game itself
+  (menus, rounds, aiming, putting, cameras, scoring).
+
+Build: `Engine\Build\BatchFiles\Build.bat OpenTeeGolf Win64 Development -Project=<path>\OpenTeeGolf.uproject`
+(the editor target, `OpenTeeGolfEditor`, can't build while another Unreal Editor with Live Coding is
+open).
+
 ## Where it stands
 
 - Looks good: the Megascans trees, the turf (thick rough, crisp fairway edges), round bunkers, the
