@@ -7,6 +7,6 @@ public class OpenTeeGolfEditorTarget : TargetRules
 		Type = TargetType.Editor;
 		DefaultBuildSettings = BuildSettingsVersion.Latest;
 		IncludeOrderVersion = EngineIncludeOrderVersion.Latest;
-		ExtraModuleNames.Add("OpenTeeGolf");
+		ExtraModuleNames.AddRange(new string[] { "OpenTeeGolf", "OpenTeeGolfEditor" });
 	}
 }

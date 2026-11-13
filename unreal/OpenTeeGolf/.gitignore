@@ -9,3 +9,7 @@ DerivedDataCache/
 # Content: courses and third-party assets (Fab, Megascans) stay out of git - their licences allow
 # shipping them in the game, not publishing them in this repository
 Content/
+# The packaged game (make_pack.ps1 -Package)
+Dist/
+# (written by packaging)
+Build/Windows/ChunkLayerInfo/

@@ -8,10 +8,24 @@
 			"Name": "OpenTeeGolf",
 			"Type": "Runtime",
 			"LoadingPhase": "Default"
+		},
+		{
+			"Name": "OpenTeeGolfEditor",
+			"Type": "Editor",
+			"LoadingPhase": "Default"
 		}
 	],
 	"Plugins": [
-		{ "Name": "PythonScriptPlugin", "Enabled": true, "TargetAllowList": ["Editor"] },
-		{ "Name": "ProceduralVegetationEditor", "Enabled": true }
+		{
+			"Name": "PythonScriptPlugin",
+			"Enabled": true,
+			"TargetAllowList": [
+				"Editor"
+			]
+		},
+		{
+			"Name": "ProceduralVegetationEditor",
+			"Enabled": true
+		}
 	]
 }

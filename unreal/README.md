@@ -113,8 +113,16 @@ runs inside the game, in C++.
   Unreal draws. `node unreal/tests/physics/course_check.mjs [course id]` plays shots from every hole
   through the JS and the C++ on that data (they must agree), and says how far the ball finishes from
   where the web game's own course puts it.
-- Next: course packs, the launch monitor connections, and the game itself (menus, rounds, aiming,
-  putting, cameras, scoring).
+- Course packs: `powershell -File unreal/make_pack.ps1 <course id> [...]` builds each exported
+  course into the game project headless (`pack_course.py`: a level with its landscape from the
+  export's heightmap, everything `build_course.py` builds, the play data as `CourseData`, and a label
+  that gives the course a pak of its own); `make_pack.ps1 -Package` packages the game with every
+  course built so far into `unreal/OpenTeeGolf/Dist/Windows`. The game finds them (console
+  `OTG.Courses`, `OTG.Play <id>`; `-course=<id>` on the command line opens one at start).
+  The game project needs the Fab trees in its `Content` folder (copied from the test project, not in
+  git). A pack is made with the game it's packaged with: add a course, package again.
+- Next: the launch monitor connections, and the game itself (menus, rounds, aiming, putting,
+  cameras, scoring).
 
 Build: `Engine\Build\BatchFiles\Build.bat OpenTeeGolf Win64 Development -Project=<path>\OpenTeeGolf.uproject`
 (the editor target, `OpenTeeGolfEditor`, can't build while another Unreal Editor with Live Coding is

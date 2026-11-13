@@ -23,11 +23,14 @@ import traceback
 import unreal
 
 # ---- set this to the course's export folder (OpenTeeGolf/exports/<course id>)
-EXPORT_DIR = r"C:\Users\rartz\Desktop\Claude Projects\GolfSim\exports\Majestic_Springs_Golf_Club"
+# (the course pack builder, pack_course.py, sets OTG_EXPORT_DIR and OTG_CONTENT, and builds every part)
+EXPORT_DIR = os.environ.get("OTG_EXPORT_DIR") or r"C:\Users\rartz\Desktop\Claude Projects\GolfSim\exports\Majestic_Springs_Golf_Club"
 
 # Which parts to build on this run (False: leave what's in the level as it is). Building only what
 # changed is much quicker: the ground's material takes the longest (Unreal compiles its shaders).
 BUILD = {"ground": True, "trees": True, "water": True, "markers": True, "props": True}
+if os.environ.get("OTG_EXPORT_DIR"):
+    BUILD = {k: True for k in BUILD}
 # Imported pictures and models are reused on later runs; True imports them all again (after a new
 # export of the course from the game)
 REIMPORT = True
@@ -85,7 +88,7 @@ def exists(name):
 
 
 meta = load("course.json")
-CONTENT = "/Game/OpenTeeGolf/" + meta["id"]
+CONTENT = os.environ.get("OTG_CONTENT") or "/Game/OpenTeeGolf/" + meta["id"]
 assets = unreal.AssetToolsHelpers.get_asset_tools()
 actors = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)
 mel = unreal.MaterialEditingLibrary
@@ -215,6 +218,14 @@ def new_material(name):
     return assets.create_asset(name, CONTENT, unreal.Material, unreal.MaterialFactoryNew())
 
 
+def spawn_mesh(mesh, loc):
+    """A static mesh actor in the level (spawn_actor_from_object makes nothing when Unreal runs
+    headless, as the pack builder runs it)"""
+    a = actors.spawn_actor_from_class(unreal.StaticMeshActor, loc)
+    a.static_mesh_component.set_static_mesh(mesh)
+    return a
+
+
 def static_meshes(found):
     return [a for a in found if isinstance(a, unreal.StaticMesh)]
 
@@ -268,6 +279,8 @@ def build_ground(land):
         s = E(unreal.MaterialExpressionTextureSample, x, y)
         s.set_editor_property("texture", t)
         s.set_editor_property("sampler_type", sampler)
+        # (shared samplers: the ground reads more textures than DirectX 11's 16 samplers)
+        s.set_editor_property("sampler_source", unreal.SamplerSourceMode.SSM_WRAP_WORLD_GROUP_SETTINGS)
         mel.connect_material_expressions(uv, "", s, "UVs")
         return s
 
@@ -1031,7 +1044,7 @@ def build_water_mesh():
     for old in actors.get_all_level_actors():
         if old.get_actor_label() == "OTG_Water":
             actors.destroy_actor(old)
-    a = actors.spawn_actor_from_object(mesh, loc)
+    a = spawn_mesh(mesh, loc)
     a.set_actor_label("OTG_Water")
     a.set_actor_rotation(unreal.Rotator(0, 0, yaw), False)
     a.set_actor_scale3d(unreal.Vector(scale * mirror, scale, scale))
@@ -1233,7 +1246,7 @@ def build_props():
         for k, mesh in enumerate(meshes):
             for i in range(len(mesh.get_editor_property("static_materials"))):
                 mesh.set_material(i, mat)
-            a = actors.spawn_actor_from_object(mesh, loc + unreal.Vector(0, 0, 5 if kind.startswith("path") else 0))
+            a = spawn_mesh(mesh, loc + unreal.Vector(0, 0, 5 if kind.startswith("path") else 0))
             a.set_actor_label("OTG_Prop_%s_%d" % (kind, k))
             a.set_actor_rotation(unreal.Rotator(0, 0, yaw), False)
             a.set_actor_scale3d(unreal.Vector(scale * mirror, scale, scale))
@@ -1255,14 +1268,14 @@ def mark_holes():
         for kind, p in (h.get("tees") or {}).items():
             if not p:
                 continue
-            a = actors.spawn_actor_from_object(cube, at(p["x"], p["y"], p["z"] + 2))
+            a = spawn_mesh(cube, at(p["x"], p["y"], p["z"] + 2))
             a.set_actor_scale3d(unreal.Vector(0.4, 0.4, 0.04))
             a.set_actor_label("OTG_Hole%d %s tee" % (h["number"], kind))
             n += 1
         for day, p in (h.get("pins") or {}).items():
             if not p:
                 continue
-            a = actors.spawn_actor_from_object(cyl, at(p["x"], p["y"], p["z"] + 115))
+            a = spawn_mesh(cyl, at(p["x"], p["y"], p["z"] + 115))
             a.set_actor_scale3d(unreal.Vector(0.03, 0.03, 2.3))
             a.set_actor_label("OTG_Hole%d %s pin" % (h["number"], day))
             n += 1
