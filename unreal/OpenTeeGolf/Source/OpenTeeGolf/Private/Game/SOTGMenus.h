@@ -59,6 +59,9 @@ private:
 	TSharedRef<SWidget> PlayPage();
 	TSharedRef<SWidget> PlayersPage();
 	TSharedRef<SWidget> SettingsPage();
+	TSharedRef<SWidget> UpdateBar();
+	class UOTGUpdateSubsystem* Updater() const;
+	bool bUpdateLater = false;   // (the update bar put off until the game starts again)
 	UOTGCourseSubsystem* Courses() const;
 	void Remember() { FOTGPlayers::SaveSetup(Setup); }
 

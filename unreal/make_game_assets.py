@@ -96,10 +96,40 @@ def course_level():
     log("L_Course made")
 
 
+# The scenery in pieces of its own (pakchunk<n> files), so the game's download is several files
+# under GitHub's 2 GB limit and an update fetches only the pieces that changed: the game itself is
+# chunk 0; each tree folder gets a label putting what's cooked from it in its chunk (cook rule left
+# alone: DefaultGame.ini says what's cooked). The tree folders aren't in git, so the labels are
+# made here, before every release.
+SCENERY_CHUNKS = (("/Game/EuropeanBeech", 1), ("/Game/EuropeanHornbeam", 2), ("/Game/Megaplant_Library", 3))
+
+
+def scenery_chunks():
+    for folder, chunk in SCENERY_CHUNKS:
+        if not eal.does_directory_exist(folder):
+            unreal.log_warning("[OpenTeeGolf assets] No %s: its chunk is skipped" % folder)
+            continue
+        # (a label's name is its id: each its own)
+        name = "OTG_Chunk%d" % chunk
+        for old in (folder + "/OTG_ChunkLabel", folder + "/" + name):
+            if eal.does_asset_exist(old):
+                eal.delete_asset(old)
+        label = tools.create_asset(name, folder, unreal.PrimaryAssetLabel, unreal.DataAssetFactory())
+        rules = label.get_editor_property("rules")
+        rules.set_editor_property("chunk_id", chunk)
+        rules.set_editor_property("cook_rule", unreal.PrimaryAssetCookRule.UNKNOWN)
+        rules.set_editor_property("apply_recursively", True)
+        label.set_editor_property("rules", rules)
+        label.set_editor_property("label_assets_in_my_directory", True)
+        eal.save_loaded_asset(label)
+        log("%s: chunk %d" % (folder, chunk))
+
+
 if not eal.does_directory_exist(FOLDER):
     eal.make_directory(FOLDER)
 rain()
 course_level()
+scenery_chunks()
 # the pieces exported courses are built from at run time: build_course.py in game-assets mode
 os.environ["OTG_RUNTIME"] = "1"
 os.environ["OTG_CONTENT"] = FOLDER + "/Runtime"

@@ -370,6 +370,19 @@ Everything the golf needs runs inside the game, in C++.
   `OTG.Round.Time <hour | auto>`.
 - Still to come in the game itself: putting aids, the Mevo+ camera view.
 
+- Updates (`OTGUpdateSubsystem`): the game keeps itself up to date from GitHub releases tagged
+  `unreal-v<version>`, downloading only the files that changed. The content is cooked in chunks so
+  every file is under GitHub's 2 GB limit: the game is `pakchunk0`, the tree scenery `pakchunk1`-`3`
+  (labels made by `make_game_assets.py`). `make_release.ps1` writes `manifest.json` (every file's
+  size and SHA-1, `release_manifest.py`); `python unreal/publish_release.py` (needs the GitHub CLI,
+  signed in; `--dry-run` to see what would go up) uploads only the files no earlier release has,
+  named by their SHA-1, plus the file list and a starter zip without the scenery, and never marks
+  the release "latest" (that stays the web version's). On start the game reads the newest release's
+  list, downloads what differs or is missing (the scenery, on a first start from the starter zip)
+  into `Update\staging`, checks each file, and on "Restart now" an `apply.cmd` swaps them in after
+  the game closes. Raise the version in `package.json` for each release. Testing: `-updateurl=` a
+  manifest's address, `-updateauto` (download and restart without asking), `-noupdate`.
+
 Build: `Engine\Build\BatchFiles\Build.bat OpenTeeGolf Win64 Development -Project=<path>\OpenTeeGolf.uproject`
 (the editor target, `OpenTeeGolfEditor`, can't build while another Unreal Editor with Live Coding is
 open).

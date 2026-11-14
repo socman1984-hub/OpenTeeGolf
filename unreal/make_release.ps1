@@ -55,6 +55,12 @@ foreach ($b in @(@('10over', 'v0.2.0'), @('allsquare', 'v0.2.0'))) {
   Invoke-WebRequest "https://raw.githubusercontent.com/divotmaker/$($b[0])/$($b[1])/LICENSE-MIT" -OutFile (Join-Path $bridgesOut "$($b[0])-LICENSE-MIT.txt") -UseBasicParsing
 }
 
+# ---- the file list the game's updater reads (manifest.json: each file's size and SHA-1; the
+# download addresses come when publish_release.ps1 puts the release on GitHub)
+$repo = (git -C $Root remote get-url origin) -replace '^.*github\.com[:/]', '' -replace '\.git$', ''
+& python (Join-Path $Here 'release_manifest.py') $stage $version $repo
+if ($LASTEXITCODE -ne 0) { throw 'Writing the file list failed.' }
+
 # ---- the zip (Windows' own tar: much faster than Compress-Archive on a few GB; not Git's, which
 # may come first on the path and can't write zips)
 $zip = Join-Path $dist "$name.zip"

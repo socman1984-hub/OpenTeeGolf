@@ -8,6 +8,8 @@
 #include "Engine/GameViewportClient.h"
 #include "GameFramework/GameUserSettings.h"
 #include "GeneralProjectSettings.h"
+#include "Widgets/Notifications/SProgressBar.h"
+#include "Game/OTGUpdateSubsystem.h"
 #include "UObject/Package.h"
 #include "UObject/StrongObjectPtr.h"
 #include "HAL/PlatformProcess.h"
@@ -272,6 +274,8 @@ void SOTGMainMenu::Construct(const FArguments&)
 				}, 16)]
 			]
 			+ SVerticalBox::Slot().FillHeight(1)[SAssignNew(Body, SBox)]
+			// an update: there is one (Update now / Later), how the download's going, ready to restart
+			+ SVerticalBox::Slot().AutoHeight().Padding(0, 10, 0, 0)[UpdateBar()]
 			// the version, and where the course data comes from
 			+ SVerticalBox::Slot().AutoHeight().Padding(0, 10, 0, 0)
 			[
@@ -282,6 +286,64 @@ void SOTGMainMenu::Construct(const FArguments&)
 		]
 	];
 	Rebuild();
+}
+
+UOTGUpdateSubsystem* SOTGMainMenu::Updater() const
+{
+	UGameInstance* GI = GameInstance();
+	return GI ? GI->GetSubsystem<UOTGUpdateSubsystem>() : nullptr;
+}
+
+TSharedRef<SWidget> SOTGMainMenu::UpdateBar()
+{
+	using S = EOTGUpdateState;
+	auto St = [this]() { UOTGUpdateSubsystem* U = Updater(); return U ? U->GetState() : S::Off; };
+	auto Shown = [this, St]() {
+		UOTGUpdateSubsystem* U = Updater();
+		const S X = St();
+		if (X == S::Downloading || X == S::Ready) return EVisibility::Visible;
+		if (X == S::Available) return bUpdateLater ? EVisibility::Collapsed : EVisibility::Visible;
+		if (X == S::Failed) return U && (U->WasAsked() || U->BytesDone() > 0) ? EVisibility::Visible : EVisibility::Collapsed;
+		return EVisibility::Collapsed;
+	};
+	auto When = [St](std::initializer_list<S> Any) {
+		TArray<S> L(Any);
+		return TAttribute<EVisibility>::CreateLambda([St, L]() { return L.Contains(St()) ? EVisibility::Visible : EVisibility::Collapsed; });
+	};
+	return SNew(SBorder).BorderImage(FCoreStyle::Get().GetBrush("WhiteBrush")).BorderBackgroundColor(FLinearColor(0.02f, 0.06f, 0.04f, 0.85f)).Padding(FMargin(16, 10))
+		.Visibility_Lambda(Shown)
+		[
+			SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot().FillWidth(1).VAlign(VAlign_Center)
+			[
+				SNew(SVerticalBox)
+				+ SVerticalBox::Slot().AutoHeight()
+				[
+					SNew(STextBlock).Font(Font(15, "Bold")).ColorAndOpacity(Ink).AutoWrapText(true)
+					.Text_Lambda([this]() { UOTGUpdateSubsystem* U = Updater(); return FText::FromString(U ? U->StatusLine() : FString()); })
+				]
+				+ SVerticalBox::Slot().AutoHeight().Padding(0, 6, 0, 0)
+				[
+					SNew(SBox).HeightOverride(8).Visibility(When({ S::Downloading }))
+					[
+						SNew(SProgressBar).FillColorAndOpacity(FLinearColor(0.3f, 0.75f, 0.4f, 1.f))
+						.Percent_Lambda([this]() { UOTGUpdateSubsystem* U = Updater(); return TOptional<float>(U && U->BytesToGet() > 0 ? float(double(U->BytesDone()) / U->BytesToGet()) : 0.f); })
+					]
+				]
+			]
+			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(12, 0, 0, 0)
+			[
+				SNew(SBox).Visibility(When({ S::Available, S::Failed }))[Button(TEXT("Update now"), [this]() { if (UOTGUpdateSubsystem* U = Updater()) U->Download(); }, 14, true)]
+			]
+			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(8, 0, 0, 0)
+			[
+				SNew(SBox).Visibility(When({ S::Available }))[Button(TEXT("Later"), [this]() { bUpdateLater = true; }, 14)]
+			]
+			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(12, 0, 0, 0)
+			[
+				SNew(SBox).Visibility(When({ S::Ready }))[Button(TEXT("Restart now"), [this]() { if (UOTGUpdateSubsystem* U = Updater()) U->ApplyAndRestart(); }, 14, true)]
+			]
+		];
 }
 
 void SOTGMainMenu::Rebuild()
@@ -582,6 +644,21 @@ TSharedRef<SWidget> SOTGMainMenu::SettingsPage()
 		W->AddSlot().Padding(8, 0, 6, 6)[Button(TEXT("Pick for this PC"), [GS, Apply]() { GS->RunHardwareBenchmark(); GS->ApplyHardwareBenchmarkResults(); Apply(); }, 13)];
 		Row2(TEXT("Graphics quality"), W);
 		V->AddSlot().AutoHeight().Padding(0, 2)[Text(TEXT("Lower it if the game runs slowly: the grass, trees and shadows cost the most."), 12, Soft)];
+	}
+	// updates: where things stand, and a button to look now
+	{
+		TSharedRef<SVerticalBox> W = SNew(SVerticalBox);
+		W->AddSlot().AutoHeight()
+		[
+			SNew(STextBlock).Font(Font(14)).ColorAndOpacity(Ink).AutoWrapText(true)
+			.Text_Lambda([this]() { UOTGUpdateSubsystem* U = Updater(); return FText::FromString(U ? U->StatusLine() : FString(TEXT("Updates aren't available here."))); })
+		];
+		W->AddSlot().AutoHeight().Padding(0, 6, 0, 0).HAlign(HAlign_Left)
+		[
+			Button(TEXT("Check for updates"), [this]() { bUpdateLater = false; if (UOTGUpdateSubsystem* U = Updater()) U->Check(true); }, 13)
+		];
+		W->AddSlot().AutoHeight().Padding(0, 4)[Text(TEXT("The game checks each time it starts and downloads only the files that changed."), 12, Soft)];
+		Row2(TEXT("Updates"), W);
 	}
 	// where the game finds exported courses (the web version writes them to the default)
 	if (UOTGCourseSubsystem* C = Courses())
