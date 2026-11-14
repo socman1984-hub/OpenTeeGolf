@@ -28,6 +28,7 @@ namespace otg
 		// the meadow's patches: noise this many metres across, between these (and the other patches if Invert)
 		float PatchM = 0, PatchLo = 0, PatchHi = 0;
 		bool bInvert = false;
+		float MinDrawM = 0;            // (drawn only beyond this, m: the far kinds)
 	};
 
 	class FGrass

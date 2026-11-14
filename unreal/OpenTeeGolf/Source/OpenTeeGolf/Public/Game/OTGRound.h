@@ -146,7 +146,9 @@ private:
 
 	UPROPERTY() TObjectPtr<UOTGCourseData> Data;
 	UPROPERTY() TObjectPtr<UStaticMeshComponent> BallMesh;
-	UPROPERTY() TObjectPtr<UStaticMeshComponent> AimMesh;
+	UPROPERTY() TObjectPtr<UStaticMeshComponent> AimMesh;      // (where the shot's aimed: holds the spot, not drawn)
+	UPROPERTY() TObjectPtr<UStaticMeshComponent> AimStick;     // (a yardage stick standing there...)
+	UPROPERTY() TObjectPtr<UStaticMeshComponent> AimStickTop;  // (...its coloured top)
 	UPROPERTY() TObjectPtr<UStaticMeshComponent> PinMesh;
 	UPROPERTY() TObjectPtr<UStaticMeshComponent> FlagMesh;
 	UPROPERTY() TObjectPtr<class UMaterialParameterCollection> WindMPC;   // (the wind for the trees and grass)
@@ -202,6 +204,7 @@ private:
 	UPROPERTY() TObjectPtr<UProceduralMeshComponent> RainMesh;
 	UPROPERTY() TObjectPtr<UProceduralMeshComponent> FlagCloth;
 	double FlagTime = 0;
+	double FlagPhase = 0;   // (the flag's ripples, radians: added up a frame at a time)
 	bool bFlagMade = false;
 	bool bFreeView = false;
 	bool bWeatherFromCommandLine = false;

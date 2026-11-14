@@ -80,7 +80,10 @@ void AOTGRound::UpdateFlag(float Dt)
 	const FVector Top = World(Pin()) + FVector(0, 0, 228);
 	const double L = 55, H = 36;   // cm
 	const int32 NU = 12, NV = 6;
-	const double Amp = FMath::Lerp(1.5, 10.0, S), Freq = FMath::Lerp(2.0, 10.0, S);
+	const double Amp = FMath::Lerp(1.5, 9.0, S), Freq = FMath::Lerp(2.0, 7.5, S);
+	// (the ripples' progress, added up a frame at a time: time x a pace that follows the gusts
+	// jumped whenever a gust changed it - the cloth leapt to a new shape every frame and smeared)
+	FlagPhase += Dt * Freq;
 	TArray<FVector> V;
 	TArray<FVector2D> UV;
 	V.Reserve((NU + 1) * (NV + 1));
@@ -90,8 +93,8 @@ void AOTGRound::UpdateFlag(float Dt)
 			const double U = double(i) / NU, W = double(j) / NV;
 			// ripples travelling out from the pole, growing toward the free end
 			// (and the free end flutters: a quicker, smaller ripple near it)
-			const double Wave = FMath::Sin(U * 7.0 - FlagTime * Freq + W * 0.8) * Amp * U + FMath::Sin(U * 13.0 - FlagTime * Freq * 1.7) * Amp * 0.3 * U
-				+ FMath::Sin(U * 21.0 - FlagTime * Freq * 2.6 + W * 2.0) * Amp * 0.25 * U * U * S;
+			const double Wave = FMath::Sin(U * 7.0 - FlagPhase + W * 0.8) * Amp * U + FMath::Sin(U * 13.0 - FlagPhase * 1.7) * Amp * 0.3 * U
+				+ FMath::Sin(U * 17.0 - FlagPhase * 2.1 + W * 2.0) * Amp * 0.15 * U * U * S;
 			// (the free end sags a little when it's slack)
 			const double Sag = (1 - S) * 6.0 * U * U;
 			V.Add(Top + Along * (U * L) + Hang * (W * H + Sag) + Side * Wave);

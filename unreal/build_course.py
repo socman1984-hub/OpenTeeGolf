@@ -167,6 +167,20 @@ TURF_GRASS = {
                        "head_len": (0.02, 0.035), "head_w": (0.01, 0.016), "patch": (7.0, 0.44, 0.5, False),
                        "root": (0.02, 0.035, 0.008), "tip": (0.06, 0.09, 0.02), "dry": (0.3, 0.07, 0.36), "dry_share": 0.0, "vary": 0.2},
 }
+# The tall grass far off (150 to 450 m: past where the near grass fades): each kind again, with a
+# third of the blades but twice as wide, a fifth as many patches, each bigger - cheap enough to draw
+# that far, so the meadows keep their texture into the distance instead of going flat (the game
+# draws these only from 150 m out: OTGGrass.cpp's "_far" kinds)
+for _k in ("native", "native_short", "fescue_gold", "tussock"):
+    _c = dict(TURF_GRASS[_k])
+    _c["blades"] = max(30, _c["blades"] // 3)
+    _c["width_mm"] = (_c["width_mm"][0] * 1.8, _c["width_mm"][1] * 2.0)
+    _c["density"] = _c["density"] / 5.0
+    _c["draw_m"] = (380.0, 450.0)
+    _lo, _hi = _c.get("scale", (0.85, 1.2))
+    _c["scale"] = (_lo * 1.3, _hi * 1.3)
+    TURF_GRASS[_k + "_far"] = _c
+
 # Beyond the first of its draw_m distances a blade shrinks down into the ground, gone by
 # GRASS_FADE of the way to the second (where Unreal stops drawing it): the grass thins out into the
 # ground's own colour instead of popping in and out as you move
@@ -1478,12 +1492,32 @@ def world_height(mat):
     return h
 
 
-def wind_offset(mat, height, scale, flutter, wave_cm=0.0, flutter_rate=2.3, sway=0.25, parts_cm=0.0):
+def world_reach(mat):
+    """A node: how far out from its trunk (the pivot's upright line) a point of a mesh is, in world
+    centimetres - for the flutter, which belongs to the branches and leaves, not the trunk."""
+    E = lambda cls, x, y: mel.create_material_expression(mat, cls, x, y)
+    lp = E(unreal.MaterialExpressionLocalPosition, -2200, 1500)
+    tr = E(unreal.MaterialExpressionTransform, -2050, 1500)
+    tr.set_editor_property("transform_source_type", unreal.MaterialVectorCoordTransformSource.TRANSFORMSOURCE_LOCAL)
+    tr.set_editor_property("transform_type", unreal.MaterialVectorCoordTransform.TRANSFORM_WORLD)
+    mel.connect_material_expressions(lp, "", tr, "")
+    xy = E(unreal.MaterialExpressionComponentMask, -1950, 1500)
+    for ch in "rgba":
+        xy.set_editor_property(ch, ch in "rg")
+    mel.connect_material_expressions(tr, "", xy, "")
+    ln = E(unreal.MaterialExpressionLength, -1850, 1500)
+    mel.connect_material_expressions(xy, "", ln, "")
+    return ln
+
+
+def wind_offset(mat, height, scale, flutter, wave_cm=0.0, flutter_rate=2.3, sway=0.25, parts_cm=0.0, reach=None, reach_cm=150.0):
     """A world position offset bending a plant downwind: height (a node: cm above its foot) squared
     times scale, pushed over by the wind's strength (and swaying a little with it), plus a quicker
     flutter even in still air. wave_cm: gusts running across the plants that far apart (grass);
     sway: how much of the lean comes and goes; parts_cm: parts of a plant this far apart flutter
-    out of step (a tree's branches), at flutter_rate (radians a second)."""
+    out of step (a tree's branches), at flutter_rate (radians a second). reach: a node, how far out
+    from the trunk (world_reach) - the flutter fades in over reach_cm from it, so the trunk and the
+    big limbs bend with the tree as one, smoothly, and only the branches and leaves flutter."""
     E = lambda cls, x, y: mel.create_material_expression(mat, cls, x, y)
 
     def const(v):
@@ -1538,6 +1572,10 @@ def wind_offset(mat, height, scale, flutter, wave_cm=0.0, flutter_rate=2.3, sway
                                                      const3((6.283 / parts_cm, 4.7 / parts_cm, 5.3 / parts_cm))))
     fast = sine(op(unreal.MaterialExpressionAdd, op(unreal.MaterialExpressionMultiply, tm, const(1.1 * flutter_rate)), fph))
     flut = op(unreal.MaterialExpressionMultiply, op(unreal.MaterialExpressionMultiply, fast, const(flutter)), op(unreal.MaterialExpressionAdd, const(0.2), k))
+    if reach is not None:
+        out = E(unreal.MaterialExpressionSaturate, -1300, 1700)
+        mel.connect_material_expressions(op(unreal.MaterialExpressionDivide, reach, const(reach_cm)), "", out, "")
+        flut = op(unreal.MaterialExpressionMultiply, flut, out)
     amt = op(unreal.MaterialExpressionMultiply, op(unreal.MaterialExpressionAdd, push, flut),
              op(unreal.MaterialExpressionMultiply, op(unreal.MaterialExpressionMultiply, height, height), const(scale)))
     return op(unreal.MaterialExpressionMultiply, way, amt)
@@ -1624,10 +1662,11 @@ def tree_parent_material(kind):
         mel.connect_material_property(const(0.85, -500, 400), "", unreal.MaterialProperty.MP_ROUGHNESS)
         mel.connect_material_property(const(0.3, -500, 500), "", unreal.MaterialProperty.MP_SPECULAR)
     # the wind: the whole tree bends from its foot (its pivot), more the higher up, each tree in
-    # its own time, its branches fluttering out of step (leaves and wood alike, so the leaves stay on)
+    # its own time, its branches fluttering out of step (leaves and wood alike, so the leaves stay
+    # on) - but not the trunk: the flutter fades in with the distance out from it
     try:
         wpo = wind_offset(mat, world_height(mat), LEAF_SWAY / 1000000.0, 0.25, flutter_rate=4.0, sway=0.4,
-                          parts_cm=250.0)
+                          parts_cm=250.0, reach=world_reach(mat))
         mel.connect_material_property(wpo, "", unreal.MaterialProperty.MP_WORLD_POSITION_OFFSET)
     except Exception:
         warn("Trees: no wind (%s)" % traceback.format_exc().splitlines()[-1])

@@ -2,8 +2,6 @@
 
 #include "SOTGHud.h"
 #include "Widgets/Images/SImage.h"
-#include "Brushes/SlateRoundedBoxBrush.h"
-#include "Widgets/SCanvas.h"
 
 #include "OTGUi.h"
 #include "SOTGMenus.h"
@@ -22,12 +20,6 @@ using namespace otg::ui;
 
 void SOTGHud::Construct(const FArguments&)
 {
-	// (the marker's pieces: rings and dots drawn as rounded boxes, no textures)
-	const FLinearColor White(1, 1, 1, 0.95f), Shade(0, 0, 0, 0.55f), None(0, 0, 0, 0);
-	AimRingShade = MakeUnique<FSlateRoundedBoxBrush>(None, 15.f, Shade, 4.5f);
-	AimRing = MakeUnique<FSlateRoundedBoxBrush>(None, 13.5f, White, 2.f);
-	AimDotShade = MakeUnique<FSlateRoundedBoxBrush>(Shade, 4.f);
-	AimDot = MakeUnique<FSlateRoundedBoxBrush>(White, 2.5f);
 	ChildSlot
 	[
 		SNew(SOverlay)
@@ -109,20 +101,6 @@ void SOTGHud::Construct(const FArguments&)
 				SAssignNew(ToastText, STextBlock).Font(Font(16)).ColorAndOpacity(Ink)
 			]
 		]
-		// the aim marker: a white ring and dot, a dark edge round them to show on sky and sand alike
-		+ SOverlay::Slot().HAlign(HAlign_Fill).VAlign(VAlign_Fill)
-		[
-			SNew(SCanvas).Visibility(EVisibility::HitTestInvisible)
-			+ SCanvas::Slot().Size(FVector2D(30, 30)).HAlign(HAlign_Center).VAlign(VAlign_Center)
-			.Position_Lambda([this]() { return AimPx / FMath::Max(HudScale, 0.1f); })
-			[
-				SNew(SOverlay).Visibility_Lambda([this]() { return bAimShown ? EVisibility::HitTestInvisible : EVisibility::Collapsed; })
-				+ SOverlay::Slot()[SNew(SImage).Image(AimRingShade.Get())]
-				+ SOverlay::Slot().Padding(1.5f)[SNew(SImage).Image(AimRing.Get())]
-				+ SOverlay::Slot().HAlign(HAlign_Center).VAlign(VAlign_Center)[SNew(SBox).WidthOverride(8).HeightOverride(8)[SNew(SImage).Image(AimDotShade.Get())]]
-				+ SOverlay::Slot().HAlign(HAlign_Center).VAlign(VAlign_Center)[SNew(SBox).WidthOverride(5).HeightOverride(5)[SNew(SImage).Image(AimDot.Get())]]
-			]
-		]
 		// the scorecard
 		+ SOverlay::Slot().HAlign(HAlign_Center).VAlign(VAlign_Center)
 		[
@@ -139,7 +117,6 @@ void SOTGHud::Construct(const FArguments&)
 void SOTGHud::Tick(const FGeometry& Geometry, const double Time, const float Dt)
 {
 	SCompoundWidget::Tick(Geometry, Time, Dt);
-	HudScale = Geometry.Scale;
 	auto Fade = [Dt](float& Left, const TSharedPtr<SBorder>& B) {
 		if (Left <= 0) return;
 		Left -= Dt;

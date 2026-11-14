@@ -198,8 +198,10 @@ AOTGRound::AOTGRound()
 	static ConstructorHelpers::FObjectFinder<UStaticMesh> Cone(TEXT("/Engine/BasicShapes/Cone.Cone"));
 	TeeMesh = MakeMesh(TEXT("TeePeg"), Cylinder.Object, false);
 	TeeHeadMesh = MakeMesh(TEXT("TeeHead"), Cone.Object, false);
-	// (the aim: where the shot's aimed; drawn by the HUD as a small marker, this just holds the spot)
+	// (the aim: where the shot's aimed - this just holds the spot; a yardage stick stands there)
 	AimMesh->SetHiddenInGame(true);
+	AimStick = MakeMesh(TEXT("AimStick"), Cylinder.Object, true);
+	AimStickTop = MakeMesh(TEXT("AimStickTop"), Cylinder.Object, false);
 	CupMesh = MakeMesh(TEXT("Cup"), Cylinder.Object, false);
 	GridMesh = CreateDefaultSubobject<UProceduralMeshComponent>(TEXT("SlopeGrid"));
 	GridMesh->SetupAttachment(RootComponent);
@@ -312,6 +314,8 @@ void AOTGRound::Setup(UOTGCourseData* InData, const FOTGRoundSetup& InSetup)
 	Mat(TeeHeadMesh, FLinearColor(0.9f, 0.9f, 0.9f));
 	Mat(CupMesh, FLinearColor(0.01f, 0.012f, 0.01f));
 	TracerMat = Mat(nullptr, FLinearColor(1.f, 0.72f, 0.2f));
+	Mat(AimStick, FLinearColor(0.92f, 0.92f, 0.9f));
+	Mat(AimStickTop, FLinearColor(1.f, 0.78f, 0.1f));
 	// (the slope grid's colours: flat white, then yellow, orange and red at 3% and over - as the web
 	// version's; and its dots white)
 	for (const FLinearColor& C : { FLinearColor(0.95f, 0.95f, 0.92f), FLinearColor(1.f, 0.9f, 0.2f), FLinearColor(1.f, 0.55f, 0.12f), FLinearColor(0.95f, 0.18f, 0.1f) })
@@ -1116,13 +1120,22 @@ void AOTGRound::NextHole()
 void AOTGRound::Tick(float Dt)
 {
 	UpdateSlopeGrid(Dt);
-	// the aim marker, over the aim spot in the view (the HUD draws it)
-	if (Hud)
+	// the aim: a yardage stick standing on the spot - white, its top yellow - sized by how far it is
+	// from the camera so it reads the same on screen near or far (true size it'd vanish at 250 m)
 	{
-		FVector2D Px;
-		APlayerController* PC = GetWorld() ? GetWorld()->GetFirstPlayerController() : nullptr;
-		const bool bShow = AimMesh && AimMesh->GetVisibleFlag() && PC && PC->ProjectWorldLocationToScreen(AimMesh->GetComponentLocation(), Px, false);
-		Hud->SetAimMarker(bShow, Px);
+		const bool bShow = AimMesh && AimMesh->GetVisibleFlag();
+		AimStick->SetVisibility(bShow);
+		AimStickTop->SetVisibility(bShow);
+		if (bShow)
+		{
+			const FVector At = AimMesh->GetComponentLocation() - FVector(0, 0, 3);
+			const double H = FMath::Max(120.0, FVector::Dist(CamPos, At) * 0.03);   // cm
+			const double Wd = H * 0.02;
+			AimStick->SetWorldLocation(At + FVector(0, 0, H * 0.4));
+			AimStick->SetWorldScale3D(FVector(Wd / 100, Wd / 100, H * 0.8 / 100));
+			AimStickTop->SetWorldLocation(At + FVector(0, 0, H * 0.9));
+			AimStickTop->SetWorldScale3D(FVector(Wd * 1.15 / 100, Wd * 1.15 / 100, H * 0.2 / 100));
+		}
 	}
 	Super::Tick(Dt);
 	if (!Data) return;

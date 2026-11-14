@@ -13,6 +13,10 @@
 namespace
 {
 	constexpr double CellM = 16.0;
+	TAutoConsoleVariable<int32> CVarFarGrass(TEXT("OTG.Grass.Far"), 1, TEXT("The tall grass far off (150-450 m): 1 on, 0 off"));
+	// (the far kinds in bigger cells: a quarter as many a side, so their thousands of cells don't load the
+	// renderer with as many components)
+	double CellFor(const otg::FGrassKind& K) { return K.MinDrawM > 0 ? CellM * 4 : CellM; }
 	constexpr int32 MaxStartsAFrame = 6, MaxInFlight = 12, MaxAddsAFrame = 4;
 
 	// (deterministic per position: the same grass every time you come back)
@@ -54,6 +58,19 @@ const TArray<otg::FGrassKind>& otg::FGrass::Kinds()
 		Add(TEXT("native_short"), { TEXT("native") }, 520, 110, 160, 1.0f, 0.75f, 1.25f, 16, 0.31f, 0.39f, true);
 		Add(TEXT("fescue_gold"), { TEXT("native") }, 280, 140, 200, 1.0f, 0.6f, 1.4f, 22, 0.34f, 0.39f, false);
 		Add(TEXT("tussock"), { TEXT("native") }, 90, 110, 160, 1.0f, 0.6f, 1.5f);
+		// the tall grass far off: each kind again, a fifth as many and bigger patches, drawn from 150
+		// to 450 m (build_course.py makes their meshes and materials: fewer, wider blades)
+		for (int32 i = 0, n = Out.Num(); i < n; i++)
+		{
+			if (!Out[i].Masks.Contains(TEXT("native")) || Out[i].Name.StartsWith(TEXT("flowers"))) continue;
+			FGrassKind F = Out[i];
+			F.Name += TEXT("_far");
+			F.Density /= 5;
+			F.DrawFrom = 380; F.DrawTo = 450;
+			F.ScaleLo *= 1.3f; F.ScaleHi *= 1.3f;
+			F.MinDrawM = 150;
+			Out.Add(F);
+		}
 		Add(TEXT("flowers_yellow"), { TEXT("native") }, 70, 70, 100, 1.0f, 0.85f, 1.2f, 9, 0.43f, 0.48f, false);
 		Add(TEXT("flowers_white"), { TEXT("native") }, 70, 70, 100, 1.0f, 0.85f, 1.2f, 11, 0.44f, 0.49f, false);
 		Add(TEXT("flowers_purple"), { TEXT("native") }, 60, 70, 100, 1.0f, 0.85f, 1.2f, 7, 0.44f, 0.5f, false);
@@ -110,17 +127,17 @@ double otg::FGrass::GroundZ(double X, double Y, FVector* OutNormal) const
 // map would have it (the mask past its edge, not in the water or on a path, in its meadow patch)
 TArray<FTransform> otg::FGrass::Place(int32 KindI, int32 CX, int32 CY) const
 {
-	const FGrassKind& K = Kinds()[KindI];
+	const FGrassKind& K = Kinds()[KindI]; const double Cell = CellFor(K);
 	TArray<FTransform> Out;
 	const double Spacing = 1000.0 / FMath::Sqrt(K.Density);   // cm (Density a 10 x 10 m)
-	const int32 Per = FMath::Max(1, FMath::RoundToInt(CellM * 100.0 / Spacing));
-	const double S = CellM * 100.0 / Per;
+	const int32 Per = FMath::Max(1, FMath::RoundToInt(Cell * 100.0 / Spacing));
+	const double S = Cell * 100.0 / Per;
 	FRandomStream R(int32(Hash(KindI, CX, CY)));
 	for (int32 b = 0; b < Per; b++)
 		for (int32 a = 0; a < Per; a++)
 		{
-			const double X = CX * CellM * 100.0 + (a + 0.5 + (R.FRand() - 0.5) * K.Jitter) * S;
-			const double Y = CY * CellM * 100.0 + (b + 0.5 + (R.FRand() - 0.5) * K.Jitter) * S;
+			const double X = CX * Cell * 100.0 + (a + 0.5 + (R.FRand() - 0.5) * K.Jitter) * S;
+			const double Y = CY * Cell * 100.0 + (b + 0.5 + (R.FRand() - 0.5) * K.Jitter) * S;
 			const float Keep = R.FRand();
 			if (X < 0 || Y < 0 || X > Land || Y > Land) continue;
 			float W = 0;
@@ -136,7 +153,7 @@ TArray<FTransform> otg::FGrass::Place(int32 KindI, int32 CX, int32 CY) const
 			if (K.PatchM > 0)
 			{
 				// (value noise bunches round the middle: spread out to the rock texture's range)
-				const double N = FMath::Clamp(0.5 + (Noise(X / 100.0, Y / 100.0, K.PatchM, K.Name.StartsWith(TEXT("native")) ? 77 : (KindI + 1) * 31) - 0.5) * 1.8, 0.0, 1.0);
+				const double N = FMath::Clamp(0.5 + (Noise(X / 100.0, Y / 100.0, K.PatchM, K.Name.StartsWith(TEXT("native")) ? 77 : int32(GetTypeHash(K.Name.Replace(TEXT("_far"), TEXT(""))) % 997) + 31) - 0.5) * 1.8, 0.0, 1.0);
 				const double L = 0.27 + 0.19 * N;
 				float F = FMath::SmoothStep(K.PatchLo, K.PatchHi, float(L));
 				P *= K.bInvert ? 1.f - F : F;
@@ -183,6 +200,7 @@ void otg::FGrass::Update(const FVector& Camera)
 		const FGrassKind& K = Kinds()[Job.Key.Kind];
 		ISM->InstanceStartCullDistance = int32(K.DrawFrom * 100);
 		ISM->InstanceEndCullDistance = int32(K.DrawTo * 100);
+		ISM->MinDrawDistance = K.MinDrawM * 100;
 		ISM->SetupAttachment(O->GetRootComponent());
 		ISM->RegisterComponent();
 		ISM->AddInstances(Job.Value, false, true);
@@ -192,9 +210,10 @@ void otg::FGrass::Update(const FVector& Camera)
 	// far cells: dropped
 	for (auto It = Cells.CreateIterator(); It; ++It)
 	{
-		const FGrassKind& K = Kinds()[It->Key.Kind];
-		const FVector2D Mid((It->Key.X + 0.5) * CellM * 100, (It->Key.Y + 0.5) * CellM * 100);
-		if (FVector2D::Distance(Mid, FVector2D(C)) > (K.DrawTo + CellM) * 100)
+		const FGrassKind& K = Kinds()[It->Key.Kind]; const double Cell = CellFor(K);
+		const bool bOff = K.MinDrawM > 0 && !CVarFarGrass.GetValueOnGameThread();
+		const FVector2D Mid((It->Key.X + 0.5) * Cell * 100, (It->Key.Y + 0.5) * Cell * 100);
+		if (bOff || FVector2D::Distance(Mid, FVector2D(C)) > (K.DrawTo + Cell) * 100)
 		{
 			if (UInstancedStaticMeshComponent* ISM = It->Value.Comp) { Count -= ISM->GetInstanceCount(); ISM->DestroyComponent(); }
 			It.RemoveCurrent();
@@ -204,16 +223,17 @@ void otg::FGrass::Update(const FVector& Camera)
 	int32 Started = 0;
 	for (int32 KindI : KindIndex)
 	{
-		const FGrassKind& K = Kinds()[KindI];
-		const int32 Rad = FMath::CeilToInt(K.DrawTo / CellM);
-		const int32 CX0 = FMath::FloorToInt(C.X / (CellM * 100)), CY0 = FMath::FloorToInt(C.Y / (CellM * 100));
+		const FGrassKind& K = Kinds()[KindI]; const double Cell = CellFor(K);
+		if (K.MinDrawM > 0 && !CVarFarGrass.GetValueOnGameThread()) continue;
+		const int32 Rad = FMath::CeilToInt(K.DrawTo / Cell);
+		const int32 CX0 = FMath::FloorToInt(C.X / (Cell * 100)), CY0 = FMath::FloorToInt(C.Y / (Cell * 100));
 		TArray<FIntPoint> Want;
 		for (int32 dy = -Rad; dy <= Rad; dy++)
 			for (int32 dx = -Rad; dx <= Rad; dx++)
 			{
-				const FVector2D Mid((CX0 + dx + 0.5) * CellM * 100, (CY0 + dy + 0.5) * CellM * 100);
-				if (FVector2D::Distance(Mid, FVector2D(C)) > (K.DrawTo + CellM * 0.71) * 100) continue;
-				if (Mid.X < -CellM * 100 || Mid.Y < -CellM * 100 || Mid.X > Land + CellM * 100 || Mid.Y > Land + CellM * 100) continue;
+				const FVector2D Mid((CX0 + dx + 0.5) * Cell * 100, (CY0 + dy + 0.5) * Cell * 100);
+				if (FVector2D::Distance(Mid, FVector2D(C)) > (K.DrawTo + Cell * 0.71) * 100) continue;
+				if (Mid.X < -Cell * 100 || Mid.Y < -Cell * 100 || Mid.X > Land + Cell * 100 || Mid.Y > Land + Cell * 100) continue;
 				if (!Cells.Contains(FCellKey{ KindI, CX0 + dx, CY0 + dy })) Want.Add(FIntPoint(CX0 + dx, CY0 + dy));
 			}
 		Want.Sort([&](const FIntPoint& A, const FIntPoint& B) { return FVector2D(A - FIntPoint(CX0, CY0)).SizeSquared() < FVector2D(B - FIntPoint(CX0, CY0)).SizeSquared(); });
