@@ -29,8 +29,21 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 
 
+def find_gh():
+    """The GitHub CLI: on the path, or where its installer puts it (a terminal opened before it was
+    installed doesn't have it on the path yet)"""
+    for p in (shutil.which("gh"), os.path.join(os.environ.get("ProgramFiles", r"C:\Program Files"), "GitHub CLI", "gh.exe"),
+              os.path.join(os.environ.get("LOCALAPPDATA", ""), "Programs", "GitHub CLI", "gh.exe")):
+        if p and os.path.exists(p):
+            return p
+    return None
+
+
+GH = find_gh()
+
+
 def gh(*args, capture=True):
-    r = subprocess.run(["gh", *args], cwd=ROOT, capture_output=capture, text=True)
+    r = subprocess.run([GH, *args], cwd=ROOT, capture_output=capture, text=True)
     if r.returncode != 0:
         raise RuntimeError("gh %s failed: %s" % (" ".join(args), (r.stderr or r.stdout or "").strip()))
     return r.stdout
@@ -51,7 +64,7 @@ def main():
     if manifest["version"] != version:
         sys.exit("dist/%s is %s, package.json says %s: run make_release.ps1 again" % (name, manifest["version"], version))
     repo, tag = manifest["repo"], "unreal-v" + version
-    if not shutil.which("gh"):
+    if not GH:
         if not dry:
             sys.exit("The GitHub CLI isn't installed: https://cli.github.com, then gh auth login")
         print("(no GitHub CLI: a dry run as if this were the first release)")
