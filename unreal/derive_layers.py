@@ -91,6 +91,130 @@ def main(export):
     out = os.path.join(export, 'layer_native.png')
     Image.fromarray(np.clip(field * 255 + 0.5, 0, 255).astype(np.uint8), 'L').save(out)
     print('layer_native.png: %.1f%% of the landscape' % (100 * mask.mean()))
+    if os.path.exists(os.path.join(export, 'water.glb')):
+        stream = stream_layer(export, size)
+        boulders(export, meta, size, stream)
+
+
+# ------------------------------------------------------------------ streams and boulders
+
+STREAM_SLOPE = 0.008    # a water surface falling more than this (per metre) is a stream, not a pond
+# Boulders along the creeks (and now and then at a pond): how far apart the groups are along the
+# shore (metres, at least), how likely a spot is to get one, the main stone's size (metres across),
+# and how many smaller stones lie round it
+BOULDER_SPACING_M = {'stream': 7.0, 'pond': 28.0}
+BOULDER_CHANCE = {'stream': 0.5, 'pond': 0.35}
+BOULDER_SIZE_M = (0.45, 1.5)
+BOULDER_SMALL = (0, 4)
+BOULDER_SEED = 5
+
+
+def read_glb(path):
+    """Positions (n x 3: metres east, up, south) and triangles (m x 3) of a glTF binary's first mesh."""
+    import struct
+    b = open(path, 'rb').read()
+    jl = struct.unpack('<I', b[12:16])[0]
+    j = json.loads(b[20:20 + jl])
+    bin_ = b[20 + jl + 8:]
+
+    def acc(i):
+        a = j['accessors'][i]
+        bv = j['bufferViews'][a['bufferView']]
+        n = {'SCALAR': 1, 'VEC2': 2, 'VEC3': 3}[a['type']]
+        dt = {5126: np.float32, 5125: np.uint32, 5123: np.uint16}[a['componentType']]
+        o = bv.get('byteOffset', 0) + a.get('byteOffset', 0)
+        v = np.frombuffer(bin_, dt, a['count'] * n, o)
+        return v.reshape(-1, n) if n > 1 else v
+
+    p = j['meshes'][0]['primitives'][0]
+    return acc(p['attributes']['POSITION']).astype(np.float64), acc(p['indices']).reshape(-1, 3).astype(np.int64)
+
+
+def stream_layer(export, size):
+    """layer_stream.png: where the water runs (its surface slopes) - build_course.py lays pebbles in
+    the bottom of a stream, silt and mud in a pond. A soft field like the other layers."""
+    v, t = read_glb(os.path.join(export, 'water.glb'))
+    a, b, c = v[t[:, 0]], v[t[:, 1]], v[t[:, 2]]
+    n = np.cross(b - a, c - a)
+    n /= np.linalg.norm(n, axis=1, keepdims=True) + 1e-12
+    slope = np.hypot(n[:, 0], n[:, 2]) / np.maximum(np.abs(n[:, 1]), 1e-6)
+    running = slope > STREAM_SLOPE
+    mpp = size / SIZE
+    mask = np.zeros((SIZE, SIZE), np.float32)
+    for pts in (a[running], b[running], c[running], (a[running] + b[running] + c[running]) / 3):
+        i = np.clip((pts[:, 0] / mpp).astype(int), 0, SIZE - 1)
+        j = np.clip((pts[:, 2] / mpp).astype(int), 0, SIZE - 1)
+        mask[j, i] = 1
+    # (the triangles are about a metre: fill between their corners, then soften)
+    mask = (box_blur(mask, 2) > 0.02).astype(np.float32)
+    field = mask
+    for _ in range(3):
+        field = box_blur(field, max(1, int(round(2.0 / mpp))))
+    Image.fromarray(np.clip(field * 255 + 0.5, 0, 255).astype(np.uint8), 'L').save(os.path.join(export, 'layer_stream.png'))
+    print('layer_stream.png: %.2f%% of the landscape, %d of %d water triangles run' % (100 * mask.mean(), running.sum(), len(t)))
+    return field
+
+
+def boulders(export, meta, size, stream):
+    """boulders.json: big stones along the creeks' banks and in their beds (a few by the ponds),
+    in groups - one large stone with smaller ones round it. Each [x, y, z (cm: east, south, up from
+    the heightmap's base), size (cm across), yaw, how flat (z scale), which stone]."""
+    wpath = os.path.join(export, 'layer_water.png')
+    if not os.path.exists(wpath):
+        return
+    w = np.asarray(Image.open(wpath).convert('L'), np.float32) / 255
+    if w.shape != (SIZE, SIZE):
+        w = np.asarray(Image.fromarray((w * 255).astype(np.uint8)).resize((SIZE, SIZE), Image.BILINEAR), np.float32) / 255
+    hm = np.asarray(Image.open(os.path.join(export, 'heightmap.png')), np.float64) / 65535 * meta['heightRangeMetres'] * 100
+    hn = hm.shape[0]
+    mpp = size / SIZE
+    rng = np.random.default_rng(BOULDER_SEED)
+
+    def height(xm, zm):
+        fx, fz = xm / size * (hn - 1), zm / size * (hn - 1)
+        i, j = min(int(fx), hn - 2), min(int(fz), hn - 2)
+        u, v = fx - i, fz - j
+        return (hm[j, i] * (1 - u) * (1 - v) + hm[j, i + 1] * u * (1 - v) + hm[j + 1, i] * (1 - u) * v + hm[j + 1, i + 1] * u * v)
+
+    # the shore: the water's field near its outline (0.5), a little either side
+    jj, ii = np.nonzero((w > 0.42) & (w < 0.6))
+    order = rng.permutation(len(jj))
+    taken = {}
+    out = []
+    cell = 4.0
+    for k in order:
+        j, i = jj[k], ii[k]
+        kind = 'stream' if stream[j, i] > 0.3 else 'pond'
+        if rng.random() > BOULDER_CHANCE[kind] * 0.02:
+            continue
+        xm, zm = (i + 0.5) * mpp, (j + 0.5) * mpp
+        gx, gz = int(xm / cell), int(zm / cell)
+        sp = BOULDER_SPACING_M[kind]
+        r = int(np.ceil(sp / cell))
+        near = False
+        for dx in range(-r, r + 1):
+            for dz in range(-r, r + 1):
+                for (px, pz) in taken.get((gx + dx, gz + dz), ()):
+                    if (px - xm) ** 2 + (pz - zm) ** 2 < sp * sp:
+                        near = True
+        if near:
+            continue
+        taken.setdefault((gx, gz), []).append((xm, zm))
+        big = rng.uniform(*BOULDER_SIZE_M) * (1.0 if kind == 'stream' else 0.8)
+        group = [(xm, zm, big)]
+        for _ in range(rng.integers(BOULDER_SMALL[0], BOULDER_SMALL[1] + 1)):
+            ang, d = rng.uniform(0, 2 * np.pi), rng.uniform(0.5, 1.4) * big + 0.3
+            sx, sz = xm + np.cos(ang) * d, zm + np.sin(ang) * d
+            pi_, pj = int(sx / mpp), int(sz / mpp)
+            if 0 <= pi_ < SIZE and 0 <= pj < SIZE and 0.36 < w[pj, pi_] < 0.75:
+                group.append((sx, sz, big * rng.uniform(0.25, 0.6)))
+        for sx, sz, d in group:
+            # (the pivot is the stone's middle: half of it or a little more below the ground)
+            z = height(sx, sz) - d * 100 * rng.uniform(0.0, 0.12)
+            out.append([round(sx * 100, 1), round(sz * 100, 1), round(z, 1), round(d * 100, 1),
+                        round(rng.uniform(0, 360), 1), round(rng.uniform(0.5, 0.85), 2), int(rng.integers(0, 6))])
+    json.dump(out, open(os.path.join(export, 'boulders.json'), 'w'))
+    print('boulders.json: %d stones in %d groups' % (len(out), sum(len(v) for v in taken.values())))
 
 
 if __name__ == '__main__':

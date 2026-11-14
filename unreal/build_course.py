@@ -28,7 +28,7 @@ EXPORT_DIR = os.environ.get("OTG_EXPORT_DIR") or r"C:\Users\rartz\Desktop\Claude
 
 # Which parts to build on this run (False: leave what's in the level as it is). Building only what
 # changed is much quicker: the ground's material takes the longest (Unreal compiles its shaders).
-BUILD = {"ground": True, "trees": True, "water": True, "markers": True, "props": True}
+BUILD = {"ground": True, "trees": True, "water": True, "boulders": True, "markers": True, "props": True}
 if os.environ.get("OTG_EXPORT_DIR"):
     BUILD = {k: True for k in BUILD}
 # Imported pictures and models are reused on later runs; True imports them all again (after a new
@@ -51,14 +51,31 @@ BED_TILE_M = 1.3
 BED_BIG = 2.4
 BED_PATCH_M = 9.0
 BED_SILT = (0.30, 0.26, 0.20)
-BED_SILT_MAX = 0.55
+BED_SILT_MAX = 0.4
 BED_TINT = (0.95, 0.92, 0.86)
 BED_DEEP = 0.7
+# Pebbles lie only on a stream's flat bottom (layer_stream.png, from derive_layers.py): where the
+# ground's normal is steeper than BED_FLAT (its upward part, the lower value: fully mud; the higher:
+# fully stones, wavering a little from place to place), and in ponds and on the banks it's mud
+# (make_bed_texture.py's creekmud) - with a few gravel patches in a pond's shallows (POND_GRAVEL)
+BED_FLAT = (0.955, 0.985)
+BED_INNER = (0.54, 0.6)   # (and only this far into the water: the water's field, 0.5 on the edge, 1 three metres in)
+POND_GRAVEL = 0.45
+MUD_TINT = (0.95, 0.9, 0.85)
+# The bank round the water: bare wet mud for up to BANK_M metres out from the water's edge, the width
+# wandering along the shore and in some stretches none (grass to the edge); BANK_DARK: how much darker
+# the wet mud is than the dry
+BANK_M = 0.9
+BANK_DARK = 0.7
 BED_TEXTURES = os.path.normpath(os.path.join(os.path.dirname(os.path.dirname(GAME_TEXTURES)), "unreal", "textures"))
 # The game's turf colours (linear; scene.js terrain shader): the photo gives only light and shade on
 # the grass, the colour is the turf's own - deep, even greens rather than the photo's lime and grey
-TURF = {"fairway": (0.10, 0.18, 0.03), "green": (0.085, 0.2, 0.04), "rough": (0.05, 0.08, 0.016), "bunker": (0.52, 0.41, 0.25),
-        "water": (0.03, 0.03, 0.018)}   # (the pond floor under Unreal's water: dark silt, not the photo's pale water)
+TURF = {"fairway": (0.058, 0.105, 0.028), "green": (0.05, 0.115, 0.03), "rough": (0.045, 0.066, 0.018), "bunker": (0.52, 0.41, 0.25),
+        "water": (0.03, 0.03, 0.018),   # (the pond floor under Unreal's water: dark silt, not the photo's pale water)
+        "native": (0.085, 0.095, 0.035)}   # (under the tall grass: its own mix of green and straw, so it carries on when the blades end)
+# The photo's light and shade on the turf: its brightness over 0.3, kept within these (a narrower
+# range: an evener fairway, less of the photo's blotches)
+TURF_SHADE = (0.8, 1.2)
 TURF_AMOUNT = 0.88        # how much of the turf colour over the photo's (the rest the photo's own)
 WET_BANK = (0.4, 0.55)   # the ground darkens towards the water from 0.6 m out (mask 0.4), to this much at the edge
 EDGE_SOFT_M = 0.3         # how wide the blend is at the edge of each surface
@@ -84,18 +101,24 @@ UE_CONIFER_NAMES = ("Tree_", "SM_")
 # (linear: root, tip, dry tips and their share). More blades, patches and distance cost frame rate.
 TURF_GRASS = {
     "rough": {"masks": ["rough"], "height_cm": (5.0, 10.0), "width_mm": (3.0, 5.5), "lean": 0.45, "blades": 300,
-              "patch_cm": 30, "density": 2400, "draw_m": (65, 90),
-              "root": (0.025, 0.04, 0.008), "tip": (0.11, 0.17, 0.025), "dry": (0.28, 0.24, 0.08), "dry_share": 0.07, "vary": 0.22},
-    "fairway": {"masks": ["fairway", "tee"], "height_cm": (1.4, 2.4), "width_mm": (2.0, 3.0), "lean": 0.25, "blades": 420,
-                "patch_cm": 24, "density": 2200, "draw_m": (25, 35),
-                "root": (0.045, 0.08, 0.012), "tip": (0.17, 0.28, 0.035), "dry": (0.22, 0.24, 0.06), "dry_share": 0.02, "vary": 0.15},
+              "patch_cm": 30, "density": 2400, "draw_m": (70, 100),
+              "root": (0.02, 0.032, 0.008), "tip": (0.072, 0.105, 0.024), "dry": (0.2, 0.18, 0.08), "dry_share": 0.05, "vary": 0.2},
+    # (a fairway is mown short and even: blades all of a height, the patches on a grid with little
+    # jitter, close enough to cover the ground, and the photo's blotches mostly left out)
+    "fairway": {"masks": ["fairway", "tee"], "height_cm": (1.5, 1.9), "width_mm": (2.0, 2.8), "lean": 0.12, "blades": 480,
+                "patch_cm": 24, "density": 2600, "draw_m": (30, 42), "jitter": 0.3, "scale": (0.95, 1.05), "shade": (0.88, 1.12),
+                "root": (0.03, 0.052, 0.012), "tip": (0.075, 0.13, 0.03), "dry": (0.13, 0.14, 0.05), "dry_share": 0.01, "vary": 0.08},
     # Tall wild grass (fescue) where the web game has deep rough and native grass - under the trees
     # and out of play (layer_native.png, from derive_layers.py): clumps of long thin blades, some
     # gone to straw, many carrying a seed head
     "native": {"masks": ["native"], "height_cm": (35.0, 75.0), "width_mm": (2.0, 3.5), "lean": 0.65, "blades": 110,
-               "patch_cm": 60, "density": 320, "draw_m": (90, 130), "clumps": 4, "clump_cm": 9, "seed_share": 0.3,
-               "root": (0.03, 0.05, 0.01), "tip": (0.13, 0.19, 0.04), "dry": (0.4, 0.33, 0.13), "dry_share": 0.18, "vary": 0.25},
+               "patch_cm": 60, "density": 320, "draw_m": (140, 200), "clumps": 4, "clump_cm": 9, "seed_share": 0.3,
+               "root": (0.025, 0.04, 0.01), "tip": (0.09, 0.125, 0.035), "dry": (0.3, 0.25, 0.11), "dry_share": 0.2, "vary": 0.25},
 }
+# Beyond the first of its draw_m distances a blade shrinks down into the ground, gone by
+# GRASS_FADE of the way to the second (where Unreal stops drawing it): the grass thins out into the
+# ground's own colour instead of popping in and out as you move
+GRASS_FADE = 0.9
 
 
 def load(name):
@@ -293,7 +316,7 @@ def build_ground(land):
     N = meta["samples"]
     photo = import_texture(os.path.join(EXPORT_DIR, "photo.jpg"), "T_CoursePhoto")
     masks = {k: import_texture(os.path.join(EXPORT_DIR, "layer_%s.png" % k), "T_Mask_" + k, "mask")
-             for k in ("fairway", "green", "tee", "bunker", "water", "rough", "native") if exists("layer_%s.png" % k)}
+             for k in ("fairway", "green", "tee", "bunker", "water", "rough", "native", "stream") if exists("layer_%s.png" % k)}
     tex = {}
     for k in ("lawn", "rough", "sand"):
         tex[k] = import_texture(os.path.join(GAME_TEXTURES, k + "_color.jpg"), "T_%s_color" % k)
@@ -306,6 +329,12 @@ def build_ground(land):
     else:
         warn("No stream-bed pebbles (run make_bed_texture.py): the bed is plain rock")
         tex["bed"], tex["bed_n"] = tex["rock"], tex["sand_n"]
+    if os.path.exists(os.path.join(BED_TEXTURES, "creekmud_color.png")):
+        tex["mud"] = import_texture(os.path.join(BED_TEXTURES, "creekmud_color.png"), "T_creekmud_color")
+        tex["mud_n"] = import_texture(os.path.join(BED_TEXTURES, "creekmud_normal.png"), "T_creekmud_normal", "normal")
+    else:
+        warn("No mud for the banks and ponds (run make_bed_texture.py): pebbles everywhere")
+        tex["mud"], tex["mud_n"] = tex["bed"], tex["bed_n"]
 
     mat = new_material("M_CourseGround")
     E = lambda cls, x, y: mel.create_material_expression(mat, cls, x, y)
@@ -386,13 +415,19 @@ def build_ground(land):
     mel.connect_material_expressions(const3((0.2126, 0.7152, 0.0722), -1700, -550), "", lum, "B")
     # (between 0.65 and 1.35: a Max then a Min, whose inputs are plain A and B)
     shade = op(unreal.MaterialExpressionMin,
-               op(unreal.MaterialExpressionMax, op(unreal.MaterialExpressionDivide, lum, const(0.3, -1500, -450), -1300, -600), const(0.65, -1300, -450), -1200, -600),
-               const(1.35, -1200, -450), -1100, -600)
+               op(unreal.MaterialExpressionMax, op(unreal.MaterialExpressionDivide, lum, const(0.3, -1500, -450), -1300, -600), const(TURF_SHADE[0], -1300, -450), -1200, -600),
+               const(TURF_SHADE[1], -1200, -450), -1100, -600)
     fair_tee = op(unreal.MaterialExpressionAdd, m["fairway"], m["tee"], -1500, -300, "", "")
     turf = None
     for i, (k, w, wout) in enumerate((("fairway", fair_tee, ""), ("green", m["green"], ""), ("rough", m["rough"], ""), ("bunker", m["bunker"], ""), ("water", m["water"], ""))):
         t = op(unreal.MaterialExpressionMultiply, const3(TURF[k], -1300, -300 + i * 120), w, -1100, -300 + i * 120, "", wout)
         turf = t if turf is None else op(unreal.MaterialExpressionAdd, turf, t, -900, -300 + i * 120)
+    if "native" in m:
+        nat = E(unreal.MaterialExpressionLinearInterpolate, -850, -250)
+        mel.connect_material_expressions(turf, "", nat, "A")
+        mel.connect_material_expressions(const3(TURF["native"], -1000, -200), "", nat, "B")
+        mel.connect_material_expressions(op(unreal.MaterialExpressionMultiply, m["native"], const(0.85, -1000, -150), -950, -150), "", nat, "Alpha")
+        turf = nat
     turf = op(unreal.MaterialExpressionMultiply, turf, shade, -800, -400)
     amount = const(TURF_AMOUNT, -800, -100)
     graded = E(unreal.MaterialExpressionLinearInterpolate, -600, -300)
@@ -414,6 +449,7 @@ def build_ground(land):
     # light and dark), the stones' relief, darker toward the middle - in place of the ground's own
     # colours wherever it's water (there the photo shows the trees over a creek, and the rough's
     # green runs under it)
+    bank_amt = {}
     try:
         bed_uv = coords(BED_TILE_M / meta["metresPerSample"], 3400)
         big_uv = coords(BED_TILE_M * BED_BIG / meta["metresPerSample"], 3500)
@@ -441,6 +477,49 @@ def build_ground(land):
         mel.connect_material_expressions(large, "RGB", bed, "B")
         mel.connect_material_expressions(bigger, "", bed, "Alpha")
         bed = op(unreal.MaterialExpressionMultiply, bed, const3(BED_TINT, -1400, 3700), -1250, 3500)
+        # mud: the pond floor, a stream's sloping sides and the bare bank (lighter and darker in
+        # large patches)
+        mud_uv = coords(BED_TILE_M * 1.7 / meta["metresPerSample"], 4500)
+        mud = sample(tex["mud"], mud_uv, -1800, 4500, S.SAMPLERTYPE_COLOR)
+        mud_n = sample(tex["mud_n"], mud_uv, -1800, 4700, S.SAMPLERTYPE_NORMAL)
+        mvar = E(unreal.MaterialExpressionLinearInterpolate, -1500, 4600)
+        mel.connect_material_expressions(const(0.78, -1650, 4600), "", mvar, "A")
+        mel.connect_material_expressions(const(1.15, -1650, 4650), "", mvar, "B")
+        mel.connect_material_expressions(patchy(silt_p, 0.24, 0.46, -1650, 4800), "", mvar, "Alpha")
+        mud_c = op(unreal.MaterialExpressionMultiply, op(unreal.MaterialExpressionMultiply, mud, const3(MUD_TINT, -1600, 4700), -1450, 4500, "RGB", ""), mvar, -1350, 4550)
+        # where the stones lie: a stream's flat bottom (the ground's slope, the limit wavering with
+        # the patches), and a few gravel patches in a pond
+        vn = E(unreal.MaterialExpressionVertexNormalWS, -1900, 5000)
+        nz = E(unreal.MaterialExpressionDotProduct, -1750, 5000)   # (its upward part)
+        mel.connect_material_expressions(vn, "", nz, "A")
+        mel.connect_material_expressions(const3((0, 0, 1), -1900, 5100), "", nz, "B")
+        wav = op(unreal.MaterialExpressionMultiply, op(unreal.MaterialExpressionSubtract, bigger, const(0.5, -1700, 5150), -1600, 5100), const(0.02, -1600, 5200), -1500, 5100)
+        flat = E(unreal.MaterialExpressionSmoothStep, -1350, 5000)
+        mel.connect_material_expressions(op(unreal.MaterialExpressionAdd, const(BED_FLAT[0], -1500, 4950), wav, -1400, 4950), "", flat, "Min")
+        mel.connect_material_expressions(op(unreal.MaterialExpressionAdd, const(BED_FLAT[1], -1500, 5050), wav, -1400, 5050), "", flat, "Max")
+        mel.connect_material_expressions(nz, "", flat, "Value")
+        if "stream" in raw:
+            streamk = E(unreal.MaterialExpressionSmoothStep, -1350, 5250)
+            mel.connect_material_expressions(const(0.25, -1500, 5250), "", streamk, "Min")
+            mel.connect_material_expressions(const(0.55, -1500, 5300), "", streamk, "Max")
+            mel.connect_material_expressions(raw["stream"], "R", streamk, "Value")
+        else:
+            streamk = const(0.0, -1350, 5250)
+        gravel = op(unreal.MaterialExpressionMultiply, patchy(patches, 0.40, 0.47, -1650, 5400), const(POND_GRAVEL, -1500, 5450), -1350, 5400)
+        # (and only in the deeper middle of the channel: its edges are mud too, the line wandering)
+        inner = E(unreal.MaterialExpressionSmoothStep, -1250, 5350)
+        mel.connect_material_expressions(op(unreal.MaterialExpressionAdd, const(BED_INNER[0], -1400, 5350), wav, -1300, 5350), "", inner, "Min")
+        mel.connect_material_expressions(op(unreal.MaterialExpressionAdd, const(BED_INNER[1], -1400, 5400), wav, -1300, 5400), "", inner, "Max")
+        mel.connect_material_expressions(raw["water"], "R", inner, "Value")
+        stones = E(unreal.MaterialExpressionLinearInterpolate, -1200, 5200)
+        mel.connect_material_expressions(gravel, "", stones, "A")
+        mel.connect_material_expressions(op(unreal.MaterialExpressionMultiply, flat, inner, -1250, 5250), "", stones, "B")
+        mel.connect_material_expressions(streamk, "", stones, "Alpha")
+        stony = E(unreal.MaterialExpressionLinearInterpolate, -1100, 3500)
+        mel.connect_material_expressions(mud_c, "", stony, "A")
+        mel.connect_material_expressions(bed, "", stony, "B")
+        mel.connect_material_expressions(stones, "", stony, "Alpha")
+        bed = stony
         silty = op(unreal.MaterialExpressionMultiply, patchy(silt_p, 0.26, 0.44, -1600, 4100), const(BED_SILT_MAX, -1500, 4250), -1400, 4100)
         silted = E(unreal.MaterialExpressionLinearInterpolate, -1150, 3500)
         mel.connect_material_expressions(bed, "", silted, "A")
@@ -457,6 +536,20 @@ def build_ground(land):
         mel.connect_material_expressions(const(BED_DEEP, -1300, 3800), "", dark, "B")
         mel.connect_material_expressions(deep, "", dark, "Alpha")
         bed = op(unreal.MaterialExpressionMultiply, bed, dark, -1050, 3600)
+        # the bank: bare wet mud out from the edge, as wide as the patches say (none in places)
+        lo = op(unreal.MaterialExpressionSubtract, const(0.5, -1000, 5600),
+                op(unreal.MaterialExpressionMultiply, patchy(patches, 0.28, 0.45, -1300, 5700), const(BANK_M / 6.0, -1100, 5750), -1000, 5700), -900, 5600)
+        bank = E(unreal.MaterialExpressionSmoothStep, -800, 5600)
+        mel.connect_material_expressions(lo, "", bank, "Min")
+        mel.connect_material_expressions(const(0.5, -900, 5700), "", bank, "Max")
+        mel.connect_material_expressions(raw["water"], "R", bank, "Value")
+        bank_amt["k"] = bank
+        bank_c = op(unreal.MaterialExpressionMultiply, mud_c, const(BANK_DARK, -800, 5500), -700, 5500)
+        banked = E(unreal.MaterialExpressionLinearInterpolate, -350, -100)
+        mel.connect_material_expressions(base, "", banked, "A")
+        mel.connect_material_expressions(bank_c, "", banked, "B")
+        mel.connect_material_expressions(bank, "", banked, "Alpha")
+        base = banked
         bed_col = E(unreal.MaterialExpressionLinearInterpolate, -250, 0)
         mel.connect_material_expressions(base, "", bed_col, "A")
         mel.connect_material_expressions(bed, "", bed_col, "B")
@@ -464,9 +557,17 @@ def build_ground(land):
         base = bed_col
         # (the stones' relief)
         bed_n = sample(tex["bed_n"], bed_uv, -1800, 4400, S.SAMPLERTYPE_NORMAL)
+        bn = E(unreal.MaterialExpressionLinearInterpolate, -500, 4400)
+        mel.connect_material_expressions(mud_n, "RGB", bn, "A")
+        mel.connect_material_expressions(bed_n, "RGB", bn, "B")
+        mel.connect_material_expressions(stones, "", bn, "Alpha")
+        banked_n = E(unreal.MaterialExpressionLinearInterpolate, -350, 300)
+        mel.connect_material_expressions(normal, "", banked_n, "A")
+        mel.connect_material_expressions(mud_n, "RGB", banked_n, "B")
+        mel.connect_material_expressions(bank, "", banked_n, "Alpha")
         bed_nrm = E(unreal.MaterialExpressionLinearInterpolate, -250, 300)
-        mel.connect_material_expressions(normal, "", bed_nrm, "A")
-        mel.connect_material_expressions(bed_n, "RGB", bed_nrm, "B")
+        mel.connect_material_expressions(banked_n, "", bed_nrm, "A")
+        mel.connect_material_expressions(bn, "", bed_nrm, "B")
         mel.connect_material_expressions(m["water"], "", bed_nrm, "Alpha")
         normal = bed_nrm
     except Exception:
@@ -507,6 +608,11 @@ def build_ground(land):
             mel.connect_material_expressions(op(unreal.MaterialExpressionMultiply,
                                                 op(unreal.MaterialExpressionSubtract, const(0.45, -800, 1000), raw["water"], -700, 1000, "", "R"),
                                                 const(10.0, -700, 1050), -650, 1000), "", dry, "")
+            # (nor on the bare mud of the bank)
+            if "k" in bank_amt:
+                bare = E(unreal.MaterialExpressionOneMinus, -650, 1100)
+                mel.connect_material_expressions(bank_amt["k"], "", bare, "")
+                dry = op(unreal.MaterialExpressionMultiply, dry, bare, -580, 1000)
             mel.connect_material_expressions(op(unreal.MaterialExpressionMultiply, sat, dry, -550, 900), "", go, kind.capitalize())
         log("Turf: on %s" % ", ".join(TURF_GRASS))
     except Exception:
@@ -696,9 +802,10 @@ def turf_material(kind, land_size_cm):
     lum = E(unreal.MaterialExpressionDotProduct, -1300, 600)
     mel.connect_material_expressions(ph, "RGB", lum, "A")
     mel.connect_material_expressions(const3((0.2126, 0.7152, 0.0722), -1500, 800), "", lum, "B")
+    lo_hi = TURF_GRASS[kind].get("shade", (0.7, 1.3))
     shade = op(unreal.MaterialExpressionMin,
-               op(unreal.MaterialExpressionMax, op(unreal.MaterialExpressionDivide, lum, const(0.3, -1300, 750), -1150, 600), const(0.7, -1150, 750), -1000, 600),
-               const(1.3, -1000, 750), -850, 600)
+               op(unreal.MaterialExpressionMax, op(unreal.MaterialExpressionDivide, lum, const(0.3, -1300, 750), -1150, 600), const(lo_hi[0], -1150, 750), -1000, 600),
+               const(lo_hi[1], -1000, 750), -850, 600)
     # the blade's colour: root to tip (red: how far up), a dry tip on a few (blue), each blade
     # lighter or darker (green: its own random value)
     cfg = TURF_GRASS[kind]
@@ -727,6 +834,29 @@ def turf_material(kind, land_size_cm):
     mel.connect_material_property(op(unreal.MaterialExpressionMultiply, col, const(0.7, -650, 560), -500, 520), "", unreal.MaterialProperty.MP_SUBSURFACE_COLOR)
     mel.connect_material_property(const(0.62, -500, 700), "", unreal.MaterialProperty.MP_ROUGHNESS)
     mel.connect_material_property(const(0.35, -500, 780), "", unreal.MaterialProperty.MP_SPECULAR)
+    # Far off, the blades shrink down into the ground (their height above the patch's foot, scaled
+    # by how far into the fade the camera is), so the grass thins away instead of popping
+    try:
+        d0 = cfg["draw_m"][0] * 100.0
+        d1 = d0 + (cfg["draw_m"][1] * 100.0 - d0) * GRASS_FADE
+        cam = E(unreal.MaterialExpressionCameraPositionWS, -1400, 1000)
+        wpos = E(unreal.MaterialExpressionWorldPosition, -1400, 1100)
+        dist = E(unreal.MaterialExpressionDistance, -1250, 1000)
+        mel.connect_material_expressions(cam, "", dist, "A")
+        mel.connect_material_expressions(wpos, "", dist, "B")
+        fade = E(unreal.MaterialExpressionSmoothStep, -1100, 1000)
+        mel.connect_material_expressions(const(d0, -1250, 1100), "", fade, "Min")
+        mel.connect_material_expressions(const(d1, -1250, 1150), "", fade, "Max")
+        mel.connect_material_expressions(dist, "", fade, "Value")
+        lp = E(unreal.MaterialExpressionLocalPosition, -1250, 1250)
+        lz = E(unreal.MaterialExpressionDotProduct, -1100, 1250)   # (the height above the patch's foot)
+        mel.connect_material_expressions(lp, "", lz, "A")
+        mel.connect_material_expressions(const3((0, 0, 1), -1250, 1350), "", lz, "B")
+        down = op(unreal.MaterialExpressionMultiply, lz, fade, -950, 1200)
+        wpo = op(unreal.MaterialExpressionMultiply, const3((0, 0, -1), -850, 1300), down, -700, 1200)
+        mel.connect_material_property(wpo, "", unreal.MaterialProperty.MP_WORLD_POSITION_OFFSET)
+    except Exception:
+        warn("Turf %s: no distance fade (%s)" % (kind, traceback.format_exc().splitlines()[-1]))
     mel.recompile_material(mat)
     unreal.EditorAssetLibrary.save_loaded_asset(mat)
     return mat
@@ -769,8 +899,8 @@ def make_turf_type(kind):
                       ("start_cull_distance", unreal.PerPlatformInt(default=int(cfg["draw_m"][0] * 100))),
                       ("end_cull_distance", unreal.PerPlatformInt(default=int(cfg["draw_m"][1] * 100))),
                       ("random_rotation", True), ("align_to_surface", True), ("use_grid", True),
-                      ("placement_jitter", 1.0), ("scaling", unreal.GrassScaling.UNIFORM),
-                      ("scale_x", unreal.FloatInterval(0.85, 1.2)),
+                      ("placement_jitter", float(cfg.get("jitter", 1.0))), ("scaling", unreal.GrassScaling.UNIFORM),
+                      ("scale_x", unreal.FloatInterval(*cfg.get("scale", (0.85, 1.2)))),
                       ("cast_dynamic_shadow", cfg.get("shadows", False)), ("receives_decals", False)):
         try:
             v.set_editor_property(prop, val)
@@ -928,6 +1058,142 @@ def hash01(x, y, k):
     return v - math.floor(v)
 
 
+# The Fab tree packs' own materials are instances of a Megascans master (/Game/MSPresets/
+# MS_Foliage_Material/MA_Foliage) that isn't in the project: without it each tree draws with the
+# fallback material - its leaf cards solid and dark, the crowns near-black whatever the light. Where
+# a material's master is missing, the trees get these instead, carrying that material's own
+# textures (Albedo; Mask: red the leaf's outline, green roughness, blue how much light shows through;
+# Normal). LEAF_TINT x the albedo, LEAF_THROUGH: the light through the leaves, LEAF_SWAY: how far a
+# crown sways (cm at 10 m up)
+LEAF_TINT = (1.15, 1.2, 1.0)
+LEAF_THROUGH = (0.55, 0.7, 0.25)
+LEAF_SWAY = 4.0
+BARK_TINT = (1.0, 0.97, 0.92)
+
+
+def has_master(mi):
+    p = mi
+    while isinstance(p, unreal.MaterialInstance):
+        p = p.get_editor_property("parent")
+    return isinstance(p, unreal.Material)
+
+
+def tree_parent_material(kind):
+    """M_TreeLeaves / M_TreeBark: the parents of the stand-in materials, their textures parameters."""
+    mat = new_material("M_Tree" + kind.capitalize())
+    E = lambda cls, x, y: mel.create_material_expression(mat, cls, x, y)
+
+    def const(v, x, y):
+        c = E(unreal.MaterialExpressionConstant, x, y)
+        c.set_editor_property("r", v)
+        return c
+
+    def const3(rgb, x, y):
+        c = E(unreal.MaterialExpressionConstant3Vector, x, y)
+        c.set_editor_property("constant", unreal.LinearColor(rgb[0], rgb[1], rgb[2], 1))
+        return c
+
+    def op(cls, a, b, x, y, a_out="", b_out=""):
+        n = E(cls, x, y)
+        mel.connect_material_expressions(a, a_out, n, "A")
+        mel.connect_material_expressions(b, b_out, n, "B")
+        return n
+
+    def param(name, sampler, y):
+        t = E(unreal.MaterialExpressionTextureSampleParameter2D, -900, y)
+        t.set_editor_property("parameter_name", name)
+        t.set_editor_property("sampler_type", sampler)
+        t.set_editor_property("texture", unreal.load_asset("/Engine/EngineResources/DefaultTexture") if sampler != unreal.MaterialSamplerType.SAMPLERTYPE_NORMAL
+                              else unreal.load_asset("/Engine/EngineMaterials/DefaultNormal"))
+        return t
+
+    S = unreal.MaterialSamplerType
+    alb = param("Albedo", S.SAMPLERTYPE_COLOR, 0)
+    msk = param("Mask", S.SAMPLERTYPE_MASKS, 300)
+    nrm = param("Normal", S.SAMPLERTYPE_NORMAL, 600)
+    mel.connect_material_property(nrm, "RGB", unreal.MaterialProperty.MP_NORMAL)
+    if kind == "leaves":
+        mat.set_editor_property("two_sided", True)
+        mat.set_editor_property("blend_mode", unreal.BlendMode.BLEND_MASKED)
+        first_ok(mat, ("shading_model",), unreal.MaterialShadingModel.MSM_TWO_SIDED_FOLIAGE)
+        mat.set_editor_property("opacity_mask_clip_value", 0.4)
+        col = op(unreal.MaterialExpressionMultiply, alb, const3(LEAF_TINT, -900, -150), -600, 0, "RGB", "")
+        mel.connect_material_property(col, "", unreal.MaterialProperty.MP_BASE_COLOR)
+        mel.connect_material_property(msk, "R", unreal.MaterialProperty.MP_OPACITY_MASK)
+        rough = E(unreal.MaterialExpressionLinearInterpolate, -500, 350)
+        mel.connect_material_expressions(const(0.45, -650, 350), "", rough, "A")
+        mel.connect_material_expressions(const(0.85, -650, 400), "", rough, "B")
+        mel.connect_material_expressions(msk, "G", rough, "Alpha")
+        mel.connect_material_property(rough, "", unreal.MaterialProperty.MP_ROUGHNESS)
+        mel.connect_material_property(const(0.35, -500, 500), "", unreal.MaterialProperty.MP_SPECULAR)
+        through = op(unreal.MaterialExpressionMultiply, op(unreal.MaterialExpressionMultiply, col, const3(LEAF_THROUGH, -650, 200), -500, 150), msk, -400, 200, "", "B")
+        mel.connect_material_property(through, "", unreal.MaterialProperty.MP_SUBSURFACE_COLOR)
+        # a slow sway, more the higher up (the tree's foot is its pivot), each tree its own phase
+        try:
+            lp = E(unreal.MaterialExpressionLocalPosition, -1200, 900)
+            lz = E(unreal.MaterialExpressionDotProduct, -1050, 900)
+            mel.connect_material_expressions(lp, "", lz, "A")
+            mel.connect_material_expressions(const3((0, 0, 1), -1200, 850), "", lz, "B")
+            rnd = E(unreal.MaterialExpressionPerInstanceRandom, -1200, 1000)
+            tm = E(unreal.MaterialExpressionTime, -1200, 1100)
+            ph = op(unreal.MaterialExpressionAdd, op(unreal.MaterialExpressionMultiply, tm, const(0.9, -1100, 1150), -1000, 1100), op(unreal.MaterialExpressionMultiply, rnd, const(6.28, -1100, 1050), -1000, 1000), -900, 1050)
+            sn = E(unreal.MaterialExpressionSine, -800, 1050)
+            sn.set_editor_property("period", 6.283)
+            mel.connect_material_expressions(ph, "", sn, "")
+            amt = op(unreal.MaterialExpressionMultiply, op(unreal.MaterialExpressionMultiply, lz, lz, -900, 900), const(LEAF_SWAY / 1000000.0, -900, 950), -800, 900)
+            sway = op(unreal.MaterialExpressionMultiply, amt, sn, -700, 950)
+            wpo = op(unreal.MaterialExpressionMultiply, const3((0.8, 0.6, 0), -700, 1050), sway, -550, 950)
+            mel.connect_material_property(wpo, "", unreal.MaterialProperty.MP_WORLD_POSITION_OFFSET)
+        except Exception:
+            warn("Tree leaves: no sway (%s)" % traceback.format_exc().splitlines()[-1])
+    else:
+        ao = E(unreal.MaterialExpressionLinearInterpolate, -600, 200)
+        mel.connect_material_expressions(const(0.5, -750, 200), "", ao, "A")
+        mel.connect_material_expressions(const(1.0, -750, 250), "", ao, "B")
+        mel.connect_material_expressions(msk, "R", ao, "Alpha")
+        col = op(unreal.MaterialExpressionMultiply, op(unreal.MaterialExpressionMultiply, alb, const3(BARK_TINT, -900, -150), -600, 0, "RGB", ""), ao, -450, 0)
+        mel.connect_material_property(col, "", unreal.MaterialProperty.MP_BASE_COLOR)
+        mel.connect_material_property(const(0.85, -500, 400), "", unreal.MaterialProperty.MP_ROUGHNESS)
+        mel.connect_material_property(const(0.3, -500, 500), "", unreal.MaterialProperty.MP_SPECULAR)
+    mel.recompile_material(mat)
+    unreal.EditorAssetLibrary.save_loaded_asset(mat)
+    return mat
+
+
+_tree_parents = {}
+_tree_standins = {}
+
+
+def tree_standin(mi):
+    """The stand-in for a pack material whose master is missing (None if it has its master, or it's
+    the impostor's, which Nanite trees don't draw)."""
+    if mi is None or not isinstance(mi, unreal.MaterialInstance) or has_master(mi):
+        return None
+    key = mi.get_path_name()
+    if key in _tree_standins:
+        return _tree_standins[key]
+    texs = {str(p.parameter_info.name): p.parameter_value for p in mi.get_editor_property("texture_parameter_values")}
+    if "Impostor" in key or "Albedo" not in texs:
+        _tree_standins[key] = None
+        return None
+    kind = "leaves" if "TwoSided" in key or "Leaves" in key else "bark"
+    if kind not in _tree_parents:
+        _tree_parents[kind] = tree_parent_material(kind)
+    name = "MI_Standin_" + mi.get_name()
+    path = CONTENT + "/Trees/" + name
+    mic = unreal.load_asset(path) if unreal.EditorAssetLibrary.does_asset_exist(path) else \
+        assets.create_asset(name, CONTENT + "/Trees", unreal.MaterialInstanceConstant, unreal.MaterialInstanceConstantFactoryNew())
+    mel.set_material_instance_parent(mic, _tree_parents[kind])
+    for pname in ("Albedo", "Mask", "Normal"):
+        t = texs.get(pname)
+        if t:
+            mel.set_material_instance_texture_parameter_value(mic, pname, t)
+    unreal.EditorAssetLibrary.save_loaded_asset(mic)
+    _tree_standins[key] = mic
+    log("Trees: %s stands in for %s (its master material is missing)" % (name, mi.get_name()))
+    return mic
+
+
 def plant_ue_broadleaf(actor, trees, choices):
     """Each tree: one of the three meshes nearest its height (picked by its position, so the woods
     mix), scaled to the game's height within reason, turned at random."""
@@ -940,7 +1206,14 @@ def plant_ue_broadleaf(actor, trees, choices):
         yaw = hash01(t["x"], t["y"], 2.9) * 360
         by_mesh.setdefault(mesh, []).append(xf(at(t["x"], t["y"], t["z"] - 10), yaw, s, s, s))
     for mesh, xs in by_mesh.items():
-        add_instances(actor, mesh, xs, mesh.get_name(), TREE_CULL_CM)
+        comp = add_instances(actor, mesh, xs, mesh.get_name(), TREE_CULL_CM)
+        try:
+            for i, sm in enumerate(mesh.get_editor_property("static_materials")):
+                sub = tree_standin(sm.get_editor_property("material_interface"))
+                if sub:
+                    comp.set_material(i, sub)
+        except Exception:
+            warn("Trees: stand-in materials not set on %s:\n%s" % (mesh.get_name(), traceback.format_exc()))
         log("Trees: %s x %d" % (mesh.get_name(), len(xs)))
     return sum(len(v) for v in by_mesh.values())
 
@@ -1610,6 +1883,217 @@ def build_props():
         log("Built: %s, %d triangles (fit %.0f cm)" % (kind, info["triangles"], err))
 
 
+# ------------------------------------------------------------------ boulders
+
+BOULDER_KINDS = 6         # different stones (boulders.json picks one for each)
+BOULDER_TINT = (0.95, 0.9, 0.82)   # x the rock texture (warmer, less blue)
+BOULDER_MOSS = (0.035, 0.05, 0.02)  # on their tops, here and there
+BOULDER_CULL_CM = (35000, 45000)
+
+
+def rock_mesh(seed):
+    """A stone a metre across: a sphere pushed out in a few broad lumps and cut by a few flat
+    faces (as a broken, weathered stone is), as positions, normals, colours and triangles. The
+    colour's red is how far out each point is (the material darkens the hollows)."""
+    import math, random
+    rnd = random.Random(seed)
+    t = (1 + 5 ** 0.5) / 2
+    verts = [(-1, t, 0), (1, t, 0), (-1, -t, 0), (1, -t, 0), (0, -1, t), (0, 1, t), (0, -1, -t), (0, 1, -t),
+             (t, 0, -1), (t, 0, 1), (-t, 0, -1), (-t, 0, 1)]
+    verts = [tuple(c / math.sqrt(sum(x * x for x in v)) for c in v) for v in verts]
+    faces = [(0, 11, 5), (0, 5, 1), (0, 1, 7), (0, 7, 10), (0, 10, 11), (1, 5, 9), (5, 11, 4), (11, 10, 2), (10, 7, 6), (7, 1, 8),
+             (3, 9, 4), (3, 4, 2), (3, 2, 6), (3, 6, 8), (3, 8, 9), (4, 9, 5), (2, 4, 11), (6, 2, 10), (8, 6, 7), (9, 8, 1)]
+    for _ in range(3):
+        cache, nf = {}, []
+
+        def mid(a, b):
+            k = (min(a, b), max(a, b))
+            if k not in cache:
+                m = [(verts[a][i] + verts[b][i]) / 2 for i in range(3)]
+                ln = math.sqrt(sum(x * x for x in m))
+                verts.append(tuple(x / ln for x in m))
+                cache[k] = len(verts) - 1
+            return cache[k]
+        for a, b, c in faces:
+            ab, bc, ca = mid(a, b), mid(b, c), mid(c, a)
+            nf += [(a, ab, ca), (b, bc, ab), (c, ca, bc), (ab, bc, ca)]
+        faces = nf
+
+    def rdir():
+        z = rnd.uniform(-1, 1)
+        a = rnd.uniform(0, math.tau)
+        r = math.sqrt(1 - z * z)
+        return (r * math.cos(a), r * math.sin(a), z)
+    lumps = [(rdir(), rnd.uniform(0.08, 0.22), rnd.uniform(2.0, 5.0)) for _ in range(8)]
+    cuts = [(rdir(), rnd.uniform(0.72, 0.9)) for _ in range(rnd.randint(3, 6))]
+    stretch = (rnd.uniform(0.85, 1.25), rnd.uniform(0.75, 1.1), 1.0)
+    pts, outs = [], []
+    for v in verts:
+        r = 0.85
+        for d, a, k in lumps:
+            r += a * max(0.0, sum(v[i] * d[i] for i in range(3))) ** k
+        # (a little roughness)
+        r += 0.025 * math.sin(v[0] * 13 + seed) * math.sin(v[1] * 11) * math.sin(v[2] * 17 + seed * 2)
+        for d, c in cuts:
+            dd = sum(v[i] * d[i] for i in range(3))
+            if dd > 0:
+                r = min(r, c / dd)
+        p = [v[i] * r * stretch[i] for i in range(3)]
+        pts.append(p)
+        outs.append(r)
+    # (to a metre across, in glTF's frame: y up)
+    span = max(max(p[i] for p in pts) - min(p[i] for p in pts) for i in range(3))
+    pts = [(p[0] / span, p[2] / span, p[1] / span) for p in pts]
+    nrm = [[0.0, 0.0, 0.0] for _ in pts]
+    for a, b, c in faces:
+        u = [pts[b][i] - pts[a][i] for i in range(3)]
+        w = [pts[c][i] - pts[a][i] for i in range(3)]
+        n = (u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], u[0] * w[1] - u[1] * w[0])
+        cen = [pts[a][i] + pts[b][i] + pts[c][i] for i in range(3)]
+        if sum(n[i] * cen[i] for i in range(3)) < 0:
+            n = (-n[0], -n[1], -n[2])
+        for k in (a, b, c):
+            for i in range(3):
+                nrm[k][i] += n[i]
+    pos, nn, col, idx = [], [], [], []
+    lo, hi = min(outs), max(outs)
+    for p, n, r in zip(pts, nrm, outs):
+        ln = math.sqrt(sum(x * x for x in n)) or 1.0
+        pos += list(p)
+        nn += [n[0] / ln, n[1] / ln, n[2] / ln]
+        col += [(r - lo) / max(1e-6, hi - lo), rnd.random(), 0.0, 1.0]
+    # (each triangle wound counter-clockwise seen from outside, as glTF's front faces are)
+    for a, b, c in faces:
+        u = [pts[b][i] - pts[a][i] for i in range(3)]
+        w = [pts[c][i] - pts[a][i] for i in range(3)]
+        n = (u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], u[0] * w[1] - u[1] * w[0])
+        cen = [pts[a][i] + pts[b][i] + pts[c][i] for i in range(3)]
+        idx += [a, b, c] if sum(n[i] * cen[i] for i in range(3)) > 0 else [a, c, b]
+    return pos, nn, col, idx
+
+
+def boulder_material():
+    tex = import_texture(os.path.join(GAME_TEXTURES, "rock_color.jpg"), "T_rock_color")
+    mat = new_material("M_Boulder")
+    E = lambda cls, x, y: mel.create_material_expression(mat, cls, x, y)
+
+    def const(v, x, y):
+        c = E(unreal.MaterialExpressionConstant, x, y)
+        c.set_editor_property("r", v)
+        return c
+
+    def const3(rgb, x, y):
+        c = E(unreal.MaterialExpressionConstant3Vector, x, y)
+        c.set_editor_property("constant", unreal.LinearColor(rgb[0], rgb[1], rgb[2], 1))
+        return c
+
+    def op(cls, a, b, x, y, a_out="", b_out=""):
+        n = E(cls, x, y)
+        mel.connect_material_expressions(a, a_out, n, "A")
+        mel.connect_material_expressions(b, b_out, n, "B")
+        return n
+
+    def mask(src, chans, x, y):
+        m = E(unreal.MaterialExpressionComponentMask, x, y)
+        for ch in "rgba":
+            m.set_editor_property(ch, ch in chans)
+        mel.connect_material_expressions(src, "", m, "")
+        return m
+
+    # the rock texture laid on from three sides (triplanar), each weighted by how much the surface faces it
+    wp = op(unreal.MaterialExpressionDivide, E(unreal.MaterialExpressionWorldPosition, -1600, 0), const(180.0, -1600, 100), -1450, 0)
+    vn = E(unreal.MaterialExpressionVertexNormalWS, -1600, 400)
+    total = None
+    wsum = None
+    for k, (uvc, nc) in enumerate((("rg", "b"), ("rb", "g"), ("gb", "r"))):
+        t = E(unreal.MaterialExpressionTextureSample, -1100, k * 250)
+        t.set_editor_property("texture", tex)
+        mel.connect_material_expressions(mask(wp, uvc, -1300, k * 250), "", t, "UVs")
+        a = E(unreal.MaterialExpressionAbs, -1300, 400 + k * 80)
+        mel.connect_material_expressions(mask(vn, nc, -1450, 400 + k * 80), "", a, "")
+        w = op(unreal.MaterialExpressionMultiply, op(unreal.MaterialExpressionMultiply, a, a, -1200, 400 + k * 80), op(unreal.MaterialExpressionMultiply, a, a, -1200, 440 + k * 80), -1100, 400 + k * 80)
+        c = op(unreal.MaterialExpressionMultiply, t, w, -900, k * 250, "RGB", "")
+        total = c if total is None else op(unreal.MaterialExpressionAdd, total, c, -800, k * 250)
+        wsum = w if wsum is None else op(unreal.MaterialExpressionAdd, wsum, w, -1000, 400 + k * 80)
+    rock = op(unreal.MaterialExpressionDivide, total, wsum, -700, 0)
+    # warmer and greyer, darker in the hollows (vertex colour red, carried in the first UVs), each
+    # stone a little lighter or darker (green)
+    uv0 = E(unreal.MaterialExpressionTextureCoordinate, -1100, 700)
+    out_ = mask(uv0, "r", -950, 700)
+    rnd_ = mask(uv0, "g", -950, 760)
+    cav = E(unreal.MaterialExpressionLinearInterpolate, -800, 700)
+    mel.connect_material_expressions(const(0.55, -950, 820), "", cav, "A")
+    mel.connect_material_expressions(const(1.0, -950, 860), "", cav, "B")
+    mel.connect_material_expressions(out_, "", cav, "Alpha")
+    var = op(unreal.MaterialExpressionAdd, const(0.8, -950, 920), op(unreal.MaterialExpressionMultiply, rnd_, const(0.4, -950, 980), -850, 940), -750, 920)
+    lumc = E(unreal.MaterialExpressionDotProduct, -600, 200)
+    mel.connect_material_expressions(rock, "", lumc, "A")
+    mel.connect_material_expressions(const3((0.33, 0.34, 0.33), -700, 250), "", lumc, "B")
+    grey = E(unreal.MaterialExpressionLinearInterpolate, -500, 100)
+    mel.connect_material_expressions(rock, "", grey, "A")
+    mel.connect_material_expressions(lumc, "", grey, "B")
+    mel.connect_material_expressions(const(0.6, -600, 300), "", grey, "Alpha")
+    col = op(unreal.MaterialExpressionMultiply, op(unreal.MaterialExpressionMultiply, op(unreal.MaterialExpressionMultiply, grey, const3(BOULDER_TINT, -500, 300), -400, 100), cav, -300, 200), var, -200, 200)
+    # moss on the tops, patchy (the texture's own light and dark, much larger)
+    up = mask(vn, "b", -1450, 1100)
+    moss_k = E(unreal.MaterialExpressionSmoothStep, -500, 1100)
+    mel.connect_material_expressions(const(0.55, -650, 1150), "", moss_k, "Min")
+    mel.connect_material_expressions(const(0.9, -650, 1200), "", moss_k, "Max")
+    mel.connect_material_expressions(up, "", moss_k, "Value")
+    big = E(unreal.MaterialExpressionTextureSample, -1100, 1300)
+    big.set_editor_property("texture", tex)
+    mel.connect_material_expressions(op(unreal.MaterialExpressionDivide, mask(wp, "rg", -1300, 1300), const(5.0, -1300, 1400), -1200, 1300), "", big, "UVs")
+    patch = E(unreal.MaterialExpressionSmoothStep, -800, 1300)
+    mel.connect_material_expressions(const(0.28, -950, 1350), "", patch, "Min")
+    mel.connect_material_expressions(const(0.4, -950, 1400), "", patch, "Max")
+    mel.connect_material_expressions(big, "R", patch, "Value")
+    moss = op(unreal.MaterialExpressionMultiply, moss_k, patch, -350, 1200)
+    final = E(unreal.MaterialExpressionLinearInterpolate, -100, 300)
+    mel.connect_material_expressions(col, "", final, "A")
+    mel.connect_material_expressions(const3(BOULDER_MOSS, -250, 400), "", final, "B")
+    mel.connect_material_expressions(op(unreal.MaterialExpressionMultiply, moss, const(0.85, -250, 1300), -200, 1250), "", final, "Alpha")
+    mel.connect_material_property(final, "", unreal.MaterialProperty.MP_BASE_COLOR)
+    mel.connect_material_property(const(0.85, -200, 500), "", unreal.MaterialProperty.MP_ROUGHNESS)
+    mel.connect_material_property(const(0.3, -200, 560), "", unreal.MaterialProperty.MP_SPECULAR)
+    mel.recompile_material(mat)
+    unreal.EditorAssetLibrary.save_loaded_asset(mat)
+    return mat
+
+
+def place_boulders():
+    """Boulders along the creeks and by the ponds (boulders.json, from derive_layers.py)."""
+    if not exists("boulders.json"):
+        log("No boulders (derive_layers.py makes boulders.json)")
+        return
+    stones = load("boulders.json")
+    a = new_actor("OTG_Boulders")
+    if not stones:
+        return
+    import tempfile
+    mat = boulder_material()
+    meshes = []
+    for k in range(BOULDER_KINDS):
+        tmp = os.path.join(tempfile.gettempdir(), "OTG_Boulder_%d.glb" % k)
+        write_glb(tmp, *rock_mesh(101 + k * 17))
+        found = static_meshes(import_file(tmp, CONTENT + "/Boulders", "SM_Boulder_%d" % k))
+        mesh = ([m for m in found if m.get_name() == "SM_Boulder_%d" % k] or found or [None])[0]
+        if mesh:
+            for i in range(len(mesh.get_editor_property("static_materials"))):
+                mesh.set_material(i, mat)
+            unreal.EditorAssetLibrary.save_loaded_asset(mesh)
+        meshes.append(mesh)
+    groups = {}
+    for x, y, z, d, yaw, flat, kind in stones:
+        s = d / 100.0
+        groups.setdefault(kind % BOULDER_KINDS, []).append(xf(at(x, y, z), yaw, s, s, s * flat))
+    n = 0
+    for k, xfs in groups.items():
+        if meshes[k]:
+            add_instances(a, meshes[k], xfs, "Boulders_%d" % k, BOULDER_CULL_CM)
+            n += len(xfs)
+    log("Boulders: %d stones" % n)
+
+
 # ------------------------------------------------------------------ tees and pins
 
 def mark_holes():
@@ -1677,7 +2161,8 @@ def build():
     measure_offset(land)
     import time
     for key, name, fn in (("ground", "Ground", lambda: build_ground(land)), ("trees", "Trees", plant_trees),
-                          ("water", "Water", build_water), ("props", "Buildings, paths, cars", build_props),
+                          ("water", "Water", build_water), ("boulders", "Boulders", place_boulders),
+                          ("props", "Buildings, paths, cars", build_props),
                           ("markers", "Tees and pins", mark_holes)):
         if not BUILD.get(key):
             log("%s: skipped (BUILD)" % name)

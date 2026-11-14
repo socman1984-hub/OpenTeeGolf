@@ -111,6 +111,19 @@ void SOTGWeatherPanel::Rebuild()
 	Slider(TEXT("Rain"), 0, 8, [](const FOTGWeatherView& X) { return X.RainMm; }, [](double D) { return D < 0.05 ? FString(TEXT("none")) : FString::Printf(TEXT("%.1f mm/h"), D); }, &OnRain);
 	Slider(TEXT("Fog"), 0, 1, [](const FOTGWeatherView& X) { return X.Fog; }, [](double D) { return D < 0.02 ? FString(TEXT("none")) : FString::Printf(TEXT("%d%%"), FMath::RoundToInt(D * 100)); }, &OnFog);
 	Slider(TEXT("Temperature"), -5, 40, [](const FOTGWeatherView& X) { return X.TempC; }, [](double D) { return FString::Printf(TEXT("%d\u00B0F"), FMath::RoundToInt(D * 1.8 + 32)); }, &OnTemp);
+	// the time of day: the sun where it is then (its shadows long at dawn and dusk); or, as golf
+	// games light a course, behind you on every hole
+	Slider(TEXT("Time of day"), 5.5, 19.5, [](const FOTGWeatherView& X) { return X.Hour < 0 ? 13.0 : X.Hour; }, [this](double D) {
+		if (View().Hour < 0) return FString(TEXT("behind you"));
+		const int32 M = FMath::RoundToInt(D * 60.0) / 15 * 15;
+		const int32 H = M / 60 % 24, Mi = M % 60;
+		return FString::Printf(TEXT("%d:%02d %s"), H % 12 == 0 ? 12 : H % 12, Mi, H < 12 ? TEXT("am") : TEXT("pm"));
+	}, &OnHour);
+	V->AddSlot().AutoHeight().Padding(110, 4, 0, 0)
+	[
+		SNew(SHorizontalBox)
+		+ SHorizontalBox::Slot().AutoWidth()[Button(TEXT("Sun behind you"), [this]() { if (OnHour) OnHour(-1); }, 12)]
+	];
 	V->AddSlot().AutoHeight().Padding(0, 8, 0, 0)[Text(TEXT("The wind, air and wet ground play in every shot."), 11, Soft)];
 	Body->SetContent(Box(V, FMargin(14, 10), Solid));
 }

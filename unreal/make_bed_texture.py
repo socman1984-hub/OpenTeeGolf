@@ -79,6 +79,61 @@ def main():
     n /= np.linalg.norm(n, axis=-1, keepdims=True)
     Image.fromarray(((n * 0.5 + 0.5) * 255).astype(np.uint8)).save(os.path.join(OUT, "creekbed_normal.png"))
     print("wrote", os.path.join(OUT, "creekbed_color.png"), "and creekbed_normal.png")
+    mud(np.random.default_rng(SEED + 1))
+
+
+def fractal(rng, size, octaves=6, base=4, falloff=0.55):
+    """Seamless fractal noise 0..1: random grids, each twice as fine, smoothly enlarged (wrapping)."""
+    out = np.zeros((size, size), np.float32)
+    amp, total = 1.0, 0.0
+    for o in range(octaves):
+        c = base * 2 ** o
+        g = rng.random((c, c)).astype(np.float32)
+        # (wrap: tile 3 x 3, enlarge, keep the middle)
+        big = np.tile(g, (3, 3))
+        img = Image.fromarray((big * 255).astype(np.uint8)).resize((size * 3, size * 3), Image.BICUBIC)
+        out += np.asarray(img, np.float32)[size:2 * size, size:2 * size] / 255 * amp
+        total += amp
+        amp *= falloff
+    out /= total
+    return (out - out.min()) / (out.max() - out.min() + 1e-6)
+
+
+def mud(rng):
+    """creekmud_color/normal.png: a pond's or bank's wet earth - brown silt in lighter and darker
+    patches, dark decayed leaves and twigs in it, fine grit and a scatter of small stones."""
+    n = fractal(rng, SIZE, 7, 4, 0.55)
+    fine = fractal(rng, SIZE, 4, 64, 0.6)
+    light = np.array((0.42, 0.35, 0.26))
+    dark = np.array((0.20, 0.16, 0.11))
+    col = dark + (light - dark) * (0.25 + 0.75 * n)[..., None]
+    col *= (0.88 + 0.24 * fine)[..., None]
+    height = n * 6 + fine * 2
+    # dark organic flecks (leaf litter) in the darker patches
+    litter = fractal(rng, SIZE, 3, 96, 0.5)
+    lm = np.clip((litter - 0.62) * 6, 0, 1) * np.clip(1.2 - n * 1.4, 0, 1)
+    col = col * (1 - 0.6 * lm[..., None]) + np.array((0.10, 0.07, 0.04)) * 0.6 * lm[..., None]
+    # small stones, sparse
+    for _ in range(300):
+        r = rng.uniform(2, 7)
+        cx, cy = rng.uniform(0, SIZE, 2)
+        c = STONES[rng.integers(len(STONES))] * rng.uniform(0.6, 0.8)
+        x0, y0 = int(cx - r) - 1, int(cy - r) - 1
+        xs, ys = np.arange(x0, x0 + int(2 * r) + 3), np.arange(y0, y0 + int(2 * r) + 3)
+        X, Y = np.meshgrid(xs - cx, ys - cy)
+        d2 = (X * X + Y * Y) / (r * r)
+        inside = d2 < 1
+        yi = np.mod(ys, SIZE)[:, None].repeat(len(xs), 1)
+        xi = np.mod(xs, SIZE)[None, :].repeat(len(ys), 0)
+        col[yi[inside], xi[inside]] = c * (0.8 + 0.2 * np.sqrt(1 - d2[inside]))[:, None]
+        height[yi[inside], xi[inside]] += r * 0.5 * np.sqrt(1 - d2[inside])
+    Image.fromarray((np.clip(col, 0, 1) * 255).astype(np.uint8)).save(os.path.join(OUT, "creekmud_color.png"))
+    dx = (np.roll(height, -1, 1) - np.roll(height, 1, 1)) * 0.5
+    dy = (np.roll(height, -1, 0) - np.roll(height, 1, 0)) * 0.5
+    nm = np.stack([-dx, dy, np.ones_like(dx)], -1)
+    nm /= np.linalg.norm(nm, axis=-1, keepdims=True)
+    Image.fromarray(((nm * 0.5 + 0.5) * 255).astype(np.uint8)).save(os.path.join(OUT, "creekmud_normal.png"))
+    print("wrote creekmud_color.png and creekmud_normal.png")
 
 
 if __name__ == "__main__":

@@ -47,6 +47,7 @@ struct FOTGWeatherView
 {
 	FString Key, Label;
 	double WindMph = 0, From = 0, Cloud = 0, RainMm = 0, Fog = 0, TempC = 20;
+	double Hour = -1;   // (the time of day; below 0: the sun behind you on every hole)
 };
 
 // The weather panel (L): the conditions changed as you play - a preset (or the course's live
@@ -58,7 +59,7 @@ public:
 	SLATE_END_ARGS()
 	void Construct(const FArguments& Args);
 	TFunction<void(const FString&)> OnKey;
-	TFunction<void(double)> OnWind, OnFrom, OnCloud, OnRain, OnFog, OnTemp;
+	TFunction<void(double)> OnWind, OnFrom, OnCloud, OnRain, OnFog, OnTemp, OnHour;
 	TFunction<void(FOTGWeatherView&)> Current;
 
 private:

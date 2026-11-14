@@ -273,12 +273,39 @@ runs inside the game, in C++.
     in patches, silt in other patches, darker toward the middle (`BED_*`).
   - The pebbles come from `make_bed_texture.py`, which writes `textures/creekbed_color.png` and
     `creekbed_normal.png`. It's generated from scratch, with no outside images.
+- Banks, beds and boulders.
+  - `derive_layers.py` now also writes `layer_stream.png` (where the water's surface slopes: a
+    stream) and `boulders.json` (groups of stones along the creeks, a few by the ponds).
+  - Pebbles lie only on a stream's flat, deeper middle (`BED_FLAT`, `BED_INNER`). Ponds, a
+    stream's sloping sides and the banks are mud (`creekmud_*.png`, also from `make_bed_texture.py`),
+    with a few gravel patches in a pond's shallows (`POND_GRAVEL`).
+  - Round the water, a strip of bare wet mud whose width wanders along the shore and in places
+    is none, so the grass reaches the edge there (`BANK_M`, `BANK_DARK`). No grass grows on it.
+  - Boulders: six stones made by `build_course.py` (`rock_mesh`), the rock texture laid on from
+    three sides with moss on their tops (`BOULDER_*`). They're scenery: the ball doesn't hit them.
+- Grass.
+  - Darker, more natural turf colours, both the ground (`TURF`) and the blades (`TURF_GRASS`).
+    Less of the photo's blotching on the turf (`TURF_SHADE`).
+  - Fairways and tees: short, even blades on a tighter grid with little jitter (`jitter`,
+    `scale`, `shade` in `TURF_GRASS`).
+  - Grass shrinks into the ground as it nears its draw distance instead of popping in and out
+    (`GRASS_FADE`). The tall grass is drawn further (140 to 200 m), and the ground under it is
+    coloured like it (`TURF["native"]`).
+- The broadleaf trees were near-black: the Fab beech and hornbeam materials are instances of a
+  Megascans master (`/Game/MSPresets/MS_Foliage_Material/MA_Foliage`) that isn't in the project,
+  so they drew with the fallback. `build_course.py` now gives those trees stand-in materials
+  (`M_TreeLeaves`, `M_TreeBark`) with each material's own textures: cut-out leaves lit through,
+  and a gentle sway (`LEAF_*`, `BARK_TINT`). Adding the pack's `MSPresets` folder would restore
+  the originals: the stand-ins are used only while the master is missing.
+- Time of day: a slider in the weather panel (L), 5:30 am to 7:30 pm. The sun is placed where it
+  is at that hour for the course's latitude on a midsummer day, dimming through dawn and dusk.
+  "Sun behind you" goes back to lighting each hole from behind the player.
 - The menu: the chosen course's aerial photo behind it, a course card with its picture, rounded
   buttons that light under the mouse, and the page shown lit in the tabs.
 - Testing commands: `OTG.Round.FreeView`, `OTG.Round.Fly`, `OTG.Round.LookAt <X Y Z | pin>`,
-  `OTG.Round.Perf`, `OTG.Round.WeatherPanel`, `OTG.Round.Weather <key | wind | from | cloud | rain | fog> [value]`.
-- Still to come in the game itself: the time of day, putting aids, the Mevo+ camera view, a darker
-  stony bed under the creeks.
+  `OTG.Round.Perf`, `OTG.Round.WeatherPanel`, `OTG.Round.Weather <key | wind | from | cloud | rain | fog> [value]`,
+  `OTG.Round.Time <hour | auto>`.
+- Still to come in the game itself: putting aids, the Mevo+ camera view.
 
 Build: `Engine\Build\BatchFiles\Build.bat OpenTeeGolf Win64 Development -Project=<path>\OpenTeeGolf.uproject`
 (the editor target, `OpenTeeGolfEditor`, can't build while another Unreal Editor with Live Coding is

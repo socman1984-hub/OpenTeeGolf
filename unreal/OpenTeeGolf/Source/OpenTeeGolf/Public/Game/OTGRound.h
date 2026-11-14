@@ -66,6 +66,10 @@ public:
 	void SetRain(double Mm);
 	void SetFog(double Fog);
 	void SetTemp(double C);
+	// the time of day (hours, local sun time): the sun where it really is then, for the course's
+	// latitude on a midsummer day; below 0, lit from behind the player on every hole as golf games are
+	void SetSunHour(double Hour);
+	double GetSunHour() const { return SunHour; }
 	double WindFromRelative() const;
 	const FOTGWeather& GetWeather() const { return Weather; }
 	void TogglePause();
@@ -175,6 +179,8 @@ private:
 	FRotator OrigSunRot = FRotator::ZeroRotator;
 	FLinearColor OrigSunColour = FLinearColor::White;
 	uint32 LookStamp = 0;
+	double SunHour = -1;
+	void SunAt(double Hour, double& ElevDeg, double& AzDeg) const;
 	UPROPERTY() TObjectPtr<UProceduralMeshComponent> RainMesh;
 	UPROPERTY() TObjectPtr<UProceduralMeshComponent> FlagCloth;
 	double FlagTime = 0;

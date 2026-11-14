@@ -161,6 +161,29 @@ void AOTGRound::SetRain(double Mm) { Weather.RainMm = FMath::Max(0.0, Mm); Weath
 void AOTGRound::SetFog(double Fog) { Weather.Fog = FMath::Clamp(Fog, 0.0, 1.0); WeatherChanged(); }
 void AOTGRound::SetTemp(double C) { Weather.TempC = C; WeatherChanged(); }
 
+void AOTGRound::SetSunHour(double Hour)
+{
+	SunHour = Hour < 0 ? -1.0 : FMath::Clamp(Hour, 5.5, 19.5);
+	ApplyLook();
+	WeatherChanged();   // (the weather's dimming works from the look's light)
+}
+
+// Where the sun is at a time of day (local sun time, hours) for the course's latitude, on a
+// midsummer day (golf's season, and daylight from dawn to dusk whenever you play):
+// its height above the horizon and its bearing from north, degrees (the usual formulas: the sun's
+// declination for the day of the year, the hour angle from noon)
+void AOTGRound::SunAt(double Hour, double& ElevDeg, double& AzDeg) const
+{
+	const double Lat = FMath::DegreesToRadians(Data ? Data->Latitude : 40.0);
+	const int32 Day = 172;   // (21 June)
+	const double Dec = FMath::DegreesToRadians(23.44 * FMath::Sin(FMath::DegreesToRadians(360.0 / 365.0 * (284 + Day))));
+	const double H = FMath::DegreesToRadians(15.0 * (Hour - 12.0));
+	const double SinE = FMath::Sin(Lat) * FMath::Sin(Dec) + FMath::Cos(Lat) * FMath::Cos(Dec) * FMath::Cos(H);
+	ElevDeg = FMath::RadiansToDegrees(FMath::Asin(FMath::Clamp(SinE, -1.0, 1.0)));
+	const double Az = FMath::Atan2(FMath::Sin(H), FMath::Cos(H) * FMath::Sin(Lat) - FMath::Tan(Dec) * FMath::Cos(Lat));
+	AzDeg = FMath::Fmod(FMath::RadiansToDegrees(Az) + 180.0 + 360.0, 360.0);
+}
+
 double AOTGRound::WindFromRelative() const
 {
 	double Mps, FromDeg;

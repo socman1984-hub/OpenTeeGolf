@@ -88,6 +88,9 @@ namespace
 		}));
 	FAutoConsoleCommandWithWorldAndArgs PerfCmd(TEXT("OTG.Round.Perf"), TEXT("Frame rate and timings (the P key)"), FCmd::CreateLambda([](const TArray<FString>&, UWorld* W) { if (AOTGRound* R = RoundIn(W)) R->TogglePerf(); }));
 	FAutoConsoleCommandWithWorldAndArgs WxCmd(TEXT("OTG.Round.WeatherPanel"), TEXT("The weather panel (the L key)"), FCmd::CreateLambda([](const TArray<FString>&, UWorld* W) { if (AOTGRound* R = RoundIn(W)) R->ToggleWeatherPanel(); }));
+	FAutoConsoleCommandWithWorldAndArgs TimeCmd(TEXT("OTG.Round.Time"), TEXT("OTG.Round.Time <hour, 5.5-19.5> | auto: (testing) the time of day"), FCmd::CreateLambda([](const TArray<FString>& A, UWorld* W) {
+		if (AOTGRound* R = RoundIn(W)) R->SetSunHour(A.Num() && A[0] != TEXT("auto") ? FCString::Atod(*A[0]) : -1.0);
+	}));
 	FAutoConsoleCommandWithWorldAndArgs WxSetCmd(TEXT("OTG.Round.Weather"), TEXT("OTG.Round.Weather <key> | wind <mph> | from <deg> | cloud <0-1> | rain <mm> | fog <0-1>"), FCmd::CreateLambda([](const TArray<FString>& A, UWorld* W) {
 		AOTGRound* R = RoundIn(W);
 		if (!R || !A.Num()) return;
@@ -321,11 +324,12 @@ void AOTGRound::Setup(UOTGCourseData* InData, const FOTGRoundSetup& InSetup)
 		Hud->WeatherPanel()->OnRain = [Self](double V) { if (Self.IsValid()) Self->SetRain(V); };
 		Hud->WeatherPanel()->OnFog = [Self](double V) { if (Self.IsValid()) Self->SetFog(V); };
 		Hud->WeatherPanel()->OnTemp = [Self](double V) { if (Self.IsValid()) Self->SetTemp(V); };
+		Hud->WeatherPanel()->OnHour = [Self](double V) { if (Self.IsValid()) Self->SetSunHour(V); };
 		Hud->WeatherPanel()->Current = [Self](FOTGWeatherView& Out) {
 			if (!Self.IsValid()) return;
 			const FOTGWeather& W = Self->GetWeather();
 			Out.Key = W.bLive ? FString(TEXT("live")) : W.Key; Out.Label = W.Label; Out.WindMph = W.WindMph; Out.From = Self->WindFromRelative();
-			Out.Cloud = W.Cloud; Out.RainMm = W.RainMm; Out.Fog = W.Fog; Out.TempC = W.TempC;
+			Out.Cloud = W.Cloud; Out.RainMm = W.RainMm; Out.Fog = W.Fog; Out.TempC = W.TempC; Out.Hour = Self->GetSunHour();
 		};
 		Hud->ShotPanel()->OnHit = [Self](double Mph, double Vla, double Hla, double Spin, double Axis) {
 			if (!Self.IsValid()) return;
@@ -1127,7 +1131,7 @@ void AOTGRound::Tick(float Dt)
 		uint32 Stamp = 0;
 		for (const auto* V : { &CVarLookExposure, &CVarLookSaturation, &CVarLookContrast, &CVarLookTemp, &CVarLookSun, &CVarLookSunWarm, &CVarLookSunPitch, &CVarLookSunSide, &CVarLookHaze, &CVarLookFog, &CVarLookVignette, &CVarLookTreeLift, &CVarLookShadows, &CVarLookSky })
 			Stamp = HashCombine(Stamp, GetTypeHash(V->GetValueOnGameThread()));
-		Stamp = HashCombine(Stamp, GetTypeHash(HoleIndex));
+		Stamp = HashCombine(HashCombine(Stamp, GetTypeHash(HoleIndex)), GetTypeHash(SunHour));
 		if (Stamp != LookStamp) { ApplyLook(); ApplyWeatherToScene(); }
 	}
 	if (!bFreeView) UpdateCamera(Dt);   // (the free view moves it itself: FreeFly)
@@ -1361,7 +1365,14 @@ void AOTGRound::ApplyLook()
 	uint32 Stamp = 0;
 	for (const auto* V : { &CVarLookExposure, &CVarLookSaturation, &CVarLookContrast, &CVarLookTemp, &CVarLookSun, &CVarLookSunWarm, &CVarLookSunPitch, &CVarLookSunSide, &CVarLookHaze, &CVarLookFog, &CVarLookVignette, &CVarLookTreeLift, &CVarLookShadows, &CVarLookSky })
 		Stamp = HashCombine(Stamp, GetTypeHash(V->GetValueOnGameThread()));
-	LookStamp = HashCombine(Stamp, GetTypeHash(HoleIndex));
+	LookStamp = HashCombine(HashCombine(Stamp, GetTypeHash(HoleIndex)), GetTypeHash(SunHour));
+	// (the time of day: the sun's height and bearing then, and how much day there is - the sun and
+	// sky dimming through dawn and dusk)
+	double Elev = 45, Az = 180;
+	const bool bTimed = SunHour >= 0;
+	if (bTimed) SunAt(SunHour, Elev, Az);
+	const float SunDay = bTimed ? float(FMath::SmoothStep(-3.0, 8.0, Elev)) : 1.f;
+	const float SkyDay = bTimed ? FMath::Max(0.04f, float(FMath::SmoothStep(-10.0, 10.0, Elev))) : 1.f;
 	if (!LookVolume)
 	{
 		LookVolume = GetWorld()->SpawnActor<APostProcessVolume>();
@@ -1391,10 +1402,18 @@ void AOTGRound::ApplyLook()
 		UDirectionalLightComponent* L = Cast<UDirectionalLightComponent>(It->GetLightComponent());
 		if (!L) continue;
 		if (OrigSun < 0) { OrigSun = L->Intensity; OrigSunRot = It->GetActorRotation(); OrigSunColour = L->GetLightColor(); }
-		L->SetIntensity(OrigSun * CVarLookSun.GetValueOnGameThread());
+		L->SetIntensity(OrigSun * CVarLookSun.GetValueOnGameThread() * SunDay);
 		L->SetLightColor(FMath::Lerp(OrigSunColour, FLinearColor(1.f, 0.86f, 0.68f), CVarLookSunWarm.GetValueOnGameThread()));
 		// (lit from behind the player on every hole, a little to one side, as golf games light them:
 		// looking into the sun the trees are dark shapes)
+		if (bTimed)
+		{
+			// (towards the sun: X east, Y south; the light travels the other way)
+			const double E = FMath::DegreesToRadians(Elev), A = FMath::DegreesToRadians(Az);
+			const FVector ToSun(FMath::Sin(A) * FMath::Cos(E), -FMath::Cos(A) * FMath::Cos(E), FMath::Sin(E));
+			It->SetActorRotation((-ToSun).Rotation());
+			break;
+		}
 		const float Pitch = CVarLookSunPitch.GetValueOnGameThread(), Side = CVarLookSunSide.GetValueOnGameThread();
 		double Yaw = OrigSunRot.Yaw;
 		if (Side < 900 && Data && Data->Holes.IsValidIndex(HoleIndex))
@@ -1419,7 +1438,8 @@ void AOTGRound::ApplyLook()
 		USkyLightComponent* SL = It->GetLightComponent();
 		if (!SL) continue;
 		if (OrigSky < 0) OrigSky = SL->Intensity;
-		SL->SetIntensity(OrigSky * CVarLookSky.GetValueOnGameThread());
+		SL->SetIntensity(OrigSky * CVarLookSky.GetValueOnGameThread() * SkyDay);
+		if (!SL->bRealTimeCapture) SL->RecaptureSky();   // (the sky's own colour at this hour)
 		break;
 	}
 	for (TActorIterator<AExponentialHeightFog> It(GetWorld()); It; ++It)
