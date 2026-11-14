@@ -238,6 +238,20 @@ const FSlateBrush* SOTGMainMenu::PhotoOf(const FString& Id, bool bCrop)
 
 void SOTGMainMenu::Construct(const FArguments&)
 {
+	// (the first start: render at 75% - see Settings > Render resolution)
+	if (UGameUserSettings* G = GEngine ? GEngine->GetGameUserSettings() : nullptr)
+	{
+		bool bSet = false;
+		GConfig->GetBool(TEXT("OpenTeeGolf"), TEXT("RenderScaleChosen"), bSet, GGameUserSettingsIni);
+		if (!bSet)
+		{
+			G->SetResolutionScaleValueEx(75.f);
+			G->ApplySettings(false);
+			G->SaveSettings();
+			GConfig->SetBool(TEXT("OpenTeeGolf"), TEXT("RenderScaleChosen"), true, GGameUserSettingsIni);
+			GConfig->Flush(false, GGameUserSettingsIni);
+		}
+	}
 	Setup = FOTGPlayers::LoadSetup();
 	Profiles = FOTGPlayers::Load();
 	Setup.Picked.RemoveAll([&](const FString& Id) { return !Profiles.ContainsByPredicate([&](const FOTGPlayerProfile& P) { return P.Id == Id; }); });
@@ -640,10 +654,32 @@ TSharedRef<SWidget> SOTGMainMenu::SettingsPage()
 		const FString Names[] = { TEXT("Low"), TEXT("Medium"), TEXT("High"), TEXT("Epic") };
 		const int32 Level = GS->GetOverallScalabilityLevel();
 		for (int32 i = 0; i < 4; i++)
-			W->AddSlot().Padding(0, 0, 6, 6)[Button(Names[i], [GS, i, Apply]() { GS->SetOverallScalabilityLevel(i); Apply(); }, 14, Level == i)];
+			W->AddSlot().Padding(0, 0, 6, 6)[Button(Names[i], [GS, i, Apply]() {
+				// (a quality level sets the render resolution to 100% too: kept as chosen)
+				float N, Keep, Lo, Hi;
+				GS->GetResolutionScaleInformationEx(N, Keep, Lo, Hi);
+				GS->SetOverallScalabilityLevel(i);
+				GS->SetResolutionScaleValueEx(Keep);
+				Apply();
+			}, 14, Level == i)];
 		W->AddSlot().Padding(8, 0, 6, 6)[Button(TEXT("Pick for this PC"), [GS, Apply]() { GS->RunHardwareBenchmark(); GS->ApplyHardwareBenchmarkResults(); Apply(); }, 13)];
 		Row2(TEXT("Graphics quality"), W);
 		V->AddSlot().AutoHeight().Padding(0, 2)[Text(TEXT("Lower it if the game runs slowly: the grass, trees and shadows cost the most."), 12, Soft)];
+	}
+	// render resolution: the picture drawn smaller and sharpened up to the screen (TSR) - the
+	// biggest single saving, most of the cost is per pixel
+	{
+		TSharedRef<SWrapBox> W = SNew(SWrapBox).UseAllottedSize(true);
+		float N, Now, Lo, Hi;
+		GS->GetResolutionScaleInformationEx(N, Now, Lo, Hi);
+		const TPair<int32, const TCHAR*> Scales[] = { { 100, TEXT("Native (100%)") }, { 85, TEXT("85%") }, { 75, TEXT("75%") }, { 67, TEXT("67%") } };
+		for (const auto& Sc : Scales)
+		{
+			const int32 Pct = Sc.Key;
+			W->AddSlot().Padding(0, 0, 6, 6)[Button(Sc.Value, [GS, Pct, Apply]() { GS->SetResolutionScaleValueEx(float(Pct)); Apply(); }, 14, FMath::RoundToInt(Now) == Pct)];
+		}
+		Row2(TEXT("Render resolution"), W);
+		V->AddSlot().AutoHeight().Padding(0, 2)[Text(TEXT("Below 100% the game draws fewer pixels and sharpens them up to your screen: much faster, a little softer. 75% suits most PCs."), 12, Soft)];
 	}
 	// updates: where things stand, and a button to look now
 	{

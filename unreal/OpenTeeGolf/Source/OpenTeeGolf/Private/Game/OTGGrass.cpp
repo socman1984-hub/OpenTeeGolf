@@ -52,6 +52,8 @@ const TArray<otg::FGrassKind>& otg::FGrass::Kinds()
 		// reads as a smooth surface, and blades on it looked like rough; the ground draws them)
 		Add(TEXT("native"), { TEXT("native") }, 320, 140, 200, 1.0f, 0.7f, 1.3f, 16, 0.31f, 0.39f, false);
 		Add(TEXT("native_short"), { TEXT("native") }, 520, 110, 160, 1.0f, 0.75f, 1.25f, 16, 0.31f, 0.39f, true);
+		Add(TEXT("fescue_gold"), { TEXT("native") }, 280, 140, 200, 1.0f, 0.6f, 1.4f, 22, 0.34f, 0.39f, false);
+		Add(TEXT("tussock"), { TEXT("native") }, 90, 110, 160, 1.0f, 0.6f, 1.5f);
 		Add(TEXT("flowers_yellow"), { TEXT("native") }, 70, 70, 100, 1.0f, 0.85f, 1.2f, 9, 0.43f, 0.48f, false);
 		Add(TEXT("flowers_white"), { TEXT("native") }, 70, 70, 100, 1.0f, 0.85f, 1.2f, 11, 0.44f, 0.49f, false);
 		Add(TEXT("flowers_purple"), { TEXT("native") }, 60, 70, 100, 1.0f, 0.85f, 1.2f, 7, 0.44f, 0.5f, false);
@@ -127,9 +129,10 @@ TArray<FTransform> otg::FGrass::Place(int32 KindI, int32 CX, int32 CY) const
 			if (P <= 0) continue;
 			P *= FMath::Clamp((0.45f - Mask(TEXT("water"), X, Y)) * 10.f, 0.f, 1.f);
 			P *= FMath::Clamp((0.85f - Mask(TEXT("path"), X, Y)) * 2.f, 0.f, 1.f);
-			// (and never on a mown surface, though the rough's mask reaches into the fringes)
+			// (and never on a mown surface, though the rough's mask reaches into the fringes: tufts
+			// up to a few cm over its outline - the material cuts their blades off exactly on it)
 			const float Mown = FMath::Max(FMath::Max(Mask(TEXT("fairway"), X, Y), Mask(TEXT("tee"), X, Y)), FMath::Max(Mask(TEXT("fringe"), X, Y), Mask(TEXT("green"), X, Y)));
-			P *= 1.f - FMath::Clamp((Mown - 0.33f) * 12.f, 0.f, 1.f);
+			P *= 1.f - FMath::Clamp((Mown - 0.52f) * 12.f, 0.f, 1.f);
 			if (K.PatchM > 0)
 			{
 				// (value noise bunches round the middle: spread out to the rock texture's range)
@@ -141,9 +144,17 @@ TArray<FTransform> otg::FGrass::Place(int32 KindI, int32 CX, int32 CY) const
 			if (Keep >= P) continue;
 			FVector Nrm;
 			const double Z = GroundZ(X, Y, &Nrm);
-			const FQuat Tilt = FQuat::FindBetweenNormals(FVector::UpVector, Nrm);
+			FQuat Tilt = FQuat::FindBetweenNormals(FVector::UpVector, Nrm);
 			const FQuat Turn(FVector::UpVector, R.FRand() * 2 * PI);
-			const float Sc = FMath::Lerp(K.ScaleLo, K.ScaleHi, R.FRand());
+			float Sc = FMath::Lerp(K.ScaleLo, K.ScaleHi, R.FRand());
+			if (K.Masks.Contains(TEXT("native")))
+			{
+				// (left to grow: taller here, lower there over a few metres, and each clump leaning its own way)
+				const float Vigor = FMath::SmoothStep(0.2f, 0.8f, float(Noise(X / 100.0, Y / 100.0, 7.0, 501)));
+				Sc *= FMath::Lerp(0.55f, 1.35f, Vigor);
+				const FVector Lean = FVector(R.FRandRange(-1, 1), R.FRandRange(-1, 1), 0).GetSafeNormal();
+				Tilt = FQuat(Lean ^ FVector::UpVector, FMath::DegreesToRadians(R.FRandRange(0.f, 10.f))) * Tilt;
+			}
 			Out.Add(FTransform(Tilt * Turn, FVector(X, Y, Z) + Data->LevelOrigin, FVector(Sc)));
 		}
 	return Out;
@@ -167,6 +178,7 @@ void otg::FGrass::Update(const FVector& Camera)
 		if (Mats[Job.Key.Kind]) ISM->SetMaterial(0, Mats[Job.Key.Kind]);
 		ISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 		ISM->SetCastShadow(false);
+		ISM->bVisibleInRayTracing = false;   // (rebuilt into the ray-tracing scene each frame, for nothing: ~1 ms)
 		ISM->SetMobility(EComponentMobility::Movable);
 		const FGrassKind& K = Kinds()[Job.Key.Kind];
 		ISM->InstanceStartCullDistance = int32(K.DrawFrom * 100);

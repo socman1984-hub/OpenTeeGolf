@@ -53,6 +53,8 @@ public:
 	void ToggleShotPanel();
 	// the free view (F): fly round the course
 	void ToggleFreeView();
+	// The slope grid on the green (the G key): on unless turned off
+	void ToggleSlopeGrid() { bGridOn = !bGridOn; GridFor = FVector::ZeroVector; }
 	bool IsFreeView() const { return bFreeView; }
 	void FreeFly(float Dt, const FVector& Move, const FVector2D& Look, bool bFast);
 	void FreeLookAt(const FVector& Target, double Dist, double Height, double YawDeg);   // (testing)
@@ -148,9 +150,22 @@ private:
 	UPROPERTY() TObjectPtr<UStaticMeshComponent> PinMesh;
 	UPROPERTY() TObjectPtr<UStaticMeshComponent> FlagMesh;
 	UPROPERTY() TObjectPtr<class UMaterialParameterCollection> WindMPC;   // (the wind for the trees and grass)
-	UPROPERTY() TObjectPtr<UStaticMeshComponent> TeeMesh;
+	UPROPERTY() TObjectPtr<UStaticMeshComponent> TeeMesh;      // (the tee's peg...)
+	UPROPERTY() TObjectPtr<UStaticMeshComponent> TeeHeadMesh;  // (...and its cup)
 	UPROPERTY() TObjectPtr<UStaticMeshComponent> CupMesh;
 	UPROPERTY() TObjectPtr<UProceduralMeshComponent> TracerMesh;
+	// the slope grid: lines draped over the green coloured by its slope, dots sliding downhill
+	UPROPERTY() TObjectPtr<UProceduralMeshComponent> GridMesh;
+	UPROPERTY() TObjectPtr<class UInstancedStaticMeshComponent> GridDots;
+	UPROPERTY() TArray<TObjectPtr<UMaterialInstanceDynamic>> GridMats;
+	struct FGridDot { double X, Z, Dx, Dz, Pct, Phase; };
+	TArray<FGridDot> Dots;
+	double GridSpacing = 1.0;
+	bool bGridOn = true;
+	FVector GridFor = FVector::ZeroVector;   // (the ball and pin it was drawn for: drawn again if either moves)
+	void UpdateSlopeGrid(float Dt);
+	void BuildSlopeGrid();
+	void HideSlopeGrid();
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> BallMat;
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> AimMat;
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> TracerMat;

@@ -142,6 +142,17 @@ TURF_GRASS = {
                      "patch_cm": 50, "density": 520, "draw_m": (110, 160), "clumps": 6, "clump_cm": 8, "seed_share": 0.08,
                      "scale": (0.75, 1.25), "patch": (16.0, 0.31, 0.39, True),
                      "root": (0.022, 0.036, 0.009), "tip": (0.075, 0.115, 0.03), "dry": (0.24, 0.21, 0.1), "dry_share": 0.1, "vary": 0.28},
+    # golden fescue, gone over: tall, wispy and floppy, most of it straw and seed heads - its own
+    # patches, over the green grass's, so the meadow is a mix (as an unkept fescue rough is)
+    "fescue_gold": {"masks": ["native"], "height_cm": (40.0, 95.0), "width_mm": (1.5, 2.8), "lean": 0.85, "blades": 120,
+                    "patch_cm": 60, "density": 280, "draw_m": (140, 200), "clumps": 3, "clump_cm": 14, "seed_share": 0.5,
+                    "scale": (0.6, 1.4), "patch": (22.0, 0.34, 0.39, False),
+                    "root": (0.03, 0.04, 0.012), "tip": (0.2, 0.17, 0.07), "dry": (0.36, 0.29, 0.13), "dry_share": 0.65, "vary": 0.3},
+    # tussocks: dense mounds of blades bent out every way, green and straw, here and there
+    "tussock": {"masks": ["native"], "height_cm": (18.0, 45.0), "width_mm": (2.5, 4.0), "lean": 0.9, "blades": 220,
+                "patch_cm": 40, "density": 90, "draw_m": (110, 160), "clumps": 1, "clump_cm": 20, "seed_share": 0.15,
+                "scale": (0.6, 1.5),
+                "root": (0.02, 0.03, 0.009), "tip": (0.1, 0.12, 0.04), "dry": (0.3, 0.25, 0.11), "dry_share": 0.4, "vary": 0.35},
     # wildflowers: thin stems, each with a small head in its colour (the "dry" colour, on the heads)
     "flowers_yellow": {"masks": ["native"], "height_cm": (30.0, 60.0), "width_mm": (1.5, 2.5), "lean": 0.25, "blades": 18,
                        "patch_cm": 45, "density": 70, "draw_m": (70, 100), "clumps": 2, "clump_cm": 10, "seed_share": 1.0,
@@ -1056,7 +1067,19 @@ def turf_material(kind, land_size_cm):
         keep = E(unreal.MaterialExpressionOneMinus, -1300, 400)
         mel.connect_material_expressions(pth, "R", keep, "")
         mval = op(unreal.MaterialExpressionMultiply, mval, keep, -1150, 300, "R" if mval is mask else "", "")
-    mel.connect_material_property(mval, "R" if mval is mask else "", unreal.MaterialProperty.MP_OPACITY_MASK)
+    # ... and never past the outline of a mown surface (fairway, tee, green, fringe): blades on the
+    # rough cut off exactly where the ground's own edge between them is drawn - a smooth curve, not
+    # the ragged line of whole tufts. (The rough's outline and a tee's are separate shapes: they
+    # needn't meet.)
+    mval_out = "R" if mval is mask else ""
+    for i, nm in enumerate(n for n in ("fairway", "tee", "green", "fringe") if n not in names):
+        if not (RUNTIME or unreal.EditorAssetLibrary.does_asset_exist(CONTENT + "/Textures/T_Mask_" + nm)):
+            continue
+        off = E(unreal.MaterialExpressionOneMinus, -1300, 2200 + i * 120)
+        mel.connect_material_expressions(tex("T_Mask_" + nm, uv, -1500, 2200 + i * 120), "R", off, "")
+        mval = op(unreal.MaterialExpressionMin, mval, off, -1150, 2200 + i * 120, mval_out, "")
+        mval_out = ""
+    mel.connect_material_property(mval, mval_out, unreal.MaterialProperty.MP_OPACITY_MASK)
     mat.set_editor_property("opacity_mask_clip_value", 0.5)
     # colour: the blade's own, times the photo's light and shade there (as the ground's)
     ph = tex("T_CoursePhoto", uv, -1500, 600, gray=False)

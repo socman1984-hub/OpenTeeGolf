@@ -151,6 +151,7 @@ void AOTGPlayerController::SetupInputComponent()
 	Bind(EKeys::Escape, [](AOTGRound* R) { if (R->IsFreeView()) R->ToggleFreeView(); else R->TogglePause(); }, true);
 	Bind(EKeys::T, [](AOTGRound* R) { R->ToggleShotPanel(); });
 	Bind(EKeys::F, [](AOTGRound* R) { R->ToggleFreeView(); }, true);
+	Bind(EKeys::G, [](AOTGRound* R) { R->ToggleSlopeGrid(); }, true);
 	Bind(EKeys::P, [](AOTGRound* R) { R->TogglePerf(); }, true);
 	Bind(EKeys::L, [](AOTGRound* R) { R->ToggleWeatherPanel(); }, true);
 	// a click on the ground aims there

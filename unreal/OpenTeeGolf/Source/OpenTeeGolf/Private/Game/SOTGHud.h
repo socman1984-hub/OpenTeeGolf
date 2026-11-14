@@ -35,6 +35,11 @@ struct FOTGCard
 
 class SOTGHud : public SCompoundWidget
 {
+	bool bAimShown = false;
+	FVector2D AimPx = FVector2D::ZeroVector;
+	float HudScale = 1.f;   // (the view's pixels a Slate unit: the HUD fills the view)
+	TUniquePtr<FSlateBrush> AimRing, AimRingShade, AimDot, AimDotShade;
+
 public:
 	SLATE_BEGIN_ARGS(SOTGHud) {}
 	SLATE_END_ARGS()
@@ -56,6 +61,8 @@ public:
 	TSharedPtr<SOTGWind> Wind() const { return WindBox; }
 	TSharedPtr<SOTGShotPanel> ShotPanel() const { return Shots; }
 	void ShowShotPanel(bool bShow);
+	// The aim marker: a small ring and dot at this point of the view (pixels), or none
+	void SetAimMarker(bool bShow, const FVector2D& ViewportPx) { bAimShown = bShow; AimPx = ViewportPx; }
 	bool IsShotPanelShown() const;
 	TSharedPtr<SOTGWeatherPanel> WeatherPanel() const { return WxPanel; }
 	void ShowWeatherPanel(bool bShow);
