@@ -30,6 +30,7 @@ project's licence). This game is built with Unreal Engine and includes the follo
 | --- | --- |
 | Trees and plants from [Fab](https://www.fab.com) (European Beech, European Hornbeam, the Megaplant Library; Quixel Megascans) | Fab Standard License: included in this game in compiled form only. They may not be extracted or redistributed on their own. |
 | Engine sky, clouds and basic shapes | Part of Unreal Engine (see above) |
+| The mown turf's texture: [ambientCG Grass005](https://ambientcg.com/view?id=Grass005) | CC0 1.0 (public domain; credited anyway) |
 
 ## Course data
 

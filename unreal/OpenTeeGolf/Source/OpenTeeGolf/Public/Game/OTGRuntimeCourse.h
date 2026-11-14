@@ -46,9 +46,12 @@ private:
 	void BuildGround(TFunction<void(float, const FString&)> Progress);
 	void BuildGroundTiles(int32 From, int32 To);
 	void PrepareGround();
+	void LiftPondBanks();
+	double GroundAt(double X, double Y) const;
 	void BuildTrees();
 	void BuildBoulders();
 	void BuildWater();
+	void BuildFarLand();
 	void BuildProps();
 	void BuildGrass();
 	void SetPictures(UMaterialInstanceDynamic* M) const;
@@ -57,6 +60,7 @@ private:
 	UPROPERTY() TObjectPtr<UOTGCourseData> Data;
 	UPROPERTY() TMap<FName, TObjectPtr<UTexture2D>> Textures;
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> GroundMat;
+	TArray<uint16> GroundHeights;   // (the heights the ground is drawn with: the course's, the ponds' banks lifted clear of the water)
 	UPROPERTY() TArray<TObjectPtr<UStaticMeshComponent>> Tiles;
 	UPROPERTY() TArray<TObjectPtr<UActorComponent>> Parts;
 	double LandCm = 0;
@@ -70,4 +74,5 @@ private:
 	TMap<FString, struct otg::FPicture> MaskPixels;   // (the masks the grass reads, on the CPU)
 	TSharedPtr<class otg::FGrass> Grass;
 	UPROPERTY() TArray<TObjectPtr<UMaterialInstanceDynamic>> TurfMats;
+	UPROPERTY() TArray<TObjectPtr<UStaticMesh>> TurfMeshes;   // (kept loaded: the grass makes cells of them as the camera moves)
 };

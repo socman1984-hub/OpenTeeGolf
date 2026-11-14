@@ -44,6 +44,13 @@ OpenTeeGolf is free software under the GNU General Public License v3 (see `LICEN
 
 The ambientCG and Poly Haven textures were resized to 1K and recompressed; CC0 needs no attribution, but credit is given here anyway.
 
+## Textures for the Unreal game (in `unreal/textures/`)
+
+| File | Source | License |
+| --- | --- | --- |
+| `turf_color.jpg`, `turf_normal.jpg`, `turf_roughness.jpg` (the mown turf) | [ambientCG Grass005](https://ambientcg.com/view?id=Grass005), at its full 2K, recompressed | CC0 1.0 |
+| `creekbed_*.png`, `creekmud_*.png` | Made by `unreal/make_bed_texture.py` | Part of OpenTeeGolf (GPL-3.0-or-later) |
+
 ## Sounds (in `public/audio/`)
 
 | File | Source | License |

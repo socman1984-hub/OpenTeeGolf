@@ -39,7 +39,9 @@ REIMPORT = True
 GAME_TEXTURES = os.path.normpath(os.path.join(EXPORT_DIR, "..", "..", "public", "textures"))
 # Their average colours (linear), as in the game (scene.js GROUND_MEAN): dividing by them keeps
 # the photo's colour and adds only the textures' detail
-GROUND_MEAN = {"lawn": (0.131, 0.23, 0.025), "rough": (0.118, 0.152, 0.03), "sand": (0.462, 0.342, 0.165)}
+# (the mown turf: unreal/textures/turf_*.jpg, ambientCG Grass005 at its full 2K - the web game's
+# lawn_*.jpg is the same grass at 1K, used when they're missing)
+GROUND_MEAN = {"lawn": (0.137, 0.239, 0.0275), "rough": (0.118, 0.152, 0.03), "sand": (0.462, 0.342, 0.165)}
 DETAIL_TILE_M = 2.5       # metres each ground texture covers
 # The surface masks are always in memory (never streamed: streamed down, the course's edges go
 # blocky), so a big course's 8192-pixel masks are kept at this size: they're smooth distance fields,
@@ -434,6 +436,13 @@ def build_ground(land):
     for k in ("lawn", "rough", "sand"):
         tex[k] = import_texture(os.path.join(GAME_TEXTURES, k + "_color.jpg"), "T_%s_color" % k)
         tex[k + "_n"] = import_texture(os.path.join(GAME_TEXTURES, k + "_normal.jpg"), "T_%s_normal" % k, "normal")
+    # the mown turf - fairways, tees, greens - at the grass's full 2K, with its roughness: no blades
+    # are drawn on them, so the ground is all there is up close
+    tex["lawn_r"] = None
+    if os.path.exists(os.path.join(BED_TEXTURES, "turf_color.jpg")):
+        tex["lawn"] = import_texture(os.path.join(BED_TEXTURES, "turf_color.jpg"), "T_turf_color")
+        tex["lawn_n"] = import_texture(os.path.join(BED_TEXTURES, "turf_normal.jpg"), "T_turf_normal", "normal")
+        tex["lawn_r"] = import_texture(os.path.join(BED_TEXTURES, "turf_roughness.jpg"), "T_turf_roughness", "mask")
     # (the stream bed's)
     tex["rock"] = import_texture(os.path.join(GAME_TEXTURES, "rock_color.jpg"), "T_rock_color")
     if os.path.exists(os.path.join(BED_TEXTURES, "creekbed_color.png")):
@@ -532,12 +541,29 @@ def build_ground(land):
     # detail: each texture over its own average colour, weighted by its surface
     detail = None
     normal = None
+    # (the turf a second time, larger and shifted - 2.7 times the tile, no whole multiple of it - so
+    # its 2.5 m repeat doesn't show as a grid across a fairway)
+    fine2 = op(unreal.MaterialExpressionAdd, coords(DETAIL_TILE_M * 2.7 / meta["metresPerSample"], 1150), const3((0.37, 0.71, 0), -2200, 1250), -2100, 1150, "", "RG")
     for i, (k, w, wout) in enumerate((("lawn", mown, ""), ("rough", m["rough"], ""), ("sand", m["bunker"], ""))):
         c = sample(tex[k], fine, -1800, 1600 + i * 500, S.SAMPLERTYPE_COLOR)
         n = sample(tex[k + "_n"], fine, -1800, 1850 + i * 500, S.SAMPLERTYPE_NORMAL)
         r = op(unreal.MaterialExpressionDivide, c, const3(GROUND_MEAN[k], -1600, 1700 + i * 500), -1400, 1600 + i * 500, "RGB")
+        if k == "lawn":
+            c2 = sample(tex[k], fine2, -1800, 1500, S.SAMPLERTYPE_COLOR)
+            r2 = op(unreal.MaterialExpressionDivide, c2, const3(GROUND_MEAN[k], -1600, 1450), -1500, 1450, "RGB")
+            half2 = E(unreal.MaterialExpressionLinearInterpolate, -1450, 1500)
+            mel.connect_material_expressions(const(1.0, -1550, 1520), "", half2, "A")
+            mel.connect_material_expressions(r2, "", half2, "B")
+            mel.connect_material_expressions(const(0.45, -1550, 1560), "", half2, "Alpha")
+            r = op(unreal.MaterialExpressionMultiply, r, half2, -1350, 1550)
+            n2 = sample(tex[k + "_n"], fine2, -1800, 1750, S.SAMPLERTYPE_NORMAL)
+            nb = E(unreal.MaterialExpressionLinearInterpolate, -1450, 1800)
+            mel.connect_material_expressions(n, "RGB", nb, "A")
+            mel.connect_material_expressions(n2, "RGB", nb, "B")
+            mel.connect_material_expressions(const(0.4, -1550, 1820), "", nb, "Alpha")
+            n = nb
         dk = op(unreal.MaterialExpressionMultiply, r, w, -1200, 1600 + i * 500, "", wout)
-        nk = op(unreal.MaterialExpressionMultiply, n, w, -1200, 1850 + i * 500, "RGB", wout)
+        nk = op(unreal.MaterialExpressionMultiply, n, w, -1200, 1850 + i * 500, "" if k == "lawn" else "RGB", wout)
         detail = dk if detail is None else op(unreal.MaterialExpressionAdd, detail, dk, -1000, 1600 + i * 500)
         normal = nk if normal is None else op(unreal.MaterialExpressionAdd, normal, nk, -1000, 1850 + i * 500)
     # (water: no detail, flat)
@@ -752,7 +778,25 @@ def build_ground(land):
         warn("Stream bed skipped:\n" + traceback.format_exc())
     mel.connect_material_property(base, "", unreal.MaterialProperty.MP_BASE_COLOR)
     mel.connect_material_property(normal, "", unreal.MaterialProperty.MP_NORMAL)
-    mel.connect_material_property(const(0.88, -400, 400), "", unreal.MaterialProperty.MP_ROUGHNESS)
+    # roughness: dull ground, the mown turf a little less so where its blades lie flat (the grass's own map)
+    rough_out = const(0.88, -400, 400)
+    if tex.get("lawn_r") is not None:
+        try:
+            tr = sample(tex["lawn_r"], fine, -1800, 7600, S.SAMPLERTYPE_LINEAR_GRAYSCALE)
+            tv = E(unreal.MaterialExpressionLinearInterpolate, -600, 7600)
+            mel.connect_material_expressions(const(0.68, -750, 7600), "", tv, "A")
+            mel.connect_material_expressions(const(0.95, -750, 7650), "", tv, "B")
+            mel.connect_material_expressions(tr, "R", tv, "Alpha")
+            ro = E(unreal.MaterialExpressionLinearInterpolate, -450, 7600)
+            mel.connect_material_expressions(rough_out, "", ro, "A")
+            mel.connect_material_expressions(tv, "", ro, "B")
+            mown01 = E(unreal.MaterialExpressionSaturate, -600, 7700)
+            mel.connect_material_expressions(mown, "", mown01, "")
+            mel.connect_material_expressions(mown01, "", ro, "Alpha")
+            rough_out = ro
+        except Exception:
+            warn("Turf roughness skipped:\n" + traceback.format_exc())
+    mel.connect_material_property(rough_out, "", unreal.MaterialProperty.MP_ROUGHNESS)
 
     # Turf on the rough and the fairways (and tees): grown a metre past each edge (Unreal places
     # grass by a coarse map, one value a landscape sample), and cut off at the edge itself by the
@@ -1458,16 +1502,18 @@ def wind_offset(mat, height, scale, flutter, wave_cm=0.0, flutter_rate=2.3, sway
         # (the gusts' waves: phase along the wind, so they run downwind across the field)
         along = op(unreal.MaterialExpressionDotProduct, E(unreal.MaterialExpressionWorldPosition, -1800, 1800), way)
         ph = op(unreal.MaterialExpressionAdd, ph, op(unreal.MaterialExpressionMultiply, along, const(-6.283 / wave_cm)))
-    # pushed over by the wind's strength, swaying a quarter each way (quicker the harder it blows)
-    slow = sine(op(unreal.MaterialExpressionAdd, op(unreal.MaterialExpressionMultiply, tm, op(unreal.MaterialExpressionAdd, const(0.7), k)), ph))
+    # pushed over by the wind's strength, swaying a quarter each way. (The sway and the flutter keep
+    # one pace whatever the wind: a pace of time x the wind's strength jumped whenever a gust changed
+    # it - time is the seconds since the level opened, a thousand and more - so the leaves leapt
+    # somewhere new every frame and smeared into streaks. Only how far they move follows the wind.)
+    slow = sine(op(unreal.MaterialExpressionAdd, op(unreal.MaterialExpressionMultiply, tm, const(1.1)), ph))
     push = op(unreal.MaterialExpressionMultiply, k, op(unreal.MaterialExpressionAdd, const(1.0 - sway), op(unreal.MaterialExpressionMultiply, slow, const(sway))))
     # flutter: quick and small, some even in still air (each part of the plant in its own time)
     fph = op(unreal.MaterialExpressionMultiply, ph, const(3.0))
     if parts_cm:
         fph = op(unreal.MaterialExpressionAdd, fph, op(unreal.MaterialExpressionDotProduct, E(unreal.MaterialExpressionWorldPosition, -1800, 1900),
                                                      const3((6.283 / parts_cm, 4.7 / parts_cm, 5.3 / parts_cm))))
-    rate = op(unreal.MaterialExpressionMultiply, op(unreal.MaterialExpressionAdd, const(0.6), k), const(flutter_rate))
-    fast = sine(op(unreal.MaterialExpressionAdd, op(unreal.MaterialExpressionMultiply, tm, rate), fph))
+    fast = sine(op(unreal.MaterialExpressionAdd, op(unreal.MaterialExpressionMultiply, tm, const(1.1 * flutter_rate)), fph))
     flut = op(unreal.MaterialExpressionMultiply, op(unreal.MaterialExpressionMultiply, fast, const(flutter)), op(unreal.MaterialExpressionAdd, const(0.2), k))
     amt = op(unreal.MaterialExpressionMultiply, op(unreal.MaterialExpressionAdd, push, flut),
              op(unreal.MaterialExpressionMultiply, op(unreal.MaterialExpressionMultiply, height, height), const(scale)))

@@ -48,7 +48,8 @@ const TArray<otg::FGrassKind>& otg::FGrass::Kinds()
 			Out.Add(G);
 		};
 		Add(TEXT("rough"), { TEXT("rough") }, 2400, 70, 100, 1.0f, 0.85f, 1.2f);
-		Add(TEXT("fairway"), { TEXT("fairway"), TEXT("tee") }, 2600, 30, 42, 0.3f, 0.95f, 1.05f);
+		// (no blades on the mown surfaces - fairways, tees, fringes, greens: mown that short, real turf
+		// reads as a smooth surface, and blades on it looked like rough; the ground draws them)
 		Add(TEXT("native"), { TEXT("native") }, 320, 140, 200, 1.0f, 0.7f, 1.3f, 16, 0.31f, 0.39f, false);
 		Add(TEXT("native_short"), { TEXT("native") }, 520, 110, 160, 1.0f, 0.75f, 1.25f, 16, 0.31f, 0.39f, true);
 		Add(TEXT("flowers_yellow"), { TEXT("native") }, 70, 70, 100, 1.0f, 0.85f, 1.2f, 9, 0.43f, 0.48f, false);
@@ -126,10 +127,13 @@ TArray<FTransform> otg::FGrass::Place(int32 KindI, int32 CX, int32 CY) const
 			if (P <= 0) continue;
 			P *= FMath::Clamp((0.45f - Mask(TEXT("water"), X, Y)) * 10.f, 0.f, 1.f);
 			P *= FMath::Clamp((0.85f - Mask(TEXT("path"), X, Y)) * 2.f, 0.f, 1.f);
+			// (and never on a mown surface, though the rough's mask reaches into the fringes)
+			const float Mown = FMath::Max(FMath::Max(Mask(TEXT("fairway"), X, Y), Mask(TEXT("tee"), X, Y)), FMath::Max(Mask(TEXT("fringe"), X, Y), Mask(TEXT("green"), X, Y)));
+			P *= 1.f - FMath::Clamp((Mown - 0.33f) * 12.f, 0.f, 1.f);
 			if (K.PatchM > 0)
 			{
 				// (value noise bunches round the middle: spread out to the rock texture's range)
-				const double N = FMath::Clamp(0.5 + (Noise(X / 100.0, Y / 100.0, K.PatchM, KindI < 4 ? 77 : KindI * 31) - 0.5) * 1.8, 0.0, 1.0);
+				const double N = FMath::Clamp(0.5 + (Noise(X / 100.0, Y / 100.0, K.PatchM, K.Name.StartsWith(TEXT("native")) ? 77 : (KindI + 1) * 31) - 0.5) * 1.8, 0.0, 1.0);
 				const double L = 0.27 + 0.19 * N;
 				float F = FMath::SmoothStep(K.PatchLo, K.PatchHi, float(L));
 				P *= K.bInvert ? 1.f - F : F;

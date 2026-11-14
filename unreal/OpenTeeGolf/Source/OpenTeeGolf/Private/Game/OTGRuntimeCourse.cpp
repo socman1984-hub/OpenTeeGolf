@@ -97,6 +97,7 @@ namespace
 	constexpr int32 BoulderKinds = 6;
 	constexpr double PathSinkCm = -4;   // (build_course.py PATH_SINK_CM)
 	constexpr double WaterLiftCm = 3;
+	constexpr double PathOffGroundCm = 35;   // (a path's mesh drawn where it's this far above the ground: bridges)
 
 	struct FTreeModel { UStaticMesh* Mesh; double Height; };
 	TArray<FTreeModel> TreeModels(const TCHAR* const* Folders, int32 NumFolders, bool bBroadleaf)
@@ -138,6 +139,7 @@ void AOTGRuntimeCourse::Build(UOTGCourseData* D, TFunction<void(float, const FSt
 	if (Progress) Progress(0.75f, TEXT("Water, paths and buildings"));
 	BuildBoulders();
 	BuildWater();
+	BuildFarLand();
 	BuildProps();
 	BuildGrass();
 	UE_LOG(LogOTGRuntimeCourse, Display, TEXT("%s built in %.1f s"), *D->CourseName, FPlatformTime::Seconds() - T0);
@@ -159,6 +161,7 @@ void AOTGRuntimeCourse::BuildInSteps(UOTGCourseData* D, TFunction<void(float, co
 		Steps.Add({ TEXT("The ground"), [this, From, Batch, Total]() { BuildGroundTiles(From, FMath::Min(From + Batch, Total)); } });
 	Steps.Add({ TEXT("Trees"), [this]() { BuildTrees(); } });
 	Steps.Add({ TEXT("Rocks and water"), [this]() { BuildBoulders(); BuildWater(); } });
+	Steps.Add({ TEXT("The land round it"), [this]() { BuildFarLand(); } });
 	Steps.Add({ TEXT("Paths and buildings"), [this]() { BuildProps(); } });
 	Steps.Add({ TEXT("Grass"), [this]() { BuildGrass(); } });
 	StepsTotal = Steps.Num();
@@ -208,9 +211,87 @@ void AOTGRuntimeCourse::PrepareGround()
 	if (!Base) { UE_LOG(LogOTGRuntimeCourse, Error, TEXT("No M_CourseGround_Runtime in the game's content (unreal/make_assets.ps1)")); return; }
 	GroundMat = UMaterialInstanceDynamic::Create(Base, this);
 	SetPictures(GroundMat);
+	LiftPondBanks();
 	const int32 N = Data->HeightSamples;
 	TileQuads = N > 2049 ? 128 : 64;   // (a tile's samples a side: bigger tiles on a big course)
 	TileCount = FMath::DivideAndRoundUp(N - 1, TileQuads);
+}
+
+// The heights the ground is drawn with. Round each pond (water_bodies.json's lakes: outline and
+// level), the odd sample of the bank just outside the shoreline lies a little below the water: the
+// water (drawn a few cm up, under the banks) shows through it as a dark pit, a row of them along the
+// shore. Those within 3 m of the outline and up to 25 cm under the water are lifted just clear of
+// it (the ball still plays on the course's own heights: a few cm)
+void AOTGRuntimeCourse::LiftPondBanks()
+{
+	GroundHeights = Data->Heights;
+	const int32 N = Data->HeightSamples;
+	if (GroundHeights.Num() != N * N) return;
+	const TSharedPtr<FJsonValue> J = ReadJson(FPaths::Combine(Data->ExportDir, TEXT("water_bodies.json")));
+	if (!J.IsValid() || J->Type != EJson::Array) return;
+	const double Step = Data->MetresPerSample * 100.0;
+	const double ZScale = Data->HeightRange * 100.0 / 65535.0;
+	const double Clear = 8.0, Deepest = 25.0;   // cm over the water (it's drawn WaterLiftCm up); how far under it a bank may be
+	constexpr int32 Reach = 3;                  // samples out from the outline
+	int32 Lifted = 0;
+	for (const TSharedPtr<FJsonValue>& B : J->AsArray())
+	{
+		const TSharedPtr<FJsonObject> O = B->AsObject();
+		if (!O.IsValid() || O->GetStringField(TEXT("type")) != TEXT("lake")) continue;
+		const TArray<TSharedPtr<FJsonValue>>* Pts = nullptr;
+		if (!O->TryGetArrayField(TEXT("points"), Pts) || Pts->Num() < 3) continue;
+		TArray<FVector2D> Poly;
+		double Level = 0;
+		for (const TSharedPtr<FJsonValue>& P : *Pts)
+		{
+			const TSharedPtr<FJsonObject> Q = P->AsObject();
+			Poly.Add(FVector2D(Q->GetNumberField(TEXT("x")), Q->GetNumberField(TEXT("y"))) / Step);
+			Level = Q->GetNumberField(TEXT("z"));
+		}
+		FBox2D Box(Poly);
+		const int32 X0 = FMath::Max(0, FMath::FloorToInt(Box.Min.X) - Reach - 1), Y0 = FMath::Max(0, FMath::FloorToInt(Box.Min.Y) - Reach - 1);
+		const int32 X1 = FMath::Min(N - 1, FMath::CeilToInt(Box.Max.X) + Reach + 1), Y1 = FMath::Min(N - 1, FMath::CeilToInt(Box.Max.Y) + Reach + 1);
+		const int32 W = X1 - X0 + 1, H = Y1 - Y0 + 1;
+		if (W <= 0 || H <= 0) continue;
+		// inside the outline (crossings), then out from it a sample at a time
+		TArray<uint8> Ring;
+		Ring.SetNumZeroed(W * H);   // 1: water; 2..: that many - 1 samples out
+		for (int32 y = 0; y < H; y++)
+			for (int32 x = 0; x < W; x++)
+			{
+				const FVector2D S(X0 + x, Y0 + y);
+				bool bIn = false;
+				for (int32 a = 0, b = Poly.Num() - 1; a < Poly.Num(); b = a++)
+					if ((Poly[a].Y > S.Y) != (Poly[b].Y > S.Y) && S.X < (Poly[b].X - Poly[a].X) * (S.Y - Poly[a].Y) / (Poly[b].Y - Poly[a].Y) + Poly[a].X) bIn = !bIn;
+				if (bIn) Ring[y * W + x] = 1;
+			}
+		for (int32 r = 2; r <= Reach + 1; r++)
+		{
+			TArray<uint8> Next = Ring;
+			for (int32 y = 0; y < H; y++)
+				for (int32 x = 0; x < W; x++)
+				{
+					if (Ring[y * W + x]) continue;
+					for (int32 dy = -1; dy <= 1 && !Next[y * W + x]; dy++)
+						for (int32 dx = -1; dx <= 1; dx++)
+						{
+							const int32 u = x + dx, v = y + dy;
+							if (u >= 0 && v >= 0 && u < W && v < H && Ring[v * W + u] == r - 1) { Next[y * W + x] = uint8(r); break; }
+						}
+				}
+			Ring = MoveTemp(Next);
+		}
+		const double Want = Level + Clear;
+		for (int32 y = 0; y < H; y++)
+			for (int32 x = 0; x < W; x++)
+			{
+				if (Ring[y * W + x] < 2) continue;
+				uint16& Hv = GroundHeights[(Y0 + y) * N + (X0 + x)];
+				const double Z = Hv * ZScale;
+				if (Z < Want && Z > Level - Deepest) { Hv = uint16(FMath::Clamp(FMath::CeilToDouble(Want / ZScale), 0.0, 65535.0)); Lifted++; }
+			}
+	}
+	UE_LOG(LogOTGRuntimeCourse, Display, TEXT("Pond banks: %d samples lifted clear of the water"), Lifted);
 }
 
 // Tiles From..To-1 of the ground (row by row)
@@ -221,7 +302,7 @@ void AOTGRuntimeCourse::BuildGroundTiles(int32 From, int32 To)
 	const int32 N = Data->HeightSamples;
 	const double Step = Data->MetresPerSample * 100.0;
 	const double ZScale = Data->HeightRange * 100.0 / 65535.0;
-	const TArray<uint16>& Hs = Data->Heights;
+	const TArray<uint16>& Hs = GroundHeights.Num() == N * N ? GroundHeights : Data->Heights;
 	auto Z = [&](int32 i, int32 j) { return double(Hs[FMath::Clamp(j, 0, N - 1) * N + FMath::Clamp(i, 0, N - 1)]) * ZScale; };
 	auto Normal = [&](int32 i, int32 j) {
 		return FVector((Z(i - 1, j) - Z(i + 1, j)) / (2 * Step), (Z(i, j - 1) - Z(i, j + 1)) / (2 * Step), 1.0).GetSafeNormal();
@@ -467,6 +548,107 @@ namespace
 	}
 }
 
+// The land beyond the course, out to the horizon: the course is a square a couple of km across,
+// and past its edge there was nothing - the sky's own blue showed below the horizon, a band of it
+// over the trees. Rings round the square, out to 12 km, start at the course's edge heights (just
+// under them: the ground's skirts hide the join), settle into low rolling hills and rise, 5 to
+// 12 km out, into a line of hills 40 to 360 m high all round, peaks and saddles: the horizon. (Flat land out to
+// 100 km left a strip of the sky's below-horizon blue; hills 20 km and more away were darkened to
+// navy by that much air.) Fields and woods in patches of colour (the prop materials' vertex
+// colours), the haze doing the rest.
+void AOTGRuntimeCourse::BuildFarLand()
+{
+	const int32 N = Data->HeightSamples;
+	if (Data->Heights.Num() != N * N) return;
+	const double SizeM = (N - 1) * Data->MetresPerSample;
+	const double StepM = 32.0;
+	const int32 Side = FMath::Max(8, FMath::RoundToInt(SizeM / StepM));
+	const int32 Around = Side * 4;
+	const double Rings[] = { 0, 40, 150, 450, 1200, 2500, 4500, 7000, 9500, 12000 };
+	constexpr int32 NumRings = UE_ARRAY_COUNT(Rings);
+	// (value noise, smooth, 0..1)
+	auto Noise = [](double X, double Y, double Cell, int32 Seed) {
+		const double U = X / Cell, V = Y / Cell;
+		const double i = FMath::Floor(U), j = FMath::Floor(V);
+		auto R = [&](double a, double b) { return Hash01(a + Seed * 17.0, b - Seed * 31.0, 1.0); };
+		auto S = [](double t) { return t * t * (3 - 2 * t); };
+		const double fu = S(U - i), fv = S(V - j);
+		return FMath::Lerp(FMath::Lerp(R(i, j), R(i + 1, j), fu), FMath::Lerp(R(i, j + 1), R(i + 1, j + 1), fu), fv);
+	};
+	// the course's edge, all the way round (metres, its height from the ground as it's drawn)
+	TArray<FVector2D> Edge;
+	TArray<double> EdgeH;
+	double MeanH = 0;
+	for (int32 k = 0; k < Around; k++)
+	{
+		const int32 s = k / Side;
+		const double t = double(k % Side) / Side * SizeM;
+		const FVector2D P = s == 0 ? FVector2D(t, 0) : s == 1 ? FVector2D(SizeM, t) : s == 2 ? FVector2D(SizeM - t, SizeM) : FVector2D(0, SizeM - t);
+		Edge.Add(P);
+		EdgeH.Add(GroundAt(P.X * 100.0, P.Y * 100.0) / 100.0);
+		MeanH += EdgeH.Last() / Around;
+	}
+	const FVector2D Mid(SizeM / 2, SizeM / 2);
+	otg::FGlbMesh G;
+	for (int32 r = 0; r < NumRings; r++)
+		for (int32 k = 0; k < Around; k++)
+		{
+			const double D = Rings[r];
+			// (the square grown by D on every side, its corners kept)
+			const FVector2D Off = Edge[k] - Mid;
+			const double Half = SizeM / 2;
+			const FVector2D P = Mid + Off * ((Half + D) / Half);
+			const double Settle = FMath::SmoothStep(0.0, 1500.0, D);
+			const double Hills = (Noise(P.X, P.Y, 2600, 3) - 0.5) * 70 + (Noise(P.X, P.Y, 700, 5) - 0.5) * 18;
+			const double Fade = FMath::SmoothStep(30.0, 900.0, D);
+			// (far off, a line of hills all round: the horizon, in front of the sky's own)
+			const double Ridge = FMath::SmoothStep(4500.0, 12000.0, D) * (40.0 + 230.0 * FMath::Square(Noise(P.X, P.Y, 3500, 13)) + 90.0 * Noise(P.X, P.Y, 1200, 17));
+			const double H = FMath::Lerp(EdgeH[k], MeanH, Settle) + Hills * Fade + Ridge - (r == 0 ? 0.15 : 0.0);
+			G.Positions.Add(FVector3f(P.X, H, P.Y));   // (the export's frame: x east, y up, z south)
+			// woods and fields: dark greens, olive and straw, by patches
+			const double Wood = Noise(P.X, P.Y, 380, 7), Dry = Noise(P.X, P.Y, 650, 11);
+			const FLinearColor Forest(0.075f, 0.1f, 0.055f), Field(0.15f, 0.18f, 0.085f), Straw(0.24f, 0.22f, 0.13f);
+			FLinearColor Col = FMath::Lerp(Field, Straw, float(FMath::SmoothStep(0.5, 0.85, Dry) * 0.7));
+			Col = FMath::Lerp(Col, Forest, float(FMath::SmoothStep(0.35, 0.65, Wood)));
+			// (next to the course: its own edge - trees and rough, mostly - so darker green)
+			Col = FMath::Lerp(Forest * 1.3f, Col, float(FMath::SmoothStep(0.0, 400.0, D)));
+			G.Colors.Add(Col);
+		}
+	for (int32 r = 0; r + 1 < NumRings; r++)
+		for (int32 k = 0; k < Around; k++)
+		{
+			const int32 k2 = (k + 1) % Around;
+			const int32 A = r * Around + k, B = r * Around + k2, C = (r + 1) * Around + k, D = (r + 1) * Around + k2;
+			for (const FIntVector& T : { FIntVector(A, B, C), FIntVector(B, D, C) })
+			{
+				// (facing up: the export frame is glTF's, front faces counter-clockwise from above; the
+				// prop material is two-sided, and a back face is lit as if facing down - black)
+				const FVector3f& Pa = G.Positions[T.X];
+				const FVector3f E1 = G.Positions[T.Y] - Pa, E2 = G.Positions[T.Z] - Pa;
+				if (FVector3f::CrossProduct(E1, E2).Y >= 0) G.Indices.Append({ T.X, T.Y, T.Z });
+				else G.Indices.Append({ T.X, T.Z, T.Y });
+			}
+		}
+	// smooth normals
+	G.Normals.SetNumZeroed(G.Positions.Num());
+	for (int32 t = 0; t + 2 < G.Indices.Num(); t += 3)
+	{
+		const FVector3f& Pa = G.Positions[G.Indices[t]];
+		FVector3f Nn = FVector3f::CrossProduct(G.Positions[G.Indices[t + 1]] - Pa, G.Positions[G.Indices[t + 2]] - Pa);
+		if (Nn.Y < 0) Nn = -Nn;   // (up)
+		for (int32 k = 0; k < 3; k++) G.Normals[G.Indices[t + k]] += Nn;
+	}
+	for (FVector3f& Nn : G.Normals) Nn = Nn.GetSafeNormal();
+	UMaterialInterface* M = Load<UMaterialInterface>(TEXT("M_Prop_building"));
+	UStaticMeshComponent* C = MeshFromGlb(this, G, Data->LevelOrigin, 0, true, M);
+	C->SetCastShadow(false);
+	C->bUseAsOccluder = false;
+	C->SetCullDistance(0);
+	C->SetBoundsScale(1.f);
+	Parts.Add(C);
+	UE_LOG(LogOTGRuntimeCourse, Display, TEXT("The land round it: %d km out"), FMath::RoundToInt(Rings[NumRings - 1] / 1000));
+}
+
 // The ponds and streams (water.glb): one surface, the game's water on it
 void AOTGRuntimeCourse::BuildWater()
 {
@@ -483,6 +665,20 @@ void AOTGRuntimeCourse::BuildWater()
 
 // Cart paths, bridges, buildings and cars (props.json, props_<kind>.glb): the game's materials,
 // a path a few cm into the ground (the ground has the path painted in: it never floats)
+// The ground's height (cm, the level's frame less its origin) at X, Y: as it's drawn
+double AOTGRuntimeCourse::GroundAt(double X, double Y) const
+{
+	const int32 N = Data->HeightSamples;
+	const TArray<uint16>& Hs = GroundHeights.Num() == N * N ? GroundHeights : Data->Heights;
+	if (Hs.Num() != N * N) return 0;
+	const double Step = Data->MetresPerSample * 100.0, ZScale = Data->HeightRange * 100.0 / 65535.0;
+	const double U = FMath::Clamp(X / Step, 0.0, N - 1.001), V = FMath::Clamp(Y / Step, 0.0, N - 1.001);
+	const int32 i = FMath::FloorToInt(U), j = FMath::FloorToInt(V);
+	const double fu = U - i, fv = V - j;
+	auto H = [&](int32 a, int32 b) { return double(Hs[b * N + a]); };
+	return FMath::Lerp(FMath::Lerp(H(i, j), H(i + 1, j), fu), FMath::Lerp(H(i, j + 1), H(i + 1, j + 1), fu), fv) * ZScale;
+}
+
 void AOTGRuntimeCourse::BuildProps()
 {
 	const TSharedPtr<FJsonValue> J = ReadJson(FPaths::Combine(Data->ExportDir, TEXT("props.json")));
@@ -494,6 +690,28 @@ void AOTGRuntimeCourse::BuildProps()
 		otg::FGlbMesh G;
 		if (!otg::ReadGlb(FPaths::Combine(Data->ExportDir, P->GetStringField(TEXT("file"))), G)) continue;
 		const bool bPath = Kind.StartsWith(TEXT("path"));
+		// The paths are painted in the ground (its path mask): their mesh is only wanted where it
+		// leaves the ground - bridges, boardwalks. Lying on the ground, sunk a little, it pokes up
+		// through it in patches (the ground's own triangles, and coarser ones further off, aren't
+		// the path's): those triangles go
+		if (bPath)
+		{
+			const int32 Before = G.Indices.Num() / 3;
+			TArray<int32> Keep;
+			for (int32 t = 0; t + 2 < G.Indices.Num(); t += 3)
+			{
+				bool bOff = false;
+				for (int32 k = 0; k < 3 && !bOff; k++)
+				{
+					const FVector3f& Pv = G.Positions[G.Indices[t + k]];
+					bOff = Pv.Y * 100.0 - GroundAt(Pv.X * 100.0, Pv.Z * 100.0) > PathOffGroundCm;
+				}
+				if (bOff) Keep.Append(&G.Indices[t], 3);
+			}
+			G.Indices = MoveTemp(Keep);
+			UE_LOG(LogOTGRuntimeCourse, Display, TEXT("Props: %s, %d of %d triangles off the ground (the rest painted in it)"), *Kind, G.Indices.Num() / 3, Before);
+			if (!G.Indices.Num()) continue;
+		}
 		UMaterialInterface* M = Load<UMaterialInterface>(TEXT("M_Prop_") + Kind);
 		if (!M) M = Load<UMaterialInterface>(TEXT("M_Prop_building"));
 		UStaticMeshComponent* C = MeshFromGlb(this, G, Data->LevelOrigin, bPath ? PathSinkCm : 0, !bPath, M);
@@ -515,6 +733,7 @@ void AOTGRuntimeCourse::BuildGrass()
 		UMaterialInstanceDynamic* M = UMaterialInstanceDynamic::Create(Base, this);
 		SetPictures(M);
 		TurfMats.Add(M);
+		TurfMeshes.Add(Mesh);
 		Have.Add(K.Name, TPair<UStaticMesh*, UMaterialInterface*>(Mesh, M));
 	}
 	Grass = MakeShared<otg::FGrass>();
