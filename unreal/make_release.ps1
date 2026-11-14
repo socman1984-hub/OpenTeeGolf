@@ -3,8 +3,9 @@
 #
 #   powershell -ExecutionPolicy Bypass -File unreal\make_release.ps1
 #
-# It packages the game (Shipping) with every course pack built so far (make_pack.ps1 <course id>),
-# and adds the Garmin R10 and Square Golf bridge programs, a README for players and the notices.
+# It packages the game (Shipping) with no courses - players export their own from the web version,
+# and the game builds them when they're opened - and adds the Garmin R10 and Square Golf bridge
+# programs, a README for players and the notices.
 # The version is the web version's (package.json).
 
 $ErrorActionPreference = 'Stop'
@@ -23,7 +24,7 @@ Set-Content -Path $gameIni -Value $ini -NoNewline -Encoding utf8
 Write-Host "OpenTeeGolf $version"
 
 # ---- the game's own assets, then the game (Shipping: no console, no logging, optimised)
-& (Join-Path $Here 'make_pack.ps1') -Assets
+& (Join-Path $Here 'make_assets.ps1')
 $out = Join-Path $Here 'OpenTeeGolf\Release'
 if (Test-Path $out) { Remove-Item -Recurse -Force $out }
 & (Join-Path $Engine 'Build\BatchFiles\RunUAT.bat') BuildCookRun "-project=$Project" -platform=Win64 -clientconfig=Shipping `

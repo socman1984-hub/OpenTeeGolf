@@ -23,7 +23,7 @@ import traceback
 import unreal
 
 # ---- set this to the course's export folder (OpenTeeGolf/exports/<course id>)
-# (the course pack builder, pack_course.py, sets OTG_EXPORT_DIR and OTG_CONTENT, and builds every part)
+# (the game's assets, make_game_assets.py, set OTG_RUNTIME: the materials and meshes exported courses are built with at run time)
 EXPORT_DIR = os.environ.get("OTG_EXPORT_DIR") or r"C:\Users\rartz\Desktop\Claude Projects\GolfSim\exports\Majestic_Springs_Golf_Club"
 
 # Which parts to build on this run (False: leave what's in the level as it is). Building only what
@@ -59,7 +59,7 @@ BED_SILT = (0.30, 0.26, 0.20)
 BED_SILT_MAX = 0.4
 BED_TINT = (0.95, 0.92, 0.86)
 BED_DEEP = 0.7
-# Pebbles lie only on a stream's flat bottom (layer_stream.png, from derive_layers.py): where the
+# Pebbles lie only on a stream's flat bottom (layer_stream.png, from the web version's derive-layers.js): where the
 # ground's normal is steeper than BED_FLAT (its upward part, the lower value: fully mud; the higher:
 # fully stones, wavering a little from place to place), and in ponds and on the banks it's mud
 # (make_bed_texture.py's creekmud) - with a few gravel patches in a pond's shallows (POND_GRAVEL)
@@ -87,7 +87,7 @@ TURF_SHADE = (0.8, 1.2)
 PATCH_LUM_W = (1.17, 1.56, 1.17)
 PATH_TINT = (0.36, 0.355, 0.33)
 # Mowing stripes on the fairways, tees and greens: bands along each hole's line of play
-# (layer_mow.png, from derive_layers.py), MOW_WIDTH_M wide (fairway, green), lighter and darker by
+# (layer_mow.png, from the web version's derive-layers.js), MOW_WIDTH_M wide (fairway, green), lighter and darker by
 # MOW_CONTRAST (fairway, green) - and, as real stripes, which band is light depends on which way you
 # look along them, and they fade looking across. The fringe round each green: its own deeper green.
 MOW_WIDTH_M = (3.2, 1.2)
@@ -126,7 +126,7 @@ TURF_GRASS = {
                 "patch_cm": 24, "density": 2600, "draw_m": (30, 42), "jitter": 0.3, "scale": (0.95, 1.05), "shade": (0.88, 1.12),
                 "root": (0.03, 0.052, 0.012), "tip": (0.075, 0.13, 0.03), "dry": (0.13, 0.14, 0.05), "dry_share": 0.01, "vary": 0.08},
     # Tall wild grass (fescue) where the web game has deep rough and native grass - under the trees
-    # and out of play (layer_native.png, from derive_layers.py): clumps of long thin blades, some
+    # and out of play (layer_native.png, from the web version's derive-layers.js): clumps of long thin blades, some
     # gone to straw, many carrying a seed head
     # (patch: where in the meadow it grows - the rock texture's light and dark this many metres
     # across, between these lightnesses, "invert" for the other patches - so the tall and the
@@ -173,8 +173,60 @@ def exists(name):
     return os.path.exists(os.path.join(EXPORT_DIR, name))
 
 
-meta = load("course.json")
-CONTENT = os.environ.get("OTG_CONTENT") or "/Game/OpenTeeGolf/" + meta["id"]
+# Game-assets mode (OTG_RUNTIME set; make_game_assets.py runs it): no course. The reusable pieces an
+# exported course is built from at run time (AOTGRuntimeCourse) go into the game's own content - the
+# ground and turf materials with the course's pictures as parameters (Photo, Mask_<surface>, Mow;
+# LandSizeM / LandSizeCm the course's size), the turf, boulder and tree stand-in assets, the water and
+# path / building materials.
+RUNTIME = bool(os.environ.get("OTG_RUNTIME"))
+MASK_KEYS = ("fairway", "green", "tee", "bunker", "water", "rough", "native", "stream", "path", "fringe")
+meta = {"id": "runtime", "name": "runtime", "samples": 2017, "metresPerSample": 1, "sizeMetres": 2016,
+        "landscape": {"locationZ": 0}} if RUNTIME else load("course.json")
+CONTENT = os.environ.get("OTG_CONTENT") or ("/Game/OpenTeeGolf/Game/Runtime" if RUNTIME else "/Game/OpenTeeGolf/" + meta["id"])
+
+
+def tiny_png(path, w, h, rgb):
+    """A small one-colour PNG (8-bit grey when rgb is a number, else RGB): parameter defaults."""
+    import struct, zlib
+    grey = isinstance(rgb, (int, float))
+    row = bytes([int(rgb)] * w) if grey else bytes(list(rgb) * w)
+    raw = b"".join(b"\0" + row for _ in range(h))
+    def chunk(t, d):
+        return struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d) & 0xffffffff)
+    png = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 0 if grey else 2, 0, 0, 0)) + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b"")
+    open(path, "wb").write(png)
+
+
+_defaults = {}
+
+
+def default_texture(kind):
+    """The parameters' defaults (made once): a blank mask, a plain photo, a mowing map along x."""
+    if kind in _defaults:
+        return _defaults[kind]
+    import tempfile
+    path = os.path.join(tempfile.gettempdir(), "OTG_Default_%s.png" % kind)
+    tiny_png(path, 4, 4, {"mask": 0, "photo": (70, 90, 50), "data": (255, 128, 128), "masks": (255, 128, 0)}[kind])
+    t = import_texture(path, "T_Default_" + kind, kind if kind not in ("photo", "masks") else "color")
+    if kind == "masks":
+        # (packed masks - red, green, blue each a mask - as the tree packs' Mask textures are)
+        t.set_editor_property("srgb", False)
+        t.set_editor_property("compression_settings", unreal.TextureCompressionSettings.TC_MASKS)
+        unreal.EditorAssetLibrary.save_loaded_asset(t)
+    _defaults[kind] = t
+    return t
+
+
+def param_sample(mat, name, uv, x, y, sampler):
+    """A texture parameter (the course's picture, set at run time) read at uv."""
+    kind = {unreal.MaterialSamplerType.SAMPLERTYPE_LINEAR_GRAYSCALE: "mask", unreal.MaterialSamplerType.SAMPLERTYPE_LINEAR_COLOR: "data"}.get(sampler, "photo")
+    n = mel.create_material_expression(mat, unreal.MaterialExpressionTextureSampleParameter2D, x, y)
+    n.set_editor_property("parameter_name", name)
+    n.set_editor_property("texture", default_texture(kind))
+    n.set_editor_property("sampler_type", sampler)
+    n.set_editor_property("sampler_source", unreal.SamplerSourceMode.SSM_WRAP_WORLD_GROUP_SETTINGS)
+    mel.connect_material_expressions(uv, "", n, "UVs")
+    return n
 assets = unreal.AssetToolsHelpers.get_asset_tools()
 actors = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)
 mel = unreal.MaterialEditingLibrary
@@ -370,9 +422,14 @@ def build_ground(land):
     """Landscape material: the photo for colour; lawn, rough and sand textures for detail and
     relief up close, picked by the surface masks; 3D grass on the rough."""
     N = meta["samples"]
-    photo = import_texture(os.path.join(EXPORT_DIR, "photo.jpg"), "T_CoursePhoto")
-    masks = {k: import_texture(os.path.join(EXPORT_DIR, "layer_%s.png" % k), "T_Mask_" + k, "mask")
-             for k in ("fairway", "green", "tee", "bunker", "water", "rough", "native", "stream", "path", "fringe") if exists("layer_%s.png" % k)}
+    if RUNTIME:
+        # (the course's pictures: parameters, set by the game when it builds the course)
+        photo = "Photo"
+        masks = {k: "Mask_" + k for k in MASK_KEYS}
+    else:
+        photo = import_texture(os.path.join(EXPORT_DIR, "photo.jpg"), "T_CoursePhoto")
+        masks = {k: import_texture(os.path.join(EXPORT_DIR, "layer_%s.png" % k), "T_Mask_" + k, "mask")
+                 for k in MASK_KEYS if exists("layer_%s.png" % k)}
     tex = {}
     for k in ("lawn", "rough", "sand"):
         tex[k] = import_texture(os.path.join(GAME_TEXTURES, k + "_color.jpg"), "T_%s_color" % k)
@@ -392,15 +449,41 @@ def build_ground(land):
         warn("No mud for the banks and ponds (run make_bed_texture.py): pebbles everywhere")
         tex["mud"], tex["mud_n"] = tex["bed"], tex["bed_n"]
 
-    mat = new_material("M_CourseGround")
+    mat = new_material("M_CourseGround_Runtime" if RUNTIME else "M_CourseGround")
     E = lambda cls, x, y: mel.create_material_expression(mat, cls, x, y)
 
     def coords(scale, y):
+        if RUNTIME:
+            # (world position: the terrain's north-west corner is the level's origin; scale in
+            # landscape samples is that many metres a texture - or, for the whole landscape, its size)
+            wp = E(unreal.MaterialExpressionWorldPosition, -2400, y)
+            xy = E(unreal.MaterialExpressionComponentMask, -2300, y)
+            for ch in "rgba":
+                xy.set_editor_property(ch, ch in "rg")
+            mel.connect_material_expressions(wp, "", xy, "")
+            if scale == N - 1:
+                size = E(unreal.MaterialExpressionScalarParameter, -2400, y + 60)
+                size.set_editor_property("parameter_name", "LandSizeM")
+                size.set_editor_property("default_value", float(meta["sizeMetres"]))
+            else:
+                size = E(unreal.MaterialExpressionConstant, -2400, y + 60)
+                size.set_editor_property("r", float(scale) * meta["metresPerSample"])
+            cm = E(unreal.MaterialExpressionMultiply, -2300, y + 60)
+            mel.connect_material_expressions(size, "", cm, "A")
+            hundred = E(unreal.MaterialExpressionConstant, -2400, y + 120)
+            hundred.set_editor_property("r", 100.0)
+            mel.connect_material_expressions(hundred, "", cm, "B")
+            d = E(unreal.MaterialExpressionDivide, -2200, y)
+            mel.connect_material_expressions(xy, "", d, "A")
+            mel.connect_material_expressions(cm, "", d, "B")
+            return d
         c = E(unreal.MaterialExpressionLandscapeLayerCoords, -2200, y)
         c.set_editor_property("mapping_scale", float(scale))
         return c
 
     def sample(t, uv, x, y, sampler):
+        if isinstance(t, str):
+            return param_sample(mat, t, uv, x, y, sampler)
         s = E(unreal.MaterialExpressionTextureSample, x, y)
         s.set_editor_property("texture", t)
         s.set_editor_property("sampler_type", sampler)
@@ -492,9 +575,9 @@ def build_ground(land):
         mel.connect_material_expressions(m["fringe"], "", fr, "Alpha")
         turf = fr
     # mowing stripes on the fairways, tees and greens (not the fringe)
-    if exists("layer_mow.png"):
+    if RUNTIME or exists("layer_mow.png"):
         try:
-            mow_t = import_texture(os.path.join(EXPORT_DIR, "layer_mow.png"), "T_Mow", "data")
+            mow_t = "Mow" if RUNTIME else import_texture(os.path.join(EXPORT_DIR, "layer_mow.png"), "T_Mow", "data")
             mow = sample(mow_t, big, -1800, 7000, S.SAMPLERTYPE_LINEAR_COLOR)
             f = mow_shade(mat, mow, m["green"])
             striped = mown
@@ -675,11 +758,13 @@ def build_ground(land):
     # grass by a coarse map, one value a landscape sample), and cut off at the edge itself by the
     # blades' own material
     try:
+        if RUNTIME:
+            raise StopIteration   # (no landscape grass on the run-time terrain: AOTGRuntimeCourse grows it)
         go = E(unreal.MaterialExpressionLandscapeGrassOutput, -400, 700)
         inputs = []
         for kind, cfg in TURF_GRASS.items():
             if any(nm not in raw for nm in cfg["masks"]):
-                log("Turf %s: no %s mask in this export (derive_layers.py makes it)" % (kind, "/".join(cfg["masks"])))
+                log("Turf %s: no %s mask in this export (the web version's derive-layers.js makes it)" % (kind, "/".join(cfg["masks"])))
                 continue
             gt = make_turf_type(kind)
             gi = unreal.GrassInput()
@@ -731,12 +816,15 @@ def build_ground(land):
                 dry = op(unreal.MaterialExpressionMultiply, dry, off, -580, 1100)
             mel.connect_material_expressions(op(unreal.MaterialExpressionMultiply, sat, dry, -550, 900), "", go, kind.capitalize())
         log("Turf: on %s" % ", ".join(TURF_GRASS))
+    except StopIteration:
+        pass
     except Exception:
         warn("Turf skipped:\n" + traceback.format_exc())
 
     mel.recompile_material(mat)
     unreal.EditorAssetLibrary.save_loaded_asset(mat)
-    land.set_editor_property("landscape_material", mat)
+    if land:
+        land.set_editor_property("landscape_material", mat)
     try:
         n = mel.get_num_material_expressions(mat)
         log("Ground material: %d nodes" % n)
@@ -888,6 +976,9 @@ def turf_material(kind, land_size_cm):
         return n
 
     def tex(name, uv, x, y, gray=True):
+        if RUNTIME:
+            pname = {"T_CoursePhoto": "Photo", "T_Mow": "Mow"}.get(name, name.replace("T_Mask_", "Mask_"))
+            return param_sample(mat, pname, uv, x, y, unreal.MaterialSamplerType.SAMPLERTYPE_LINEAR_GRAYSCALE if gray else unreal.MaterialSamplerType.SAMPLERTYPE_COLOR)
         s = E(unreal.MaterialExpressionTextureSample, x, y)
         s.set_editor_property("texture", unreal.load_asset(CONTENT + "/Textures/" + name))
         s.set_editor_property("sampler_type", unreal.MaterialSamplerType.SAMPLERTYPE_LINEAR_GRAYSCALE if gray else unreal.MaterialSamplerType.SAMPLERTYPE_COLOR)
@@ -903,14 +994,20 @@ def turf_material(kind, land_size_cm):
     corner = E(unreal.MaterialExpressionConstant2Vector, -2000, 120)
     corner.set_editor_property("r", OFFSET.x)
     corner.set_editor_property("g", OFFSET.y)
-    uv = op(unreal.MaterialExpressionDivide, op(unreal.MaterialExpressionSubtract, xy, corner, -1850, 0), const(land_size_cm, -1850, 120), -1700, 0)
+    if RUNTIME:
+        size = E(unreal.MaterialExpressionScalarParameter, -1850, 120)
+        size.set_editor_property("parameter_name", "LandSizeCm")
+        size.set_editor_property("default_value", float(land_size_cm))
+    else:
+        size = const(land_size_cm, -1850, 120)
+    uv = op(unreal.MaterialExpressionDivide, op(unreal.MaterialExpressionSubtract, xy, corner, -1850, 0), size, -1700, 0)
     # the surface the blades belong to
     names = TURF_GRASS[kind]["masks"]
     mask = tex("T_Mask_" + names[0], uv, -1500, 0)
     mval = mask
     for i, nm in enumerate(names[1:]):
         mval = op(unreal.MaterialExpressionMax, mval, tex("T_Mask_" + nm, uv, -1500, 200 + i * 200), -1300, 100 + i * 200, "R" if mval is mask else "", "R")
-    if unreal.EditorAssetLibrary.does_asset_exist(CONTENT + "/Textures/T_Mask_path"):
+    if RUNTIME or unreal.EditorAssetLibrary.does_asset_exist(CONTENT + "/Textures/T_Mask_path"):
         pth = tex("T_Mask_path", uv, -1500, 400)
         keep = E(unreal.MaterialExpressionOneMinus, -1300, 400)
         mel.connect_material_expressions(pth, "R", keep, "")
@@ -951,14 +1048,17 @@ def turf_material(kind, land_size_cm):
     mel.connect_material_expressions(t_dry, "", dried, "Alpha")
     vary = op(unreal.MaterialExpressionAdd, const(1.0 - cfg["vary"], -1000, 480), op(unreal.MaterialExpressionMultiply, t_rand, const(2 * cfg["vary"], -1100, 520), -1000, 520), -900, 480)
     col = op(unreal.MaterialExpressionMultiply, op(unreal.MaterialExpressionMultiply, dried, vary, -800, 350), shade, -650, 400)
-    if kind == "fairway" and unreal.EditorAssetLibrary.does_asset_exist(CONTENT + "/Textures/T_Mow"):
+    if kind == "fairway" and (RUNTIME or unreal.EditorAssetLibrary.does_asset_exist(CONTENT + "/Textures/T_Mow")):
         try:
-            mw = E(unreal.MaterialExpressionTextureSample, -1500, 1600)
-            mw.set_editor_property("texture", unreal.load_asset(CONTENT + "/Textures/T_Mow"))
-            mw.set_editor_property("sampler_type", unreal.MaterialSamplerType.SAMPLERTYPE_LINEAR_COLOR)
-            mel.connect_material_expressions(uv, "", mw, "UVs")
+            if RUNTIME:
+                mw = param_sample(mat, "Mow", uv, -1500, 1600, unreal.MaterialSamplerType.SAMPLERTYPE_LINEAR_COLOR)
+            else:
+                mw = E(unreal.MaterialExpressionTextureSample, -1500, 1600)
+                mw.set_editor_property("texture", unreal.load_asset(CONTENT + "/Textures/T_Mow"))
+                mw.set_editor_property("sampler_type", unreal.MaterialSamplerType.SAMPLERTYPE_LINEAR_COLOR)
+                mel.connect_material_expressions(uv, "", mw, "UVs")
             f = mow_shade(mat, mw, const(0.0, -1500, 1700))
-            if unreal.EditorAssetLibrary.does_asset_exist(CONTENT + "/Textures/T_Mask_fringe"):
+            if RUNTIME or unreal.EditorAssetLibrary.does_asset_exist(CONTENT + "/Textures/T_Mask_fringe"):
                 frm = tex("T_Mask_fringe", uv, -1500, 1800)
                 kk = E(unreal.MaterialExpressionLinearInterpolate, -800, 1700)
                 mel.connect_material_expressions(f, "", kk, "A")
@@ -1039,6 +1139,8 @@ def make_turf_type(kind):
     except Exception:
         warn("Turf %s: Nanite not turned on (%s)" % (kind, traceback.format_exc().splitlines()[-1]))
     unreal.EditorAssetLibrary.save_loaded_asset(mesh)
+    if RUNTIME:
+        return mesh
     path = CONTENT + "/GT_Turf_" + kind
     gt = unreal.load_asset(path) if unreal.EditorAssetLibrary.does_asset_exist(path) else None
     if not isinstance(gt, unreal.LandscapeGrassType):
@@ -1417,8 +1519,9 @@ def tree_parent_material(kind):
         t = E(unreal.MaterialExpressionTextureSampleParameter2D, -900, y)
         t.set_editor_property("parameter_name", name)
         t.set_editor_property("sampler_type", sampler)
-        t.set_editor_property("texture", unreal.load_asset("/Engine/EngineResources/DefaultTexture") if sampler != unreal.MaterialSamplerType.SAMPLERTYPE_NORMAL
-                              else unreal.load_asset("/Engine/EngineMaterials/DefaultNormal"))
+        t.set_editor_property("texture", default_texture("masks") if sampler == unreal.MaterialSamplerType.SAMPLERTYPE_MASKS
+                              else unreal.load_asset("/Engine/EngineMaterials/DefaultNormal") if sampler == unreal.MaterialSamplerType.SAMPLERTYPE_NORMAL
+                              else unreal.load_asset("/Engine/EngineResources/DefaultTexture"))
         return t
 
     S = unreal.MaterialSamplerType
@@ -2371,10 +2474,27 @@ def boulder_material():
     return mat
 
 
+def boulder_meshes():
+    import tempfile
+    mat = boulder_material()
+    meshes = []
+    for k in range(BOULDER_KINDS):
+        tmp = os.path.join(tempfile.gettempdir(), "OTG_Boulder_%d.glb" % k)
+        write_glb(tmp, *rock_mesh(101 + k * 17))
+        found = static_meshes(import_file(tmp, CONTENT + "/Boulders", "SM_Boulder_%d" % k))
+        mesh = ([m for m in found if m.get_name() == "SM_Boulder_%d" % k] or found or [None])[0]
+        if mesh:
+            for i in range(len(mesh.get_editor_property("static_materials"))):
+                mesh.set_material(i, mat)
+            unreal.EditorAssetLibrary.save_loaded_asset(mesh)
+        meshes.append(mesh)
+    return meshes
+
+
 def place_boulders():
-    """Boulders along the creeks and by the ponds (boulders.json, from derive_layers.py)."""
+    """Boulders along the creeks and by the ponds (boulders.json, from the web version's derive-layers.js)."""
     if not exists("boulders.json"):
-        log("No boulders (derive_layers.py makes boulders.json)")
+        log("No boulders (the web version's derive-layers.js makes boulders.json)")
         return
     stones = load("boulders.json")
     a = new_actor("OTG_Boulders")
@@ -2462,7 +2582,34 @@ def set_texture_pool():
         warn("Texture pool not saved to the config: " + traceback.format_exc().splitlines()[-1])
 
 
+def build_runtime_assets():
+    """Game-assets mode: everything an exported course is built from at run time."""
+    import time
+    t0 = time.time()
+    step("Ground material", lambda: build_ground(None))
+    for kind in TURF_GRASS:
+        step("Turf " + kind, lambda kind=kind: make_turf_type(kind))
+    def trees():
+        n = 0
+        for mesh, _ in ue_broadleaf() + ue_broadleaf(UE_CONIFER_FOLDERS, None):
+            for sm in mesh.get_editor_property("static_materials"):
+                if tree_standin(sm.get_editor_property("material_interface")):
+                    n += 1
+        log("Tree stand-ins: %d" % len(_tree_standins))
+    step("Tree stand-ins", trees)
+    step("Boulders", boulder_meshes)
+    step("Water material", water_material)
+    for kind in ("path", "path_gravel", "building", "car", "bridge"):
+        step("Prop material " + kind, lambda kind=kind: prop_material(kind))
+    wind_collection()
+    unreal.EditorAssetLibrary.save_directory(CONTENT)
+    log("Game assets for exported courses made in %s (%.0f s)" % (CONTENT, time.time() - t0))
+
+
 def build():
+    if RUNTIME:
+        build_runtime_assets()
+        return
     set_texture_pool()
     land = find_landscape()
     if not land:

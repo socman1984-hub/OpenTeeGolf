@@ -6,6 +6,8 @@
 #include "Engine/World.h"
 #include "EngineUtils.h"
 #include "Game/OTGRound.h"
+#include "Game/OTGRuntimeCourse.h"
+#include "SOTGLoading.h"
 #include "HAL/IConsoleManager.h"
 #include "Misc/CommandLine.h"
 #include "Misc/Parse.h"
@@ -69,6 +71,23 @@ void AOTGGameMode::StartPlay()
 	{
 		PC->SetShowMouseCursor(true);
 		PC->SetInputMode(FInputModeGameAndUI().SetHideCursorDuringCapture(false));
+	}
+	// (an exported course: built here first, from its folder, a step a frame behind a loading
+	// screen; then the round)
+	if (!Course->ExportDir.IsEmpty())
+	{
+		AOTGRuntimeCourse* Built = GetWorld()->SpawnActor<AOTGRuntimeCourse>();
+		TSharedRef<SOTGLoading> Screen = SNew(SOTGLoading).Title(Course->CourseName);
+		if (GEngine && GEngine->GameViewport) GEngine->GameViewport->AddViewportWidgetContent(Screen, 20);
+		TWeakObjectPtr<AOTGGameMode> Self(this);
+		TWeakObjectPtr<UOTGCourseData> C(Course);
+		Built->BuildInSteps(Course, [Screen](float F, const FString& What) { Screen->Set(F, What); }, [Self, C, Setup, Screen]() {
+			if (GEngine && GEngine->GameViewport) GEngine->GameViewport->RemoveViewportWidgetContent(Screen);
+			if (!Self.IsValid() || !C.IsValid()) return;
+			AOTGRound* Round = Self->GetWorld()->SpawnActor<AOTGRound>();
+			Round->Setup(C.Get(), Setup);
+		});
+		return;
 	}
 	AOTGRound* Round = GetWorld()->SpawnActor<AOTGRound>();
 	Round->Setup(Course, Setup);
@@ -136,8 +155,10 @@ void AOTGPlayerController::SetupInputComponent()
 	Bind(EKeys::L, [](AOTGRound* R) { R->ToggleWeatherPanel(); }, true);
 	// a click on the ground aims there
 	Bind(EKeys::LeftMouseButton, [this](AOTGRound* R) {
-		FHitResult Hit;
-		if (GetHitResultUnderCursor(ECC_Visibility, false, Hit) && Hit.bBlockingHit) R->AimAtWorld(Hit.Location);
+		// (along the line under the cursor to where it meets the course's ground: the course's own
+		// heights, so it needs no collision on the ground)
+		FVector Origin, Dir;
+		if (DeprojectMousePositionToWorld(Origin, Dir)) R->AimAlongRay(Origin, Dir);
 	});
 }
 

@@ -14,6 +14,7 @@
 import http from 'node:http';
 import net from 'node:net';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { AsyncLocalStorage } from 'node:async_hooks';
@@ -35,7 +36,6 @@ import { MevoClient, DEFAULT_SETUP } from './lib/mevo.js';
 import { FrpController } from './lib/frp.js';
 import { BridgeProcess, BRIDGES } from './lib/bridges.js';
 import { UnrealRound } from './lib/unrealplay.js';
-import { UnrealBuild } from './lib/unrealbuild.js';
 const BUILDING_TYPE_IDS = new Set(BUILDING_TYPES.map((t) => t.id));
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -127,7 +127,6 @@ function broadcast(type, data) {
 }
 // The round being played in Unreal Engine, if any (lib/unrealplay.js, unreal/play_course.py)
 let unrealRound = null;
-const unrealBuild = new UnrealBuild(ROOT);
 
 // How much each loading step has downloaded, for the loading screen: every fetch made while a step
 // runs (inside withTask) counts its bytes towards that step, and about once a second the step's
@@ -549,6 +548,8 @@ const readRaw = (req, limit) => new Promise((resolve, reject) => {
 
 const PUBLIC = path.join(ROOT, 'public');
 const EXPORTS = path.join(ROOT, 'exports'); // (courses exported for Unreal Engine)
+// (and where the Unreal game looks for courses to play: each export goes there too)
+const GAME_COURSES = path.join(process.env.USERPROFILE || os.homedir(), 'Documents', 'OpenTeeGolf', 'Courses');
 const THREE = path.join(ROOT, 'node_modules', 'three');
 const JOLT = path.join(ROOT, 'node_modules', 'jolt-physics', 'dist');
 const EZTREE = path.join(ROOT, 'node_modules', '@dgreenheck', 'ez-tree', 'build');
@@ -633,15 +634,19 @@ const httpServer = http.createServer(async (req, res) => {
       const saved = JSON.parse(fs.readFileSync(file, 'utf8'));
       return json(res, saved.version === PHOTO_TREES_VERSION ? saved : { trees: null });
     }
-    if ((m = p.match(/^\/api\/export\/([\w-]+)\/(heightmap\.png|photo\.jpg|layer_[a-z]+\.png|trees\.json|holes\.json|course\.json|tree_\d+\.glb|tree_\d+_leaves\.png|tree_\d+_bark\.jpg|tree_\d+_bark_n\.jpg|tree_models\.json|grass_tuft\.glb|water\.glb|water\.json|water_bodies\.json|props_[a-z_]+\.glb|props\.json|play\.json|surfaces\.png)$/)) && req.method === 'PUT') {
+    if ((m = p.match(/^\/api\/export\/([\w-]+)\/(heightmap\.png|photo\.jpg|layer_[a-z]+\.png|trees\.json|holes\.json|course\.json|tree_\d+\.glb|tree_\d+_leaves\.png|tree_\d+_bark\.jpg|tree_\d+_bark_n\.jpg|tree_models\.json|grass_tuft\.glb|water\.glb|water\.json|water_bodies\.json|props_[a-z_]+\.glb|props\.json|play\.json|surfaces\.png|boulders\.json)$/)) && req.method === 'PUT') {
       // A course exported for Unreal Engine (public/js/export-unreal.js), written to exports/<id>/
+      // and to the game's own courses folder (Documents\OpenTeeGolf\Courses\<id>\)
       if (!courseFile(m[1])) return json(res, { error: 'No such course' }, 404);
       const body = await readRaw(req, 300e6).catch(() => null);
       if (!body) return json(res, { error: 'Too big' }, 413);
       const dir = path.join(EXPORTS, m[1]);
       fs.mkdirSync(dir, { recursive: true });
       fs.writeFileSync(path.join(dir, m[2]), body);
-      return json(res, { ok: true, path: path.join(dir, m[2]) });
+      const game = path.join(GAME_COURSES, m[1]);
+      fs.mkdirSync(game, { recursive: true });
+      fs.writeFileSync(path.join(game, m[2]), body);
+      return json(res, { ok: true, path: path.join(dir, m[2]), game: path.join(game, m[2]) });
     }
     if ((m = p.match(/^\/api\/courses\/([\w-]+)\/bunkers$/)) && req.method === 'PUT') {
       // Bunkers lined up with their hollows or the aerial photo (public/js/bunkerfit.js): the
@@ -808,14 +813,6 @@ const httpServer = http.createServer(async (req, res) => {
     }
     // ---- a round in Unreal Engine (unreal/play_course.py): start it on a course exported for
     // Unreal, then Unreal asks for the state (and the last shot's path) a few times a second
-    // ---- building a course (and the game) for Unreal from the menu: lib/unrealbuild.js
-    if (p === '/api/unreal/build' && req.method === 'POST') {
-      const b = await readBody(req).catch(() => null);
-      const kind = b?.kind === 'release' ? 'release' : 'pack';
-      if (kind === 'pack' && !(typeof b?.course === 'string' && /^[\w-]+$/.test(b.course) && courseFile(b.course))) return json(res, { error: 'No such course' }, 404);
-      try { return json(res, unrealBuild.start(kind, b.course)); } catch (err) { return json(res, { error: err.message }, 409); }
-    }
-    if (p === '/api/unreal/build') return json(res, unrealBuild.state());
     if (p === '/api/unreal/start' && req.method === 'POST') {
       const b = await readBody(req);
       const f = courseFile(b.course);

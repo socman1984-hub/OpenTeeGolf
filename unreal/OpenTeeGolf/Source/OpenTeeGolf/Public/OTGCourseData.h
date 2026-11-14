@@ -12,7 +12,12 @@
 #include "Engine/DataAsset.h"
 #include "OTGCourseData.generated.h"
 
-namespace otg { struct PlayCourse; struct PlayTrees; }
+namespace otg
+{
+	struct PlayCourse; struct PlayTrees;
+	// A greyscale PNG's pixels (8 or 16 bits a pixel)
+	OPENTEEGOLF_API bool ReadGreyPng(const FString& File, int32 BitDepth, int32& OutW, int32& OutH, TArray64<uint8>& OutRaw);
+}
 
 USTRUCT(BlueprintType)
 struct FOTGHole
@@ -81,8 +86,11 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Course") double AltitudeM = 0;
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Course") float DefaultStimp = 10;
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Course") TArray<FOTGHole> Holes;
-	// The level the pack builder made for the course
+	// The level the pack builder made for the course (a course loaded from its export folder: the
+	// game's template level, L_Course, which builds it there)
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Course") TSoftObjectPtr<UWorld> Level;
+	// A course loaded from its export folder at run time (not a pack): the folder
+	UPROPERTY() FString ExportDir;
 
 	// Where the course is (course metres): outside, the ball is out
 	UPROPERTY() double MinX = 0;
@@ -110,6 +118,10 @@ public:
 	UPROPERTY() TArray<FOTGDropZone> DropZones;
 	// Where the export's origin (the landscape's north-west corner, at HeightBase) is in the level
 	UPROPERTY() FVector LevelOrigin = FVector::ZeroVector;
+
+	// The play data from an export folder (play.json, its heightmap and surfaces): false, with the
+	// reason in OutError, if it isn't there or doesn't read
+	bool LoadFromExport(const FString& Dir, FString* OutError = nullptr);
 
 	// The course as the physics plays it
 	void FillPlayCourse(otg::PlayCourse& Out) const;

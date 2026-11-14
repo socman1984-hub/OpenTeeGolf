@@ -374,13 +374,6 @@ table.sc td.cur { outline: 2px solid var(--accent); }
 .sc .side-name i { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 4px; }
 .sc tr.team th, .sc tr.team td { color: var(--accent); }
 
-/* Export to Unreal: how the build is going (main.js unrealPanel) */
-.unreal-panel { position: fixed; z-index: 60; right: 16px; bottom: 16px; width: min(420px, calc(100vw - 32px)); background: var(--panel, #142017); border: 1px solid var(--line, rgba(255,255,255,0.15)); border-radius: 12px; padding: 12px 14px; box-shadow: 0 8px 28px rgba(0,0,0,0.45); }
-.unreal-panel.hidden { display: none; }
-.unreal-panel .up-title { display: block; margin-bottom: 6px; }
-.unreal-panel .up-text { white-space: pre-line; font-size: 13px; opacity: 0.9; }
-.unreal-panel .up-tail { max-height: 160px; overflow: auto; font-size: 11px; margin: 8px 0 0; padding: 6px; background: rgba(0,0,0,0.3); border-radius: 6px; white-space: pre-wrap; }
-.unreal-panel .up-btns { display: flex; gap: 8px; justify-content: flex-end; margin-top: 10px; }
 
 /* Export to Unreal: the screen over everything while the course loads, exports and builds (main.js ueScreen) */
 .ue-screen { position: fixed; inset: 0; z-index: 80; display: flex; align-items: center; justify-content: center; padding: 16px; background: #0b120d; }

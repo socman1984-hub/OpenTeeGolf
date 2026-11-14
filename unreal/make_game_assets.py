@@ -1,4 +1,4 @@
-# The game's own assets (not a course's), made headless in the game project: run by make_pack.ps1
+# The game's own assets (not a course's), made headless in the game project: run by make_assets.ps1
 # before packaging (and with -Assets on its own). Into /Game/OpenTeeGolf/Game, cooked with the base
 # game (DefaultGame.ini DirectoriesToAlwaysCook).
 #
@@ -79,7 +79,30 @@ def rain():
     log("M_Rain made")
 
 
+def course_level():
+    """L_Course: the level an exported course is built in at run time (AOTGRuntimeCourse): the basic
+    template's sky, sun, sky light, fog and clouds, as a course pack's level has them; no floor."""
+    path = FOLDER + "/L_Course"
+    les = unreal.get_editor_subsystem(unreal.LevelEditorSubsystem)
+    actors = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)
+    if eal.does_asset_exist(path):
+        eal.delete_asset(path)
+    if not les.new_level_from_template(path, "/Engine/Maps/Templates/Template_Default"):
+        les.new_level(path)
+    for a in actors.get_all_level_actors():
+        if a.get_actor_label().lower().startswith("floor"):
+            actors.destroy_actor(a)
+    les.save_current_level()
+    log("L_Course made")
+
+
 if not eal.does_directory_exist(FOLDER):
     eal.make_directory(FOLDER)
 rain()
+course_level()
+# the pieces exported courses are built from at run time: build_course.py in game-assets mode
+os.environ["OTG_RUNTIME"] = "1"
+os.environ["OTG_CONTENT"] = FOLDER + "/Runtime"
+_build = os.path.join(os.environ.get("OTG_SCRIPT_DIR", os.path.dirname(os.path.abspath(__file__))), "build_course.py")
+exec(compile(open(_build, encoding="utf-8").read(), _build, "exec"), {"__name__": "__main__", "__file__": _build})
 open(os.path.join(os.environ.get("OTG_SCRIPT_DIR", "."), "assets_done.txt"), "w").write("ok")

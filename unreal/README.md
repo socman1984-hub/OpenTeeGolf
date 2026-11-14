@@ -10,15 +10,12 @@ still need work; see "Where it stands" below.
 ## 1. Export a course from the game
 
 **The easy way: one click.** In the web version's menu, click **Export to Unreal** on the course's
-card (next to Edit; courses built from OpenStreetMap only). It loads the course to its first tee,
-exports it, then has the server build it for the Unreal game (`make_pack.ps1`, run by
-`lib/unrealbuild.js`). It all happens behind an export screen: the course loads out of sight and
-can't be played meanwhile; the screen ticks off the stages (loading, exporting, building in
-Unreal), shows one progress bar for the whole job and what it's doing, and a random fact every
-12 seconds (`public/js/facts.js`). **Keep using the game** leaves the build running with a small
-panel in the corner. When the course is done, **Update the game** rebuilds the double-click game
-(`make_release.ps1`) with it, on the same screen. The scripts run with PowerShell's execution
-policy bypassed for that run only.
+card (next to Edit; courses built from OpenStreetMap only). It loads the course to its first tee
+out of sight and exports it, behind an export screen (the stages ticked off, one progress bar, what
+it's doing, and a random fact every 12 seconds from `public/js/facts.js`). The server writes the
+export to `exports/<course id>/` and to the Unreal game's courses folder,
+`Documents\OpenTeeGolf\Courses\<course id>\`. That's all: the game builds the course itself
+when it's opened (section 5). Nothing is built in the Unreal Editor, and courses never go in git.
 
 By hand:
 
@@ -40,6 +37,7 @@ By hand:
 | `holes.json` | Tees, pins and aim points per hole |
 | `course.json` | Sizes, the Landscape import settings, how the coordinates map |
 | `play.json`, `surfaces.png` | What the Unreal game needs to play the course: holes, drop zones, trees' and buildings' shapes, and the surfaces every half metre |
+| `layer_native/path/fringe/stream/mow.png`, `boulders.json` | Worked out from the play data by `public/js/derive-layers.js`: the tall native grass, the cart paths, the green fringes, the stream beds, the mowing directions and where boulders lie |
 
 ## 2. Unreal project setup (once)
 
@@ -110,8 +108,8 @@ several players, a scorecard on screen, and playing as a game (Play in Editor / 
 ## 5. The standalone game (in progress)
 
 `unreal/OpenTeeGolf/` is the start of OpenTeeGolf as a game of its own: courses made in the web
-version, built into course packs, played without a browser or the editor. Everything the golf needs
-runs inside the game, in C++.
+version, built by the game itself when they're opened, played without a browser or the editor.
+Everything the golf needs runs inside the game, in C++.
 
 - Done: the project (Unreal 5.8, C++; needs Visual Studio with "Game development with C++"), and
   the ball physics, `Source/OpenTeeGolf/.../Physics/OTGBallPhysics.*`: `public/js/openfairway.js`
@@ -126,14 +124,23 @@ runs inside the game, in C++.
   Unreal draws. `node unreal/tests/physics/course_check.mjs [course id]` plays shots from every hole
   through the JS and the C++ on that data (they must agree), and says how far the ball finishes from
   where the web game's own course puts it.
-- Course packs: `powershell -File unreal/make_pack.ps1 <course id> [...]` builds each exported
-  course into the game project headless (`pack_course.py`: a level with its landscape from the
-  export's heightmap, everything `build_course.py` builds, the play data as `CourseData`, and a label
-  that gives the course a pak of its own); `make_pack.ps1 -Package` packages the game with every
-  course built so far into `unreal/OpenTeeGolf/Dist/Windows`. The game finds them (console
-  `OTG.Courses`, `OTG.Play <id>`; `-course=<id>` on the command line opens one at start).
-  The game project needs the Fab trees in its `Content` folder (copied from the test project, not in
-  git). A pack is made with the game it's packaged with: add a course, package again.
+- Courses at run time: the game lists every folder with a `play.json` in its courses folder
+  (`Documents\OpenTeeGolf\Courses`; Settings > Courses folder, `CoursesFolder=` under
+  `[OpenTeeGolf]` in `GameUserSettings.ini`, or `-courses=<folder>` on the command line). Opening one
+  reads its play data (`UOTGCourseData::LoadFromExport`) and opens the template level
+  `/Game/OpenTeeGolf/Game/L_Course` (sky, sun, fog, clouds), where `AOTGRuntimeCourse` builds the
+  course a step a frame behind a loading screen (`SOTGLoading`): the photo, masks and mowing map as
+  textures with mips (`OTGTextures`), the ground as tiled static meshes with four levels of detail,
+  the trees (the Fab broadleaves and Megaplant conifers, chosen by height, with the course's
+  stand-in materials), boulders, water and props from the export's `.glb` files (`OTGGlb`), and the
+  grass grown round the camera in 16 m cells on worker threads (`OTGGrass`, the same kinds and
+  densities as `build_course.py`'s `TURF_GRASS`). The materials, turf patches and boulder meshes it
+  uses are made once into `/Game/OpenTeeGolf/Game/Runtime` by `make_game_assets.py`
+  (`powershell -File unreal/make_assets.ps1`, which runs `build_course.py` in its `OTG_RUNTIME`
+  mode). Console `OTG.Courses`, `OTG.Play <id>`; `-course=<id>` on the command line opens one at
+  start. The game project needs the Fab trees in its `Content` folder (not in git).
+  Course packs (levels built in the editor under `/Game/Courses`) are retired: the editor tools
+  are still there, but packs are never cooked into the game.
 - Launch monitors: `OTGLaunchMonitorSubsystem` takes shots the same ways the web version does,
   ported from `server.js`, `lib/mevo.js` and `lib/frp.js`:
   - OpenConnect on TCP 921, for FS Golf. It's always listening, and it reports when another
@@ -210,7 +217,7 @@ runs inside the game, in C++.
   - The HUD gives the wind against your aim ("Wind 18 mph from the right").
   - The sky follows it: cloud cover thickens the level's volumetric clouds and greys the sky
     (less blue scattering, more haze, a dimmer sun and sky light). Rain falls as streaks round the
-    camera, blown by the wind (`M_Rain`, made by `make_game_assets.py`: `make_pack.ps1 -Assets`, and
+    camera, blown by the wind (`M_Rain`, made by `make_game_assets.py`: `make_assets.ps1`, and
     before every `-Package`). A storm darkens the clouds, and fog and rain thicken the fog.
 - On the round's screen (as the web version's):
   - The minimap: the course photo turned so the hole runs up it, with the ball, the aim line and
@@ -228,7 +235,8 @@ runs inside the game, in C++.
   (Unreal's scalability levels, or "Pick for this PC"), vertical sync - saved in
   `GameUserSettings.ini`. The menu's footer gives the version and where the course data comes from.
 - The release: `powershell -ExecutionPolicy Bypass -File unreal\make_release.ps1` packages the game
-  in Shipping with every course pack built so far (and the version from `package.json`, the
+  in Shipping with no courses (players export their own; `DefaultGame.ini` cooks the two maps, the
+  game's assets and the tree meshes, never `/Game/Courses`), with the version from `package.json`, the
   window icon `Build/Windows/Application.ico`). It then adds the Garmin R10 and Square Golf
   bridges (`bridges/`, beside the game, where it looks for them) with their licences, a player
   README and the game's notices (`release/README.txt`, `release/NOTICE.md`) and the licence,
@@ -236,8 +244,8 @@ runs inside the game, in C++.
   (a PC without the Visual C++ runtime needs Microsoft's redistributable; the player README says
   where). The Shipping game keeps its saves in `%LOCALAPPDATA%\OpenTeeGolf\Saved`. Before sharing
   it, read `release/NOTICE.md`:
-  a pack of a course outside the US carries Esri imagery (personal, non-commercial use only), and
-  the Fab trees may only ship inside the game.
+  the Fab trees may only ship inside the game. (Exported courses outside the US carry Esri imagery,
+  for personal, non-commercial use only: they stay on the player's own PC.)
 - The look (`AOTGRound::ApplyLook`): a clear summer day, as golf games show one. The round
   grades the picture (a touch darker exposure, more saturation and contrast, warmer white
   balance, a light vignette), strengthens and warms the sun and lights each hole from behind the
@@ -247,8 +255,7 @@ runs inside the game, in C++.
   `Haze`, `Fog`, `Vignette`, `TreeLift`, `Shadows`, `Sky`), applied live. The turf and ground colours
   (`TURF`, `TURF_GRASS` in `build_course.py`) are warm yellow-green fairways and greens and a
   darker olive rough.
-- Tall native grass: `derive_layers.py` (run by `make_pack.ps1`, system Python with numpy and
-  Pillow) writes `layer_native.png` from the export's play data:
+- Tall native grass: `public/js/derive-layers.js` (run by the export) writes `layer_native.png` from the export's play data:
   - the web game's deep rough and native ground, and the ground under every tree's crown;
   - never a fairway, tee, green, fringe, first cut, path, bunker or water.
 
@@ -287,7 +294,7 @@ runs inside the game, in C++.
   - The pebbles come from `make_bed_texture.py`, which writes `textures/creekbed_color.png` and
     `creekbed_normal.png`. It's generated from scratch, with no outside images.
 - Banks, beds and boulders.
-  - `derive_layers.py` now also writes `layer_stream.png` (where the water's surface slopes: a
+  - `derive-layers.js` now also writes `layer_stream.png` (where the water's surface slopes: a
     stream) and `boulders.json` (groups of stones along the creeks, a few by the ponds).
   - Pebbles lie only on a stream's flat, deeper middle (`BED_FLAT`, `BED_INNER`). Ponds, a
     stream's sloping sides and the banks are mud (`creekmud_*.png`, also from `make_bed_texture.py`),
@@ -328,7 +335,7 @@ runs inside the game, in C++.
 - Patch thresholds read the rock texture's lightness weighted by `PATCH_LUM_W`: its linear
   lightness is only about 0.07 to 0.12, and unweighted every patch (bed stones, silt, the bank's
   width, the meadow) came out all or nothing.
-- Cart paths: `derive_layers.py` writes `layer_path.png`; the ground paints the paths in
+- Cart paths: `derive-layers.js` writes `layer_path.png`; the ground paints the paths in
   (`PATH_TINT`), no grass grows on them or pokes through, and their mesh sits a few cm into the
   ground (`PATH_SINK_CM`) so it never floats.
 - The flag: its back is its own copy of the cloth, facing the other way (one surface for both
@@ -347,7 +354,7 @@ runs inside the game, in C++.
   while playing a big course in Unreal. (`rhi.DumpMemory`'s total counts reserved, uncommitted
   buffer space - 9.6 GB of its 14.8 GB on Banff - that isn't memory in use.)
 - Mowing stripes and the green's fringe.
-  - `derive_layers.py` writes `layer_mow.png`: on the mown surfaces, the line of play of the
+  - `derive-layers.js` writes `layer_mow.png`: on the mown surfaces, the line of play of the
     nearest hole (tee, aim points, green) as a direction, and `layer_fringe.png`.
   - The ground and the fairway blades draw bands along it (`MOW_WIDTH_M`: 3.2 m on fairways and
     tees, 1.2 m on greens; `MOW_CONTRAST`). As real stripes, which band is light depends on which

@@ -8,7 +8,7 @@ public class OpenTeeGolf : ModuleRules
 		PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "DeveloperSettings" });
 		// (the launch monitors: OpenConnect and Mevo+ sockets, JSON, FRP WebSockets)
-		PrivateDependencyModuleNames.AddRange(new string[] { "Sockets", "Networking", "Json", "WebSockets" });
+		PrivateDependencyModuleNames.AddRange(new string[] { "Sockets", "Networking", "Json", "WebSockets", "ImageWrapper", "MeshDescription", "StaticMeshDescription" });
 		// (the round: the tracer, the HUD)
 		PrivateDependencyModuleNames.AddRange(new string[] { "ProceduralMeshComponent", "Slate", "SlateCore", "JsonUtilities", "HTTP", "EngineSettings", "RenderCore", "RHI" });
 	}

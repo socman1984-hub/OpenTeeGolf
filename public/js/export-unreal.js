@@ -31,6 +31,9 @@
 //                      metres from the north-west corner), coloured per vertex; props.json: each
 //                      file's kind and bounds in Unreal centimetres, to line it up
 //   holes.json         tees, pins and aim points per hole, in Unreal centimetres
+//   layer_native.png, layer_path.png, layer_fringe.png, layer_mow.png, layer_stream.png, boulders.json
+//                      what the old unreal/derive_layers.py added (see derive-layers.js), so the folder
+//                      is complete as it is: the game loads it straight from Documents\OpenTeeGolf\Courses
 //   course.json        sizes and scales for the landscape import, and how coordinates map
 //
 // Coordinates: Unreal X = east, Y = south (Unreal is left-handed: X forward, Y right, Z up), in
@@ -41,6 +44,7 @@ import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
 import { hash } from './treeplace.js';
 import { tuftGeometry } from './grass.js';
 import { pointInPoly } from './course.js';
+import { deriveLayers } from './derive-layers.js';
 
 const SIZES = [505, 1009, 2017, 4033, 8129];
 
@@ -262,9 +266,11 @@ export async function exportForUnreal({ course, scene, id, solids = [], status =
   // the rough: everything the others aren't
   F.rough = new Float32Array(M * M);
   for (let q = 0; q < M * M; q++) F.rough[q] = 1 - Math.max(F.fairway[q], F.green[q], F.tee[q], F.bunker[q], F.water[q]);
+  let waterLayer = null;
   for (const [k, v] of Object.entries(F)) {
     const b = new Uint8Array(M * M);
     for (let q = 0; q < b.length; q++) b[q] = Math.round(v[q] * 255);
+    if (k === 'water') waterLayer = b;
     await put(`layer_${k}.png`, await png8(b, M, M), 'image/png');
   }
 
@@ -389,6 +395,17 @@ export async function exportForUnreal({ course, scene, id, solids = [], status =
     solids: solids.filter((b) => b.pts?.length >= 3).map((b) => ({ h: r3(b.h), kind: b.kind || 'building', pts: b.pts.map(([x, z]) => [r3(x), r3(z)]) })),
   };
   await put('play.json', JSON.stringify(play), 'application/json');
+  // ---- the masks the Unreal game grows its grass, stripes, pebbles and boulders from
+  {
+    const wgeo = water?.mesh.geometry;
+    const { layers, boulders } = await deriveLayers({
+      surfaces: play.surfaces, codes8: codes, trees: play.trees, holes, x0, z1, size: span,
+      water: wgeo ? { pos: wgeo.attributes.position.array, index: wgeo.index.array } : null,
+      waterLayer, waterM: M, heights: v16, hn: N, heightRange: range, tick, status,
+    });
+    for (const l of layers) await put(l.file, await (l.channels === 3 ? pngRGB(l.data, l.w, l.h) : png8(l.data, l.w, l.h)), 'image/png');
+    if (boulders) await put('boulders.json', JSON.stringify(boulders), 'application/json');
+  }
   const meta = {
     name: course.name, id, lat: course.lat ?? null, lon: course.lon ?? null,
     samples: N, metresPerSample: step, sizeMetres: span,
@@ -805,10 +822,15 @@ async function png8(v, w, h) {
   for (let j = 0; j < h; j++) { raw[j * row] = 0; raw.set(v.subarray(j * w, (j + 1) * w), j * row + 1); }
   return pngFile(w, h, 8, raw);
 }
-async function pngFile(w, h, depth, raw) {
+async function pngRGB(v, w, h) {
+  const row = 1 + w * 3, raw = new Uint8Array(row * h);
+  for (let j = 0; j < h; j++) { raw[j * row] = 0; raw.set(v.subarray(j * w * 3, (j + 1) * w * 3), j * row + 1); }
+  return pngFile(w, h, 8, raw, 2);
+}
+async function pngFile(w, h, depth, raw, colour = 0) {
   const idat = new Uint8Array(await new Response(new Blob([raw]).stream().pipeThrough(new CompressionStream('deflate'))).arrayBuffer());
   const ihdr = new Uint8Array(13), dv = new DataView(ihdr.buffer);
-  dv.setUint32(0, w); dv.setUint32(4, h); ihdr[8] = depth; ihdr[9] = 0; // greyscale
+  dv.setUint32(0, w); dv.setUint32(4, h); ihdr[8] = depth; ihdr[9] = colour; // (0 greyscale, 2 RGB)
   return new Blob([new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', ihdr), chunk('IDAT', idat), chunk('IEND', new Uint8Array(0))], { type: 'image/png' });
 }
 let CRC;

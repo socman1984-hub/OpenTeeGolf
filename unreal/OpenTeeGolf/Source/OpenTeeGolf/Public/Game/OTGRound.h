@@ -49,6 +49,7 @@ public:
 	void CastTest();                   // (testing)
 	void AimAt(double X, double Z);    // (course metres: the minimap, a click on the ground)
 	void AimAtWorld(const FVector& W);
+	void AimAlongRay(const FVector& Origin, const FVector& Dir);   // (a click: where the line meets the ground)
 	void ToggleShotPanel();
 	// the free view (F): fly round the course
 	void ToggleFreeView();

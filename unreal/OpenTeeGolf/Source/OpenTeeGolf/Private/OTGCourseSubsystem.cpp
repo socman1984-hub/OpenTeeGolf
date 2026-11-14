@@ -15,6 +15,12 @@
 #include "GameFramework/PlayerController.h"
 #include "UnrealClient.h"
 #include "Misc/Paths.h"
+#include "Misc/FileHelper.h"
+#include "HAL/FileManager.h"
+#include "HAL/PlatformProcess.h"
+#include "Misc/ConfigCacheIni.h"
+#include "Serialization/JsonReader.h"
+#include "Serialization/JsonSerializer.h"
 #include "Misc/CommandLine.h"
 #include "Misc/Parse.h"
 #include "TimerManager.h"
@@ -24,6 +30,24 @@ DEFINE_LOG_CATEGORY_STATIC(LogOTGCourses, Log, All);
 namespace
 {
 	const FPrimaryAssetType CourseType(TEXT("OTGCourse"));
+	// (the level an exported course is built in: sky, sun, fog and clouds, nothing else)
+	const TCHAR* TemplateLevel = TEXT("/Game/OpenTeeGolf/Game/L_Course.L_Course");
+
+	// An exported course's name, place and holes, from its play.json (without loading the rest)
+	bool PeekExport(const FString& Dir, FOTGCourseInfo& Out)
+	{
+		FString Text;
+		if (!FFileHelper::LoadFileToString(Text, *FPaths::Combine(Dir, TEXT("play.json")))) return false;
+		TSharedPtr<FJsonObject> Play;
+		if (!FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Text), Play) || !Play.IsValid()) return false;
+		if (!Play->TryGetStringField(TEXT("id"), Out.Id)) return false;
+		Play->TryGetStringField(TEXT("name"), Out.Name);
+		Play->TryGetStringField(TEXT("location"), Out.Location);
+		const TArray<TSharedPtr<FJsonValue>>* Holes = nullptr;
+		Out.Holes = Play->TryGetArrayField(TEXT("holes"), Holes) ? Holes->Num() : 0;
+		Out.ExportDir = Dir;
+		return true;
+	}
 
 	UOTGCourseSubsystem* SubsystemOf(UWorld* World)
 	{
@@ -46,7 +70,7 @@ void UOTGCourseSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
 	Super::Initialize(Collection);
 	const TArray<FOTGCourseInfo> Courses = ListCourses();
-	UE_LOG(LogOTGCourses, Display, TEXT("%d course(s) in the installed packs"), Courses.Num());
+	UE_LOG(LogOTGCourses, Display, TEXT("%d course(s): exported courses from %s, and installed packs"), Courses.Num(), *CoursesFolder());
 	for (const FOTGCourseInfo& C : Courses) UE_LOG(LogOTGCourses, Display, TEXT("  %s: %s, %d holes"), *C.Id, *C.Name, C.Holes);
 	// (-course=<id>: straight onto it, once the game is up)
 	FString Id;
@@ -99,9 +123,40 @@ void UOTGCourseSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 	}
 }
 
+FString UOTGCourseSubsystem::DefaultCoursesFolder()
+{
+	// (Documents: the user folder Unreal knows, on Windows)
+	return FPaths::Combine(FPlatformProcess::UserDir(), TEXT("OpenTeeGolf"), TEXT("Courses"));
+}
+
+FString UOTGCourseSubsystem::CoursesFolder() const
+{
+	FString Folder;
+	if (FParse::Value(FCommandLine::Get(), TEXT("courses="), Folder) && !Folder.IsEmpty()) return Folder;
+	if (GConfig && GConfig->GetString(TEXT("OpenTeeGolf"), TEXT("CoursesFolder"), Folder, GGameUserSettingsIni) && !Folder.IsEmpty()) return Folder;
+	return DefaultCoursesFolder();
+}
+
+void UOTGCourseSubsystem::SetCoursesFolder(const FString& Folder)
+{
+	if (!GConfig) return;
+	GConfig->SetString(TEXT("OpenTeeGolf"), TEXT("CoursesFolder"), *Folder, GGameUserSettingsIni);
+	GConfig->Flush(false, GGameUserSettingsIni);
+}
+
 TArray<FOTGCourseInfo> UOTGCourseSubsystem::ListCourses() const
 {
 	TArray<FOTGCourseInfo> Out;
+	// the exported courses: every folder with a play.json
+	const FString Root = CoursesFolder();
+	TArray<FString> Dirs;
+	IFileManager::Get().FindFiles(Dirs, *FPaths::Combine(Root, TEXT("*")), false, true);
+	for (const FString& D : Dirs)
+	{
+		FOTGCourseInfo Info;
+		if (PeekExport(FPaths::Combine(Root, D), Info)) Out.Add(Info);
+	}
+	const bool bPacks = FParse::Param(FCommandLine::Get(), TEXT("packs"));
 	UAssetManager& AM = UAssetManager::Get();
 	TArray<FAssetData> Assets;
 	AM.GetPrimaryAssetDataList(CourseType, Assets);
@@ -109,6 +164,9 @@ TArray<FOTGCourseInfo> UOTGCourseSubsystem::ListCourses() const
 	{
 		if (UOTGCourseData* D = Cast<UOTGCourseData>(A.GetAsset()))
 		{
+			// (a pack of a course that's also exported: the export, unless -packs)
+			const int32 Dup = Out.IndexOfByPredicate([&](const FOTGCourseInfo& I) { return I.Id == D->CourseId; });
+			if (Dup != INDEX_NONE) { if (!bPacks) continue; Out.RemoveAt(Dup); }
 			FOTGCourseInfo Info;
 			Info.Id = D->CourseId; Info.Name = D->CourseName; Info.Location = D->Location; Info.Holes = D->Holes.Num();
 			Out.Add(Info);
@@ -120,6 +178,20 @@ TArray<FOTGCourseInfo> UOTGCourseSubsystem::ListCourses() const
 
 UOTGCourseData* UOTGCourseSubsystem::LoadCourse(const FString& Id) const
 {
+	// an exported course: its play data read from the folder, built in the template level
+	for (const FOTGCourseInfo& C : ListCourses())
+	{
+		if (C.Id != Id || C.ExportDir.IsEmpty()) continue;
+		if (LastExport && LastExport->CourseId == Id && LastExport->ExportDir == C.ExportDir) return LastExport;
+		UOTGCourseData* D = NewObject<UOTGCourseData>(const_cast<UOTGCourseSubsystem*>(this));
+		FString Why;
+		if (!D->LoadFromExport(C.ExportDir, &Why)) { UE_LOG(LogOTGCourses, Warning, TEXT("%s: %s"), *Id, *Why); return nullptr; }
+		D->ExportDir = C.ExportDir;
+		D->Level = TSoftObjectPtr<UWorld>(FSoftObjectPath(TemplateLevel));
+		D->LevelOrigin = FVector::ZeroVector;   // (the export's north-west corner, at its base height)
+		LastExport = D;
+		return D;
+	}
 	const FSoftObjectPath Path = UAssetManager::Get().GetPrimaryAssetPath(FPrimaryAssetId(CourseType, FName(*Id)));
 	if (Path.IsValid()) return Cast<UOTGCourseData>(Path.TryLoad());
 	// (not in the asset registry: a pack added after the game was built - try where packs put it)

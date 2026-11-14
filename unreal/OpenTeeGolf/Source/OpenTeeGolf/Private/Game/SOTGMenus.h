@@ -9,6 +9,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "UObject/StrongObjectPtr.h"
 #include "Game/OTGPlayers.h"
 #include "LaunchMonitor/OTGLaunchMonitorTypes.h"
 #include "OTGCourseSubsystem.h"
@@ -69,6 +70,7 @@ private:
 	// each course's aerial photo: its card's picture, and the backdrop for the one chosen
 	const FSlateBrush* PhotoOf(const FString& Id, bool bCrop);
 	TMap<FString, TSharedPtr<FSlateBrush>> Photos;
+	TMap<FString, TStrongObjectPtr<class UTexture2D>> FolderPhotos;   // (exported courses' photos, loaded from their folders)
 	TSharedPtr<class SImage> Backdrop;
 	TSharedPtr<SBox> TabBar;
 	int32 ConfirmRemove = -1;

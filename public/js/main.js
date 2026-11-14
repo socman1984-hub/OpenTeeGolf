@@ -725,63 +725,19 @@ $('btn-start').onclick = async () => {
 
 // ------------------------------------------------------------------ export to Unreal (one click)
 
-// From a course's card: load the course to its first tee, export it for Unreal (as Ctrl+Shift+U
-// does), back to the menu, then have the server build it into the Unreal game's course packs
-// (unreal/make_pack.ps1, lib/unrealbuild.js) - and, if asked, update the double-click game too
-// (make_release.ps1). A panel shows how it's going; the build carries on if the page is reloaded.
-const unrealPanel = (() => {
-  let el = null;
-  const ui = () => {
-    if (el) return el;
-    el = document.createElement('div');
-    el.className = 'unreal-panel hidden';
-    el.innerHTML = '<b class="up-title"></b><div class="up-text"></div><pre class="up-tail hidden"></pre><div class="up-btns"></div>';
-    document.body.appendChild(el);
-    return el;
-  };
-  return {
-    show(title, text, buttons = [], tail = null) {
-      const p = ui();
-      p.classList.remove('hidden');
-      p.querySelector('.up-title').textContent = title;
-      p.querySelector('.up-text').textContent = text;
-      const t = p.querySelector('.up-tail');
-      t.classList.toggle('hidden', !tail);
-      t.textContent = tail ? tail.join('\n') : '';
-      const b = p.querySelector('.up-btns');
-      b.innerHTML = '';
-      for (const [label, fn] of buttons) {
-        const btn = document.createElement('button');
-        btn.className = 'chip';
-        btn.textContent = label;
-        btn.onclick = fn;
-        b.appendChild(btn);
-      }
-    },
-    hide() { el?.classList.add('hidden'); },
-  };
-})();
-let unrealWatch = null;
-
+// From a course's card: load the course to its first tee out of sight, export it for Unreal (as
+// Ctrl+Shift+U does) and back to the menu. The server writes the export to the Unreal game's
+// courses folder (Documents\OpenTeeGolf\Courses\<id>\), and the game builds the course from it
+// when it's opened: nothing to build here, no Unreal Editor needed.
 const mmss = (s) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 
 // The export screen: over everything (the course loads out of sight beneath it, and can't be played
 // meanwhile), its stages ticked off, one bar for the whole job, and something to read
-const UE_STAGES = {
-  pack: [['load', 'Loading the course', 0.3], ['export', 'Exporting it for Unreal', 0.25], ['build', 'Building it in Unreal', 0.45]],
-  release: [['assets', 'The game\'s own assets', 0.05], ['compile', 'Building the game', 0.25], ['cook', 'Cooking its content', 0.5], ['pack', 'Packaging and zipping', 0.2]],
-};
+const UE_STAGES = [['load', 'Loading the course', 0.45], ['export', 'Exporting it for Unreal', 0.55]];
 // (where the export is by its messages: export-unreal.js status())
 const EXPORT_STEPS = [['heights', 0], ['aerial photo', 0.1], ['surface outlines', 0.2], ['tree models', 0.3], ['water', 0.58], ['buildings', 0.62], ['play data', 0.7], ['Exported', 1]];
-// (where Unreal's build is by the last step in its log: build_course.py log())
-const BUILD_STEPS = [['Starting Unreal', 0.03], ['Landscape corner', 0.12], ['Turf', 0.18], ['Ground material', 0.28], ['Ground took', 0.32], ['Trees:', 0.4],
-  ['Planted', 0.6], ['Trees took', 0.62], ['Water', 0.66], ['Water took', 0.72], ['Boulders', 0.76], ['Built:', 0.82], ['Marked', 0.88], ['Done.', 0.95]];
-// (and the release's, by the packaging tool's banners)
-const RELEASE_STEPS = [['assets made', ['compile', 0]], ['BUILD COMMAND STARTED', ['compile', 0.05]], ['BUILD COMMAND COMPLETED', ['cook', 0]],
-  ['COOK COMMAND STARTED', ['cook', 0.02]], ['COOK COMMAND COMPLETED', ['pack', 0]], ['STAGE COMMAND', ['pack', 0.2]], ['PACKAGE COMMAND', ['pack', 0.4]],
-  ['ARCHIVE COMMAND', ['pack', 0.6]], ['Built ', ['pack', 0.95]]];
 
-const ue = { el: null, mode: 'pack', stage: 0, frac: 0, t0: 0, factTimer: null, clock: null, poll: null, facts: [], course: null };
+const ue = { el: null, stage: 0, frac: 0, t0: 0, factTimer: null, clock: null, facts: [], course: null };
 
 function ueScreen() {
   if (ue.el) return ue.el;
@@ -803,9 +759,8 @@ function ueScreen() {
   return el;
 }
 
-function ueOpen(mode, title, kicker, course = null) {
+function ueOpen(title, kicker, course = null) {
   const el = ueScreen();
-  ue.mode = mode;
   ue.stage = 0;
   ue.frac = 0;
   ue.total = 0;
@@ -813,7 +768,7 @@ function ueOpen(mode, title, kicker, course = null) {
   ue.course = course;
   el.querySelector('.ue-kicker').textContent = kicker;
   el.querySelector('.ue-title').textContent = title;
-  el.querySelector('.ue-stages').innerHTML = UE_STAGES[mode].map(([id, label]) => `<div class="ue-stage" data-id="${id}"><span class="ue-icon"></span><span>${label}</span><small></small></div>`).join('');
+  el.querySelector('.ue-stages').innerHTML = UE_STAGES.map(([id, label]) => `<div class="ue-stage" data-id="${id}"><span class="ue-icon"></span><span>${label}</span><small></small></div>`).join('');
   // the course's own picture, dimmed, behind it all
   const bd = el.querySelector('.ue-backdrop');
   bd.style.backgroundImage = course ? `url(/api/courses/${course.id}/${course.photo !== 'none' ? 'photo' : 'aerial'})` : '';
@@ -831,7 +786,6 @@ function ueClose() {
   ue.el?.classList.add('hidden');
   clearInterval(ue.factTimer);
   clearInterval(ue.clock);
-  clearInterval(ue.poll);
 }
 
 function ueFact() {
@@ -843,10 +797,9 @@ function ueFact() {
 
 // Where it is: a stage (its id) and how far through it (0..1); the bar never goes back
 function ueSet(stageId, frac, now = null) {
-  const stages = UE_STAGES[ue.mode];
-  const i = Math.max(0, stages.findIndex(([id]) => id === stageId));
-  const before = stages.slice(0, i).reduce((a, s) => a + s[2], 0);
-  const total = before + stages[i][2] * Math.min(1, Math.max(0, frac));
+  const i = Math.max(0, UE_STAGES.findIndex(([id]) => id === stageId));
+  const before = UE_STAGES.slice(0, i).reduce((a, s) => a + s[2], 0);
+  const total = before + UE_STAGES[i][2] * Math.min(1, Math.max(0, frac));
   if (i > ue.stage || (i === ue.stage && total >= ue.total)) { ue.stage = i; ue.frac = frac; }
   ue.total = Math.max(ue.total || 0, total);
   if (now != null) ue.el.querySelector('.ue-now').textContent = now;
@@ -855,13 +808,14 @@ function ueSet(stageId, frac, now = null) {
 
 function ueDraw() {
   if (!ue.el) return;
+  const finished = ue.el.classList.contains('finished');
+  if (!finished && !ue.el.classList.contains('failed')) ue.el.querySelector('.ue-time').textContent = mmss(Math.round((Date.now() - ue.t0) / 1000));
   const pct = Math.round((ue.total || 0) * 100);
   ue.el.querySelector('.ue-bar i').style.width = `${pct}%`;
   ue.el.querySelector('.ue-pct').textContent = `${pct}%`;
-  ue.el.querySelector('.ue-time').textContent = mmss(Math.round((Date.now() - ue.t0) / 1000));
   ue.el.querySelectorAll('.ue-stage').forEach((n, k) => {
-    n.classList.toggle('done', k < ue.stage || ue.el.classList.contains('finished'));
-    n.classList.toggle('now', k === ue.stage && !ue.el.classList.contains('finished') && !ue.el.classList.contains('failed'));
+    n.classList.toggle('done', k < ue.stage || finished);
+    n.classList.toggle('now', k === ue.stage && !finished && !ue.el.classList.contains('failed'));
   });
 }
 
@@ -877,17 +831,15 @@ function ueButtons(list) {
   });
 }
 
-function ueFail(msg, tail = null) {
+function ueFail(msg) {
   ue.el.classList.add('failed');
-  ue.el.querySelector('.ue-now').textContent = msg + (tail ? `\n${tail.join('\n')}` : '');
+  ue.el.querySelector('.ue-now').textContent = msg;
   ueDraw();
   ueButtons([['Close', ueClose, true]]);
 }
 
 async function exportToUnreal(c) {
-  const now = await fetch('/api/unreal/build').then((r) => r.json()).catch(() => ({}));
-  if (now.state === 'running') { ueWatch(now.kind, now.course); return; }
-  ueOpen('pack', c.name, 'Export to Unreal', c);
+  ueOpen(c.name, 'Export to Unreal', c);
   S.exporting = true;
   // the course, loaded out of sight: its loading steps move the bar
   const track = setInterval(() => {
@@ -926,101 +878,14 @@ async function exportToUnreal(c) {
   }
   S.exporting = false;
   openMenu();
-  const r = await fetch('/api/unreal/build', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: 'pack', course: c.id }) })
-    .then((x) => x.json()).catch((err) => ({ error: err.message }));
-  if (r.error) { ueFail(`Building for Unreal didn't start: ${r.error}`); return; }
-  ueSet('build', 0, 'Starting Unreal…');
-  ueWatch('pack', c.id, true);
+  ue.total = 1;
+  ue.stage = UE_STAGES.length;
+  ue.el.classList.add('finished');
+  ue.el.querySelector('.ue-title').textContent = `${c.name} is ready for Unreal`;
+  ue.el.querySelector('.ue-now').textContent = `Exported in ${mmss(Math.round((Date.now() - ue.t0) / 1000))}. Open the OpenTeeGolf Unreal game and pick it under Play (restart the game if it's already open). It's kept in Documents\\OpenTeeGolf\\Courses.`;
+  ueButtons([['Back to the menu', ueClose, true]]);
+  ueDraw();
 }
-
-// The server's build, on the screen: polled every 2 s until it's done
-function ueWatch(kind, courseId, open = false) {
-  const c = S.courses?.find((x) => x.id === courseId) || null;
-  if (!open || ue.el?.classList.contains('hidden')) {
-    if (kind === 'pack') { ueOpen('pack', c?.name || courseId, 'Export to Unreal', c); ue.stage = 2; ue.total = 0.55; }
-    else ueOpen('release', 'Updating the Unreal game', 'Export to Unreal');
-  }
-  clearInterval(unrealWatch);
-  unrealPanel.hide();
-  const name = c?.name || courseId;
-  ueButtons([['Keep using the game', () => { ueClose(); watchUnrealBuild(); }]]);
-  clearInterval(ue.poll);
-  ue.poll = setInterval(async () => {
-    const s = await fetch('/api/unreal/build').then((x) => x.json()).catch(() => null);
-    if (!s || s.state === 'idle') return;
-    if (s.state === 'running') {
-      if (s.kind === 'pack') {
-        const step = [...BUILD_STEPS].reverse().find(([k]) => (s.now || '').includes(k));
-        // (between steps: creeping on with the time)
-        const creep = Math.min(0.08, s.seconds / 3000);
-        ueSet('build', (step ? step[1] : 0.02) + creep, s.now || 'Building…');
-      } else {
-        const lines = (s.recent || []).join('\n');
-        let at = ['assets', Math.min(0.9, s.seconds / 120)];
-        for (const [k, where] of RELEASE_STEPS) if (lines.includes(k)) at = where;
-        ueSet(at[0], at[1] + Math.min(0.1, s.seconds / 6000), s.now || '');
-      }
-      return;
-    }
-    clearInterval(ue.poll);
-    if (s.state === 'failed') { ueFail(`It failed after ${mmss(s.seconds)}.`, s.tail); return; }
-    ue.total = 1;
-    ue.stage = UE_STAGES[ue.mode].length;
-    ue.el.classList.add('finished');
-    if (s.kind === 'pack') {
-      ue.el.querySelector('.ue-title').textContent = `${name} is ready for Unreal`;
-      ue.el.querySelector('.ue-now').textContent = 'It\'s in the Unreal project now. To play it in the double-click game, update the game (about 10 to 20 minutes).';
-      ueButtons([['Update the game', () => { startGameUpdate(); }, true], ['Back to the menu', ueClose]]);
-    } else {
-      ue.el.querySelector('.ue-title').textContent = 'The Unreal game is updated';
-      ue.el.querySelector('.ue-now').textContent = `Done in ${mmss(s.seconds)}: unreal/OpenTeeGolf/Release/Windows/OpenTeeGolf.exe, and a zip in dist/.`;
-      ueButtons([['Back to the menu', ueClose, true]]);
-    }
-    ueDraw();
-  }, 2000);
-}
-
-function startGameUpdate() {
-  fetch('/api/unreal/build', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: 'release' }) })
-    .then((x) => x.json())
-    .then((r) => {
-      if (r.error) { ueOpen('release', 'Updating the Unreal game', 'Export to Unreal'); ueFail(r.error); return; }
-      ueOpen('release', 'Updating the Unreal game', 'Export to Unreal');
-      ueWatch('release', null, true);
-    })
-    .catch((err) => { ueOpen('release', 'Updating the Unreal game', 'Export to Unreal'); ueFail(err.message); });
-}
-
-// The server's build: shown until it's done (every 3 s)
-function watchUnrealBuild() {
-  clearInterval(unrealWatch);
-  const tick = async () => {
-    const s = await fetch('/api/unreal/build').then((r) => r.json()).catch(() => null);
-    if (!s || s.state === 'idle') { clearInterval(unrealWatch); return; }
-    const name = S.courses?.find((x) => x.id === s.course)?.name || s.course;
-    const title = s.kind === 'pack' ? `Building ${name} for Unreal` : 'Updating the Unreal game';
-    if (s.state === 'running') {
-      const about = s.kind === 'pack' ? 'about 5 to 10 minutes' : 'about 10 to 20 minutes';
-      unrealPanel.show(title, `${mmss(s.seconds)} so far (${about}). You can keep using the game.${s.now ? `\n${s.now}` : ''}`,
-        [['Show progress', () => { clearInterval(unrealWatch); ueWatch(s.kind, s.course); }], ['Hide', () => unrealPanel.hide()]]);
-      return;
-    }
-    clearInterval(unrealWatch);
-    if (s.state === 'failed') {
-      unrealPanel.show(title, `It failed after ${mmss(s.seconds)}.`, [['Close', () => unrealPanel.hide()]], s.tail);
-    } else if (s.kind === 'pack') {
-      unrealPanel.show(`${name} is ready for Unreal`,
-        `Built in ${mmss(s.seconds)}. It's in the Unreal project now. To play it in the double-click game, update the game (about 10 to 20 minutes).`,
-        [['Update the game', () => { unrealPanel.hide(); startGameUpdate(); }], ['Close', () => unrealPanel.hide()]]);
-    } else {
-      unrealPanel.show('The Unreal game is updated', `Done in ${mmss(s.seconds)}: unreal/OpenTeeGolf/Release/Windows/OpenTeeGolf.exe, and a zip in dist/.`, [['Close', () => unrealPanel.hide()]]);
-    }
-  };
-  tick();
-  unrealWatch = setInterval(tick, 3000);
-}
-// (a build still going from before the page was opened: shown)
-fetch('/api/unreal/build').then((r) => r.json()).then((s) => { if (s.state === 'running') watchUnrealBuild(); }).catch(() => {});
 
 // ------------------------------------------------------------------ practice areas
 

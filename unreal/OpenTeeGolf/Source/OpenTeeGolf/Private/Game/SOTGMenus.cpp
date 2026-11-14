@@ -8,6 +8,11 @@
 #include "Engine/GameViewportClient.h"
 #include "GameFramework/GameUserSettings.h"
 #include "GeneralProjectSettings.h"
+#include "UObject/Package.h"
+#include "UObject/StrongObjectPtr.h"
+#include "HAL/PlatformProcess.h"
+#include "HAL/FileManager.h"
+#include "OTGTextures.h"
 #include "Kismet/KismetSystemLibrary.h"
 #include "OTGCourseData.h"
 #include "OTGLaunchMonitorSubsystem.h"
@@ -206,7 +211,15 @@ const FSlateBrush* SOTGMainMenu::PhotoOf(const FString& Id, bool bCrop)
 {
 	const FString Key = Id + (bCrop ? TEXT("#card") : TEXT(""));
 	if (const TSharedPtr<FSlateBrush>* B = Photos.Find(Key)) return B->Get();
-	UTexture2D* Tex = LoadObject<UTexture2D>(nullptr, *FString::Printf(TEXT("/Game/Courses/%s/Build/Textures/T_CoursePhoto.T_CoursePhoto"), *Id));
+	UTexture2D* Tex = nullptr;
+	// (an exported course: its photo from the folder, smaller; a pack: the pack's)
+	if (const FOTGCourseInfo* Info = CourseList.FindByPredicate([&](const FOTGCourseInfo& I) { return I.Id == Id; }); Info && !Info->ExportDir.IsEmpty())
+	{
+		if (const TStrongObjectPtr<UTexture2D>* Have = FolderPhotos.Find(Id)) Tex = Have->Get();
+		else if ((Tex = otg::LoadTexture(FPaths::Combine(Info->ExportDir, TEXT("photo.jpg")), otg::ETexKind::Photo, 1024, GetTransientPackage())))
+			FolderPhotos.Add(Id, TStrongObjectPtr<UTexture2D>(Tex));
+	}
+	if (!Tex) Tex = LoadObject<UTexture2D>(nullptr, *FString::Printf(TEXT("/Game/Courses/%s/Build/Textures/T_CoursePhoto.T_CoursePhoto"), *Id));
 	TSharedPtr<FSlateBrush> Brush = MakeShared<FSlateBrush>();
 	if (Tex)
 	{
@@ -214,7 +227,7 @@ const FSlateBrush* SOTGMainMenu::PhotoOf(const FString& Id, bool bCrop)
 		Brush->ImageSize = bCrop ? FVector2D(132, 88) : FVector2D(1920, 1920);
 		// (a card: the middle of the course; the backdrop: most of it)
 		Brush->SetUVRegion(bCrop ? FBox2f(FVector2f(0.33f, 0.36f), FVector2f(0.67f, 0.59f)) : FBox2f(FVector2f(0.15f, 0.15f), FVector2f(0.85f, 0.85f)));
-		Tex->SetForceMipLevelsToBeResident(600.f);
+		if (!Tex->IsA<UTexture2D>() || Tex->GetOutermost() != GetTransientPackage()) Tex->SetForceMipLevelsToBeResident(600.f);
 	}
 	else Brush->TintColor = FLinearColor(0.05f, 0.1f, 0.06f, 1.f);
 	Photos.Add(Key, Brush);
@@ -300,7 +313,19 @@ TSharedRef<SWidget> SOTGMainMenu::PlayPage()
 	TSharedRef<SVerticalBox> List = SNew(SVerticalBox);
 	List->AddSlot().AutoHeight().Padding(0, 0, 0, 6)[Heading(TEXT("Course"))];
 	if (!CourseList.Num())
-		List->AddSlot().AutoHeight()[SNew(STextBlock).Text(FText::FromString(TEXT("No course packs installed. Build one from the web version (unreal/make_pack.ps1) and package the game with it."))).Font(Font(14)).ColorAndOpacity(Soft).AutoWrapText(true)];
+		List->AddSlot().AutoHeight()[SNew(STextBlock).Text(FText::FromString(TEXT("No courses yet. In OpenTeeGolf's web version, click Export to Unreal on a course's card: it appears here (restart the game if it's open)."))).Font(Font(14)).ColorAndOpacity(Soft).AutoWrapText(true)];
+	// (where the game looks, and a way to open it)
+	if (UOTGCourseSubsystem* C = Courses())
+	{
+		const FString Folder = C->CoursesFolder();
+		List->AddSlot().AutoHeight().Padding(0, 4, 0, 8)
+		[
+			SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot().FillWidth(1).VAlign(VAlign_Center)[SNew(STextBlock).Text(FText::FromString(TEXT("Courses folder: ") + Folder)).Font(Font(12)).ColorAndOpacity(Soft).AutoWrapText(true)]
+			+ SHorizontalBox::Slot().AutoWidth().Padding(8, 0, 0, 0)[Button(TEXT("Open"), [Folder]() { IFileManager::Get().MakeDirectory(*Folder, true); FPlatformProcess::ExploreFolder(*Folder); }, 12)]
+			+ SHorizontalBox::Slot().AutoWidth().Padding(6, 0, 0, 0)[Button(TEXT("Refresh"), [this]() { if (UOTGCourseSubsystem* S = Courses()) CourseList = S->ListCourses(); Rebuild(); }, 12)]
+		];
+	}
 	for (const FOTGCourseInfo& I : CourseList)
 	{
 		const FString Id = I.Id;
@@ -557,6 +582,29 @@ TSharedRef<SWidget> SOTGMainMenu::SettingsPage()
 		W->AddSlot().Padding(8, 0, 6, 6)[Button(TEXT("Pick for this PC"), [GS, Apply]() { GS->RunHardwareBenchmark(); GS->ApplyHardwareBenchmarkResults(); Apply(); }, 13)];
 		Row2(TEXT("Graphics quality"), W);
 		V->AddSlot().AutoHeight().Padding(0, 2)[Text(TEXT("Lower it if the game runs slowly: the grass, trees and shadows cost the most."), 12, Soft)];
+	}
+	// where the game finds exported courses (the web version writes them to the default)
+	if (UOTGCourseSubsystem* C = Courses())
+	{
+		const FString Folder = C->CoursesFolder();
+		const bool bDefault = Folder == UOTGCourseSubsystem::DefaultCoursesFolder();
+		TSharedRef<SVerticalBox> W = SNew(SVerticalBox);
+		W->AddSlot().AutoHeight()
+		[
+			SNew(SEditableTextBox).Text(FText::FromString(Folder)).Font(Font(13))
+			.OnTextCommitted_Lambda([this](const FText& T, ETextCommit::Type How) {
+				if (How == ETextCommit::OnCleared) return;
+				if (UOTGCourseSubsystem* S = Courses()) { S->SetCoursesFolder(T.ToString().TrimStartAndEnd()); CourseList = S->ListCourses(); }
+				Rebuild();
+			})
+		];
+		TSharedRef<SWrapBox> Btns = SNew(SWrapBox).UseAllottedSize(true);
+		Btns->AddSlot().Padding(0, 6, 6, 0)[Button(TEXT("Open it"), [Folder]() { IFileManager::Get().MakeDirectory(*Folder, true); FPlatformProcess::ExploreFolder(*Folder); }, 13)];
+		if (!bDefault)
+			Btns->AddSlot().Padding(0, 6, 6, 0)[Button(TEXT("Back to the usual place"), [this]() { if (UOTGCourseSubsystem* S = Courses()) { S->SetCoursesFolder(FString()); CourseList = S->ListCourses(); } Rebuild(); }, 13)];
+		W->AddSlot().AutoHeight()[Btns];
+		W->AddSlot().AutoHeight().Padding(0, 4)[Text(TEXT("The web version's Export to Unreal puts courses in the usual place (Documents\\OpenTeeGolf\\Courses)."), 12, Soft)];
+		Row2(TEXT("Courses folder"), W);
 	}
 	V->AddSlot().AutoHeight().Padding(0, 8)
 	[

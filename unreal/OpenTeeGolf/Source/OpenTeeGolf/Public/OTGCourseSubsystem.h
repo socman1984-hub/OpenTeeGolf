@@ -1,5 +1,10 @@
-// The courses the game has: one per course pack (UOTGCourseData, found through the asset manager
-// as primary assets of type OTGCourse), and opening one.
+// The courses the game has, and opening one. Two kinds:
+//  - exported courses: a folder each in the courses folder (Documents\OpenTeeGolf\Courses by
+//    default; -courses=<folder> or the Settings page for another), written by the web version's
+//    Export to Unreal. Built when opened, in the template level L_Course (AOTGRuntimeCourse).
+//  - course packs (the old way: built by the Unreal Editor, make_pack.ps1): UOTGCourseData assets
+//    found through the asset manager as primary assets of type OTGCourse.
+// An exported course is used over a pack of the same course (-packs: the pack).
 //
 // Console: OTG.Courses lists them, OTG.Play <id> opens one. Command line: -course=<id> opens one at
 // start.
@@ -21,6 +26,8 @@ struct FOTGCourseInfo
 	UPROPERTY(BlueprintReadOnly) FString Name;
 	UPROPERTY(BlueprintReadOnly) FString Location;
 	UPROPERTY(BlueprintReadOnly) int32 Holes = 0;
+	// an exported course's folder (empty: a course pack)
+	UPROPERTY(BlueprintReadOnly) FString ExportDir;
 };
 
 UCLASS()
@@ -33,6 +40,11 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "OpenTeeGolf")
 	TArray<FOTGCourseInfo> ListCourses() const;
+
+	// Where exported courses are looked for (and the setting that moves it: empty for the default)
+	FString CoursesFolder() const;
+	static FString DefaultCoursesFolder();
+	void SetCoursesFolder(const FString& Folder);
 
 	// The course's data (loaded), or null
 	UFUNCTION(BlueprintCallable, Category = "OpenTeeGolf")
@@ -47,5 +59,7 @@ public:
 
 	// What the menu set up for the round (the round reads it when the course's level opens)
 	UPROPERTY() FOTGRoundSetup PendingSetup;
+	// (the exported course read last: the menu and the round use it again rather than reading it twice)
+	UPROPERTY() mutable TObjectPtr<UOTGCourseData> LastExport;
 	bool bHasPendingSetup = false;
 };

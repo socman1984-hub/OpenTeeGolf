@@ -2,6 +2,7 @@
 // finishShot, pathRelief, waterDrop, holeOut, nextHole, mulligan).
 
 #include "Game/OTGRound.h"
+#include "Game/OTGRuntimeCourse.h"
 
 #include "Camera/CameraActor.h"
 #include "Components/DirectionalLightComponent.h"
@@ -308,7 +309,11 @@ void AOTGRound::Setup(UOTGCourseData* InData, const FOTGRoundSetup& InSetup)
 		GEngine->GameViewport->AddViewportWidgetContent(Hud.ToSharedRef(), 10);
 		// the minimap: the course photo, over the landscape's area
 		const FString PhotoPath = FString::Printf(TEXT("/Game/Courses/%s/Build/Textures/T_CoursePhoto.T_CoursePhoto"), *Data->CourseId);
-		UTexture2D* Photo = LoadObject<UTexture2D>(nullptr, *PhotoPath);
+		UTexture2D* Photo = nullptr;
+		// (an exported course: the photo its builder loaded from the folder; a pack: the pack's)
+		if (!Data->ExportDir.IsEmpty())
+			for (TActorIterator<AOTGRuntimeCourse> It(GetWorld()); It; ++It) { Photo = It->Pictures().FindRef(TEXT("Photo")); break; }
+		if (!Photo) Photo = LoadObject<UTexture2D>(nullptr, *PhotoPath);
 		if (!Photo) UE_LOG(LogOTGRound, Warning, TEXT("No course photo for the minimap (%s)"), *PhotoPath);
 		TWeakObjectPtr<AOTGRound> Self(this);
 		Hud->Minimap()->SetCourse(Photo, Data->HeightX0, Data->HeightZ1, (Data->HeightSamples - 1) * Data->MetresPerSample, [Self](double X, double Z) {
@@ -344,7 +349,7 @@ void AOTGRound::Setup(UOTGCourseData* InData, const FOTGRoundSetup& InSetup)
 		RainMat = UMaterialInstanceDynamic::Create(Rain, this);
 		RainMesh->SetMaterial(0, RainMat);
 	}
-	else UE_LOG(LogOTGRound, Warning, TEXT("No rain material (make_pack.ps1 -Assets makes it)"));
+	else UE_LOG(LogOTGRound, Warning, TEXT("No rain material (unreal/make_assets.ps1 makes it)"));
 
 	// Shots
 	if (UOTGLaunchMonitorSubsystem* LM = GetGameInstance()->GetSubsystem<UOTGLaunchMonitorSubsystem>())
@@ -628,6 +633,32 @@ void AOTGRound::AimAt(double X, double Z)
 	AimDist = D;
 	ShowAim();
 	AddressView(false);
+}
+
+// Where a line (world space, from the camera through the cursor) first meets the ground: marched
+// along in 2 m steps against the course's heights, then halved down to 5 cm
+void AOTGRound::AimAlongRay(const FVector& Origin, const FVector& Dir)
+{
+	if (!Data) return;
+	auto Below = [&](const FVector& W) {
+		const FVector C = Data->WorldToCourse(W);
+		const double G = Course.HeightAt(C.X, C.Z);
+		return FMath::IsFinite(G) && C.Y <= G;
+	};
+	const FVector D = Dir.GetSafeNormal();
+	double A = 0, B = -1;
+	for (double T = 200; T < 400000; T += 200)
+	{
+		if (Below(Origin + D * T)) { B = T; break; }
+		A = T;
+	}
+	if (B < 0) return;
+	for (int32 k = 0; k < 14; k++)
+	{
+		const double M = (A + B) / 2;
+		(Below(Origin + D * M) ? B : A) = M;
+	}
+	AimAtWorld(Origin + D * B);
 }
 
 void AOTGRound::AimAtWorld(const FVector& W)

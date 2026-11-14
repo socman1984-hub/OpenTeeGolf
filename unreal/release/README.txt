@@ -59,10 +59,16 @@ against your aim (the arrow points the way it blows: up is helping).
 Your players, last setup and settings are saved in %LOCALAPPDATA%\OpenTeeGolf\Saved (type that
 in Explorer's address bar to open it); a new version of the game keeps them.
 
-More courses
-------------
-Courses are built from the web version of OpenTeeGolf (Ctrl+Shift+U exports one) and packed into
-the game with unreal\make_pack.ps1; see unreal\README.md in the OpenTeeGolf project.
+Courses
+-------
+The game comes with no courses: you make your own in the web version of OpenTeeGolf (build or
+pick a course there, then click Export to Unreal on its card). The export goes to
+Documents\OpenTeeGolf\Courses, and the game lists every course in that folder under Play
+(restart the game, or click Refresh, after exporting). The first time a course is opened the game
+builds it (a loading screen shows how far along it is: under a minute for most courses).
+
+Settings > Courses folder shows where the game looks, opens it, and can point it somewhere else.
+To share a course, copy its folder into someone else's Courses folder.
 
 OpenTeeGolf is free software; see LICENSE-OpenTeeGolf.txt. Third-party software, assets and the
 course data are listed in NOTICE.md.
