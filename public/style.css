@@ -381,3 +381,36 @@ table.sc td.cur { outline: 2px solid var(--accent); }
 .unreal-panel .up-text { white-space: pre-line; font-size: 13px; opacity: 0.9; }
 .unreal-panel .up-tail { max-height: 160px; overflow: auto; font-size: 11px; margin: 8px 0 0; padding: 6px; background: rgba(0,0,0,0.3); border-radius: 6px; white-space: pre-wrap; }
 .unreal-panel .up-btns { display: flex; gap: 8px; justify-content: flex-end; margin-top: 10px; }
+
+/* Export to Unreal: the screen over everything while the course loads, exports and builds (main.js ueScreen) */
+.ue-screen { position: fixed; inset: 0; z-index: 80; display: flex; align-items: center; justify-content: center; padding: 16px; background: #0b120d; }
+.ue-screen.hidden { display: none; }
+.ue-backdrop { position: absolute; inset: 0; background: #0b120d center / cover no-repeat; filter: blur(6px) brightness(0.35) saturate(0.8); transform: scale(1.06); }
+.ue-card { position: relative; width: min(620px, 100%); max-height: calc(100vh - 32px); overflow: auto; background: rgba(12, 20, 16, 0.86); border: 1px solid var(--line); border-radius: 16px; padding: 22px 24px; box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5); }
+.ue-kicker { color: var(--accent); font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; }
+.ue-title { margin: 4px 0 16px; font-size: 22px; }
+.ue-stages { display: flex; flex-direction: column; gap: 8px; margin-bottom: 18px; }
+.ue-stage { display: flex; align-items: center; gap: 10px; color: var(--muted); }
+.ue-stage small { margin-left: auto; }
+.ue-icon { width: 18px; height: 18px; border-radius: 50%; border: 2px solid var(--line); flex: none; box-sizing: border-box; }
+.ue-stage.now { color: var(--text); font-weight: 600; }
+.ue-stage.now .ue-icon { border-color: var(--accent); border-top-color: transparent; animation: ue-spin 0.9s linear infinite; }
+.ue-stage.done { color: var(--text); }
+.ue-stage.done .ue-icon { background: var(--good); border-color: var(--good); }
+.ue-stage.done .ue-icon::after { content: '✓'; display: block; color: #0b120d; font-size: 11px; line-height: 14px; text-align: center; font-weight: 700; }
+.ue-screen.failed .ue-stage.now .ue-icon, .ue-screen.failed .ue-icon:not(.done) { animation: none; }
+@keyframes ue-spin { to { transform: rotate(360deg); } }
+.ue-bar { height: 12px; border-radius: 6px; background: rgba(255, 255, 255, 0.08); overflow: hidden; }
+.ue-bar i { display: block; height: 100%; width: 0; border-radius: 6px; background: linear-gradient(90deg, #2f8f4e, #6fd38f); transition: width 0.6s ease; }
+.ue-screen.failed .ue-bar i { background: var(--bad); }
+.ue-meta { display: flex; justify-content: space-between; margin-top: 6px; font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.ue-pct { color: var(--text); font-weight: 600; }
+.ue-now { min-height: 2.7em; margin: 10px 0 16px; font-size: 13px; color: var(--muted); white-space: pre-line; overflow-wrap: anywhere; }
+.ue-screen.failed .ue-now { color: #ffb3ad; max-height: 180px; overflow: auto; }
+.ue-fact { padding: 12px 14px; border-radius: 10px; background: rgba(255, 216, 74, 0.07); border: 1px solid rgba(255, 216, 74, 0.2); }
+.ue-fact b { color: var(--accent); font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; }
+.ue-fact p { margin: 6px 0 0; min-height: 3.9em; line-height: 1.45; transition: opacity 0.35s; }
+.ue-fact p.fade { opacity: 0; }
+.ue-screen.finished .ue-fact, .ue-screen.failed .ue-fact { display: none; }
+.ue-btns { display: flex; gap: 10px; justify-content: flex-end; margin-top: 18px; flex-wrap: wrap; }
+.ue-btns:empty { display: none; }

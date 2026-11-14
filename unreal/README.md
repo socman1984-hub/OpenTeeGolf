@@ -12,9 +12,13 @@ still need work; see "Where it stands" below.
 **The easy way: one click.** In the web version's menu, click **Export to Unreal** on the course's
 card (next to Edit; courses built from OpenStreetMap only). It loads the course to its first tee,
 exports it, then has the server build it for the Unreal game (`make_pack.ps1`, run by
-`lib/unrealbuild.js`). A panel bottom right shows how it's going. When the course is done, its
-**Update the game** button rebuilds the double-click game (`make_release.ps1`) with it. The
-scripts run with PowerShell's execution policy bypassed for that run only.
+`lib/unrealbuild.js`). It all happens behind an export screen: the course loads out of sight and
+can't be played meanwhile; the screen ticks off the stages (loading, exporting, building in
+Unreal), shows one progress bar for the whole job and what it's doing, and a random fact every
+12 seconds (`public/js/facts.js`). **Keep using the game** leaves the build running with a small
+panel in the corner. When the course is done, **Update the game** rebuilds the double-click game
+(`make_release.ps1`) with it, on the same screen. The scripts run with PowerShell's execution
+policy bypassed for that run only.
 
 By hand:
 
@@ -332,6 +336,9 @@ runs inside the game, in C++.
 - Smoother hill shadows in a low sun (`OTG.Look.SunSoft`, `OTG.Look.SlopeBias`): the ground's
   facets cast a comb of teeth along a shadow's edge.
 - Free view: Shift flies 6 times as fast (was 3).
+- Aiming (a click on the course, the minimap, the arrow keys): the view swings round the ball to
+  face the new aim, keeping its height and distance (it used to slide straight across, dipping
+  low past the ball on a big turn).
 - Video memory on big courses: the surface masks are always in memory, so they're capped at
   `MASK_MAX_PX` (4096; mowing directions half that). A big course's export writes them at 8192,
   a dozen of them about 1 GB; capped, about 0.25 GB. Unreal's own use on Banff Springs (26 holes,

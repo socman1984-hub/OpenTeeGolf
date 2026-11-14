@@ -180,6 +180,7 @@ private:
 	FRotator OrigSunRot = FRotator::ZeroRotator;
 	FLinearColor OrigSunColour = FLinearColor::White;
 	uint32 LookStamp = 0;
+	FVector OrbitCentre = FVector::ZeroVector, OrbitGoal = FVector(1e30);   // (the address view: AddressView, UpdateCamera)
 	double SunHour = -1;
 	void SunAt(double Hour, double& ElevDeg, double& AzDeg) const;
 	UPROPERTY() TObjectPtr<UProceduralMeshComponent> RainMesh;

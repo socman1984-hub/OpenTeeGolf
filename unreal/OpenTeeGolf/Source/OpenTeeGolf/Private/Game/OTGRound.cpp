@@ -1255,6 +1255,8 @@ void AOTGRound::AddressView(bool bSnap)
 	}
 	CamSpeed = 2.5f;
 	OverviewLeft = 0;
+	OrbitCentre = B;
+	OrbitGoal = CamGoal;   // (UpdateCamera swings round the ball to it, not across)
 	if (bSnap) { CamPos = CamGoal; CamLookNow = CamLook; }
 }
 
@@ -1272,8 +1274,27 @@ void AOTGRound::OverviewView()
 void AOTGRound::UpdateCamera(float Dt)
 {
 	const float K = 1.f - FMath::Exp(-Dt * CamSpeed);
-	CamPos += (CamGoal - CamPos) * K;
-	if (Phase != EPhase::Flying) CamLookNow += (CamLook - CamLookNow) * K;
+	if (Phase != EPhase::Flying && CamGoal.Equals(OrbitGoal, 1.0))
+	{
+		// Turning to a new aim behind the ball: round the ball, the shorter way, keeping the
+		// camera's height and distance from it (in a straight line, a big turn cut low across the ball)
+		auto Swing = [&](FVector& Now, const FVector& Goal) {
+			const FVector A = Now - OrbitCentre, G = Goal - OrbitCentre;
+			double Yaw = FMath::Atan2(A.Y, A.X);
+			const double YawG = FMath::Atan2(G.Y, G.X);
+			Yaw += FMath::FindDeltaAngleRadians(Yaw, YawG) * K;
+			const double R = FMath::Lerp(FVector2D(A).Size(), FVector2D(G).Size(), double(K));
+			const double Z = FMath::Lerp(A.Z, G.Z, double(K));
+			Now = OrbitCentre + FVector(FMath::Cos(Yaw) * R, FMath::Sin(Yaw) * R, Z);
+		};
+		Swing(CamPos, CamGoal);
+		Swing(CamLookNow, CamLook);
+	}
+	else
+	{
+		CamPos += (CamGoal - CamPos) * K;
+		if (Phase != EPhase::Flying) CamLookNow += (CamLook - CamLookNow) * K;
+	}
 	// (never under the ground)
 	const FVector C = Data->WorldToCourse(CamPos);
 	const double G = Course.HeightAt(C.X, C.Z);
