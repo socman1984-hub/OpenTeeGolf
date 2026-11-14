@@ -48,6 +48,8 @@ static TAutoConsoleVariable<float> CVarLookSunPitch(TEXT("OTG.Look.SunPitch"), -
 static TAutoConsoleVariable<float> CVarLookSunSide(TEXT("OTG.Look.SunSide"), 40.f, TEXT("The sun from behind the tee, this many degrees to the left (999: the level's own direction)"));
 static TAutoConsoleVariable<float> CVarLookHaze(TEXT("OTG.Look.Haze"), 0.35f, TEXT("Haze in the air (x the level's; lower: a deeper blue sky)"));
 static TAutoConsoleVariable<float> CVarLookFog(TEXT("OTG.Look.Fog"), 0.5f, TEXT("Height fog (x the level's)"));
+static TAutoConsoleVariable<float> CVarLookSunSoft(TEXT("OTG.Look.SunSoft"), 1.2f, TEXT("The sun's size in the sky (degrees: softer shadow edges; the real sun is 0.53)"));
+static TAutoConsoleVariable<float> CVarLookSlopeBias(TEXT("OTG.Look.SlopeBias"), 2.0f, TEXT("Shadow slope bias (smooths the hills' own shadow edges in a low sun)"));
 static TAutoConsoleVariable<float> CVarLookTreeLift(TEXT("OTG.Look.TreeLift"), 0.25f, TEXT("Sky light let into shade (Lumen skylight leaking: lighter tree crowns; 0 none)"));
 static TAutoConsoleVariable<float> CVarLookShadows(TEXT("OTG.Look.Shadows"), 1.18f, TEXT("The darkest tones lifted (gain; 1: as is)"));
 static TAutoConsoleVariable<float> CVarLookSky(TEXT("OTG.Look.Sky"), 1.3f, TEXT("Sky light (x the level's)"));
@@ -1129,7 +1131,7 @@ void AOTGRound::Tick(float Dt)
 	// (a look setting changed: again)
 	{
 		uint32 Stamp = 0;
-		for (const auto* V : { &CVarLookExposure, &CVarLookSaturation, &CVarLookContrast, &CVarLookTemp, &CVarLookSun, &CVarLookSunWarm, &CVarLookSunPitch, &CVarLookSunSide, &CVarLookHaze, &CVarLookFog, &CVarLookVignette, &CVarLookTreeLift, &CVarLookShadows, &CVarLookSky })
+		for (const auto* V : { &CVarLookExposure, &CVarLookSaturation, &CVarLookContrast, &CVarLookTemp, &CVarLookSun, &CVarLookSunWarm, &CVarLookSunPitch, &CVarLookSunSide, &CVarLookHaze, &CVarLookFog, &CVarLookVignette, &CVarLookTreeLift, &CVarLookShadows, &CVarLookSky, &CVarLookSunSoft, &CVarLookSlopeBias })
 			Stamp = HashCombine(Stamp, GetTypeHash(V->GetValueOnGameThread()));
 		Stamp = HashCombine(HashCombine(Stamp, GetTypeHash(HoleIndex)), GetTypeHash(SunHour));
 		if (Stamp != LookStamp) { ApplyLook(); ApplyWeatherToScene(); }
@@ -1363,7 +1365,7 @@ void AOTGRound::ShowScorecard(bool bShow)
 void AOTGRound::ApplyLook()
 {
 	uint32 Stamp = 0;
-	for (const auto* V : { &CVarLookExposure, &CVarLookSaturation, &CVarLookContrast, &CVarLookTemp, &CVarLookSun, &CVarLookSunWarm, &CVarLookSunPitch, &CVarLookSunSide, &CVarLookHaze, &CVarLookFog, &CVarLookVignette, &CVarLookTreeLift, &CVarLookShadows, &CVarLookSky })
+	for (const auto* V : { &CVarLookExposure, &CVarLookSaturation, &CVarLookContrast, &CVarLookTemp, &CVarLookSun, &CVarLookSunWarm, &CVarLookSunPitch, &CVarLookSunSide, &CVarLookHaze, &CVarLookFog, &CVarLookVignette, &CVarLookTreeLift, &CVarLookShadows, &CVarLookSky, &CVarLookSunSoft, &CVarLookSlopeBias })
 		Stamp = HashCombine(Stamp, GetTypeHash(V->GetValueOnGameThread()));
 	LookStamp = HashCombine(HashCombine(Stamp, GetTypeHash(HoleIndex)), GetTypeHash(SunHour));
 	// (the time of day: the sun's height and bearing then, and how much day there is - the sun and
@@ -1403,6 +1405,10 @@ void AOTGRound::ApplyLook()
 		if (!L) continue;
 		if (OrigSun < 0) { OrigSun = L->Intensity; OrigSunRot = It->GetActorRotation(); OrigSunColour = L->GetLightColor(); }
 		L->SetIntensity(OrigSun * CVarLookSun.GetValueOnGameThread() * SunDay);
+		// (smooth shadow edges on the hills: the ground is a mesh on a 1 m grid, and a low sun along
+		// it shadows its facets in a comb of teeth - a slightly softer sun and more slope bias)
+		L->SetLightSourceAngle(CVarLookSunSoft.GetValueOnGameThread());
+		L->SetShadowSlopeBias(CVarLookSlopeBias.GetValueOnGameThread());
 		L->SetLightColor(FMath::Lerp(OrigSunColour, FLinearColor(1.f, 0.86f, 0.68f), CVarLookSunWarm.GetValueOnGameThread()));
 		// (lit from behind the player on every hole, a little to one side, as golf games light them:
 		// looking into the sun the trees are dark shapes)

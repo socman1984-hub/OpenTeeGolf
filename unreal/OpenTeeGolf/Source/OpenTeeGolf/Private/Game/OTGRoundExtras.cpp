@@ -4,6 +4,8 @@
 #include "Game/OTGRound.h"
 
 #include "Camera/CameraActor.h"
+#include "Kismet/KismetMaterialLibrary.h"
+#include "Materials/MaterialParameterCollection.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "OTGCourseData.h"
 #include "ProceduralMeshComponent.h"
@@ -40,7 +42,7 @@ void AOTGRound::FreeFly(float Dt, const FVector& Move, const FVector2D& Look, bo
 	const FVector C = Data->WorldToCourse(FreePos);
 	const double G = Course.HeightAt(C.X, C.Z);
 	const double Above = FMath::IsFinite(G) ? FMath::Max(1.0, (FreePos.Z - Data->CourseToWorld(FVector(C.X, G, C.Z)).Z) / 100.0) : 30.0;
-	const double Speed = FMath::Clamp(Above * 120.0, 400.0, 9000.0) * (bFast ? 3.0 : 1.0);
+	const double Speed = FMath::Clamp(Above * 120.0, 400.0, 9000.0) * (bFast ? 6.0 : 1.0);
 	FreePos += (R.GetUnitAxis(EAxis::X) * Move.X + R.GetUnitAxis(EAxis::Y) * Move.Y + FVector::UpVector * Move.Z) * Speed * Dt;
 	if (FMath::IsFinite(G))
 	{
@@ -68,6 +70,10 @@ void AOTGRound::UpdateFlag(float Dt)
 	// downwind, in the level (course (-sin, -cos) is world (-sin, +cos)); in calm air any way
 	const FVector Down = Mps > 0.05 ? FVector(-FMath::Sin(F), FMath::Cos(F), 0) : FVector(1, 0, 0);
 	const FVector Side = FVector::CrossProduct(FVector::UpVector, Down);
+	// (and the same wind for the trees and grass: their materials read it from MPC_Wind - which way,
+	// m/s with the gusts)
+	if (!WindMPC) WindMPC = LoadObject<UMaterialParameterCollection>(nullptr, TEXT("/Game/OpenTeeGolf/Game/MPC_Wind.MPC_Wind"));
+	if (WindMPC) UKismetMaterialLibrary::SetVectorParameterValue(this, WindMPC, TEXT("Wind"), FLinearColor(Down.X, Down.Y, float((Mph + Gust) * 0.44704), 0.f));
 	const double Droop = FMath::DegreesToRadians(FMath::Lerp(82.0, 12.0, S));
 	const FVector Along = Down * FMath::Cos(Droop) - FVector::UpVector * FMath::Sin(Droop);
 	const FVector Hang = FVector::CrossProduct(Side, Along).GetSafeNormal(); // (the flag's own "down": along the pole when it flies)
@@ -96,8 +102,7 @@ void AOTGRound::UpdateFlag(float Dt)
 		for (int32 i = 0; i < NU; i++)
 		{
 			const int32 A = j * (NU + 1) + i, B = A + 1, C = A + NU + 1, D = C + 1;
-			Tri.Append({ A, C, B, B, C, D });   // (one face...)
-			Tri.Append({ A, B, C, B, D, C });   // (...and the other)
+			Tri.Append({ A, C, B, B, C, D });
 		}
 	// normals from the grid
 	TArray<FVector> N;
@@ -111,6 +116,24 @@ void AOTGRound::UpdateFlag(float Dt)
 			const FVector& Q1 = V[FMath::Min(j + 1, NV) * (NU + 1) + i];
 			N[j * (NU + 1) + i] = FVector::CrossProduct(P1 - P0, Q1 - Q0).GetSafeNormal();
 		}
+	// the back: its own copy of the cloth, facing the other way and a hair behind (one surface shared
+	// by both sides was lit as the front from behind, and the two fought in the shadows: a flicker)
+	{
+		const int32 Nv = V.Num(), Nt = Tri.Num();
+		V.Reserve(Nv * 2); N.Reserve(Nv * 2); UV.Reserve(Nv * 2);
+		for (int32 i = 0; i < Nv; i++)
+		{
+			const FVector P = V[i], Nn = N[i];
+			const FVector2D T = UV[i];
+			V.Add(P - Nn * 0.12); N.Add(-Nn); UV.Add(T);
+		}
+		Tri.Reserve(Nt * 2);
+		for (int32 t = 0; t < Nt; t += 3)
+		{
+			const int32 A = Tri[t] + Nv, B = Tri[t + 1] + Nv, C = Tri[t + 2] + Nv;
+			Tri.Add(A); Tri.Add(C); Tri.Add(B);
+		}
+	}
 	if (!bFlagMade)
 	{
 		FlagCloth->CreateMeshSection_LinearColor(0, V, Tri, N, UV, TArray<FLinearColor>(), TArray<FProcMeshTangent>(), false);

@@ -76,6 +76,18 @@ TURF = {"fairway": (0.058, 0.105, 0.028), "green": (0.05, 0.115, 0.03), "rough":
 # The photo's light and shade on the turf: its brightness over 0.3, kept within these (a narrower
 # range: an evener fairway, less of the photo's blotches)
 TURF_SHADE = (0.8, 1.2)
+# Patches (the stream bed's stones and silt, the bank's width, the meadow's grasses and flowers)
+# are read from the rock texture's lightness seen much larger: its linear lightness is about 0.07
+# to 0.12, so it's weighted up to about 0.27..0.46 (median 0.35), the range the thresholds use
+PATCH_LUM_W = (1.17, 1.56, 1.17)
+PATH_TINT = (0.36, 0.355, 0.33)
+# Mowing stripes on the fairways, tees and greens: bands along each hole's line of play
+# (layer_mow.png, from derive_layers.py), MOW_WIDTH_M wide (fairway, green), lighter and darker by
+# MOW_CONTRAST (fairway, green) - and, as real stripes, which band is light depends on which way you
+# look along them, and they fade looking across. The fringe round each green: its own deeper green.
+MOW_WIDTH_M = (3.2, 1.2)
+MOW_CONTRAST = (0.11, 0.08)
+FRINGE = (0.04, 0.095, 0.026)   # (the cart paths' concrete, as prop_material's)
 TURF_AMOUNT = 0.88        # how much of the turf colour over the photo's (the rest the photo's own)
 WET_BANK = (0.4, 0.55)   # the ground darkens towards the water from 0.6 m out (mask 0.4), to this much at the edge
 EDGE_SOFT_M = 0.3         # how wide the blend is at the edge of each surface
@@ -111,14 +123,40 @@ TURF_GRASS = {
     # Tall wild grass (fescue) where the web game has deep rough and native grass - under the trees
     # and out of play (layer_native.png, from derive_layers.py): clumps of long thin blades, some
     # gone to straw, many carrying a seed head
-    "native": {"masks": ["native"], "height_cm": (35.0, 75.0), "width_mm": (2.0, 3.5), "lean": 0.65, "blades": 110,
+    # (patch: where in the meadow it grows - the rock texture's light and dark this many metres
+    # across, between these lightnesses, "invert" for the other patches - so the tall and the
+    # short grass take turns and the flowers come in clumps)
+    "native": {"masks": ["native"], "height_cm": (35.0, 85.0), "width_mm": (2.0, 3.5), "lean": 0.65, "blades": 110,
                "patch_cm": 60, "density": 320, "draw_m": (140, 200), "clumps": 4, "clump_cm": 9, "seed_share": 0.3,
+               "scale": (0.7, 1.3), "patch": (16.0, 0.31, 0.39, False),
                "root": (0.025, 0.04, 0.01), "tip": (0.09, 0.125, 0.035), "dry": (0.3, 0.25, 0.11), "dry_share": 0.2, "vary": 0.25},
+    # shorter, greener wild grass between the tall stands
+    "native_short": {"masks": ["native"], "height_cm": (15.0, 35.0), "width_mm": (2.5, 4.5), "lean": 0.5, "blades": 160,
+                     "patch_cm": 50, "density": 520, "draw_m": (110, 160), "clumps": 6, "clump_cm": 8, "seed_share": 0.08,
+                     "scale": (0.75, 1.25), "patch": (16.0, 0.31, 0.39, True),
+                     "root": (0.022, 0.036, 0.009), "tip": (0.075, 0.115, 0.03), "dry": (0.24, 0.21, 0.1), "dry_share": 0.1, "vary": 0.28},
+    # wildflowers: thin stems, each with a small head in its colour (the "dry" colour, on the heads)
+    "flowers_yellow": {"masks": ["native"], "height_cm": (30.0, 60.0), "width_mm": (1.5, 2.5), "lean": 0.25, "blades": 18,
+                       "patch_cm": 45, "density": 70, "draw_m": (70, 100), "clumps": 2, "clump_cm": 10, "seed_share": 1.0,
+                       "head_len": (0.025, 0.05), "head_w": (0.008, 0.014), "patch": (9.0, 0.43, 0.48, False),
+                       "root": (0.02, 0.035, 0.008), "tip": (0.06, 0.09, 0.02), "dry": (0.8, 0.55, 0.04), "dry_share": 0.0, "vary": 0.2},
+    "flowers_white": {"masks": ["native"], "height_cm": (25.0, 50.0), "width_mm": (1.5, 2.5), "lean": 0.25, "blades": 16,
+                      "patch_cm": 45, "density": 70, "draw_m": (70, 100), "clumps": 2, "clump_cm": 10, "seed_share": 1.0,
+                      "head_len": (0.015, 0.03), "head_w": (0.012, 0.02), "patch": (11.0, 0.44, 0.49, False),
+                      "root": (0.02, 0.035, 0.008), "tip": (0.06, 0.09, 0.02), "dry": (0.75, 0.74, 0.66), "dry_share": 0.0, "vary": 0.15},
+    "flowers_purple": {"masks": ["native"], "height_cm": (20.0, 45.0), "width_mm": (1.5, 2.5), "lean": 0.3, "blades": 16,
+                       "patch_cm": 45, "density": 60, "draw_m": (70, 100), "clumps": 2, "clump_cm": 10, "seed_share": 1.0,
+                       "head_len": (0.02, 0.035), "head_w": (0.01, 0.016), "patch": (7.0, 0.44, 0.5, False),
+                       "root": (0.02, 0.035, 0.008), "tip": (0.06, 0.09, 0.02), "dry": (0.3, 0.07, 0.36), "dry_share": 0.0, "vary": 0.2},
 }
 # Beyond the first of its draw_m distances a blade shrinks down into the ground, gone by
 # GRASS_FADE of the way to the second (where Unreal stops drawing it): the grass thins out into the
 # ground's own colour instead of popping in and out as you move
 GRASS_FADE = 0.9
+# In a full wind the tips of the tallest blades lean this much of their height downwind; gusts run
+# across the grass in waves this far apart (cm)
+GRASS_BEND = 0.4
+GRASS_WAVE_CM = 900.0
 
 
 def load(name):
@@ -220,6 +258,17 @@ def import_texture(path, name, kind="color"):
         return unreal.load_asset(CONTENT + "/Textures/" + name)
     import_file(path, CONTENT + "/Textures", name)
     t = unreal.load_asset(CONTENT + "/Textures/" + name)
+    if t and kind == "data":
+        t.set_editor_property("srgb", False)
+        for prop, val in (("compression_settings", unreal.TextureCompressionSettings.TC_VECTOR_DISPLACEMENTMAP),
+                          ("never_stream", True), ("lod_group", unreal.TextureGroup.TEXTUREGROUP_WORLD),
+                          ("power_of_two_mode", unreal.TexturePowerOfTwoSetting.NONE)):
+            try:
+                t.set_editor_property(prop, val)
+            except Exception:
+                pass
+        unreal.EditorAssetLibrary.save_loaded_asset(t)
+        return t
     if t and kind != "color":
         t.set_editor_property("srgb", False)
         t.set_editor_property("compression_settings",
@@ -316,7 +365,7 @@ def build_ground(land):
     N = meta["samples"]
     photo = import_texture(os.path.join(EXPORT_DIR, "photo.jpg"), "T_CoursePhoto")
     masks = {k: import_texture(os.path.join(EXPORT_DIR, "layer_%s.png" % k), "T_Mask_" + k, "mask")
-             for k in ("fairway", "green", "tee", "bunker", "water", "rough", "native", "stream") if exists("layer_%s.png" % k)}
+             for k in ("fairway", "green", "tee", "bunker", "water", "rough", "native", "stream", "path", "fringe") if exists("layer_%s.png" % k)}
     tex = {}
     for k in ("lawn", "rough", "sand"):
         tex[k] = import_texture(os.path.join(GAME_TEXTURES, k + "_color.jpg"), "T_%s_color" % k)
@@ -428,7 +477,46 @@ def build_ground(land):
         mel.connect_material_expressions(const3(TURF["native"], -1000, -200), "", nat, "B")
         mel.connect_material_expressions(op(unreal.MaterialExpressionMultiply, m["native"], const(0.85, -1000, -150), -950, -150), "", nat, "Alpha")
         turf = nat
+    # the fringe round the greens: its own deeper green
+    if "fringe" in m:
+        fr = E(unreal.MaterialExpressionLinearInterpolate, -850, -350)
+        mel.connect_material_expressions(turf, "", fr, "A")
+        mel.connect_material_expressions(const3(FRINGE, -1000, -350), "", fr, "B")
+        mel.connect_material_expressions(m["fringe"], "", fr, "Alpha")
+        turf = fr
+    # mowing stripes on the fairways, tees and greens (not the fringe)
+    if exists("layer_mow.png"):
+        try:
+            mow_t = import_texture(os.path.join(EXPORT_DIR, "layer_mow.png"), "T_Mow", "data")
+            mow = sample(mow_t, big, -1800, 7000, S.SAMPLERTYPE_LINEAR_COLOR)
+            f = mow_shade(mat, mow, m["green"])
+            striped = mown
+            if "fringe" in m:
+                nf = E(unreal.MaterialExpressionOneMinus, -950, 7150)
+                mel.connect_material_expressions(m["fringe"], "", nf, "")
+                striped = op(unreal.MaterialExpressionMultiply, striped, nf, -850, 7100)
+            k_ = E(unreal.MaterialExpressionLinearInterpolate, -800, 7000)
+            mel.connect_material_expressions(const(1.0, -950, 7000), "", k_, "A")
+            mel.connect_material_expressions(f, "", k_, "B")
+            mel.connect_material_expressions(striped, "", k_, "Alpha")
+            turf = op(unreal.MaterialExpressionMultiply, turf, k_, -750, -400)
+        except Exception:
+            warn("Mowing stripes skipped:\n" + traceback.format_exc())
     turf = op(unreal.MaterialExpressionMultiply, turf, shade, -800, -400)
+    # the cart paths, in the ground itself (their own mesh can sit a touch above or below it): the
+    # game's concrete grain, as the paths' mesh has it
+    if "path" in m:
+        try:
+            asphalt = import_texture(os.path.join(GAME_TEXTURES, "asphalt_color.jpg"), "T_asphalt_color")
+            pa = sample(asphalt, coords(3.0 / meta["metresPerSample"], 6400), -1300, 6400, S.SAMPLERTYPE_COLOR)
+            pc = op(unreal.MaterialExpressionMultiply, pa, const3(tuple(c / 0.208 for c in PATH_TINT), -1300, 6500), -1150, 6400, "RGB", "")
+            paved = E(unreal.MaterialExpressionLinearInterpolate, -700, -500)
+            mel.connect_material_expressions(turf, "", paved, "A")
+            mel.connect_material_expressions(pc, "", paved, "B")
+            mel.connect_material_expressions(m["path"], "", paved, "Alpha")
+            turf = paved
+        except Exception:
+            warn("Paths not painted in the ground:\n" + traceback.format_exc())
     amount = const(TURF_AMOUNT, -800, -100)
     graded = E(unreal.MaterialExpressionLinearInterpolate, -600, -300)
     mel.connect_material_expressions(ph, "RGB", graded, "A")
@@ -467,7 +555,7 @@ def build_ground(land):
             mel.connect_material_expressions(const(hi, x - 150, y + 150), "", k, "Max")
             lum = E(unreal.MaterialExpressionDotProduct, x - 100, y)
             mel.connect_material_expressions(src, "RGB", lum, "A")
-            mel.connect_material_expressions(const3((0.3, 0.4, 0.3), x - 200, y + 200), "", lum, "B")
+            mel.connect_material_expressions(const3(PATCH_LUM_W, x - 200, y + 200), "", lum, "B")
             mel.connect_material_expressions(lum, "", k, "Value")
             return k
 
@@ -613,6 +701,27 @@ def build_ground(land):
                 bare = E(unreal.MaterialExpressionOneMinus, -650, 1100)
                 mel.connect_material_expressions(bank_amt["k"], "", bare, "")
                 dry = op(unreal.MaterialExpressionMultiply, dry, bare, -580, 1000)
+            # (its patches of the meadow)
+            if "patch" in cfg:
+                size_m, lo, hi, inv = cfg["patch"]
+                pt = sample(tex["rock"], coords(size_m / meta["metresPerSample"], 6000), -900, 6000, S.SAMPLERTYPE_COLOR)
+                pl = E(unreal.MaterialExpressionDotProduct, -800, 6000)
+                mel.connect_material_expressions(pt, "RGB", pl, "A")
+                mel.connect_material_expressions(const3(PATCH_LUM_W, -900, 6100), "", pl, "B")
+                pk = E(unreal.MaterialExpressionSmoothStep, -700, 6000)
+                mel.connect_material_expressions(const(lo, -800, 6100), "", pk, "Min")
+                mel.connect_material_expressions(const(hi, -800, 6150), "", pk, "Max")
+                mel.connect_material_expressions(pl, "", pk, "Value")
+                if inv:
+                    pk2 = E(unreal.MaterialExpressionOneMinus, -650, 6000)
+                    mel.connect_material_expressions(pk, "", pk2, "")
+                    pk = pk2
+                dry = op(unreal.MaterialExpressionMultiply, dry, pk, -580, 1050)
+            # (never on a cart path)
+            if "path" in raw:
+                off = E(unreal.MaterialExpressionSaturate, -650, 1150)
+                mel.connect_material_expressions(op(unreal.MaterialExpressionMultiply, op(unreal.MaterialExpressionSubtract, const(0.85, -800, 1150), raw["path"], -720, 1150, "", "R"), const(2.0, -800, 1200), -700, 1150), "", off, "")
+                dry = op(unreal.MaterialExpressionMultiply, dry, off, -580, 1100)
             mel.connect_material_expressions(op(unreal.MaterialExpressionMultiply, sat, dry, -550, 900), "", go, kind.capitalize())
         log("Turf: on %s" % ", ".join(TURF_GRASS))
     except Exception:
@@ -728,11 +837,11 @@ def turf_patch(kind, cfg, seed=7):
         # over the way the blade leans
         if rnd.random() < cfg.get("seed_share", 0):
             tx, ty, tz = pos[(base + 6) * 3], pos[(base + 6) * 3 + 1], pos[(base + 6) * 3 + 2]
-            L = rnd.uniform(0.06, 0.11)
+            L = rnd.uniform(*cfg.get("head_len", (0.06, 0.11)))
             hx, hy, hz = tx + bx * L * 0.45, ty + L * 0.85, tz + bz * L * 0.45
             sb = len(pos) // 3
             for (ax, az) in ((fx, fz), (-fz, fx)):          # (two crossed cards, so it reads from any side)
-                wd = rnd.uniform(0.004, 0.007)
+                wd = rnd.uniform(*cfg.get("head_w", (0.004, 0.007)))
                 for (px_, py_, pz_), half in (((tx, ty, tz), 0.0), (((tx + hx) / 2, (ty + hy) / 2, (tz + hz) / 2), wd), ((hx, hy, hz), 0.0)):
                     for sgn in (-1, 1):
                         pos += [px_ + ax * half * sgn, py_, pz_ + az * half * sgn]
@@ -794,6 +903,11 @@ def turf_material(kind, land_size_cm):
     mval = mask
     for i, nm in enumerate(names[1:]):
         mval = op(unreal.MaterialExpressionMax, mval, tex("T_Mask_" + nm, uv, -1500, 200 + i * 200), -1300, 100 + i * 200, "R" if mval is mask else "", "R")
+    if unreal.EditorAssetLibrary.does_asset_exist(CONTENT + "/Textures/T_Mask_path"):
+        pth = tex("T_Mask_path", uv, -1500, 400)
+        keep = E(unreal.MaterialExpressionOneMinus, -1300, 400)
+        mel.connect_material_expressions(pth, "R", keep, "")
+        mval = op(unreal.MaterialExpressionMultiply, mval, keep, -1150, 300, "R" if mval is mask else "", "")
     mel.connect_material_property(mval, "R" if mval is mask else "", unreal.MaterialProperty.MP_OPACITY_MASK)
     mat.set_editor_property("opacity_mask_clip_value", 0.5)
     # colour: the blade's own, times the photo's light and shade there (as the ground's)
@@ -830,6 +944,29 @@ def turf_material(kind, land_size_cm):
     mel.connect_material_expressions(t_dry, "", dried, "Alpha")
     vary = op(unreal.MaterialExpressionAdd, const(1.0 - cfg["vary"], -1000, 480), op(unreal.MaterialExpressionMultiply, t_rand, const(2 * cfg["vary"], -1100, 520), -1000, 520), -900, 480)
     col = op(unreal.MaterialExpressionMultiply, op(unreal.MaterialExpressionMultiply, dried, vary, -800, 350), shade, -650, 400)
+    if kind == "fairway" and unreal.EditorAssetLibrary.does_asset_exist(CONTENT + "/Textures/T_Mow"):
+        try:
+            mw = E(unreal.MaterialExpressionTextureSample, -1500, 1600)
+            mw.set_editor_property("texture", unreal.load_asset(CONTENT + "/Textures/T_Mow"))
+            mw.set_editor_property("sampler_type", unreal.MaterialSamplerType.SAMPLERTYPE_LINEAR_COLOR)
+            mel.connect_material_expressions(uv, "", mw, "UVs")
+            f = mow_shade(mat, mw, const(0.0, -1500, 1700))
+            if unreal.EditorAssetLibrary.does_asset_exist(CONTENT + "/Textures/T_Mask_fringe"):
+                frm = tex("T_Mask_fringe", uv, -1500, 1800)
+                kk = E(unreal.MaterialExpressionLinearInterpolate, -800, 1700)
+                mel.connect_material_expressions(f, "", kk, "A")
+                mel.connect_material_expressions(const(1.0, -950, 1750), "", kk, "B")
+                mel.connect_material_expressions(frm, "R", kk, "Alpha")
+                f = kk
+                # (and the fringe's blades its deeper green)
+                fcol = E(unreal.MaterialExpressionLinearInterpolate, -600, 450)
+                mel.connect_material_expressions(col, "", fcol, "A")
+                mel.connect_material_expressions(op(unreal.MaterialExpressionMultiply, col, const3(tuple(FRINGE[i] / TURF["fairway"][i] for i in range(3)), -800, 500), -700, 500), "", fcol, "B")
+                mel.connect_material_expressions(frm, "R", fcol, "Alpha")
+                col = fcol
+            col = op(unreal.MaterialExpressionMultiply, col, f, -550, 400)
+        except Exception:
+            warn("Turf fairway: no mowing stripes (%s)" % traceback.format_exc().splitlines()[-1])
     mel.connect_material_property(col, "", unreal.MaterialProperty.MP_BASE_COLOR)
     mel.connect_material_property(op(unreal.MaterialExpressionMultiply, col, const(0.7, -650, 560), -500, 520), "", unreal.MaterialProperty.MP_SUBSURFACE_COLOR)
     mel.connect_material_property(const(0.62, -500, 700), "", unreal.MaterialProperty.MP_ROUGHNESS)
@@ -854,6 +991,12 @@ def turf_material(kind, land_size_cm):
         mel.connect_material_expressions(const3((0, 0, 1), -1250, 1350), "", lz, "B")
         down = op(unreal.MaterialExpressionMultiply, lz, fade, -950, 1200)
         wpo = op(unreal.MaterialExpressionMultiply, const3((0, 0, -1), -850, 1300), down, -700, 1200)
+        # and the wind: the blades lean downwind, the taller the more, in waves running across
+        try:
+            hmax = cfg["height_cm"][1]
+            wpo = op(unreal.MaterialExpressionAdd, wpo, wind_offset(mat, lz, GRASS_BEND / hmax, 0.25, GRASS_WAVE_CM), -600, 1200)
+        except Exception:
+            warn("Turf %s: no wind (%s)" % (kind, traceback.format_exc().splitlines()[-1]))
         mel.connect_material_property(wpo, "", unreal.MaterialProperty.MP_WORLD_POSITION_OFFSET)
     except Exception:
         warn("Turf %s: no distance fade (%s)" % (kind, traceback.format_exc().splitlines()[-1]))
@@ -1058,16 +1201,162 @@ def hash01(x, y, k):
     return v - math.floor(v)
 
 
+# ------------------------------------------------------------------ mowing stripes
+
+def mow_shade(mat, mow, green_w):
+    """A brightness factor (about 1) for the mowing stripes: mow is the sampled layer_mow (its red
+    and green the mower's direction), green_w how much of this is green (finer, gentler stripes)."""
+    E = lambda cls, x, y: mel.create_material_expression(mat, cls, x, y)
+
+    def const(v):
+        c = E(unreal.MaterialExpressionConstant, -1600, 2400)
+        c.set_editor_property("r", v)
+        return c
+
+    def const3(rgb):
+        c = E(unreal.MaterialExpressionConstant3Vector, -1600, 2450)
+        c.set_editor_property("constant", unreal.LinearColor(rgb[0], rgb[1], rgb[2], 1))
+        return c
+
+    def op(cls, a, b, a_out=""):
+        n = E(cls, -1400, 2400)
+        mel.connect_material_expressions(a, a_out, n, "A")
+        mel.connect_material_expressions(b, "", n, "B")
+        return n
+
+    def lerp(a, b, t):
+        n = E(unreal.MaterialExpressionLinearInterpolate, -1300, 2400)
+        mel.connect_material_expressions(a, "", n, "A")
+        mel.connect_material_expressions(b, "", n, "B")
+        mel.connect_material_expressions(t, "", n, "Alpha")
+        return n
+
+    # the mower's way (x, y), from 0..1 back to -1..1 (z 0)
+    d = op(unreal.MaterialExpressionSubtract, op(unreal.MaterialExpressionMultiply, mow, const3((2, 2, 0)), "RGB"), const3((1, 1, 0)))
+    dn = E(unreal.MaterialExpressionNormalize, -1300, 2500)
+    mel.connect_material_expressions(d, "", dn, "")
+    # across it (-y, x): the distance across, in bands
+    perp = op(unreal.MaterialExpressionCrossProduct, const3((0, 0, 1)), dn)
+    wp = E(unreal.MaterialExpressionWorldPosition, -1800, 2600)
+    across = op(unreal.MaterialExpressionDotProduct, wp, perp)
+    width = lerp(const(MOW_WIDTH_M[0] * 100.0), const(MOW_WIDTH_M[1] * 100.0), green_w)
+    bands = E(unreal.MaterialExpressionFrac, -1200, 2600)
+    mel.connect_material_expressions(op(unreal.MaterialExpressionDivide, across, width), "", bands, "")
+    # a square wave with soft edges: 0 one band, 1 the next
+    tri = E(unreal.MaterialExpressionAbs, -1100, 2600)
+    mel.connect_material_expressions(op(unreal.MaterialExpressionSubtract, op(unreal.MaterialExpressionMultiply, bands, const(2.0)), const(1.0)), "", tri, "")
+    sq = E(unreal.MaterialExpressionSmoothStep, -1000, 2600)
+    mel.connect_material_expressions(const(0.42), "", sq, "Min")
+    mel.connect_material_expressions(const(0.58), "", sq, "Max")
+    mel.connect_material_expressions(tri, "", sq, "Value")
+    pm = op(unreal.MaterialExpressionSubtract, op(unreal.MaterialExpressionMultiply, sq, const(2.0)), const(1.0))
+    # which way you look along the stripes: the light band swaps, and looking across they fade
+    cv = E(unreal.MaterialExpressionCameraVectorWS, -1800, 2700)
+    look = op(unreal.MaterialExpressionDotProduct, op(unreal.MaterialExpressionMultiply, cv, const3((1, 1, 0))), dn)
+    lk = E(unreal.MaterialExpressionClamp, -1100, 2700)
+    mel.connect_material_expressions(op(unreal.MaterialExpressionMultiply, look, const(2.5)), "", lk, "")
+    lk.set_editor_property("min_default", -1.0)
+    lk.set_editor_property("max_default", 1.0)
+    contrast = lerp(const(MOW_CONTRAST[0]), const(MOW_CONTRAST[1]), green_w)
+    return op(unreal.MaterialExpressionAdd, const(1.0), op(unreal.MaterialExpressionMultiply, op(unreal.MaterialExpressionMultiply, pm, lk), contrast))
+
+
+# ------------------------------------------------------------------ wind in the trees and grass
+
+# The game writes the wind into this collection every frame (AOTGRound::UpdateFlag): "Wind" = the
+# way it blows (x, y: a unit vector in the level), its speed (m/s, gusts included) and 0. The trees
+# and grass lean and sway with it. WIND_FULL_MPS: the speed at which they bend fully.
+WIND_MPC = "/Game/OpenTeeGolf/Game/MPC_Wind"
+WIND_FULL_MPS = 12.0
+
+
+def wind_collection():
+    if unreal.EditorAssetLibrary.does_asset_exist(WIND_MPC):
+        return unreal.load_asset(WIND_MPC)
+    folder, name = WIND_MPC.rsplit("/", 1)
+    mpc = assets.create_asset(name, folder, unreal.MaterialParameterCollection, unreal.MaterialParameterCollectionFactoryNew())
+    v = unreal.CollectionVectorParameter()
+    v.set_editor_property("parameter_name", "Wind")
+    v.set_editor_property("default_value", unreal.LinearColor(1, 0, 2, 0))
+    mpc.set_editor_property("vector_parameters", [v])
+    unreal.EditorAssetLibrary.save_loaded_asset(mpc)
+    log("Wind: made %s" % WIND_MPC)
+    return mpc
+
+
+def wind_offset(mat, height, scale, flutter, wave_cm=0.0, flutter_rate=2.3, sway=0.25, parts_cm=0.0):
+    """A world position offset bending a plant downwind: height (a node: cm above its foot) squared
+    times scale, pushed over by the wind's strength (and swaying a little with it), plus a quicker
+    flutter even in still air. wave_cm: gusts running across the plants that far apart (grass);
+    sway: how much of the lean comes and goes; parts_cm: parts of a plant this far apart flutter
+    out of step (a tree's branches), at flutter_rate (radians a second)."""
+    E = lambda cls, x, y: mel.create_material_expression(mat, cls, x, y)
+
+    def const(v):
+        c = E(unreal.MaterialExpressionConstant, -1600, 1400)
+        c.set_editor_property("r", v)
+        return c
+
+    def const3(rgb):
+        c = E(unreal.MaterialExpressionConstant3Vector, -1600, 1450)
+        c.set_editor_property("constant", unreal.LinearColor(rgb[0], rgb[1], rgb[2], 1))
+        return c
+
+    def op(cls, a, b):
+        n = E(cls, -1400, 1400)
+        mel.connect_material_expressions(a, "", n, "A")
+        mel.connect_material_expressions(b, "", n, "B")
+        return n
+
+    def sine(x):
+        n = E(unreal.MaterialExpressionSine, -1300, 1400)
+        n.set_editor_property("period", 6.283)
+        mel.connect_material_expressions(x, "", n, "")
+        return n
+
+    w = E(unreal.MaterialExpressionCollectionParameter, -1800, 1400)
+    w.set_editor_property("collection", wind_collection())
+    w.set_editor_property("parameter_name", "Wind")
+    rgb = E(unreal.MaterialExpressionComponentMask, -1700, 1400)
+    for ch in "rgba":
+        rgb.set_editor_property(ch, ch in "rgb")
+    mel.connect_material_expressions(w, "", rgb, "")
+    way = op(unreal.MaterialExpressionMultiply, rgb, const3((1, 1, 0)))
+    speed = op(unreal.MaterialExpressionDotProduct, rgb, const3((0, 0, 1)))
+    k = E(unreal.MaterialExpressionSaturate, -1300, 1500)
+    mel.connect_material_expressions(op(unreal.MaterialExpressionDivide, speed, const(WIND_FULL_MPS)), "", k, "")
+    tm = E(unreal.MaterialExpressionTime, -1800, 1600)
+    ph = op(unreal.MaterialExpressionMultiply, E(unreal.MaterialExpressionPerInstanceRandom, -1800, 1700), const(6.283))
+    if wave_cm:
+        # (the gusts' waves: phase along the wind, so they run downwind across the field)
+        along = op(unreal.MaterialExpressionDotProduct, E(unreal.MaterialExpressionWorldPosition, -1800, 1800), way)
+        ph = op(unreal.MaterialExpressionAdd, ph, op(unreal.MaterialExpressionMultiply, along, const(-6.283 / wave_cm)))
+    # pushed over by the wind's strength, swaying a quarter each way (quicker the harder it blows)
+    slow = sine(op(unreal.MaterialExpressionAdd, op(unreal.MaterialExpressionMultiply, tm, op(unreal.MaterialExpressionAdd, const(0.7), k)), ph))
+    push = op(unreal.MaterialExpressionMultiply, k, op(unreal.MaterialExpressionAdd, const(1.0 - sway), op(unreal.MaterialExpressionMultiply, slow, const(sway))))
+    # flutter: quick and small, some even in still air (each part of the plant in its own time)
+    fph = op(unreal.MaterialExpressionMultiply, ph, const(3.0))
+    if parts_cm:
+        fph = op(unreal.MaterialExpressionAdd, fph, op(unreal.MaterialExpressionDotProduct, E(unreal.MaterialExpressionWorldPosition, -1800, 1900),
+                                                     const3((6.283 / parts_cm, 4.7 / parts_cm, 5.3 / parts_cm))))
+    rate = op(unreal.MaterialExpressionMultiply, op(unreal.MaterialExpressionAdd, const(0.6), k), const(flutter_rate))
+    fast = sine(op(unreal.MaterialExpressionAdd, op(unreal.MaterialExpressionMultiply, tm, rate), fph))
+    flut = op(unreal.MaterialExpressionMultiply, op(unreal.MaterialExpressionMultiply, fast, const(flutter)), op(unreal.MaterialExpressionAdd, const(0.2), k))
+    amt = op(unreal.MaterialExpressionMultiply, op(unreal.MaterialExpressionAdd, push, flut),
+             op(unreal.MaterialExpressionMultiply, op(unreal.MaterialExpressionMultiply, height, height), const(scale)))
+    return op(unreal.MaterialExpressionMultiply, way, amt)
+
+
 # The Fab tree packs' own materials are instances of a Megascans master (/Game/MSPresets/
 # MS_Foliage_Material/MA_Foliage) that isn't in the project: without it each tree draws with the
 # fallback material - its leaf cards solid and dark, the crowns near-black whatever the light. Where
 # a material's master is missing, the trees get these instead, carrying that material's own
 # textures (Albedo; Mask: red the leaf's outline, green roughness, blue how much light shows through;
 # Normal). LEAF_TINT x the albedo, LEAF_THROUGH: the light through the leaves, LEAF_SWAY: how far a
-# crown sways (cm at 10 m up)
-LEAF_TINT = (1.15, 1.2, 1.0)
+# crown 10 m up bends in a full wind (cm; WIND_FULL_MPS)
+LEAF_TINT = (1.25, 1.2, 0.85)
 LEAF_THROUGH = (0.55, 0.7, 0.25)
-LEAF_SWAY = 4.0
+LEAF_SWAY = 70.0
 BARK_TINT = (1.0, 0.97, 0.92)
 
 
@@ -1128,24 +1417,6 @@ def tree_parent_material(kind):
         mel.connect_material_property(const(0.35, -500, 500), "", unreal.MaterialProperty.MP_SPECULAR)
         through = op(unreal.MaterialExpressionMultiply, op(unreal.MaterialExpressionMultiply, col, const3(LEAF_THROUGH, -650, 200), -500, 150), msk, -400, 200, "", "B")
         mel.connect_material_property(through, "", unreal.MaterialProperty.MP_SUBSURFACE_COLOR)
-        # a slow sway, more the higher up (the tree's foot is its pivot), each tree its own phase
-        try:
-            lp = E(unreal.MaterialExpressionLocalPosition, -1200, 900)
-            lz = E(unreal.MaterialExpressionDotProduct, -1050, 900)
-            mel.connect_material_expressions(lp, "", lz, "A")
-            mel.connect_material_expressions(const3((0, 0, 1), -1200, 850), "", lz, "B")
-            rnd = E(unreal.MaterialExpressionPerInstanceRandom, -1200, 1000)
-            tm = E(unreal.MaterialExpressionTime, -1200, 1100)
-            ph = op(unreal.MaterialExpressionAdd, op(unreal.MaterialExpressionMultiply, tm, const(0.9, -1100, 1150), -1000, 1100), op(unreal.MaterialExpressionMultiply, rnd, const(6.28, -1100, 1050), -1000, 1000), -900, 1050)
-            sn = E(unreal.MaterialExpressionSine, -800, 1050)
-            sn.set_editor_property("period", 6.283)
-            mel.connect_material_expressions(ph, "", sn, "")
-            amt = op(unreal.MaterialExpressionMultiply, op(unreal.MaterialExpressionMultiply, lz, lz, -900, 900), const(LEAF_SWAY / 1000000.0, -900, 950), -800, 900)
-            sway = op(unreal.MaterialExpressionMultiply, amt, sn, -700, 950)
-            wpo = op(unreal.MaterialExpressionMultiply, const3((0.8, 0.6, 0), -700, 1050), sway, -550, 950)
-            mel.connect_material_property(wpo, "", unreal.MaterialProperty.MP_WORLD_POSITION_OFFSET)
-        except Exception:
-            warn("Tree leaves: no sway (%s)" % traceback.format_exc().splitlines()[-1])
     else:
         ao = E(unreal.MaterialExpressionLinearInterpolate, -600, 200)
         mel.connect_material_expressions(const(0.5, -750, 200), "", ao, "A")
@@ -1155,6 +1426,18 @@ def tree_parent_material(kind):
         mel.connect_material_property(col, "", unreal.MaterialProperty.MP_BASE_COLOR)
         mel.connect_material_property(const(0.85, -500, 400), "", unreal.MaterialProperty.MP_ROUGHNESS)
         mel.connect_material_property(const(0.3, -500, 500), "", unreal.MaterialProperty.MP_SPECULAR)
+    # the wind: the whole tree bends from its foot (its pivot), more the higher up, each tree in
+    # its own time, its branches fluttering out of step (leaves and wood alike, so the leaves stay on)
+    try:
+        lp = E(unreal.MaterialExpressionLocalPosition, -1200, 900)
+        lz = E(unreal.MaterialExpressionDotProduct, -1050, 900)
+        mel.connect_material_expressions(lp, "", lz, "A")
+        mel.connect_material_expressions(const3((0, 0, 1), -1200, 850), "", lz, "B")
+        wpo = wind_offset(mat, lz, LEAF_SWAY / 1000000.0, 0.25, flutter_rate=4.0, sway=0.4,
+                          parts_cm=250.0)
+        mel.connect_material_property(wpo, "", unreal.MaterialProperty.MP_WORLD_POSITION_OFFSET)
+    except Exception:
+        warn("Trees: no wind (%s)" % traceback.format_exc().splitlines()[-1])
     mel.recompile_material(mat)
     unreal.EditorAssetLibrary.save_loaded_asset(mat)
     return mat
@@ -1188,6 +1471,8 @@ def tree_standin(mi):
         t = texs.get(pname)
         if t:
             mel.set_material_instance_texture_parameter_value(mic, pname, t)
+    # (and refreshed: without it the instance draws with the parent's placeholder textures)
+    mel.update_material_instance(mic)
     unreal.EditorAssetLibrary.save_loaded_asset(mic)
     _tree_standins[key] = mic
     log("Trees: %s stands in for %s (its master material is missing)" % (name, mi.get_name()))
@@ -1857,6 +2142,9 @@ def colours_in_uvs(src):
     return out
 
 
+PATH_SINK_CM = -4
+
+
 def build_props():
     """Cart paths, bridges, buildings and cars, as the game builds them."""
     if not exists("props.json"):
@@ -1876,7 +2164,9 @@ def build_props():
         for k, mesh in enumerate(meshes):
             for i in range(len(mesh.get_editor_property("static_materials"))):
                 mesh.set_material(i, mat)
-            a = spawn_mesh(mesh, loc + unreal.Vector(0, 0, 5 if kind.startswith("path") else 0))
+            # (a path a little into the ground: the ground has the path painted in, so where the
+            # mesh dips under it the path carries on, and it never floats over the grass)
+            a = spawn_mesh(mesh, loc + unreal.Vector(0, 0, PATH_SINK_CM if kind.startswith("path") else 0))
             a.set_actor_label("OTG_Prop_%s_%d" % (kind, k))
             a.set_actor_rotation(unreal.Rotator(0, 0, yaw), False)
             a.set_actor_scale3d(unreal.Vector(scale * mirror, scale, scale))
@@ -2044,8 +2334,8 @@ def boulder_material():
     big.set_editor_property("texture", tex)
     mel.connect_material_expressions(op(unreal.MaterialExpressionDivide, mask(wp, "rg", -1300, 1300), const(5.0, -1300, 1400), -1200, 1300), "", big, "UVs")
     patch = E(unreal.MaterialExpressionSmoothStep, -800, 1300)
-    mel.connect_material_expressions(const(0.28, -950, 1350), "", patch, "Min")
-    mel.connect_material_expressions(const(0.4, -950, 1400), "", patch, "Max")
+    mel.connect_material_expressions(const(0.085, -950, 1350), "", patch, "Min")
+    mel.connect_material_expressions(const(0.11, -950, 1400), "", patch, "Max")
     mel.connect_material_expressions(big, "R", patch, "Value")
     moss = op(unreal.MaterialExpressionMultiply, moss_k, patch, -350, 1200)
     final = E(unreal.MaterialExpressionLinearInterpolate, -100, 300)

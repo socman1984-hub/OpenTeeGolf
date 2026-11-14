@@ -91,9 +91,75 @@ def main(export):
     out = os.path.join(export, 'layer_native.png')
     Image.fromarray(np.clip(field * 255 + 0.5, 0, 255).astype(np.uint8), 'L').save(out)
     print('layer_native.png: %.1f%% of the landscape' % (100 * mask.mean()))
+    # layer_path.png: the cart paths, with a crisp edge: build_course.py paints them into the ground
+    # and keeps the grass off them (the path's own mesh can sit a touch above or below the ground)
+    if 'path' in codes:
+        pm = (sub == codes.index('path')) & inside
+        pf = pm.astype(np.float32)
+        for _ in range(3):
+            pf = box_blur(pf, 1)
+        Image.fromarray(np.clip(pf * 255 + 0.5, 0, 255).astype(np.uint8), 'L').save(os.path.join(export, 'layer_path.png'))
+        print('layer_path.png: %.2f%% of the landscape' % (100 * pm.mean()))
+    if 'fringe' in codes:
+        fm = (sub == codes.index('fringe')) & inside
+        ff = fm.astype(np.float32)
+        for _ in range(3):
+            ff = box_blur(ff, 1)
+        Image.fromarray(np.clip(ff * 255 + 0.5, 0, 255).astype(np.uint8), 'L').save(os.path.join(export, 'layer_fringe.png'))
+        print('layer_fringe.png: %.2f%% of the landscape' % (100 * fm.mean()))
+    mown = np.zeros(256, bool)
+    for name in ('fairway', 'green', 'tee', 'fringe'):
+        if name in codes:
+            mown[codes.index(name)] = True
+    mow_layer(export, mown[sub] & inside, size)
     if os.path.exists(os.path.join(export, 'water.glb')):
         stream = stream_layer(export, size)
         boulders(export, meta, size, stream)
+
+
+# ------------------------------------------------------------------ mowing stripes
+
+def mow_layer(export, mown, size):
+    """layer_mow.png: on the mown surfaces, which way the mower ran - along the line of play of the
+    nearest hole (tee, its aim points, then the green): red and green the direction (x east, y
+    south) as 0.5 + 0.5 x. build_course.py draws the stripes from it."""
+    holes = json.load(open(os.path.join(export, 'holes.json'), encoding='utf-8'))
+    segs = []
+    for h in holes:
+        tees = [t for t in (h.get('tees') or {}).values() if t]
+        if not tees or not h.get('green'):
+            continue
+        tee = max(tees, key=lambda t: (t['x'] - h['green']['x']) ** 2 + (t['y'] - h['green']['y']) ** 2)
+        pts = [tee] + list(h.get('aims') or []) + [h['green']]
+        for a, b in zip(pts, pts[1:]):
+            segs.append((a['x'] / 100.0, a['y'] / 100.0, b['x'] / 100.0, b['y'] / 100.0))
+    out = np.zeros((SIZE, SIZE, 3), np.uint8)
+    out[..., 0], out[..., 1], out[..., 2] = 255, 128, 128
+    if not segs:
+        Image.fromarray(out, 'RGB').save(os.path.join(export, 'layer_mow.png'))
+        return
+    # (the mown surfaces and a few metres round them, so the edges have a direction too)
+    near = box_blur(mown.astype(np.float32), 6) > 0
+    jj, ii = np.nonzero(near)
+    mpp = size / SIZE
+    px, py = (ii + 0.5) * mpp, (jj + 0.5) * mpp
+    best = np.full(len(px), 1e18)
+    dx = np.ones(len(px))
+    dy = np.zeros(len(px))
+    for ax, ay, bx, by in segs:
+        vx, vy = bx - ax, by - ay
+        L2 = max(vx * vx + vy * vy, 1e-6)
+        t = np.clip(((px - ax) * vx + (py - ay) * vy) / L2, 0, 1)
+        d2 = (px - ax - t * vx) ** 2 + (py - ay - t * vy) ** 2
+        closer = d2 < best
+        L = L2 ** 0.5
+        best = np.where(closer, d2, best)
+        dx = np.where(closer, vx / L, dx)
+        dy = np.where(closer, vy / L, dy)
+    out[jj, ii, 0] = np.clip(np.round(127.5 + 127.5 * dx), 0, 255).astype(np.uint8)
+    out[jj, ii, 1] = np.clip(np.round(127.5 + 127.5 * dy), 0, 255).astype(np.uint8)
+    Image.fromarray(out, 'RGB').save(os.path.join(export, 'layer_mow.png'))
+    print('layer_mow.png: mowing directions from %d stretches of %d holes' % (len(segs), len(holes)))
 
 
 # ------------------------------------------------------------------ streams and boulders

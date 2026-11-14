@@ -297,6 +297,34 @@ runs inside the game, in C++.
   (`M_TreeLeaves`, `M_TreeBark`) with each material's own textures: cut-out leaves lit through,
   and a gentle sway (`LEAF_*`, `BARK_TINT`). Adding the pack's `MSPresets` folder would restore
   the originals: the stand-ins are used only while the master is missing.
+  - The stand-ins draw with the parent's placeholder textures unless refreshed after their
+    textures are set (`update_material_instance`): that was the grey-white trees.
+- Wind in the trees and grass: the game writes the hole's wind (way, m/s with gusts) into
+  `/Game/OpenTeeGolf/Game/MPC_Wind` every frame. The trees lean, sway and flutter branch by
+  branch (`LEAF_SWAY`, `wind_offset`); the grass bends in waves running downwind
+  (`GRASS_BEND`, `GRASS_WAVE_CM`). Fully bent at `WIND_FULL_MPS`. The Megaplant pines keep
+  their own materials and don't move.
+- The meadow ("native"): tall fescue and shorter, greener wild grass take turns in patches, with
+  clumps of yellow, white and purple wildflowers (`native_short`, `flowers_*` in `TURF_GRASS`;
+  `patch`: where each grows). All made by the script, no outside assets.
+- Patch thresholds read the rock texture's lightness weighted by `PATCH_LUM_W`: its linear
+  lightness is only about 0.07 to 0.12, and unweighted every patch (bed stones, silt, the bank's
+  width, the meadow) came out all or nothing.
+- Cart paths: `derive_layers.py` writes `layer_path.png`; the ground paints the paths in
+  (`PATH_TINT`), no grass grows on them or pokes through, and their mesh sits a few cm into the
+  ground (`PATH_SINK_CM`) so it never floats.
+- The flag: its back is its own copy of the cloth, facing the other way (one surface for both
+  sides was lit wrongly from behind and flickered in its shadow).
+- Smoother hill shadows in a low sun (`OTG.Look.SunSoft`, `OTG.Look.SlopeBias`): the ground's
+  facets cast a comb of teeth along a shadow's edge.
+- Free view: Shift flies 6 times as fast (was 3).
+- Mowing stripes and the green's fringe.
+  - `derive_layers.py` writes `layer_mow.png`: on the mown surfaces, the line of play of the
+    nearest hole (tee, aim points, green) as a direction, and `layer_fringe.png`.
+  - The ground and the fairway blades draw bands along it (`MOW_WIDTH_M`: 3.2 m on fairways and
+    tees, 1.2 m on greens; `MOW_CONTRAST`). As real stripes, which band is light depends on which
+    way you look along them, and they fade looking across.
+  - The fringe round each green is a deeper green (`FRINGE`), with no stripes.
 - Time of day: a slider in the weather panel (L), 5:30 am to 7:30 pm. The sun is placed where it
   is at that hour for the course's latitude on a midsummer day, dimming through dawn and dusk.
   "Sun behind you" goes back to lighting each hole from behind the player.
