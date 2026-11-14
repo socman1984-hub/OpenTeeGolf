@@ -376,7 +376,9 @@ Everything the golf needs runs inside the game, in C++.
   (labels made by `make_game_assets.py`). `make_release.ps1` writes `manifest.json` (every file's
   size and SHA-1, `release_manifest.py`); `python unreal/publish_release.py` (needs the GitHub CLI,
   signed in; `--dry-run` to see what would go up) uploads only the files no earlier release has,
-  named by their SHA-1, plus the file list and a starter zip without the scenery, and never marks
+  named by their SHA-1, plus the file list, the installer (`installer/OpenTeeGolf.iss`, Inno Setup 6:
+  installs per user, no admin, with shortcuts and an uninstaller) and a starter zip, both without
+  the scenery, and never marks
   the release "latest" (that stays the web version's). On start the game reads the newest release's
   list, downloads what differs or is missing (the scenery, on a first start from the starter zip)
   into `Update\staging`, checks each file, and on "Restart now" an `apply.cmd` swaps them in after

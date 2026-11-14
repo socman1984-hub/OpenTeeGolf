@@ -12,8 +12,10 @@ What goes up:
   uploads only what changed, and the game downloads only that;
 - manifest.json: every file with its size, SHA-1 and download address (an earlier release's, for
   files that haven't changed);
-- a starter zip: the game without its tree scenery (pakchunk1-3: too big for one zip on GitHub).
-  Unzipped and started, the game finds the scenery listed and missing and downloads it.
+- the installer, OpenTeeGolf-Setup-<version>.exe (Inno Setup, unreal/installer/OpenTeeGolf.iss),
+  and a starter zip: the game without its tree scenery (pakchunk1-3: too big for one file on
+  GitHub). Installed or unzipped and started, the game finds the scenery listed and missing and
+  downloads it.
 """
 
 import json
@@ -44,14 +46,19 @@ def main():
     version = json.load(open(os.path.join(ROOT, "package.json"), encoding="utf-8"))["version"]
     name = "OpenTeeGolf-Unreal-%s-win-x64" % version
     stage = os.path.join(ROOT, "dist", name)
-    manifest = json.load(open(os.path.join(stage, "manifest.json"), encoding="utf-8"))
+    original = open(os.path.join(stage, "manifest.json"), encoding="utf-8").read()
+    manifest = json.loads(original)
     if manifest["version"] != version:
         sys.exit("dist/%s is %s, package.json says %s: run make_release.ps1 again" % (name, manifest["version"], version))
     repo, tag = manifest["repo"], "unreal-v" + version
     if not shutil.which("gh"):
-        sys.exit("The GitHub CLI isn't installed: https://cli.github.com, then gh auth login")
-    gh("auth", "status")
-    releases = json.loads(gh("release", "list", "--limit", "100", "--json", "tagName,isDraft,isPrerelease"))
+        if not dry:
+            sys.exit("The GitHub CLI isn't installed: https://cli.github.com, then gh auth login")
+        print("(no GitHub CLI: a dry run as if this were the first release)")
+        releases = []
+    else:
+        gh("auth", "status")
+        releases = json.loads(gh("release", "list", "--limit", "100", "--json", "tagName,isDraft,isPrerelease"))
     if any(r["tagName"] == tag for r in releases):
         sys.exit("%s is already on GitHub: raise the version in package.json for a new release" % tag)
 
@@ -68,10 +75,11 @@ def main():
 
     up = os.path.join(tmp, "up")
     os.makedirs(up)
-    new_bytes = 0
+    new_bytes = reused = 0
     for f in manifest["files"]:
         if f["sha1"] in known:
             f["url"] = known[f["sha1"]]
+            reused += 1
             continue
         f["url"] = "https://github.com/%s/releases/download/%s/%s" % (repo, tag, f["sha1"])
         dest = os.path.join(up, f["sha1"])
@@ -93,15 +101,29 @@ def main():
     if os.path.getsize(starter) >= 2 * 1024 ** 3:
         sys.exit("The starter zip is over 2 GB")
 
+    # the installer, with this manifest (so a fresh install knows where to download the scenery)
+    iscc = os.path.join(os.environ["LOCALAPPDATA"], "Programs", "Inno Setup 6", "ISCC.exe")
+    if not os.path.exists(iscc):
+        sys.exit("No Inno Setup 6 (jrsoftware.org): the installer can't be built")
+    subprocess.run([iscc, "/Q", "/DVersion=" + version, "/DSource=" + stage, "/DOutDir=" + up,
+                    os.path.join(HERE, "installer", "OpenTeeGolf.iss")], check=True)
+    setup = os.path.join(up, "OpenTeeGolf-Setup-%s.exe" % version)
+    if os.path.getsize(setup) >= 2 * 1024 ** 3:
+        sys.exit("The installer is over 2 GB")
+
     files = sorted(os.listdir(up))
-    print("%s: %d files new (%.2f GB), %d from earlier releases; starter zip %.0f MB"
-          % (tag, len(files) - 2, new_bytes / 1024 ** 3, len(manifest["files"]) - (len(files) - 2), os.path.getsize(starter) / 1024 ** 2))
+    print("%s: %d files to upload (%.2f GB), %d already on earlier releases; installer %.0f MB, starter zip %.0f MB"
+          % (tag, len(files) - 3, new_bytes / 1024 ** 3, reused, os.path.getsize(setup) / 1024 ** 2, os.path.getsize(starter) / 1024 ** 2))
     if dry:
+        # (the release folder as it was: a dry run changes nothing)
+        with open(os.path.join(stage, "manifest.json"), "w", encoding="utf-8") as fh:
+            fh.write(original)
         print("(dry run: nothing published; the files are in %s)" % up)
         return
-    notes = ("OpenTeeGolf for Unreal Engine %s.\n\nNew here: download %s.zip, unzip it anywhere and run OpenTeeGolf.exe. "
-             "On its first start it downloads the scenery (about 3 GB) and restarts.\n\n"
-             "Already have it: the game updates itself (it checks when it starts)." % (version, name))
+    notes = ("OpenTeeGolf for Unreal Engine %s.\n\nNew here: download OpenTeeGolf-Setup-%s.exe and run it (no admin needed; "
+             "Windows may say it protected your PC: More info, Run anyway). Or download %s.zip, unzip it anywhere and run "
+             "OpenTeeGolf.exe. On its first start the game downloads its scenery (about 3 GB) and restarts.\n\n"
+             "Already have it: the game updates itself (it checks when it starts)." % (version, version, name))
     gh("release", "create", tag, "--title", "OpenTeeGolf for Unreal %s" % version, "--notes", notes, "--latest=false", capture=False)
     gh("release", "upload", tag, *[os.path.join(up, f) for f in files], capture=False)
     shutil.rmtree(tmp, ignore_errors=True)

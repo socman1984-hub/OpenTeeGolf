@@ -61,6 +61,16 @@ $repo = (git -C $Root remote get-url origin) -replace '^.*github\.com[:/]', '' -
 & python (Join-Path $Here 'release_manifest.py') $stage $version $repo
 if ($LASTEXITCODE -ne 0) { throw 'Writing the file list failed.' }
 
+# ---- the installer (Inno Setup: OpenTeeGolf-Setup-<version>.exe, the game without its scenery,
+# which it downloads on its first start). This local one has no download addresses yet - fine for
+# testing (-updateurl); publish_release.py builds the real one with them.
+$iscc = Join-Path $env:LOCALAPPDATA 'Programs\Inno Setup 6\ISCC.exe'
+if (Test-Path $iscc) {
+  & $iscc /Q "/DVersion=$version" "/DSource=$stage" "/DOutDir=$dist" (Join-Path $Here 'installer\OpenTeeGolf.iss')
+  if ($LASTEXITCODE -ne 0) { throw "Building the installer failed ($LASTEXITCODE)" }
+  Write-Host "Built $(Join-Path $dist "OpenTeeGolf-Setup-$version.exe")"
+} else { Write-Warning 'No Inno Setup 6 (jrsoftware.org): no installer' }
+
 # ---- the zip (Windows' own tar: much faster than Compress-Archive on a few GB; not Git's, which
 # may come first on the path and can't write zips)
 $zip = Join-Path $dist "$name.zip"

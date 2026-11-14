@@ -5,7 +5,11 @@ Golf on real courses with your launch monitor, in Unreal Engine 5.
 
 Starting
 --------
-Double-click OpenTeeGolf.exe. (If Windows says a DLL such as VCRUNTIME140 or MSVCP140 is missing,
+Run OpenTeeGolf-Setup-<version>.exe (no admin needed; if Windows says it protected your PC, choose
+More info, Run anyway), or unzip the game anywhere and double-click OpenTeeGolf.exe. On its first
+start the game downloads its scenery (about 3 GB) and restarts once. After that it keeps itself up
+to date: when it starts it checks for a new version and downloads only what changed (Settings >
+Updates to check now). (If Windows says a DLL such as VCRUNTIME140 or MSVCP140 is missing,
 install Microsoft's "Visual C++ Redistributable" for x64 from https://aka.ms/vs/17/release/vc_redist.x64.exe
 and start it again. The first start takes longer while the graphics card prepares its shaders.)
 
