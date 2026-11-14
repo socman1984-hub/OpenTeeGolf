@@ -152,6 +152,7 @@ private:
 	UPROPERTY() TObjectPtr<UStaticMeshComponent> PinMesh;
 	UPROPERTY() TObjectPtr<UStaticMeshComponent> FlagMesh;
 	UPROPERTY() TObjectPtr<class UMaterialParameterCollection> WindMPC;   // (the wind for the trees and grass)
+	UPROPERTY() TObjectPtr<class UMaterialParameterCollection> FabWindMPC;   // (the Megascans plants' wind)
 	UPROPERTY() TObjectPtr<UStaticMeshComponent> TeeMesh;      // (the tee's peg...)
 	UPROPERTY() TObjectPtr<UStaticMeshComponent> TeeHeadMesh;  // (...and its cup)
 	UPROPERTY() TObjectPtr<UStaticMeshComponent> CupMesh;

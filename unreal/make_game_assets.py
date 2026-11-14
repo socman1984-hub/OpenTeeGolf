@@ -101,7 +101,7 @@ def course_level():
 # chunk 0; each tree folder gets a label putting what's cooked from it in its chunk (cook rule left
 # alone: DefaultGame.ini says what's cooked). The tree folders aren't in git, so the labels are
 # made here, before every release.
-SCENERY_CHUNKS = (("/Game/EuropeanBeech", 1), ("/Game/EuropeanHornbeam", 2), ("/Game/Megaplant_Library", 3))
+SCENERY_CHUNKS = (("/Game/EuropeanBeech", 1), ("/Game/EuropeanHornbeam", 2), ("/Game/Megaplant_Library", 3), ("/Game/Fab", 4))
 
 
 def scenery_chunks():
@@ -125,8 +125,36 @@ def scenery_chunks():
         log("%s: chunk %d" % (folder, chunk))
 
 
+def fab_usage():
+    """The Megascans plants (Content/Fab) are drawn as instances (OTGGrass.cpp), and their materials
+    - the far billboards' above all - must say they may be: without it Unreal draws them with its
+    default material, dark smudges across the meadows. Their base materials get the flag (Fab's
+    content isn't in git, so it's set here each time)."""
+    if not eal.does_directory_exist("/Game/Fab"):
+        return
+    done = set()
+    for path in eal.list_assets("/Game/Fab/Megascans/Plants", recursive=True, include_folder=False):
+        if not path.split(".")[-1].startswith("MI_"):
+            continue
+        mi = eal.load_asset(path)
+        base = mi.get_base_material() if mi else None
+        if not base or base.get_path_name() in done:
+            continue
+        done.add(base.get_path_name())
+        changed = False
+        for flag in ("used_with_instanced_static_meshes",):
+            if not base.get_editor_property(flag):
+                base.set_editor_property(flag, True)
+                changed = True
+        if changed:
+            unreal.MaterialEditingLibrary.recompile_material(base)
+            eal.save_loaded_asset(base)
+        log("Fab material %s: instanced ok%s" % (base.get_name(), " (set)" if changed else ""))
+
+
 if not eal.does_directory_exist(FOLDER):
     eal.make_directory(FOLDER)
+fab_usage()
 rain()
 course_level()
 scenery_chunks()

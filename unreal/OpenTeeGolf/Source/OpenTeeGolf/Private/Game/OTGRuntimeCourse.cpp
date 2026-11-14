@@ -724,9 +724,31 @@ void AOTGRuntimeCourse::BuildProps()
 // the camera as it moves (otg::FGrass)
 void AOTGRuntimeCourse::BuildGrass()
 {
-	TMap<FString, TPair<UStaticMesh*, UMaterialInterface*>> Have;
+	TMap<FString, TArray<TPair<UStaticMesh*, UMaterialInterface*>>> Have;
+	int32 FabMeshes = 0;
 	for (const otg::FGrassKind& K : otg::FGrass::Kinds())
 	{
+		TArray<TPair<UStaticMesh*, UMaterialInterface*>>& V = Have.Add(K.Name);
+		if (K.Fab.Num())
+		{
+			// Megascans plants: every variant of each, with its own material (Megascans' foliage
+			// material: it sways with QMPC_GlobalFoliageActor's wind, which the round sets from the
+			// game's - AOTGRound::UpdateFlag)
+			for (const FString& Plant : K.Fab)
+			{
+				const FString Folder = TEXT("/Game/Fab/Megascans/Plants/") + Plant;
+				for (const FAssetData& A : AssetsUnder(*Folder, UStaticMesh::StaticClass()))
+				{
+					UStaticMesh* Mesh = Cast<UStaticMesh>(A.GetAsset());
+					if (!Mesh || !Mesh->GetStaticMaterials().Num()) continue;
+					TurfMeshes.Add(Mesh);
+					V.Add(TPair<UStaticMesh*, UMaterialInterface*>(Mesh, nullptr));   // (its own)
+					FabMeshes++;
+				}
+			}
+			if (!V.Num()) UE_LOG(LogOTGRuntimeCourse, Warning, TEXT("Grass %s: none of its Megascans plants are in the game (Content/Fab)"), *K.Name);
+			continue;
+		}
 		UStaticMesh* Mesh = Find<UStaticMesh>(TEXT("SM_Turf_") + K.Name);
 		UMaterialInterface* Base = Load<UMaterialInterface>(TEXT("M_Turf_") + K.Name);
 		if (!Mesh || !Base) { UE_LOG(LogOTGRuntimeCourse, Warning, TEXT("Grass %s: not in the game's content"), *K.Name); continue; }
@@ -734,11 +756,11 @@ void AOTGRuntimeCourse::BuildGrass()
 		SetPictures(M);
 		TurfMats.Add(M);
 		TurfMeshes.Add(Mesh);
-		Have.Add(K.Name, TPair<UStaticMesh*, UMaterialInterface*>(Mesh, M));
+		V.Add(TPair<UStaticMesh*, UMaterialInterface*>(Mesh, M));
 	}
 	Grass = MakeShared<otg::FGrass>();
 	Grass->Init(this, Data, MaskPixels, LandCm, Have);
-	UE_LOG(LogOTGRuntimeCourse, Display, TEXT("Grass: %d kinds"), Have.Num());
+	UE_LOG(LogOTGRuntimeCourse, Display, TEXT("Grass: %d kinds, %d Megascans plant meshes"), Have.Num(), FabMeshes);
 }
 
 void AOTGRuntimeCourse::Tick(float Dt)

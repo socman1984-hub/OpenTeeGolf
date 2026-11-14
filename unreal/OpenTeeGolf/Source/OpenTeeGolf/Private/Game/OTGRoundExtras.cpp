@@ -74,6 +74,15 @@ void AOTGRound::UpdateFlag(float Dt)
 	// m/s with the gusts)
 	if (!WindMPC) WindMPC = LoadObject<UMaterialParameterCollection>(nullptr, TEXT("/Game/OpenTeeGolf/Game/MPC_Wind.MPC_Wind"));
 	if (WindMPC) UKismetMaterialLibrary::SetVectorParameterValue(this, WindMPC, TEXT("Wind"), FLinearColor(Down.X, Down.Y, float((Mph + Gust) * 0.44704), 0.f));
+	// (and the Megascans grasses': their own collection - which way the wind blows, in degrees, and
+	// how hard; their pace left alone, as ours is: a pace that follows the gusts makes them jump)
+	if (!FabWindMPC) FabWindMPC = LoadObject<UMaterialParameterCollection>(nullptr, TEXT("/Game/Fab/MaterialParameterCollection/QMPC_GlobalFoliageActor.QMPC_GlobalFoliageActor"));
+	if (FabWindMPC)
+	{
+		const float K = float(FMath::Clamp((Mph + Gust) * 0.44704 / 12.0, 0.0, 1.0));
+		UKismetMaterialLibrary::SetScalarParameterValue(this, FabWindMPC, TEXT("Wind Direction"), float(FMath::RadiansToDegrees(FMath::Atan2(Down.Y, Down.X))));
+		UKismetMaterialLibrary::SetScalarParameterValue(this, FabWindMPC, TEXT("Wind Strength Plants"), FMath::Lerp(0.25f, 3.0f, K));
+	}
 	const double Droop = FMath::DegreesToRadians(FMath::Lerp(82.0, 12.0, S));
 	const FVector Along = Down * FMath::Cos(Droop) - FVector::UpVector * FMath::Sin(Droop);
 	const FVector Hang = FVector::CrossProduct(Side, Along).GetSafeNormal(); // (the flag's own "down": along the pole when it flies)

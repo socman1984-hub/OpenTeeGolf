@@ -5,7 +5,7 @@
 #include "OTGCourseData.h"
 
 #include "Async/Async.h"
-#include "Components/InstancedStaticMeshComponent.h"
+#include "Components/HierarchicalInstancedStaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
 #include "GameFramework/Actor.h"
 #include "Materials/MaterialInterface.h"
@@ -14,9 +14,7 @@ namespace
 {
 	constexpr double CellM = 16.0;
 	TAutoConsoleVariable<int32> CVarFarGrass(TEXT("OTG.Grass.Far"), 1, TEXT("The tall grass far off (150-450 m): 1 on, 0 off"));
-	// (the far kinds in bigger cells: a quarter as many a side, so their thousands of cells don't load the
-	// renderer with as many components)
-	double CellFor(const otg::FGrassKind& K) { return K.MinDrawM > 0 ? CellM * 4 : CellM; }
+	double CellFor(const otg::FGrassKind& K) { return K.CellM > 0 ? K.CellM : CellM; }
 	constexpr int32 MaxStartsAFrame = 6, MaxInFlight = 12, MaxAddsAFrame = 4;
 
 	// (deterministic per position: the same grass every time you come back)
@@ -45,30 +43,46 @@ const TArray<otg::FGrassKind>& otg::FGrass::Kinds()
 {
 	static const TArray<FGrassKind> K = [] {
 		TArray<FGrassKind> Out;
-		auto Add = [&](const TCHAR* Name, TArray<FString> Masks, float Density, float From, float To, float Jitter, float SLo, float SHi, float PatchM = 0, float PLo = 0, float PHi = 0, bool bInv = false) {
+		auto Add = [&](const TCHAR* Name, TArray<FString> Masks, float Density, float From, float To, float Jitter, float SLo, float SHi, float PatchM = 0, float PLo = 0, float PHi = 0, bool bInv = false) -> FGrassKind& {
 			FGrassKind G;
 			G.Name = Name; G.Masks = MoveTemp(Masks); G.Density = Density; G.DrawFrom = From; G.DrawTo = To; G.Jitter = Jitter;
 			G.ScaleLo = SLo; G.ScaleHi = SHi; G.PatchM = PatchM; G.PatchLo = PLo; G.PatchHi = PHi; G.bInvert = bInv;
-			Out.Add(G);
+			return Out.Add_GetRef(G);
 		};
 		Add(TEXT("rough"), { TEXT("rough") }, 2400, 70, 100, 1.0f, 0.85f, 1.2f);
 		// (no blades on the mown surfaces - fairways, tees, fringes, greens: mown that short, real turf
 		// reads as a smooth surface, and blades on it looked like rough; the ground draws them)
-		Add(TEXT("native"), { TEXT("native") }, 320, 140, 200, 1.0f, 0.7f, 1.3f, 16, 0.31f, 0.39f, false);
-		Add(TEXT("native_short"), { TEXT("native") }, 520, 110, 160, 1.0f, 0.75f, 1.25f, 16, 0.31f, 0.39f, true);
-		Add(TEXT("fescue_gold"), { TEXT("native") }, 280, 140, 200, 1.0f, 0.6f, 1.4f, 22, 0.34f, 0.39f, false);
-		Add(TEXT("tussock"), { TEXT("native") }, 90, 110, 160, 1.0f, 0.6f, 1.5f);
-		// the tall grass far off: each kind again, a fifth as many and bigger patches, drawn from 150
-		// to 450 m (build_course.py makes their meshes and materials: fewer, wider blades)
-		for (int32 i = 0, n = Out.Num(); i < n; i++)
+		// tufts through the rough: Megascans wild grass and grass clumps, small (10 to 25 cm), kept half
+		// a metre inside it so none reaches over a fairway's edge
 		{
-			if (!Out[i].Masks.Contains(TEXT("native")) || Out[i].Name.StartsWith(TEXT("flowers"))) continue;
-			FGrassKind F = Out[i];
+			FGrassKind& G = Add(TEXT("rough_tufts"), { TEXT("rough") }, 70, 60, 90, 1.0f, 0.45f, 0.75f);
+			G.Fab = { TEXT("Wild_Grass_vlkhcbxia"), TEXT("Grass_Clumps_qmBr2"), TEXT("Grass_Clumps_rbdoo"), TEXT("Grass_Clumps_rbojr"), TEXT("Grass_Clumps_rbptq") };
+			G.Margin = 0.5f;
+		}
+		// the tall grass, Megascans plants in drifts: fescue (tall grass, wheat grass, rough meadow
+		// grass) in its patches, wild and tundra grass in the others, each out to 450 m (their own
+		// billboards far off), and our short meadow grass under them as a base
+		Add(TEXT("native_short"), { TEXT("native") }, 520, 110, 160, 1.0f, 0.75f, 1.25f, 16, 0.31f, 0.39f, true);
+		{
+			FGrassKind& G = Add(TEXT("fescue"), { TEXT("native") }, 320, 300, 450, 1.0f, 0.8f, 1.25f, 22, 0.33f, 0.40f, false);
+			G.Fab = { TEXT("Tall_Grass_rbEkI"), TEXT("Tall_Grass_rbEkP"), TEXT("Tall_Grass_rbEla"), TEXT("Wheat_Grass_tdcrdbur"), TEXT("Rough_Meadow_Grass_skFjJ") };
+			G.Margin = 0.8f;
+			G.CellM = 48;
+		}
+		{
+			FGrassKind& G = Add(TEXT("meadow"), { TEXT("native") }, 300, 250, 400, 1.0f, 0.8f, 1.3f, 22, 0.33f, 0.40f, true);
+			G.Fab = { TEXT("Wild_Grass_vczndjqja"), TEXT("Tundra_Grass_wk2oaeyqx"), TEXT("Grass_smdrailr"), TEXT("Grass_slBm1") };
+			G.Margin = 0.6f;
+			G.CellM = 48;
+		}
+		{
+			FGrassKind F = *Out.FindByPredicate([](const FGrassKind& X) { return X.Name == TEXT("native_short"); });   // (native_short far off)
 			F.Name += TEXT("_far");
 			F.Density /= 5;
 			F.DrawFrom = 380; F.DrawTo = 450;
 			F.ScaleLo *= 1.3f; F.ScaleHi *= 1.3f;
 			F.MinDrawM = 150;
+			F.CellM = 64;
 			Out.Add(F);
 		}
 		Add(TEXT("flowers_yellow"), { TEXT("native") }, 70, 70, 100, 1.0f, 0.85f, 1.2f, 9, 0.43f, 0.48f, false);
@@ -80,20 +94,22 @@ const TArray<otg::FGrassKind>& otg::FGrass::Kinds()
 }
 
 void otg::FGrass::Init(AActor* InOwner, UOTGCourseData* InData, const TMap<FString, FPicture>& Masks, double LandCm,
-	const TMap<FString, TPair<UStaticMesh*, UMaterialInterface*>>& KindsHave)
+	const TMap<FString, TArray<TPair<UStaticMesh*, UMaterialInterface*>>>& KindsHave)
 {
 	Owner = InOwner;
 	Data = InData;
 	Pics = Masks;
 	Land = LandCm;
-	Done = MakeShared<TQueue<TPair<FCellKey, TArray<FTransform>>, EQueueMode::Mpsc>>();
+	Done = MakeShared<TQueue<TPair<FCellKey, FPlaced>, EQueueMode::Mpsc>>();
 	InFlight = MakeShared<FThreadSafeCounter>();
 	for (int32 k = 0; k < Kinds().Num(); k++)
 	{
-		const TPair<UStaticMesh*, UMaterialInterface*>* Have = KindsHave.Find(Kinds()[k].Name);
-		Meshes.Add(Have ? Have->Key : nullptr);
-		Mats.Add(Have ? Have->Value : nullptr);
-		if (Have && Have->Key) KindIndex.Add(k);
+		TArray<UStaticMesh*>& M = Meshes.AddDefaulted_GetRef();
+		TArray<UMaterialInterface*>& Mt = Mats.AddDefaulted_GetRef();
+		if (const TArray<TPair<UStaticMesh*, UMaterialInterface*>>* Have = KindsHave.Find(Kinds()[k].Name))
+			for (const TPair<UStaticMesh*, UMaterialInterface*>& V : *Have)
+				if (V.Key) { M.Add(V.Key); Mt.Add(V.Value); }
+		if (M.Num()) KindIndex.Add(k);
 	}
 }
 
@@ -125,10 +141,12 @@ double otg::FGrass::GroundZ(double X, double Y, FVector* OutNormal) const
 
 // A cell's patches: a grid as dense as the kind, jittered, each kept as likely as the pack's grass
 // map would have it (the mask past its edge, not in the water or on a path, in its meadow patch)
-TArray<FTransform> otg::FGrass::Place(int32 KindI, int32 CX, int32 CY) const
+otg::FGrass::FPlaced otg::FGrass::Place(int32 KindI, int32 CX, int32 CY) const
 {
 	const FGrassKind& K = Kinds()[KindI]; const double Cell = CellFor(K);
-	TArray<FTransform> Out;
+	const int32 NV = FMath::Max(1, Meshes.IsValidIndex(KindI) ? Meshes[KindI].Num() : 1);
+	FPlaced Out;
+	Out.SetNum(NV);
 	const double Spacing = 1000.0 / FMath::Sqrt(K.Density);   // cm (Density a 10 x 10 m)
 	const int32 Per = FMath::Max(1, FMath::RoundToInt(Cell * 100.0 / Spacing));
 	const double S = Cell * 100.0 / Per;
@@ -149,7 +167,9 @@ TArray<FTransform> otg::FGrass::Place(int32 KindI, int32 CX, int32 CY) const
 			// (and never on a mown surface, though the rough's mask reaches into the fringes: tufts
 			// up to a few cm over its outline - the material cuts their blades off exactly on it)
 			const float Mown = FMath::Max(FMath::Max(Mask(TEXT("fairway"), X, Y), Mask(TEXT("tee"), X, Y)), FMath::Max(Mask(TEXT("fringe"), X, Y), Mask(TEXT("green"), X, Y)));
-			P *= 1.f - FMath::Clamp((Mown - 0.52f) * 12.f, 0.f, 1.f);
+			// (the masks: 0.5 on the outline, 1/6 a metre in or out - a wide clump kept K.Margin inside)
+			P *= 1.f - FMath::Clamp((Mown - 0.52f + K.Margin / 6.f) * 12.f, 0.f, 1.f);
+			if (K.Margin > 0) P *= FMath::Clamp((W - 0.5f - K.Margin / 6.f) * 12.f + 1.f, 0.f, 1.f);
 			if (K.PatchM > 0)
 			{
 				// (value noise bunches round the middle: spread out to the rock texture's range)
@@ -168,11 +188,11 @@ TArray<FTransform> otg::FGrass::Place(int32 KindI, int32 CX, int32 CY) const
 			{
 				// (left to grow: taller here, lower there over a few metres, and each clump leaning its own way)
 				const float Vigor = FMath::SmoothStep(0.2f, 0.8f, float(Noise(X / 100.0, Y / 100.0, 7.0, 501)));
-				Sc *= FMath::Lerp(0.55f, 1.35f, Vigor);
+				Sc *= K.Fab.Num() ? FMath::Lerp(0.8f, 1.2f, Vigor) : FMath::Lerp(0.55f, 1.35f, Vigor);   // (the Megascans clumps vary in size already)
 				const FVector Lean = FVector(R.FRandRange(-1, 1), R.FRandRange(-1, 1), 0).GetSafeNormal();
 				Tilt = FQuat(Lean ^ FVector::UpVector, FMath::DegreesToRadians(R.FRandRange(0.f, 10.f))) * Tilt;
 			}
-			Out.Add(FTransform(Tilt * Turn, FVector(X, Y, Z) + Data->LevelOrigin, FVector(Sc)));
+			Out[NV > 1 ? R.RandRange(0, NV - 1) : 0].Add(FTransform(Tilt * Turn, FVector(X, Y, Z) + Data->LevelOrigin, FVector(Sc)));
 		}
 	return Out;
 }
@@ -183,29 +203,33 @@ void otg::FGrass::Update(const FVector& Camera)
 	if (!O || !Data) return;
 	const FVector C = Camera - Data->LevelOrigin;
 	// finished cells: their instances
-	TPair<FCellKey, TArray<FTransform>> Job;
+	TPair<FCellKey, FPlaced> Job;
 	for (int32 n = 0; n < MaxAddsAFrame && Done->Dequeue(Job); n++)
 	{
 		FCell* Cell = Cells.Find(Job.Key);
 		if (!Cell) continue;   // (dropped meanwhile)
 		Cell->bPending = false;
-		if (!Job.Value.Num()) continue;
-		UInstancedStaticMeshComponent* ISM = NewObject<UInstancedStaticMeshComponent>(O);
-		ISM->SetStaticMesh(Meshes[Job.Key.Kind]);
-		if (Mats[Job.Key.Kind]) ISM->SetMaterial(0, Mats[Job.Key.Kind]);
-		ISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-		ISM->SetCastShadow(false);
-		ISM->bVisibleInRayTracing = false;   // (rebuilt into the ray-tracing scene each frame, for nothing: ~1 ms)
-		ISM->SetMobility(EComponentMobility::Movable);
 		const FGrassKind& K = Kinds()[Job.Key.Kind];
-		ISM->InstanceStartCullDistance = int32(K.DrawFrom * 100);
-		ISM->InstanceEndCullDistance = int32(K.DrawTo * 100);
-		ISM->MinDrawDistance = K.MinDrawM * 100;
-		ISM->SetupAttachment(O->GetRootComponent());
-		ISM->RegisterComponent();
-		ISM->AddInstances(Job.Value, false, true);
-		Cell->Comp = ISM;
-		Count += Job.Value.Num();
+		for (int32 v = 0; v < Job.Value.Num(); v++)
+		{
+			if (!Job.Value[v].Num() || !Meshes[Job.Key.Kind].IsValidIndex(v)) continue;
+			// (the Megascans plants hierarchically: each clump to its billboard as it goes off)
+			UInstancedStaticMeshComponent* ISM = NewObject<UInstancedStaticMeshComponent>(O);
+			ISM->SetStaticMesh(Meshes[Job.Key.Kind][v]);
+			if (Mats[Job.Key.Kind][v]) ISM->SetMaterial(0, Mats[Job.Key.Kind][v]);
+			ISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+			ISM->SetCastShadow(false);
+			ISM->bVisibleInRayTracing = false;   // (rebuilt into the ray-tracing scene each frame, for nothing: ~1 ms)
+			ISM->SetMobility(EComponentMobility::Movable);
+			ISM->InstanceStartCullDistance = int32(K.DrawFrom * 100);
+			ISM->InstanceEndCullDistance = int32(K.DrawTo * 100);
+			ISM->MinDrawDistance = K.MinDrawM * 100;
+			ISM->SetupAttachment(O->GetRootComponent());
+			ISM->RegisterComponent();
+			ISM->AddInstances(Job.Value[v], false, true);
+			Cell->Comps.Add(ISM);
+			Count += Job.Value[v].Num();
+		}
 	}
 	// far cells: dropped
 	for (auto It = Cells.CreateIterator(); It; ++It)
@@ -215,7 +239,7 @@ void otg::FGrass::Update(const FVector& Camera)
 		const FVector2D Mid((It->Key.X + 0.5) * Cell * 100, (It->Key.Y + 0.5) * Cell * 100);
 		if (bOff || FVector2D::Distance(Mid, FVector2D(C)) > (K.DrawTo + Cell) * 100)
 		{
-			if (UInstancedStaticMeshComponent* ISM = It->Value.Comp) { Count -= ISM->GetInstanceCount(); ISM->DestroyComponent(); }
+			for (UInstancedStaticMeshComponent* ISM : It->Value.Comps) if (ISM) { Count -= ISM->GetInstanceCount(); ISM->DestroyComponent(); }
 			It.RemoveCurrent();
 		}
 	}
@@ -241,14 +265,14 @@ void otg::FGrass::Update(const FVector& Camera)
 		{
 			if (Started >= MaxStartsAFrame || InFlight->GetValue() >= MaxInFlight) return;
 			const FCellKey Key{ KindI, P.X, P.Y };
-			Cells.Add(Key, FCell{ nullptr, true });
+			Cells.Add(Key, FCell{ {}, true });
 			InFlight->Increment();
 			Started++;
 			auto DoneQ = Done;
 			auto Flight = InFlight;
 			const FGrass* Self = this;
 			Async(EAsyncExecution::ThreadPool, [Self, Key, DoneQ, Flight]() {
-				DoneQ->Enqueue(TPair<FCellKey, TArray<FTransform>>(Key, Self->Place(Key.Kind, Key.X, Key.Y)));
+				DoneQ->Enqueue(TPair<FCellKey, FPlaced>(Key, Self->Place(Key.Kind, Key.X, Key.Y)));
 				Flight->Decrement();
 			});
 		}
