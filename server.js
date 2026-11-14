@@ -35,6 +35,7 @@ import { MevoClient, DEFAULT_SETUP } from './lib/mevo.js';
 import { FrpController } from './lib/frp.js';
 import { BridgeProcess, BRIDGES } from './lib/bridges.js';
 import { UnrealRound } from './lib/unrealplay.js';
+import { UnrealBuild } from './lib/unrealbuild.js';
 const BUILDING_TYPE_IDS = new Set(BUILDING_TYPES.map((t) => t.id));
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -126,6 +127,7 @@ function broadcast(type, data) {
 }
 // The round being played in Unreal Engine, if any (lib/unrealplay.js, unreal/play_course.py)
 let unrealRound = null;
+const unrealBuild = new UnrealBuild(ROOT);
 
 // How much each loading step has downloaded, for the loading screen: every fetch made while a step
 // runs (inside withTask) counts its bytes towards that step, and about once a second the step's
@@ -806,6 +808,14 @@ const httpServer = http.createServer(async (req, res) => {
     }
     // ---- a round in Unreal Engine (unreal/play_course.py): start it on a course exported for
     // Unreal, then Unreal asks for the state (and the last shot's path) a few times a second
+    // ---- building a course (and the game) for Unreal from the menu: lib/unrealbuild.js
+    if (p === '/api/unreal/build' && req.method === 'POST') {
+      const b = await readBody(req).catch(() => null);
+      const kind = b?.kind === 'release' ? 'release' : 'pack';
+      if (kind === 'pack' && !(typeof b?.course === 'string' && /^[\w-]+$/.test(b.course) && courseFile(b.course))) return json(res, { error: 'No such course' }, 404);
+      try { return json(res, unrealBuild.start(kind, b.course)); } catch (err) { return json(res, { error: err.message }, 409); }
+    }
+    if (p === '/api/unreal/build') return json(res, unrealBuild.state());
     if (p === '/api/unreal/start' && req.method === 'POST') {
       const b = await readBody(req);
       const f = courseFile(b.course);

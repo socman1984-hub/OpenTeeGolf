@@ -41,6 +41,11 @@ GAME_TEXTURES = os.path.normpath(os.path.join(EXPORT_DIR, "..", "..", "public", 
 # the photo's colour and adds only the textures' detail
 GROUND_MEAN = {"lawn": (0.131, 0.23, 0.025), "rough": (0.118, 0.152, 0.03), "sand": (0.462, 0.342, 0.165)}
 DETAIL_TILE_M = 2.5       # metres each ground texture covers
+# The surface masks are always in memory (never streamed: streamed down, the course's edges go
+# blocky), so a big course's 8192-pixel masks are kept at this size: they're smooth distance fields,
+# so the edges still follow the outlines (a dozen masks: 0.25 GB at 4096, 1 GB at 8192). The mowing
+# directions, which change only between holes, at half this.
+MASK_MAX_PX = 4096
 # The bed under ponds and streams (seen through the clear water): stones and gravel in patches
 # over silt, darker toward the middle where it's deeper. The pebbles are make_bed_texture.py's
 # (unreal/textures). BED_TILE_M: metres one copy of the pebbles covers (a second copy, BED_BIG
@@ -262,7 +267,8 @@ def import_texture(path, name, kind="color"):
         t.set_editor_property("srgb", False)
         for prop, val in (("compression_settings", unreal.TextureCompressionSettings.TC_VECTOR_DISPLACEMENTMAP),
                           ("never_stream", True), ("lod_group", unreal.TextureGroup.TEXTUREGROUP_WORLD),
-                          ("power_of_two_mode", unreal.TexturePowerOfTwoSetting.NONE)):
+                          ("power_of_two_mode", unreal.TexturePowerOfTwoSetting.NONE),
+                          ("max_texture_size", MASK_MAX_PX // 2)):
             try:
                 t.set_editor_property(prop, val)
             except Exception:
@@ -280,7 +286,8 @@ def import_texture(path, name, kind="color"):
             for prop, val in (("never_stream", True), ("lod_group", unreal.TextureGroup.TEXTUREGROUP_WORLD),
                               ("filter", unreal.TextureFilter.TF_TRILINEAR),
                               ("mip_gen_settings", unreal.TextureMipGenSettings.TMGS_FROM_TEXTURE_GROUP),
-                              ("power_of_two_mode", unreal.TexturePowerOfTwoSetting.NONE)):
+                              ("power_of_two_mode", unreal.TexturePowerOfTwoSetting.NONE),
+                              ("max_texture_size", MASK_MAX_PX)):
                 try:
                     t.set_editor_property(prop, val)
                 except Exception:
@@ -1284,6 +1291,24 @@ def wind_collection():
     return mpc
 
 
+def world_height(mat):
+    """A node: how far above its foot (its pivot) a point of a mesh is, in the world - its own
+    height turned into the world with the instance's scale (a tree model is often made bigger than
+    it's placed, and the wind is sized in world centimetres)."""
+    E = lambda cls, x, y: mel.create_material_expression(mat, cls, x, y)
+    lp = E(unreal.MaterialExpressionLocalPosition, -2200, 1300)
+    tr = E(unreal.MaterialExpressionTransform, -2050, 1300)
+    tr.set_editor_property("transform_source_type", unreal.MaterialVectorCoordTransformSource.TRANSFORMSOURCE_LOCAL)
+    tr.set_editor_property("transform_type", unreal.MaterialVectorCoordTransform.TRANSFORM_WORLD)
+    mel.connect_material_expressions(lp, "", tr, "")
+    up = E(unreal.MaterialExpressionConstant3Vector, -2050, 1400)
+    up.set_editor_property("constant", unreal.LinearColor(0, 0, 1, 1))
+    h = E(unreal.MaterialExpressionDotProduct, -1900, 1300)
+    mel.connect_material_expressions(tr, "", h, "A")
+    mel.connect_material_expressions(up, "", h, "B")
+    return h
+
+
 def wind_offset(mat, height, scale, flutter, wave_cm=0.0, flutter_rate=2.3, sway=0.25, parts_cm=0.0):
     """A world position offset bending a plant downwind: height (a node: cm above its foot) squared
     times scale, pushed over by the wind's strength (and swaying a little with it), plus a quicker
@@ -1429,11 +1454,7 @@ def tree_parent_material(kind):
     # the wind: the whole tree bends from its foot (its pivot), more the higher up, each tree in
     # its own time, its branches fluttering out of step (leaves and wood alike, so the leaves stay on)
     try:
-        lp = E(unreal.MaterialExpressionLocalPosition, -1200, 900)
-        lz = E(unreal.MaterialExpressionDotProduct, -1050, 900)
-        mel.connect_material_expressions(lp, "", lz, "A")
-        mel.connect_material_expressions(const3((0, 0, 1), -1200, 850), "", lz, "B")
-        wpo = wind_offset(mat, lz, LEAF_SWAY / 1000000.0, 0.25, flutter_rate=4.0, sway=0.4,
+        wpo = wind_offset(mat, world_height(mat), LEAF_SWAY / 1000000.0, 0.25, flutter_rate=4.0, sway=0.4,
                           parts_cm=250.0)
         mel.connect_material_property(wpo, "", unreal.MaterialProperty.MP_WORLD_POSITION_OFFSET)
     except Exception:

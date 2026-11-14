@@ -9,6 +9,15 @@ still need work; see "Where it stands" below.
 
 ## 1. Export a course from the game
 
+**The easy way: one click.** In the web version's menu, click **Export to Unreal** on the course's
+card (next to Edit; courses built from OpenStreetMap only). It loads the course to its first tee,
+exports it, then has the server build it for the Unreal game (`make_pack.ps1`, run by
+`lib/unrealbuild.js`). A panel bottom right shows how it's going. When the course is done, its
+**Update the game** button rebuilds the double-click game (`make_release.ps1`) with it. The
+scripts run with PowerShell's execution policy bypassed for that run only.
+
+By hand:
+
 1. Start OpenTeeGolf and play a course built from OpenStreetMap (not a practice area). Wait until
    you're on the first tee.
 2. Press **Ctrl+Shift+U**. Messages show progress (a couple of minutes: it writes every tree model).
@@ -302,8 +311,13 @@ runs inside the game, in C++.
 - Wind in the trees and grass: the game writes the hole's wind (way, m/s with gusts) into
   `/Game/OpenTeeGolf/Game/MPC_Wind` every frame. The trees lean, sway and flutter branch by
   branch (`LEAF_SWAY`, `wind_offset`); the grass bends in waves running downwind
-  (`GRASS_BEND`, `GRASS_WAVE_CM`). Fully bent at `WIND_FULL_MPS`. The Megaplant pines keep
-  their own materials and don't move.
+  (`GRASS_BEND`, `GRASS_WAVE_CM`). Fully bent at `WIND_FULL_MPS`. A tree's sway is sized by its
+  height in the world (`world_height`: its model's height with the instance's scale).
+  - The pines (the procedural-vegetation Baltic pines) don't move. Their static meshes have no
+    wind, and their master material puts its own per-vertex offset into its attribute bundle.
+    Replacing that bundle's per-vertex attributes to add ours smeared the needle cards, and a
+    script can't read the existing offset to add to it. A conifer pack with wind built in (as
+    the Fab beech and hornbeam have) would sway with the rest.
 - The meadow ("native"): tall fescue and shorter, greener wild grass take turns in patches, with
   clumps of yellow, white and purple wildflowers (`native_short`, `flowers_*` in `TURF_GRASS`;
   `patch`: where each grows). All made by the script, no outside assets.
@@ -318,6 +332,13 @@ runs inside the game, in C++.
 - Smoother hill shadows in a low sun (`OTG.Look.SunSoft`, `OTG.Look.SlopeBias`): the ground's
   facets cast a comb of teeth along a shadow's edge.
 - Free view: Shift flies 6 times as fast (was 3).
+- Video memory on big courses: the surface masks are always in memory, so they're capped at
+  `MASK_MAX_PX` (4096; mowing directions half that). A big course's export writes them at 8192,
+  a dozen of them about 1 GB; capped, about 0.25 GB. Unreal's own use on Banff Springs (26 holes,
+  about 13,000 trees) is about 5 GB. Its "video memory exhausted" warning means the card is
+  shared: the web version with a course loaded in a browser holds several GB too, so close it
+  while playing a big course in Unreal. (`rhi.DumpMemory`'s total counts reserved, uncommitted
+  buffer space - 9.6 GB of its 14.8 GB on Banff - that isn't memory in use.)
 - Mowing stripes and the green's fringe.
   - `derive_layers.py` writes `layer_mow.png`: on the mown surfaces, the line of play of the
     nearest hole (tee, aim points, green) as a direction, and `layer_fringe.png`.

@@ -221,6 +221,16 @@ function cardFor(c) {
     const links = document.createElement('span');
     links.className = 'card-links';
     links.appendChild(edit);
+    // (a real course, one click: loaded, exported and built for the Unreal game)
+    if (c.hasReal) {
+      const ue = document.createElement('a');
+      ue.href = '#';
+      ue.className = 'edit-link';
+      ue.textContent = 'Export to Unreal';
+      ue.title = 'Export this course and build it for the OpenTeeGolf Unreal game (about 10 minutes)';
+      ue.onclick = (e) => { e.preventDefault(); e.stopPropagation(); exportToUnreal(c); };
+      links.appendChild(ue);
+    }
     el.querySelector('.info').appendChild(links);
     if (c.osmId) {
       const upd = document.createElement('a');
@@ -711,6 +721,111 @@ $('btn-start').onclick = async () => {
   document.querySelectorAll('.unit').forEach((n) => (n.textContent = S.settings.units));
   startHole(+$('opt-start').value);
 };
+
+// ------------------------------------------------------------------ export to Unreal (one click)
+
+// From a course's card: load the course to its first tee, export it for Unreal (as Ctrl+Shift+U
+// does), back to the menu, then have the server build it into the Unreal game's course packs
+// (unreal/make_pack.ps1, lib/unrealbuild.js) - and, if asked, update the double-click game too
+// (make_release.ps1). A panel shows how it's going; the build carries on if the page is reloaded.
+const unrealPanel = (() => {
+  let el = null;
+  const ui = () => {
+    if (el) return el;
+    el = document.createElement('div');
+    el.className = 'unreal-panel hidden';
+    el.innerHTML = '<b class="up-title"></b><div class="up-text"></div><pre class="up-tail hidden"></pre><div class="up-btns"></div>';
+    document.body.appendChild(el);
+    return el;
+  };
+  return {
+    show(title, text, buttons = [], tail = null) {
+      const p = ui();
+      p.classList.remove('hidden');
+      p.querySelector('.up-title').textContent = title;
+      p.querySelector('.up-text').textContent = text;
+      const t = p.querySelector('.up-tail');
+      t.classList.toggle('hidden', !tail);
+      t.textContent = tail ? tail.join('\n') : '';
+      const b = p.querySelector('.up-btns');
+      b.innerHTML = '';
+      for (const [label, fn] of buttons) {
+        const btn = document.createElement('button');
+        btn.className = 'chip';
+        btn.textContent = label;
+        btn.onclick = fn;
+        b.appendChild(btn);
+      }
+    },
+    hide() { el?.classList.add('hidden'); },
+  };
+})();
+let unrealWatch = null;
+
+const mmss = (s) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+
+async function exportToUnreal(c) {
+  const now = await fetch('/api/unreal/build').then((r) => r.json()).catch(() => ({}));
+  if (now.state === 'running') { watchUnrealBuild(); return; }
+  unrealPanel.show(`Export ${c.name} to Unreal`, 'Loading the course…');
+  try {
+    await selectCourse(c);
+    $('opt-start').value = '0';
+    if (c.hasReal) $('opt-terrain').value = 'real';
+    await $('btn-start').onclick();
+    // (on the first tee, everything built: the export reads the course as the game shows it)
+    for (let t = 0; S.phase !== 'ready' && t < 600; t++) await new Promise((r) => setTimeout(r, 200));
+    if (S.phase !== 'ready') throw new Error('the course did not finish loading');
+    unrealPanel.show(`Export ${c.name} to Unreal`, 'Exporting the course…');
+    await exportForUnreal({ course: S.course, scene, id: c.id, solids: S.solids || [], status: (m) => unrealPanel.show(`Export ${c.name} to Unreal`, m) });
+  } catch (err) {
+    openMenu();
+    unrealPanel.show('Export to Unreal', `The export failed: ${err.message}`, [['Close', () => unrealPanel.hide()]]);
+    return;
+  }
+  openMenu();
+  const r = await fetch('/api/unreal/build', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: 'pack', course: c.id }) })
+    .then((x) => x.json()).catch((err) => ({ error: err.message }));
+  if (r.error) { unrealPanel.show('Export to Unreal', `Building for Unreal didn't start: ${r.error}`, [['Close', () => unrealPanel.hide()]]); return; }
+  watchUnrealBuild();
+}
+
+function startGameUpdate() {
+  fetch('/api/unreal/build', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: 'release' }) })
+    .then((x) => x.json())
+    .then((r) => { if (r.error) unrealPanel.show('Update the Unreal game', r.error, [['Close', () => unrealPanel.hide()]]); else watchUnrealBuild(); })
+    .catch((err) => unrealPanel.show('Update the Unreal game', err.message, [['Close', () => unrealPanel.hide()]]));
+}
+
+// The server's build: shown until it's done (every 3 s)
+function watchUnrealBuild() {
+  clearInterval(unrealWatch);
+  const tick = async () => {
+    const s = await fetch('/api/unreal/build').then((r) => r.json()).catch(() => null);
+    if (!s || s.state === 'idle') { clearInterval(unrealWatch); return; }
+    const name = S.courses?.find((x) => x.id === s.course)?.name || s.course;
+    const title = s.kind === 'pack' ? `Building ${name} for Unreal` : 'Updating the Unreal game';
+    if (s.state === 'running') {
+      const about = s.kind === 'pack' ? 'about 5 to 10 minutes' : 'about 10 to 20 minutes';
+      unrealPanel.show(title, `${mmss(s.seconds)} so far (${about}). You can keep using the game.${s.now ? `\n${s.now}` : ''}`, [['Hide', () => unrealPanel.hide()]]);
+      return;
+    }
+    clearInterval(unrealWatch);
+    if (s.state === 'failed') {
+      unrealPanel.show(title, `It failed after ${mmss(s.seconds)}.`, [['Close', () => unrealPanel.hide()]], s.tail);
+    } else if (s.kind === 'pack') {
+      unrealPanel.show(`${name} is ready for Unreal`,
+        `Built in ${mmss(s.seconds)}. It's in the Unreal project now. To play it in the double-click game, update the game (about 10 to 20 minutes).`,
+        [['Update the game', startGameUpdate], ['Close', () => unrealPanel.hide()]]);
+    } else {
+      unrealPanel.show('The Unreal game is updated', `Done in ${mmss(s.seconds)}: unreal/OpenTeeGolf/Release/Windows/OpenTeeGolf.exe, and a zip in dist/.`, [['Close', () => unrealPanel.hide()]]);
+    }
+  };
+  tick();
+  unrealWatch = setInterval(tick, 3000);
+}
+// (a build still going from before the page was opened: shown)
+fetch('/api/unreal/build').then((r) => r.json()).then((s) => { if (s.state === 'running') watchUnrealBuild(); }).catch(() => {});
 
 // ------------------------------------------------------------------ practice areas
 
