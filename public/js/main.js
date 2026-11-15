@@ -142,6 +142,7 @@ async function loadCourses() {
   menu.cards.clear();
   $('courses-dir').title = `Courses folder: ${r.dir}`;
   if (!r.courses.length) {
+    helperReport('failed', 'No courses', true);
     $('course-tools').classList.add('hidden');
     $('course-list').innerHTML = `<div class="muted">No courses yet. <a href="/builder.html">Build one from OpenStreetMap</a>, and it will show up here.</div>`;
     return;
@@ -154,6 +155,12 @@ async function loadCourses() {
   const lastPlayed = Object.entries(menu.played).sort((a, b) => b[1] - a[1])[0]?.[0];
   const first = r.courses.find((c) => c.id === want) || r.courses.find((c) => c.id === lastPlayed) || null;
   renderCourses();
+  if (HELPER_EXPORT) {
+    const c = r.courses.find((x) => x.id === HELPER_EXPORT);
+    if (!c) { helperReport('failed', `No course ${HELPER_EXPORT}`, true); return; }
+    exportToUnreal(c);
+    return;
+  }
   const pick = first || visibleCourses()[0];
   if (pick) selectCourse(pick);
   document.querySelector('.course.sel')?.scrollIntoView({ block: 'nearest' });
@@ -738,6 +745,18 @@ const UE_STAGES = [['load', 'Loading the course', 0.45], ['export', 'Exporting i
 const EXPORT_STEPS = [['heights', 0], ['aerial photo', 0.1], ['surface outlines', 0.2], ['tree models', 0.3], ['water', 0.58], ['buildings', 0.62], ['play data', 0.7], ['Exported', 1]];
 
 const ue = { el: null, stage: 0, frac: 0, t0: 0, factTimer: null, clock: null, facts: [], course: null };
+// ?export=<course id>: the page was opened by the server's helper mode (headless, for the Unreal
+// game: server.js /api/helper/export), which follows the export through these reports
+const HELPER_EXPORT = new URLSearchParams(location.search).get('export');
+let helperLast = 0;
+function helperReport(state, msg, force = false) {
+  if (!HELPER_EXPORT) return;
+  const now = Date.now();
+  if (!force && now - helperLast < 400) return;
+  helperLast = now;
+  fetch('/api/helper/progress', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ course: HELPER_EXPORT, state, frac: ue.total || 0, msg: msg ?? ue.el?.querySelector('.ue-now')?.textContent ?? '' }) }).catch(() => {});
+}
 
 function ueScreen() {
   if (ue.el) return ue.el;
@@ -804,6 +823,7 @@ function ueSet(stageId, frac, now = null) {
   ue.total = Math.max(ue.total || 0, total);
   if (now != null) ue.el.querySelector('.ue-now').textContent = now;
   ueDraw();
+  helperReport('run', now);
 }
 
 function ueDraw() {
@@ -836,6 +856,7 @@ function ueFail(msg) {
   ue.el.querySelector('.ue-now').textContent = msg;
   ueDraw();
   ueButtons([['Close', ueClose, true]]);
+  helperReport('failed', msg, true);
 }
 
 async function exportToUnreal(c) {
@@ -882,6 +903,7 @@ async function exportToUnreal(c) {
   ue.stage = UE_STAGES.length;
   ue.el.classList.add('finished');
   ue.el.querySelector('.ue-title').textContent = `${c.name} is ready for Unreal`;
+  helperReport('done', `Exported in ${mmss(Math.round((Date.now() - ue.t0) / 1000))}`, true);
   ue.el.querySelector('.ue-now').textContent = `Exported in ${mmss(Math.round((Date.now() - ue.t0) / 1000))}. Open the OpenTeeGolf Unreal game and pick it under Play (restart the game if it's already open). It's kept in Documents\\OpenTeeGolf\\Courses.`;
   ueButtons([['Back to the menu', ueClose, true]]);
   ueDraw();
@@ -2447,6 +2469,7 @@ $('opt-frp-url').onchange = async () => {
 connectEvents();
 setupPlayersMenu().catch((err) => console.warn('Players', err));
 loadCourses().catch((err) => {
+  helperReport('failed', `Could not load courses: ${err.message}`, true);
   $('course-list').innerHTML = `<div class="muted">Could not load courses: ${err.message}</div>`;
 });
 

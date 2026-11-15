@@ -9,7 +9,8 @@
 //  - Pushes shots to the browser over Server-Sent Events.
 //
 // Usage: node server.js
-//   env: PORT (8080), OPENCONNECT_PORT (921)
+//   env: PORT (8080), OPENCONNECT_PORT (921); OTG_HELPER=1: run hidden for the Unreal game
+//   (lib/helper.js: no launch monitor listeners, only this computer can connect)
 
 import http from 'node:http';
 import net from 'node:net';
@@ -36,6 +37,7 @@ import { MevoClient, DEFAULT_SETUP } from './lib/mevo.js';
 import { FrpController } from './lib/frp.js';
 import { BridgeProcess, BRIDGES } from './lib/bridges.js';
 import { UnrealRound } from './lib/unrealplay.js';
+import { HELPER, noteBuild, buildState, startExport, jobState, progress as helperProgress, cancelExport, watchParent, cleanStale, findBrowser } from './lib/helper.js';
 const BUILDING_TYPE_IDS = new Set(BUILDING_TYPES.map((t) => t.id));
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -120,6 +122,8 @@ const sseClients = new Set();
 function broadcast(type, data) {
   const msg = `event: ${type}\ndata: ${JSON.stringify(data)}\n\n`;
   for (const res of sseClients) res.write(msg);
+  // (builds and updates, for the Unreal game, which asks rather than listens: /api/helper/build)
+  if (type === 'build' && data?.jobId) noteBuild(data);
   // (a round being played in Unreal Engine plays every shot too)
   if (type === 'shot' && unrealRound) {
     try { unrealRound.onShot(data); } catch (err) { console.error('[unreal] shot failed:', err); }
@@ -322,14 +326,14 @@ ocServer.on('error', (err) => {
   }
   setTimeout(ocListen, 5000).unref();
 });
-ocListen();
+if (!HELPER) ocListen();
 
 // ---------------------------------------------------------------- Mevo+ direct (no FS Golf)
 
 // Saved choice of how shots arrive: 'fsgolf' (FS Golf → OpenConnect above), 'direct' (this PC
 // joins the Mevo+ Wi-Fi and talks to the radar itself, see lib/mevo.js), 'r10' or 'square' (a
 // Bluetooth launch monitor through its bridge) or 'frp' (any Flight Relay Protocol device at frpUrl)
-const SETTINGS_FILE = process.env.SETTINGS_FILE || path.join(ROOT, 'data', 'settings.json');
+const SETTINGS_FILE = process.env.SETTINGS_FILE || path.join(process.env.OTG_DATA_DIR || path.join(ROOT, 'data'), 'settings.json');
 const settings = (() => { try { return JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8')); } catch { return {}; } })();
 settings.lm = { connection: 'fsgolf', host: '192.168.2.1', port: 5100, videoPort: 8080, frpUrl: 'ws://127.0.0.1:5880/frp', ...settings.lm };
 const CONNECTIONS = ['fsgolf', 'direct', 'r10', 'square', 'frp'];
@@ -476,7 +480,7 @@ function startRelay() {
   frp.start();
   show();
 }
-startMevo();
+if (!HELPER) startMevo();
 // (a bridge program is stopped with the game)
 process.on('exit', () => relay?.bridge?.stop());
 for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => { relay?.bridge?.stop(); process.exit(0); });
@@ -547,9 +551,11 @@ const readRaw = (req, limit) => new Promise((resolve, reject) => {
 });
 
 const PUBLIC = path.join(ROOT, 'public');
-const EXPORTS = path.join(ROOT, 'exports'); // (courses exported for Unreal Engine)
+// (courses exported for Unreal Engine; OTG_EXPORTS_DIR=- writes only the game's own copy)
+const EXPORTS = process.env.OTG_EXPORTS_DIR === '-' ? '' : process.env.OTG_EXPORTS_DIR || path.join(ROOT, 'exports');
 // (and where the Unreal game looks for courses to play: each export goes there too)
-const GAME_COURSES = path.join(process.env.USERPROFILE || os.homedir(), 'Documents', 'OpenTeeGolf', 'Courses');
+// (the Unreal game's courses folder: OTG_GAME_COURSES when the game has moved it)
+const GAME_COURSES = process.env.OTG_GAME_COURSES || path.join(process.env.USERPROFILE || os.homedir(), 'Documents', 'OpenTeeGolf', 'Courses');
 const THREE = path.join(ROOT, 'node_modules', 'three');
 const JOLT = path.join(ROOT, 'node_modules', 'jolt-physics', 'dist');
 const EZTREE = path.join(ROOT, 'node_modules', '@dgreenheck', 'ez-tree', 'build');
@@ -561,6 +567,19 @@ const httpServer = http.createServer(async (req, res) => {
   const p = decodeURIComponent(url.pathname);
   try {
     if (p === '/api/courses') return json(res, { dir: BUILT_DIR, courses: findCourses() });
+    // ---- helper mode (the Unreal game builds and exports courses through these: lib/helper.js)
+    if (p === '/api/helper/ping') return json(res, { ok: true, helper: HELPER, version: VERSION, browser: !!findBrowser(), dir: BUILT_DIR, game: GAME_COURSES });
+    if (p === '/api/helper/job') return json(res, jobState());
+    if (p === '/api/helper/build') return json(res, buildState(url.searchParams.get('job') || ''));
+    if (p === '/api/helper/progress' && req.method === 'POST') { helperProgress(await readBody(req).catch(() => ({}))); return json(res, { ok: true }); }
+    if (p === '/api/helper/export' && req.method === 'POST') {
+      const id = url.searchParams.get('course') || '';
+      if (!courseFile(id)) return json(res, { error: 'No such course' }, 404);
+      const r = startExport(id, HTTP_PORT, { visible: url.searchParams.get('visible') === '1' });
+      return json(res, r, r.error ? 409 : 200);
+    }
+    if (p === '/api/helper/cancel' && req.method === 'POST') { cancelExport(); return json(res, jobState()); }
+    if (p === '/api/helper/quit' && req.method === 'POST' && HELPER) { json(res, { ok: true }); cancelExport(); setTimeout(() => process.exit(0), 100); return; }
     let m;
     if ((m = p.match(/^\/api\/courses\/([\w-]+)\/data$/))) {
       const f = courseFile(m[1]);
@@ -640,13 +659,12 @@ const httpServer = http.createServer(async (req, res) => {
       if (!courseFile(m[1])) return json(res, { error: 'No such course' }, 404);
       const body = await readRaw(req, 300e6).catch(() => null);
       if (!body) return json(res, { error: 'Too big' }, 413);
-      const dir = path.join(EXPORTS, m[1]);
-      fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(path.join(dir, m[2]), body);
+      const dir = EXPORTS ? path.join(EXPORTS, m[1]) : null;
+      if (dir) { fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(path.join(dir, m[2]), body); }
       const game = path.join(GAME_COURSES, m[1]);
       fs.mkdirSync(game, { recursive: true });
       fs.writeFileSync(path.join(game, m[2]), body);
-      return json(res, { ok: true, path: path.join(dir, m[2]), game: path.join(game, m[2]) });
+      return json(res, { ok: true, path: dir ? path.join(dir, m[2]) : null, game: path.join(game, m[2]) });
     }
     if ((m = p.match(/^\/api\/courses\/([\w-]+)\/bunkers$/)) && req.method === 'PUT') {
       // Bunkers lined up with their hollows or the aerial photo (public/js/bunkerfit.js): the
@@ -1147,8 +1165,9 @@ httpServer.on('error', (err) => {
   console.error(err.code === 'EADDRINUSE' ? `Port ${HTTP_PORT} is in use; set PORT to another value.` : err);
   process.exit(1);
 });
-httpServer.listen(HTTP_PORT, () => {
-  console.log(`OpenTeeGolf ${VERSION} running at http://localhost:${HTTP_PORT}`);
+httpServer.listen(HTTP_PORT, HELPER ? '127.0.0.1' : undefined, () => {
+  console.log(`OpenTeeGolf ${VERSION} running at http://localhost:${HTTP_PORT}${HELPER ? ' (helper for the Unreal game)' : ''}`);
+  if (HELPER) { watchParent(); cleanStale(); console.log(`Courses folder: ${BUILT_DIR}`); return; }
   cleanUpAfterUpdate();
   checkForUpdate().then((u) => { if (u.available) console.log(`A new version is available: ${u.latest} (you have ${VERSION}). Update from the game's menu.`); }).catch(() => {});
   console.log(`Courses folder: ${BUILT_DIR} (${findCourses().length} course(s) found)`);

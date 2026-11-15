@@ -1,8 +1,10 @@
 # Builds the portable Windows release: dist\OpenTeeGolf-<version>-win-x64.zip
 # The zip carries its own Node.js, so players just unzip and double-click "Start OpenTeeGolf.bat".
 #
-# Usage (from the project folder):  powershell -ExecutionPolicy Bypass -File scripts\package-win.ps1 [-NodeVersion 24.19.0]
-param([string]$NodeVersion = '24.19.0')
+# Usage (from the project folder):  powershell -ExecutionPolicy Bypass -File scripts\package-win.ps1 [-NodeVersion 24.19.0] [-NoZip]
+# -NoZip: only the folder (dist\OpenTeeGolf-<version>-win-x64), for the Unreal release's course
+# helper (unreal\make_release.ps1)
+param([string]$NodeVersion = '24.19.0', [switch]$NoZip)
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -98,6 +100,8 @@ if (-not (Test-Path $unz)) { Expand-Archive $nodeZip -DestinationPath $cache }
 $nodeOut = Join-Path $stage 'node'
 New-Item -ItemType Directory -Force $nodeOut | Out-Null
 Copy-Item (Join-Path $unz 'node.exe'), (Join-Path $unz 'LICENSE') $nodeOut
+
+if ($NoZip) { Write-Host "Staged $stage"; return }
 
 # Zip it
 $zip = Join-Path $dist "$name.zip"

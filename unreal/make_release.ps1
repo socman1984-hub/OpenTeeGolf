@@ -3,9 +3,10 @@
 #
 #   powershell -ExecutionPolicy Bypass -File unreal\make_release.ps1
 #
-# It packages the game (Shipping) with no courses - players export their own from the web version,
-# and the game builds them when they're opened - and adds the Garmin R10 and Square Golf bridge
-# programs, a README for players and the notices.
+# It packages the game (Shipping) with no courses - players build their own with the course helper
+# (Helper\: the web version's server with its own Node.js, which the game runs hidden), and the
+# game builds them when they're opened - and adds the Garmin R10 and Square Golf bridge programs, a
+# README for players and the notices.
 # The version is the web version's (package.json).
 
 $ErrorActionPreference = 'Stop'
@@ -54,6 +55,16 @@ Copy-Item (Join-Path $Root 'bridges\*.exe') $bridgesOut
 foreach ($b in @(@('10over', 'v0.2.0'), @('allsquare', 'v0.2.0'))) {
   Invoke-WebRequest "https://raw.githubusercontent.com/divotmaker/$($b[0])/$($b[1])/LICENSE-MIT" -OutFile (Join-Path $bridgesOut "$($b[0])-LICENSE-MIT.txt") -UseBasicParsing
 }
+
+# ---- the course helper (Helper\: the web version's server and its Node.js, run hidden by the game
+# to find, build and export courses: UOTGHelperSubsystem, lib/helper.js); not its launch monitor
+# bridges (the game has its own), tests or starter
+& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $Root 'scripts\package-win.ps1') -NoZip
+if ($LASTEXITCODE -ne 0) { throw 'Staging the course helper failed.' }
+$web = Join-Path $dist "OpenTeeGolf-$version-win-x64"
+$helperOut = Join-Path $stage 'Helper'
+New-Item -ItemType Directory -Force $helperOut | Out-Null
+Get-ChildItem $web | Where-Object { $_.Name -notin @('bridges', 'test', 'courses', 'Start OpenTeeGolf.bat') } | ForEach-Object { Copy-Item -Recurse $_.FullName $helperOut }
 
 # ---- the file list the game's updater reads (manifest.json: each file's size and SHA-1; the
 # download addresses come when publish_release.ps1 puts the release on GitHub)

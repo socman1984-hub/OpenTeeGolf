@@ -141,6 +141,20 @@ Everything the golf needs runs inside the game, in C++.
   start. The game project needs the Fab trees in its `Content` folder (not in git).
   Course packs (levels built in the editor under `/Game/Courses`) are retired: the editor tools
   are still there, but packs are never cooked into the game.
+- The course helper (making courses from the game, phase 0 of moving the course builder and editor
+  into it): `UOTGHelperSubsystem` runs the web version's server hidden (`OTG_HELPER=1`,
+  `lib/helper.js`: this computer only, no launch monitor listeners, gone with the game) on a free
+  port, and the game finds, checks, builds and exports courses through it. The export runs the
+  web game's own Export to Unreal in headless Edge or Chrome (`/?export=<id>`; a fresh browser
+  profile each time), which reports how far it is; the game asks twice a second. In a development
+  copy it uses the repository's own `courses` folder and Node; a release carries it in `Helper\`
+  with its own Node.js (`make_release.ps1` stages it with `scripts/package-win.ps1 -NoZip`) and
+  keeps the courses' sources and downloads in `Documents\OpenTeeGolf\CourseSources` and
+  `HelperData`. `FOTGCourseSource` reads a course's source as the web editor does and saves it
+  through the helper (the same body as the editor's Save). Console: `OTG.Helper.Start`, `.Status`,
+  `.Search <words>`, `.Check <way|relation> <id>`, `.Build <way|relation> <id> [name]`,
+  `.Export <id> [visible]`, `.Cancel`, `.Load <id> [save]`; `-helperexport=<id>` exports a course
+  and quits (for testing).
 - Launch monitors: `OTGLaunchMonitorSubsystem` takes shots the same ways the web version does,
   ported from `server.js`, `lib/mevo.js` and `lib/frp.js`:
   - OpenConnect on TCP 921, for FS Golf. It's always listening, and it reports when another
