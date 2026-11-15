@@ -182,10 +182,16 @@ Everything the golf needs runs inside the game, in C++.
   map (`SOTGWorldMap`: OpenStreetMap or Esri's aerial photos, tiles fetched and kept on disk by the
   helper, `/api/helper/tile`), the world's mapped courses as dots (`/api/builder/world`, paged while
   the helper gathers them), a search, the picked course's check (holes, greens ..., the set of
-  holes at a club with several), Build (`/api/builder/build`, then the export, its progress from
-  `/api/helper/job`), Play it; the courses built, to export again, update or delete.
-  `-ExecCmds="OTG.Menu.Page build" -buildertest=<words> [-buildertestbuild]` searches, picks the
-  first, takes `Saved/Screenshots/builder_*.png` (and builds and exports it), then quits.
+  holes at a club with several), Build, Play it; the courses built, to export again, update or delete.
+  Builds, updates and exports all go in the helper's queue (`lib/queue.js`, `/api/helper/queue`;
+  the game's `UOTGHelperSubsystem::GetQueue`): two builds at a time, one export at a time (the next
+  course builds meanwhile), each built course then put in the game. It's kept in
+  `<data>/queue.json` and carries on when the game is started again (the helper started at once if
+  anything's left). The page's queue card shows each one (a clock, its step, its last messages; stop,
+  remove, try again, play it); a round shows a toast when one is ready. The editor's full export is
+  queued too. `-ExecCmds="OTG.Menu.Page build" -buildertest=<words> [-buildertestbuild
+  [-buildertestexport=<id>]]` searches, picks the first, takes `Saved/Screenshots/builder_*.png`
+  (and builds and exports it, with another course's export queued alongside), then quits.
 - The tree designer (R, the "Trees and rocks" tab, `SOTGTreeDesigner`, phase 2): each course's
   `trees_design.json` (`FOTGTreeDesign`): per species the model it's drawn with (the game's choice
   by height, or beech, hornbeam, Norway spruce, Baltic pine), its size and how many (fewer: taken

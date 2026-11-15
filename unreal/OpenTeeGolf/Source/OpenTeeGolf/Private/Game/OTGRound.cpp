@@ -3,6 +3,7 @@
 
 #include "Game/OTGRound.h"
 #include "Game/OTGRuntimeCourse.h"
+#include "Game/OTGHelperSubsystem.h"
 
 #include "Camera/CameraActor.h"
 #include "Components/DirectionalLightComponent.h"
@@ -421,6 +422,15 @@ void AOTGRound::Setup(UOTGCourseData* InData, const FOTGRoundSetup& InSetup)
 	// Shots
 	if (UOTGLaunchMonitorSubsystem* LM = GetGameInstance()->GetSubsystem<UOTGLaunchMonitorSubsystem>())
 		ShotHandle = LM->OnShotNative.AddUObject(this, &AOTGRound::OnShot);
+
+	// Courses built in the background (the New course page's queue): told here when one is ready
+	if (UOTGHelperSubsystem* HS = GetGameInstance()->GetSubsystem<UOTGHelperSubsystem>())
+		HS->OnJobDone.AddWeakLambda(this, [this](const FOTGHelperJob& J) {
+			if (J.Name.IsEmpty()) return;
+			if (J.State == TEXT("done") && J.Kind == TEXT("export")) Toast(J.Name + TEXT(" is ready: play it from the menu"), 6.f);
+			else if (J.State == TEXT("done") && J.bNeedsReview) Toast(J.Name + TEXT(" is built: its holes need looking over in the editor"), 6.f);
+			else if (J.State == TEXT("failed")) Toast(J.Name + TEXT(": building it didn't work (see New course)"), 6.f);
+		});
 
 	// (-roundexec="<s>:<console command>|...": commands at those times after the round starts, for
 	// checking it without anyone at the game)

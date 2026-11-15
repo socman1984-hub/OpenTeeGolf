@@ -421,10 +421,13 @@ EActiveTimerReturnType SOTGCourseBuilder::Pulse(double Time, float Dt)
 		{
 			if (Courses.IsValidIndex(Picked) && !Courses[Picked].BuiltId.IsEmpty()) { UE_LOG(LogTemp, Display, TEXT("buildertest: built already (%s): exporting"), *Courses[Picked].BuiltId); if (H) H->Export(Courses[Picked].BuiltId); }
 			else StartBuild();
+			// (-buildertestexport=<id>: another course queued with it, put in the game meanwhile)
+			FString Also;
+			if (H && FParse::Value(FCommandLine::Get(), TEXT("buildertestexport="), Also)) H->Export(Also);
 			TestStep = 5; TestAt = FPlatformTime::Seconds() + 30;
 		}
 		else if (TestStep == 5) { Shot(TEXT("builder_building")); TestStep = 6; TestAt = FPlatformTime::Seconds() + 5; }
-		else if (TestStep == 6 && H && !H->GetJob().IsRunning() && !bExportAfterBuild)
+		else if (TestStep == 6 && H && H->GetQueue().Num() && !H->ActiveCount())
 		{
 			UE_LOG(LogTemp, Display, TEXT("buildertest: %s %s %s (ready: %s)"), *H->GetJob().Kind, *H->GetJob().State, *H->GetJob().Message, *ReadyId);
 			Shot(TEXT("builder_done"));
@@ -433,11 +436,11 @@ EActiveTimerReturnType SOTGCourseBuilder::Pulse(double Time, float Dt)
 		else if (TestStep == 6) TestAt = FPlatformTime::Seconds() + 5;
 		else if (TestStep == 9) { TestStep = 0; Quit(); }
 	}
-	// a job going on: its line kept up to date
+	// the queue: its card kept up to date
 	if (UOTGHelperSubsystem* H = Helper())
 	{
-		const FOTGHelperJob& J = H->GetJob();
-		const FString Now = J.Kind + J.State + J.Message + FString::SanitizeFloat(FMath::RoundToFloat(J.Frac * 100));
+		FString Now = H->GetJob().State + H->GetJob().Message;
+		for (const FOTGHelperJob& J : H->GetQueue()) Now += J.QueueId + J.Kind + J.State + J.Message + FString::FromInt(FMath::RoundToInt(J.Frac * 100));
 		if (Now != JobShown) { JobShown = Now; Rebuild(); }
 	}
 	return EActiveTimerReturnType::Continue;
@@ -633,87 +636,107 @@ void SOTGCourseBuilder::Check()
 void SOTGCourseBuilder::StartBuild()
 {
 	UOTGHelperSubsystem* H = Helper();
-	if (!H || !Courses.IsValidIndex(Picked) || H->GetJob().IsRunning()) return;
+	if (!H || !Courses.IsValidIndex(Picked) || H->ActiveFor(FString(), Courses[Picked].OsmId)) return;
 	const FOTGMapCourse& M = Courses[Picked];
 	const FString Name = NameDraft.TrimStartAndEnd();
-	bExportAfterBuild = true;
 	H->Build(M.OsmType, M.OsmId, Name.IsEmpty() ? M.Name : Name, M.Location, Group);
 	Rebuild();
 }
 
 void SOTGCourseBuilder::JobDone(const FOTGHelperJob& J)
 {
-	UOTGHelperSubsystem* H = Helper();
-	if (!H) return;
-	if ((J.Kind == TEXT("build") || J.Kind == TEXT("update")) && J.State == TEXT("done") && !J.CourseId.IsEmpty())
-	{
-		// built: on to the export (the course drawn as the game draws it, into its courses folder)
-		LoadBuilt();
-		if (bExportAfterBuild || J.Kind == TEXT("update")) H->Export(J.CourseId);
-		bExportAfterBuild = false;
-	}
-	else if (J.Kind == TEXT("export") && J.State == TEXT("done"))
-	{
-		ReadyId = J.CourseId;
-		LoadBuilt();
-	}
-	else bExportAfterBuild = false;
+	// (the queue builds, then puts it in the game, itself: here the lists catch up)
+	LoadBuilt();
+	if (J.Kind == TEXT("export") && J.State == TEXT("done")) ReadyId = J.CourseId;
 	Rebuild();
 }
 
 TSharedRef<SWidget> SOTGCourseBuilder::JobCard()
 {
 	UOTGHelperSubsystem* H = Helper();
-	if (!H || H->GetJob().Kind.IsEmpty()) return SNullWidget::NullWidget;
-	const FOTGHelperJob& J = H->GetJob();
-	const bool bRun = J.IsRunning(), bFailed = J.State == TEXT("failed");
-	const FString What = J.Kind == TEXT("export") ? FString(TEXT("Getting it ready for the game")) : J.Kind == TEXT("update") ? FString(TEXT("Bringing it up to date")) : FString(TEXT("Building the course"));
+	if (!H) return SNullWidget::NullWidget;
+	const TArray<FOTGHelperJob>& Q = H->GetQueue();
 	TSharedRef<SVerticalBox> V = SNew(SVerticalBox);
-	// its name and a clock (it ticks: you can see it's still going)
+	// (one that couldn't even be added: why)
+	const FOTGHelperJob& Last = H->GetJob();
+	if (!Q.Num())
+	{
+		if (Last.QueueId.IsEmpty() && Last.State == TEXT("failed"))
+			return Box(SNew(STextBlock).Font(Font(12, "Bold")).ColorAndOpacity(Warn).WrapTextAt(400).Text(FText::FromString(TEXT("It couldn't be added: ") + Last.Message)), FMargin(12, 10), Solid);
+		return SNullWidget::NullWidget;
+	}
+	const int32 Active = H->ActiveCount();
 	V->AddSlot().AutoHeight()
 	[
 		SNew(SHorizontalBox)
-		+ SHorizontalBox::Slot().FillWidth(1)[Text(bRun ? What : !bFailed ? What + TEXT(": done") : What + TEXT(": it didn't work"), 14, bFailed ? Warn : Gold, "Bold")]
-		+ SHorizontalBox::Slot().AutoWidth()[SNew(STextBlock).Font(Font(13, "Bold")).ColorAndOpacity(Soft).Text_Lambda([this]() {
-			const UOTGHelperSubsystem* H2 = Helper();
-			if (!H2 || !H2->GetJob().StartedAt) return FText::GetEmpty();
-			const FOTGHelperJob& Jn = H2->GetJob();
-			const int32 S = FMath::Max(0, FMath::RoundToInt32((Jn.IsRunning() ? FPlatformTime::Seconds() : Jn.EndedAt) - Jn.StartedAt));
-			return FText::FromString(FString::Printf(TEXT("%d:%02d"), S / 60, S % 60));
-		})]
+		+ SHorizontalBox::Slot().FillWidth(1).VAlign(VAlign_Center)[Text(Active ? FString::Printf(TEXT("Being built (%d)"), Active) : FString(TEXT("Built lately")), 15, Gold, "Bold")]
+		+ SHorizontalBox::Slot().AutoWidth()[Active < Q.Num() ? StaticCastSharedRef<SWidget>(Button(TEXT("Clear finished"), [this]() { if (UOTGHelperSubsystem* H2 = Helper()) H2->ClearFinished(); Rebuild(); }, 11)) : StaticCastSharedRef<SWidget>(SNullWidget::NullWidget)]
 	];
-	if (J.Kind == TEXT("export") && bRun)
+	// (going and waiting ones in their order, then the finished, newest first)
+	TArray<int32> Order;
+	for (int32 i = 0; i < Q.Num(); i++) if (Q[i].IsRunning()) Order.Add(i);
+	for (int32 i = 0; i < Q.Num(); i++) if (Q[i].IsWaiting()) Order.Add(i);
+	for (int32 i = Q.Num() - 1, n = 0; i >= 0 && n < 6; i--) if (!Q[i].IsActive()) { Order.Add(i); n++; }
+	for (int32 i : Order)
 	{
-		// (a bar: how far the export is)
-		V->AddSlot().AutoHeight().Padding(0, 6, 0, 2)
+		const FOTGHelperJob& J = Q[i];
+		const FString QId = J.QueueId, CourseId = J.CourseId;
+		const bool bRun = J.IsRunning(), bFailed = J.State == TEXT("failed"), bDone = J.State == TEXT("done");
+		const FString Step = J.Kind == TEXT("export") ? FString(TEXT("getting it ready for the game")) : J.Kind == TEXT("update") ? FString(TEXT("updating from OpenStreetMap")) : FString(TEXT("building"));
+		TSharedRef<SVerticalBox> R = SNew(SVerticalBox);
+		// its name, the step and a clock
+		R->AddSlot().AutoHeight()
 		[
-			SNew(SBox).HeightOverride(8)
-			[
-				SNew(SOverlay)
-				+ SOverlay::Slot()[SNew(SBorder).BorderImage(FCoreStyle::Get().GetBrush("WhiteBrush")).BorderBackgroundColor(FLinearColor(1, 1, 1, 0.15f))]
-				+ SOverlay::Slot().HAlign(HAlign_Left)[SNew(SBox).WidthOverride(400.f * FMath::Clamp(J.Frac, 0.f, 1.f))[SNew(SBorder).BorderImage(FCoreStyle::Get().GetBrush("WhiteBrush")).BorderBackgroundColor(Green)]]
-			]
+			SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot().FillWidth(1)[SNew(STextBlock).Font(Font(13, "Bold")).ColorAndOpacity(bFailed ? Warn : bDone ? Green : Ink).WrapTextAt(330)
+				.Text(FText::FromString(J.Name + (bRun ? TEXT(": ") + Step : bDone && !J.bNeedsReview ? FString(TEXT(": in the game")) : bFailed ? FString(TEXT(": it didn't work")) : FString())))]
+			+ SHorizontalBox::Slot().AutoWidth()[SNew(STextBlock).Font(Font(12, "Bold")).ColorAndOpacity(Soft).Text_Lambda([this, QId]() {
+				const UOTGHelperSubsystem* H2 = Helper();
+				const FOTGHelperJob* Jn = H2 ? H2->GetQueue().FindByPredicate([&](const FOTGHelperJob& X) { return X.QueueId == QId; }) : nullptr;
+				if (!Jn || !Jn->StartedAt) return FText::GetEmpty();
+				const int32 S = FMath::Max(0, FMath::RoundToInt32((Jn->IsActive() ? FPlatformTime::Seconds() : Jn->EndedAt) - Jn->StartedAt));
+				return FText::FromString(FString::Printf(TEXT("%d:%02d"), S / 60, S % 60));
+			})]
 		];
+		if (J.Kind == TEXT("export") && bRun)
+		{
+			R->AddSlot().AutoHeight().Padding(0, 4, 0, 2)
+			[
+				SNew(SBox).HeightOverride(6)
+				[
+					SNew(SOverlay)
+					+ SOverlay::Slot()[SNew(SBorder).BorderImage(FCoreStyle::Get().GetBrush("WhiteBrush")).BorderBackgroundColor(FLinearColor(1, 1, 1, 0.15f))]
+					+ SOverlay::Slot().HAlign(HAlign_Left)[SNew(SBox).WidthOverride(400.f * FMath::Clamp(J.Frac, 0.f, 1.f))[SNew(SBorder).BorderImage(FCoreStyle::Get().GetBrush("WhiteBrush")).BorderBackgroundColor(Green)]]
+				]
+			];
+		}
+		if (!J.Message.IsEmpty() && !(bDone && J.Message == TEXT("In the game")))
+			R->AddSlot().AutoHeight().Padding(0, 2, 0, 0)[SNew(STextBlock).Font(Font(11, bRun ? "Bold" : "Regular")).ColorAndOpacity(bFailed ? Warn : bRun ? Ink : Soft).WrapTextAt(400).Text(FText::FromString(J.Message))];
+		// (a running one: what it did just before)
+		if (bRun)
+		{
+			const int32 From = FMath::Max(0, J.Log.Num() - 4);
+			for (int32 k = J.Log.Num() - 2; k >= From; k--)
+				if (!J.Log[k].IsEmpty() && J.Log[k] != J.Message)
+					R->AddSlot().AutoHeight().Padding(0, 1, 0, 0)[SNew(STextBlock).Font(Font(10)).ColorAndOpacity(FLinearColor(0.8f, 0.84f, 0.78f, 0.7f)).WrapTextAt(400).Text(FText::FromString(J.Log[k]))];
+			if (J.Message.Contains(TEXT("OpenStreetMap")))
+				R->AddSlot().AutoHeight().Padding(0, 2, 0, 0)[SNew(STextBlock).Font(Font(10)).ColorAndOpacity(Soft).WrapTextAt(400)
+					.Text(FText::FromString(TEXT("OpenStreetMap's public servers are busy at times: it tries the next one, then the main OpenStreetMap site.")))];
+		}
+		// what can be done with it
+		TSharedRef<SHorizontalBox> B = SNew(SHorizontalBox);
+		auto Add = [&](const TCHAR* L, TFunction<void()> F, bool bMain = false) { B->AddSlot().AutoWidth().Padding(0, 0, 6, 0)[Button(L, MoveTemp(F), 11, bMain)]; };
+		if (bDone && J.bNeedsReview && !CourseId.IsEmpty()) Add(TEXT("Look over its holes"), [this, CourseId]() { if (OnEdit) OnEdit(CourseId); }, true);
+		else if (bDone && !CourseId.IsEmpty()) Add(TEXT("Play it"), [this, CourseId]() { if (OnReady) OnReady(CourseId); }, true);
+		if (bFailed) Add(TEXT("Try again"), [this, QId]() { if (UOTGHelperSubsystem* H2 = Helper()) H2->Retry(QId); Rebuild(); }, true);
+		if (J.IsWaiting() || bFailed) Add(TEXT("Remove"), [this, QId]() { if (UOTGHelperSubsystem* H2 = Helper()) H2->Remove(QId); Rebuild(); });
+		if (bRun) Add(J.Kind == TEXT("export") ? TEXT("Stop") : TEXT("Stop after this step"), [this, QId]() { if (UOTGHelperSubsystem* H2 = Helper()) H2->Remove(QId); Rebuild(); });
+		R->AddSlot().AutoHeight().Padding(0, 4, 0, 0)[B];
+		V->AddSlot().AutoHeight().Padding(0, 8, 0, 0)[R];
 	}
-	// what it's doing now, and what it did before (the last few)
-	V->AddSlot().AutoHeight().Padding(0, 4, 0, 0)[SNew(STextBlock).Font(Font(12, "Bold")).ColorAndOpacity(bFailed ? Warn : Ink).WrapTextAt(400).Text(FText::FromString(J.Message))];
-	const int32 From = FMath::Max(0, J.Log.Num() - 7);
-	for (int32 i = J.Log.Num() - 2; i >= From; i--)
-		if (!J.Log[i].IsEmpty() && J.Log[i] != J.Message)
-			V->AddSlot().AutoHeight().Padding(0, 1, 0, 0)[SNew(STextBlock).Font(Font(11)).ColorAndOpacity(FLinearColor(0.8f, 0.84f, 0.78f, 0.75f)).WrapTextAt(400).Text(FText::FromString(J.Log[i]))];
-	if (bRun && J.Message.Contains(TEXT("OpenStreetMap")))
-		V->AddSlot().AutoHeight().Padding(0, 4, 0, 0)[SNew(STextBlock).Font(Font(11)).ColorAndOpacity(Soft).WrapTextAt(400)
-			.Text(FText::FromString(TEXT("OpenStreetMap's public servers are busy at times: it tries the next one, then the main OpenStreetMap site.")))];
-	if (J.Kind == TEXT("export") && bRun) V->AddSlot().AutoHeight().Padding(0, 6, 0, 0)[Button(TEXT("Stop"), [this]() { if (UOTGHelperSubsystem* H2 = Helper()) H2->Cancel(); }, 12)];
-	if (bFailed && J.Kind == TEXT("build") && Courses.IsValidIndex(Picked) && Courses[Picked].BuiltId.IsEmpty())
-		V->AddSlot().AutoHeight().Padding(0, 8, 0, 0)[Button(TEXT("Try again"), [this]() { StartBuild(); }, 13, true)];
-	if (bFailed && J.Kind == TEXT("export") && !J.CourseId.IsEmpty())
-	{
-		const FString Id = J.CourseId;
-		V->AddSlot().AutoHeight().Padding(0, 8, 0, 0)[Button(TEXT("Try again"), [this, Id]() { if (UOTGHelperSubsystem* H2 = Helper()) H2->Export(Id); Rebuild(); }, 13, true)];
-	}
-	if (!ReadyId.IsEmpty() && !bRun)
-		V->AddSlot().AutoHeight().Padding(0, 8, 0, 0)[Button(TEXT("Play it"), [this]() { if (OnReady) OnReady(ReadyId); }, 15, true)];
+	if (Active)
+		V->AddSlot().AutoHeight().Padding(0, 8, 0, 0)[SNew(STextBlock).Font(Font(11)).ColorAndOpacity(Soft).WrapTextAt(400)
+			.Text(FText::FromString(TEXT("Go and play meanwhile: they carry on in the background (two built at a time, one got ready for the game at a time), you're told in the round when one is ready, and what's left carries on next time if you close the game.")))];
 	return Box(V, FMargin(12, 10), Solid);
 }
 
@@ -724,7 +747,9 @@ TSharedRef<SWidget> SOTGCourseBuilder::PickedCard()
 			.Text(FText::FromString(TEXT("Find a course: search for it, or drag and zoom the map (the mouse wheel) and click its dot. Every dot is a golf course mapped in OpenStreetMap; gold ones you've built already."))), FMargin(12, 10), Solid);
 	const FOTGMapCourse& M = Courses[Picked];
 	UOTGHelperSubsystem* H = Helper();
-	const bool bBusy = H && H->GetJob().IsRunning();
+	const FOTGHelperJob* Queued = H ? H->ActiveFor(M.BuiltId, M.OsmId) : nullptr;
+	const bool bBusy = Queued != nullptr;
+	const bool bLine = H && H->ActiveCount() > 0;
 	TSharedRef<SVerticalBox> V = SNew(SVerticalBox);
 	V->AddSlot().AutoHeight()[SNew(STextBlock).Font(Font(18, "Bold")).ColorAndOpacity(Ink).WrapTextAt(400).Text(FText::FromString(M.Name))];
 	if (!M.Location.IsEmpty()) V->AddSlot().AutoHeight()[SNew(STextBlock).Font(Font(12)).ColorAndOpacity(Soft).WrapTextAt(400).Text(FText::FromString(M.Location))];
@@ -738,6 +763,7 @@ TSharedRef<SWidget> SOTGCourseBuilder::PickedCard()
 		if (!bBusy) Btns->AddSlot().AutoWidth().Padding(0, 0, 6, 0)[Button(TEXT("Edit"), [this, Id]() { if (OnEdit) OnEdit(Id); }, 13)];
 		if (!bBusy) Btns->AddSlot().AutoWidth().Padding(0, 0, 6, 0)[Button(B && B->bInGame ? TEXT("Export again") : TEXT("Put it in the game"), [this, Id]() { if (UOTGHelperSubsystem* H2 = Helper()) H2->Export(Id); Rebuild(); }, 13, !(B && B->bInGame))];
 		V->AddSlot().AutoHeight().Padding(0, 6, 0, 0)[Btns];
+		if (Queued) V->AddSlot().AutoHeight().Padding(0, 6, 0, 0)[Text(TEXT("In the queue: ") + Queued->Message, 12, Soft)];
 		return Box(V, FMargin(12, 10), Solid);
 	}
 	if (bChecking) V->AddSlot().AutoHeight().Padding(0, 8, 0, 0)[Text(TEXT("Looking at what's mapped there…"), 13, Soft)];
@@ -781,8 +807,8 @@ TSharedRef<SWidget> SOTGCourseBuilder::PickedCard()
 			.OnTextChanged_Lambda([this](const FText& T) { NameDraft = T.ToString(); })];
 		V->AddSlot().AutoHeight().Padding(0, 10, 0, 0)
 		[
-			bBusy ? StaticCastSharedRef<SWidget>(Text(TEXT("(another course is being built)"), 12, Soft))
-				: StaticCastSharedRef<SWidget>(Button(TEXT("Build this course"), [this]() { StartBuild(); }, 15, true))
+			bBusy ? StaticCastSharedRef<SWidget>(Text(TEXT("In the queue: ") + Queued->Message, 12, Soft))
+				: StaticCastSharedRef<SWidget>(Button(bLine ? TEXT("Add it to the queue") : TEXT("Build this course"), [this]() { StartBuild(); }, 15, true))
 		];
 		V->AddSlot().AutoHeight().Padding(0, 6, 0, 0)[SNew(STextBlock).Font(Font(11)).ColorAndOpacity(Soft).WrapTextAt(400)
 			.Text(FText::FromString(TEXT("It downloads the map data, the ground's heights and aerial photos, builds the course, then gets it ready for the game - about 5 to 20 minutes, most of it the last step.")))];
@@ -794,7 +820,6 @@ TSharedRef<SWidget> SOTGCourseBuilder::BuiltList()
 {
 	if (!Built.Num()) return SNullWidget::NullWidget;
 	UOTGHelperSubsystem* H = Helper();
-	const bool bBusy = H && H->GetJob().IsRunning();
 	TSharedRef<SVerticalBox> V = SNew(SVerticalBox);
 	V->AddSlot().AutoHeight().Padding(0, 0, 0, 4)[Text(TEXT("Courses you've built"), 15, Gold, "Bold")];
 	for (const FBuilt& B : Built)
@@ -807,7 +832,8 @@ TSharedRef<SWidget> SOTGCourseBuilder::BuiltList()
 			+ SVerticalBox::Slot().AutoHeight()[Text(B.Name, 13, Ink, "Bold")]
 			+ SVerticalBox::Slot().AutoHeight()[Text(B.bInGame ? TEXT("in the game") : TEXT("not in the game yet"), 11, B.bInGame ? Green : Soft)]
 		];
-		if (!bBusy)
+		if (H && H->ActiveFor(Id)) Row->AddSlot().AutoWidth().VAlign(VAlign_Center).Padding(4, 0, 0, 0)[Text(TEXT("in the queue"), 11, Soft)];
+		else
 		{
 			Row->AddSlot().AutoWidth().VAlign(VAlign_Center).Padding(4, 0, 0, 0)[Button(TEXT("Edit"), [this, Id]() { if (OnEdit) OnEdit(Id); }, 11)];
 			Row->AddSlot().AutoWidth().VAlign(VAlign_Center).Padding(4, 0, 0, 0)[Button(B.bInGame ? TEXT("Export again") : TEXT("Export"), [this, Id]() { if (UOTGHelperSubsystem* H2 = Helper()) H2->Export(Id); Rebuild(); }, 11)];

@@ -193,7 +193,17 @@ void UOTGHelperSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
 	Super::Initialize(Collection);
 	TickHandle = FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateUObject(this, &UOTGHelperSubsystem::Tick), 0.1f);
-	// (-helperexport=<id>: export a course and quit, for testing the helper without the menus)
+	// (courses left in the queue last time: the helper started, to carry on with them)
+	{
+		FString Text;
+		if (Available() && FFileHelper::LoadFileToString(Text, *FPaths::Combine(DataDir(), TEXT("queue.json")))
+			&& (Text.Contains(TEXT("\"state\":\"waiting\"")) || Text.Contains(TEXT("\"state\":\"run\""))))
+		{
+			HelperLog(TEXT("Courses left in the queue: starting the helper to carry on"));
+			Start();
+		}
+	}
+		// (-helperexport=<id>: export a course and quit, for testing the helper without the menus)
 	FString Test;
 	if (FParse::Value(FCommandLine::Get(), TEXT("helperexport="), Test) && !Test.IsEmpty())
 	{
@@ -402,13 +412,14 @@ bool UOTGHelperSubsystem::Tick(float)
 		State = EOTGHelperState::Failed;
 		Message = TEXT("The course helper stopped");
 		UE_LOG(LogOTGHelper, Warning, TEXT("%s"), *Message);
-		if (Job.IsRunning()) { Job.State = TEXT("failed"); Job.Message = Message; OnJobDone.Broadcast(Job); }
+		// (what it was doing carries on when it's started again: the queue is kept on disk)
+		for (FOTGHelperJob& Jb : Queue) if (Jb.IsRunning()) Jb.Message = TEXT("Paused: the course helper stopped (it carries on when it starts again)");
 	}
-	// The long job: asked about twice a second
+	// The queue: asked about every second while something's going, now and then otherwise
 	const double Now = FPlatformTime::Seconds();
-	if (Job.IsRunning() && State == EOTGHelperState::Ready && !bPolling && Now >= NextPoll)
+	if (State == EOTGHelperState::Ready && !bPolling && Now >= NextPoll)
 	{
-		NextPoll = Now + 0.5;
+		NextPoll = Now + (ActiveCount() || NextPoll == 0 ? 1.0 : 5.0);
 		PollJob();
 	}
 	return true;
@@ -456,118 +467,160 @@ void UOTGHelperSubsystem::Check(const FString& OsmType, int64 OsmId, FDone Done)
 	Get(FString::Printf(TEXT("/api/builder/check?type=%s&id=%lld"), *FGenericPlatformHttp::UrlEncode(OsmType), OsmId), MoveTemp(Done));
 }
 
-void UOTGHelperSubsystem::Build(const FString& OsmType, int64 OsmId, const FString& Name, const FString& Location, const FString& Group, bool bPhotoColours)
+void UOTGHelperSubsystem::Enqueue(TSharedRef<FJsonObject> B)
 {
-	if (Job.IsRunning()) { UE_LOG(LogOTGHelper, Warning, TEXT("Already %s %s"), *Job.Kind, *Job.Id); return; }
-	const TSharedRef<FJsonObject> B = MakeShared<FJsonObject>();
-	B->SetStringField(TEXT("osmType"), OsmType);
-	B->SetNumberField(TEXT("osmId"), double(OsmId));
-	if (!Name.IsEmpty()) B->SetStringField(TEXT("name"), Name);
-	B->SetStringField(TEXT("location"), Location);
-	if (!Group.IsEmpty()) B->SetStringField(TEXT("group"), Group);
-	if (bPhotoColours) B->SetStringField(TEXT("surface"), TEXT("photo"));
 	FString Body;
 	FJsonSerializer::Serialize(B, TJsonWriterFactory<>::Create(&Body));
-	Job = FOTGHelperJob();
-	Job.Kind = TEXT("build"); Job.State = TEXT("start"); Job.Message = TEXT("Starting the build…"); Job.StartedAt = FPlatformTime::Seconds(); Job.Log.Add(Job.Message);
 	TWeakObjectPtr<UOTGHelperSubsystem> Self(this);
-	Request(TEXT("POST"), TEXT("/api/builder/build"), Body, [Self](int32 Code, TSharedPtr<FJsonValue> J, const FString& Text) {
+	Request(TEXT("POST"), TEXT("/api/helper/queue"), Body, [Self](int32 Code, TSharedPtr<FJsonValue> J, const FString& Text) {
 		if (!Self.IsValid()) return;
-		FString Id;
-		if (Code == 200 && J.IsValid() && J->AsObject().IsValid() && J->AsObject()->TryGetStringField(TEXT("jobId"), Id)) { Self->Job.Id = Id; Self->Job.State = TEXT("run"); return; }
-		Self->Job.State = TEXT("failed"); Self->Job.Message = Text;
-		Self->OnJobDone.Broadcast(Self->Job);
+		const TSharedPtr<FJsonObject> O = J.IsValid() ? J->AsObject() : nullptr;
+		const TSharedPtr<FJsonObject>* It = nullptr;
+		if (Code == 200 && O.IsValid() && O->TryGetObjectField(TEXT("item"), It)) { Self->FocusId = (*It)->GetStringField(TEXT("id")); Self->NextPoll = 0; return; }
+		// (not added: told as a failed one)
+		FOTGHelperJob F;
+		F.Kind = TEXT("build"); F.State = TEXT("failed");
+		FString Err;
+		F.Message = O.IsValid() && O->TryGetStringField(TEXT("error"), Err) ? Err : Text.IsEmpty() ? FString(TEXT("The course helper didn't answer")) : Text.Left(300);
+		Self->Job = F;
+		Self->FocusId.Empty();
+		Self->OnJobDone.Broadcast(F);
 	});
 }
 
-void UOTGHelperSubsystem::Update(const FString& InCourseId)
+void UOTGHelperSubsystem::Build(const FString& OsmType, int64 OsmId, const FString& Name, const FString& Location, const FString& Group, bool bPhotoColours)
 {
-	const FString CourseId = InCourseId;
-	if (Job.IsRunning()) { UE_LOG(LogOTGHelper, Warning, TEXT("Already %s %s"), *Job.Kind, *Job.Id); return; }
-	Job = FOTGHelperJob();
-	Job.Kind = TEXT("update"); Job.State = TEXT("start"); Job.CourseId = CourseId; Job.Message = TEXT("Starting the update…"); Job.StartedAt = FPlatformTime::Seconds(); Job.Log.Add(Job.Message);
-	TWeakObjectPtr<UOTGHelperSubsystem> Self(this);
-	Request(TEXT("POST"), FString::Printf(TEXT("/api/courses/%s/update"), *CourseId), FString(), [Self](int32 Code, TSharedPtr<FJsonValue> J, const FString& Text) {
-		if (!Self.IsValid()) return;
-		FString Id;
-		if (Code == 200 && J.IsValid() && J->AsObject().IsValid() && J->AsObject()->TryGetStringField(TEXT("jobId"), Id)) { Self->Job.Id = Id; Self->Job.State = TEXT("run"); return; }
-		Self->Job.State = TEXT("failed"); Self->Job.Message = Text;
-		Self->OnJobDone.Broadcast(Self->Job);
-	});
+	const TSharedRef<FJsonObject> A = MakeShared<FJsonObject>();
+	A->SetStringField(TEXT("osmType"), OsmType);
+	A->SetNumberField(TEXT("osmId"), double(OsmId));
+	if (!Name.IsEmpty()) A->SetStringField(TEXT("name"), Name);
+	A->SetStringField(TEXT("location"), Location);
+	if (!Group.IsEmpty()) A->SetStringField(TEXT("group"), Group);
+	if (bPhotoColours) A->SetStringField(TEXT("surface"), TEXT("photo"));
+	const TSharedRef<FJsonObject> B = MakeShared<FJsonObject>();
+	B->SetStringField(TEXT("kind"), TEXT("build"));
+	B->SetStringField(TEXT("name"), Name);
+	B->SetObjectField(TEXT("args"), A);
+	Enqueue(B);
 }
 
-void UOTGHelperSubsystem::Export(const FString& InCourseId, bool bVisible)
+void UOTGHelperSubsystem::Update(const FString& CourseId)
 {
-	// (a copy: the id may be the last job's, which is cleared below)
-	const FString CourseId = InCourseId;
-	if (Job.IsRunning()) { UE_LOG(LogOTGHelper, Warning, TEXT("Already %s %s"), *Job.Kind, *Job.Id); return; }
-	Job = FOTGHelperJob();
-	Job.Kind = TEXT("export"); Job.Id = CourseId; Job.CourseId = CourseId; Job.State = TEXT("start"); Job.Message = TEXT("Starting the export…"); Job.StartedAt = FPlatformTime::Seconds(); Job.Log.Add(Job.Message);
-	UE_LOG(LogOTGHelper, Display, TEXT("Exporting %s"), *CourseId);
-	TWeakObjectPtr<UOTGHelperSubsystem> Self(this);
-	Request(TEXT("POST"), FString::Printf(TEXT("/api/helper/export?course=%s%s"), *FGenericPlatformHttp::UrlEncode(CourseId), bVisible ? TEXT("&visible=1") : TEXT("")), FString(),
-		[Self](int32 Code, TSharedPtr<FJsonValue>, const FString& Text) {
-			if (!Self.IsValid() || Code == 200) return;
-			Self->Job.State = TEXT("failed"); Self->Job.Message = Text;
-			Self->OnJobDone.Broadcast(Self->Job);
-		});
+	const TSharedRef<FJsonObject> B = MakeShared<FJsonObject>();
+	B->SetStringField(TEXT("kind"), TEXT("update"));
+	B->SetStringField(TEXT("courseId"), CourseId);
+	B->SetStringField(TEXT("name"), CourseId.Replace(TEXT("_"), TEXT(" ")));
+	Enqueue(B);
 }
 
-void UOTGHelperSubsystem::Cancel()
+void UOTGHelperSubsystem::Export(const FString& CourseId, bool)
 {
-	if (Job.Kind == TEXT("export")) Request(TEXT("POST"), TEXT("/api/helper/cancel"), FString(), nullptr);
+	UE_LOG(LogOTGHelper, Display, TEXT("Queueing %s to be put in the game"), *CourseId);
+	const TSharedRef<FJsonObject> B = MakeShared<FJsonObject>();
+	B->SetStringField(TEXT("kind"), TEXT("export"));
+	B->SetStringField(TEXT("courseId"), CourseId);
+	B->SetStringField(TEXT("name"), CourseId.Replace(TEXT("_"), TEXT(" ")));
+	Enqueue(B);
 }
 
+void UOTGHelperSubsystem::Cancel() { if (!Job.QueueId.IsEmpty()) Remove(Job.QueueId); }
+
+void UOTGHelperSubsystem::Remove(const FString& InQueueId)
+{
+	const FString QueueId = InQueueId;
+	Request(TEXT("POST"), TEXT("/api/helper/queue/remove?id=") + QueueId, FString(), nullptr);
+	Queue.RemoveAll([&](const FOTGHelperJob& J) { return J.QueueId == QueueId && !J.IsRunning(); });
+	NextPoll = 0;
+}
+
+void UOTGHelperSubsystem::Retry(const FString& InQueueId)
+{
+	const FString QueueId = InQueueId;
+	Request(TEXT("POST"), TEXT("/api/helper/queue/retry?id=") + QueueId, FString(), nullptr);
+	FocusId = QueueId;
+	NextPoll = 0;
+}
+
+void UOTGHelperSubsystem::ClearFinished()
+{
+	Request(TEXT("POST"), TEXT("/api/helper/queue/clear"), FString(), nullptr);
+	Queue.RemoveAll([](const FOTGHelperJob& J) { return !J.IsActive(); });
+	NextPoll = 0;
+}
+
+// The queue as the helper has it: each one's step, message and log; finishing ones told of
 void UOTGHelperSubsystem::PollJob()
 {
-	if (Job.Id.IsEmpty()) return;
 	bPolling = true;
-	const FString Path = Job.Kind == TEXT("export") ? FString(TEXT("/api/helper/job")) : TEXT("/api/helper/build?job=") + Job.Id;
 	TWeakObjectPtr<UOTGHelperSubsystem> Self(this);
-	Get(Path, [Self](int32 Code, TSharedPtr<FJsonValue> J, const FString&) {
+	Get(TEXT("/api/helper/queue"), [Self](int32 Code, TSharedPtr<FJsonValue> J, const FString&) {
 		if (!Self.IsValid()) return;
 		Self->bPolling = false;
 		const TSharedPtr<FJsonObject> O = J.IsValid() ? J->AsObject() : nullptr;
-		if (Code != 200 || !O.IsValid() || !Self->Job.IsRunning()) return;
-		FOTGHelperJob& Jb = Self->Job;
-		const FString Before = Jb.Message;
-		if (Jb.Kind == TEXT("export"))
+		const TArray<TSharedPtr<FJsonValue>>* Items = nullptr;
+		if (Code != 200 || !O.IsValid() || !O->TryGetArrayField(TEXT("items"), Items)) return;
+		const double Now = FPlatformTime::Seconds();
+		TArray<FOTGHelperJob> Q;
+		for (const TSharedPtr<FJsonValue>& V : *Items)
 		{
-			if (O->GetStringField(TEXT("course")) != Jb.Id) return;
-			Jb.State = O->GetStringField(TEXT("state"));
-			Jb.Frac = O->GetNumberField(TEXT("frac"));
-			Jb.Message = O->GetStringField(TEXT("msg"));
-			Jb.Seconds = O->GetIntegerField(TEXT("seconds"));
-		}
-		else
-		{
-			FString S;
-			if (O->TryGetStringField(TEXT("msg"), S) && !S.IsEmpty()) Jb.Message = S;
-			const TArray<TSharedPtr<FJsonValue>>* L = nullptr;
-			if (O->TryGetArrayField(TEXT("log"), L)) { Jb.Log.Reset(); for (const TSharedPtr<FJsonValue>& V : *L) Jb.Log.Add(V->AsString()); }
-			FString Err;
-			if (O->TryGetStringField(TEXT("error"), Err) && !Err.IsEmpty()) { Jb.State = TEXT("failed"); Jb.Message = Err; }
-			else if (O->GetBoolField(TEXT("done"))) { Jb.State = TEXT("done"); O->TryGetStringField(TEXT("courseId"), Jb.CourseId); }
-		}
-		if (Jb.Message != Before)
-		{
-			UE_LOG(LogOTGHelper, Display, TEXT("%s %s: %.0f%% %s"), *Jb.Kind, *Jb.Id, Jb.Frac * 100, *Jb.Message);
-			// (an export's: its messages kept here, the step changes and the last of each)
-			if (Jb.Kind == TEXT("export") && !Jb.Message.IsEmpty())
+			const TSharedPtr<FJsonObject> I = V->AsObject();
+			if (!I.IsValid()) continue;
+			FOTGHelperJob Jb;
+			Jb.QueueId = I->GetStringField(TEXT("id"));
+			Jb.Id = Jb.QueueId;
+			Jb.Name = I->GetStringField(TEXT("name"));
+			Jb.Kind = I->GetStringField(TEXT("stage")) == TEXT("export") ? FString(TEXT("export")) : I->GetStringField(TEXT("kind"));
+			Jb.State = I->GetStringField(TEXT("state"));
+			Jb.Frac = float(I->GetNumberField(TEXT("frac")));
+			I->TryGetStringField(TEXT("msg"), Jb.Message);
+			I->TryGetStringField(TEXT("courseId"), Jb.CourseId);
+			I->TryGetBoolField(TEXT("needsReview"), Jb.bNeedsReview);
+			const TSharedPtr<FJsonObject>* Args = nullptr;
+			if (I->TryGetObjectField(TEXT("args"), Args)) Jb.OsmId = int64((*Args)->GetNumberField(TEXT("osmId")));
+			Jb.Seconds = int32(I->GetNumberField(TEXT("seconds")));
+			if (Jb.Seconds > 0 || Jb.IsRunning())
 			{
-				auto Stem = [](const FString& M) { int32 I; return M.FindChar(TEXT('\u2026'), I) ? M.Left(I) : M; };
-				if (Jb.Log.Num() && Stem(Jb.Log.Last()) == Stem(Jb.Message)) Jb.Log.Last() = Jb.Message; else Jb.Log.Add(Jb.Message);
-				if (Jb.Log.Num() > 40) Jb.Log.RemoveAt(0);
+				// (the card's clock: from the helper's own count)
+				if (Jb.IsActive()) Jb.StartedAt = Now - Jb.Seconds;
+				else { Jb.StartedAt = 1; Jb.EndedAt = 1 + Jb.Seconds; }
 			}
+			const TArray<TSharedPtr<FJsonValue>>* L = nullptr;
+			if (I->TryGetArrayField(TEXT("log"), L)) for (const TSharedPtr<FJsonValue>& M : *L) Jb.Log.Add(M->AsString());
+			Q.Add(MoveTemp(Jb));
 		}
-		if (!Jb.IsRunning())
+		Self->Queue = MoveTemp(Q);
+		// (the one to show: the latest added)
+		const FString Focus = Self->FocusId;
+		const FOTGHelperJob* F = Self->Queue.FindByPredicate([&](const FOTGHelperJob& X) { return X.QueueId == Focus; });
+		Self->Job = F ? *F : Self->Queue.Num() ? Self->Queue.Last() : FOTGHelperJob();
+		// (finished since last time: told)
+		TArray<FOTGHelperJob> Ended;
+		for (const FOTGHelperJob& Jb : Self->Queue)
 		{
-			Jb.EndedAt = FPlatformTime::Seconds();
-			HelperLog(FString::Printf(TEXT("%s %s: %s (%s) after %.0f s"), *Jb.Kind, *Jb.Id, *Jb.State, *Jb.Message, Jb.EndedAt - Jb.StartedAt));
-			UE_LOG(LogOTGHelper, Display, TEXT("%s %s: %s %s"), *Jb.Kind, *Jb.Id, *Jb.State, *Jb.CourseId);
-			Self->OnJobDone.Broadcast(Jb);
+			const FString Key = Jb.State + TEXT("/") + Jb.Kind;
+			const FString* Was = Self->Seen.Find(Jb.QueueId);
+			if (Was && *Was != Key)
+			{
+				UE_LOG(LogOTGHelper, Display, TEXT("%s %s: %s %s"), *Jb.Kind, *Jb.Name, *Jb.State, *Jb.Message);
+				if (!Jb.IsActive() && (Was->StartsWith(TEXT("run")) || Was->StartsWith(TEXT("waiting"))))
+				{
+					HelperLog(FString::Printf(TEXT("%s %s (%s): %s (%s) after %d s"), *Jb.Kind, *Jb.Name, *Jb.CourseId, *Jb.State, *Jb.Message, Jb.Seconds));
+					Ended.Add(Jb);
+				}
+			}
+			Self->Seen.Add(Jb.QueueId, Key);
 		}
+		for (const FOTGHelperJob& Jb : Ended) Self->OnJobDone.Broadcast(Jb);
 	});
+}
+
+// Where the helper keeps its downloads and the queue (as Launch tells it)
+FString UOTGHelperSubsystem::DataDir() const
+{
+	bool bDev = false;
+	const FString Dir = HelperDir(&bDev);
+	if (bDev) return FPaths::Combine(Dir, TEXT("data"));
+	return FPaths::Combine(FPlatformProcess::UserDir(), TEXT("OpenTeeGolf"), TEXT("HelperData"));
 }
 
 void UOTGHelperSubsystem::LoadSource(const FString& CourseId, TFunction<void(TSharedPtr<FJsonObject>, TSharedPtr<FJsonObject>, const FString&)> Done)

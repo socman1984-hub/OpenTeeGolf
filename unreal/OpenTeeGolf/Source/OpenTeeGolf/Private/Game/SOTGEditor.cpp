@@ -523,8 +523,8 @@ void SOTGCourseEditor::Save(int32 Then)
 		{
 			if (UOTGHelperSubsystem* H2 = Self->Helper())
 			{
-				if (H2->GetJob().IsRunning()) Self->Status = TEXT("Saved. Something else is being built: put it in the game when that's done");
-				else { H2->Export(Self->Id); Self->bExporting = true; Self->Applied = Self->Src; }
+				H2->Export(Self->Id); Self->bExporting = true; Self->Applied = Self->Src;
+				Self->Status = TEXT("Saved, and queued to be put in the game");
 			}
 		}
 		Self->Changed();
@@ -568,14 +568,16 @@ EActiveTimerReturnType SOTGCourseEditor::Pulse(double Time, float Dt)
 	if (bExporting)
 		if (UOTGHelperSubsystem* H = Helper())
 		{
-			const FOTGHelperJob& J = H->GetJob();
+			const FOTGHelperJob* Jp = H->FindJob(Id);
+			const FOTGHelperJob& J = Jp ? *Jp : H->GetJob();
 			const FString Now = FString::Printf(TEXT("%s %.0f %s"), *J.State, J.Frac * 100, *J.Message);
 			if (Now != JobShown)
 			{
 				JobShown = Now;
 				if (J.Kind == TEXT("export") && J.CourseId == Id)
 				{
-					if (J.IsRunning()) Status = FString::Printf(TEXT("Putting it in the game: %d%%  %s"), FMath::RoundToInt(J.Frac * 100), *J.Message);
+					if (J.IsWaiting()) Status = TEXT("Queued to be put in the game: ") + J.Message;
+					else if (J.IsRunning()) Status = FString::Printf(TEXT("Putting it in the game: %d%%  %s"), FMath::RoundToInt(J.Frac * 100), *J.Message);
 					else { bExporting = false; bExported = J.State == TEXT("done"); Status = bExported ? FString(TEXT("In the game: play it from the menu")) : TEXT("Putting it in the game didn't work: ") + J.Message; }
 					if (Top.IsValid()) Top->SetContent(TopBar());
 				}
@@ -714,9 +716,9 @@ TSharedRef<SWidget> SOTGCourseEditor::TopBar()
 		+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(4, 0)[Button(TEXT("Hole"), [this]() { FitHole(); }, 12)]
 		+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(4, 0)[Button(TEXT("Course"), [this]() { FitAll(); }, 12)]
 		+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(4, 0)[Button(bShowPhoto && PhotoBrush.IsValid() ? TEXT("Photo") : TEXT("Shading"), [this]() { bShowPhoto = !bShowPhoto; Changed(); }, 12)]
-		+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(12, 0, 4, 0)[Button(TEXT("Save"), [this]() { Save(0); }, 14, bDirty)]
-		+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(4, 0)[Button(bQuicking ? TEXT("Updating the game…") : TEXT("Save and update the game"), [this]() { if (!bQuicking && !bExporting) Save(1); }, 14, !bQuicking && !bExporting)]
-		+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(4, 0)[Button(bExporting ? TEXT("Putting it in the game…") : TEXT("Put in the game (full)"), [this]() { if (!bExporting && !bQuicking) Save(2); }, 12)]
+		+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(12, 0, 4, 0)[SNew(SBox).ToolTipText(FText::FromString(TEXT("Keep your changes (the course's source). The game doesn't see them until you update it.")))[Button(TEXT("Save"), [this]() { Save(0); }, 14, bDirty)]]
+		+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(4, 0)[SNew(SBox).ToolTipText(FText::FromString(TEXT("Save, then patch the course the game plays in a few seconds: shapes, trees, tall grass, the ground. Anything it can't patch is named afterwards: that needs Put in the game (full).")))[Button(bQuicking ? TEXT("Updating the game…") : TEXT("Save and update the game"), [this]() { if (!bQuicking && !bExporting) Save(1); }, 14, !bQuicking && !bExporting)]]
+		+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(4, 0)[SNew(SBox).ToolTipText(FText::FromString(TEXT("Save, then rebuild the whole course for the game from scratch (5 to 15 minutes, in the background): needed the first time, and for anything the quick update can't do.")))[Button(bExporting ? TEXT("Putting it in the game…") : TEXT("Put in the game (full)"), [this]() { if (!bExporting && !bQuicking) Save(2); }, 12)]]
 		+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(12, 0, 0, 0)[Button(bDirty && Status == TEXT("Close without saving?") ? TEXT("Yes, close") : TEXT("Close"), [this]() {
 			if (bDirty && Status != TEXT("Close without saving?")) { Status = TEXT("Close without saving?"); Changed(); return; }
 			if (OnClose) OnClose(bExported);

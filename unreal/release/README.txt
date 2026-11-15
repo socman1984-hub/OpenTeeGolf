@@ -78,11 +78,14 @@ golf course mapped in OpenStreetMap is one; gold ones you've built. The game sho
 there (and, at a club with more than one course, asks which holes), then Build downloads the map
 data, the ground's heights and aerial photos, builds the course and gets it ready to play (about 5
 to 20 minutes; you need to be online, and Microsoft Edge or Google Chrome installed - Windows has
-Edge). Then Play it. Edit opens the course editor: the holes (tees, aim points, pins, par), the
+Edge). Then Play it. You can pick more courses while one builds: each goes in a queue, built
+in the background (two at a time) while you play, and the round tells you when one is ready; if
+you close the game, the rest carry on next time. Edit opens the course editor: the holes (tees, aim points, pins, par), the
 shapes (greens, fairways, bunkers, tees, water, penalty areas, the boundary, tree areas), trees,
 tall grass, buildings and the course's looks, on its aerial photo; "Save and update the game"
 puts most changes in the game in seconds (the holes, greens, fairways, tees, bunkers, trees and
-tall grass); "Put in the game (full)" gets it all ready again, water and the rest (5-20 minutes). "Courses you've built" exports one again, brings it up to date from
+tall grass); "Put in the game (full)" gets it all ready again, water and the rest (5-20 minutes,
+in the queue). Hover over a button for what it does. "Courses you've built" exports one again, brings it up to date from
 OpenStreetMap, or deletes it. Built courses go in Documents\OpenTeeGolf\Courses, their
 sources in Documents\OpenTeeGolf\CourseSources. The first time a course is opened the game builds
 it (a loading screen shows how far along it is: under a minute for most courses). Courses exported

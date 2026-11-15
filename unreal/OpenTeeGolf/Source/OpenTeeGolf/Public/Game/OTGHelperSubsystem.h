@@ -33,11 +33,16 @@ enum class EOTGHelperState : uint8
 	Failed,     // Message says why
 };
 
-// A long job on the helper (a build or an export): where it is
+// A course in the helper's queue (lib/queue.js): built, updated or got ready for the game in the
+// background. Kind is the step it's on (build, update or export); State waiting, run, done or failed
 USTRUCT()
 struct FOTGHelperJob
 {
 	GENERATED_BODY()
+	UPROPERTY() FString QueueId;     // (its place in the helper's queue)
+	UPROPERTY() FString Name;
+	UPROPERTY() bool bNeedsReview = false;
+	int64 OsmId = 0;                 // (a build's: the course on the map)   // (built, its holes guessed: not put in the game)
 	UPROPERTY() FString Kind;        // build, update or export
 	UPROPERTY() FString Id;          // the build's job id, the exported course's id
 	UPROPERTY() FString State;       // start, run, done, failed
@@ -49,6 +54,8 @@ struct FOTGHelperJob
 	double EndedAt = 0;
 	TArray<FString> Log;               // (what it said, last first-come: the card shows the latest)
 	bool IsRunning() const { return State == TEXT("start") || State == TEXT("run"); }
+	bool IsWaiting() const { return State == TEXT("waiting"); }
+	bool IsActive() const { return IsRunning() || IsWaiting(); }
 };
 
 UCLASS()
@@ -83,16 +90,27 @@ public:
 	void World(int32 From, FDone Done);                                   // the world's mapped courses
 	void Where(double Lat, double Lon, FDone Done);                       // { location }
 	void Check(const FString& OsmType, int64 OsmId, FDone Done);          // what's mapped, its hole groups
-	// Build a course (Name, Location, Group optional); the job follows in Job
+	// ---- the queue: each of these adds a course to it (built, then put in the game; it runs in the
+	// background, two builds and one export at a time, and carries on next time if the game closes)
+	// Build a course (Name, Location, Group optional), then put it in the game
 	void Build(const FString& OsmType, int64 OsmId, const FString& Name, const FString& Location, const FString& Group, bool bPhotoColours = false);
 	// Update a built course from OpenStreetMap (kept: the editor's trees, grass and looks)
 	void Update(const FString& CourseId);
 	// Export a built course to the game's courses folder (about 5-15 minutes)
 	void Export(const FString& CourseId, bool bVisible = false);
-	void Cancel();
-	// The long job going on or last done (none: Kind empty)
+	void Cancel();                                   // (the latest added: stopped, or taken out)
+	void Remove(const FString& QueueId);             // waiting: taken out; going: stopped
+	void Retry(const FString& QueueId);              // a failed one, from the step that failed
+	void ClearFinished();
+	// The latest added (none: Kind empty), every one, how many are waiting or going
 	const FOTGHelperJob& GetJob() const { return Job; }
-	// Called when the job finishes (done or failed)
+	const TArray<FOTGHelperJob>& GetQueue() const { return Queue; }
+	int32 ActiveCount() const { int32 N = 0; for (const FOTGHelperJob& J : Queue) N += J.IsActive() ? 1 : 0; return N; }
+	// A course's in the queue, waiting or going (null: none): by its id, or by its OpenStreetMap id
+	const FOTGHelperJob* ActiveFor(const FString& CourseId, int64 OsmId = 0) const { for (const FOTGHelperJob& J : Queue) if (J.IsActive() && ((!CourseId.IsEmpty() && J.CourseId == CourseId) || (OsmId && J.OsmId == OsmId))) return &J; return nullptr; }
+	// The newest of a course's (null: none)
+	const FOTGHelperJob* FindJob(const FString& CourseId) const { for (int32 i = Queue.Num() - 1; i >= 0; i--) if (Queue[i].CourseId == CourseId) return &Queue[i]; return nullptr; }
+	// Called when one finishes (done or failed)
 	TMulticastDelegate<void(const FOTGHelperJob&)> OnJobDone;
 
 	// The course's source, as the editor reads it: { course, real } (course.json, real.json)
@@ -108,6 +126,8 @@ private:
 	void Ping(int32 Attempt);
 	void Finish(bool bOk, const FString& Why = FString());
 	void PollJob();
+	void Enqueue(TSharedRef<FJsonObject> Body);
+	FString DataDir() const;
 	FString HelperDir(bool* bDev = nullptr) const;
 	FString NodeExe(const FString& Dir) const;
 
@@ -125,5 +145,8 @@ private:
 	FTSTicker::FDelegateHandle TickHandle;
 	double NextPoll = 0;
 	FOTGHelperJob Job;
+	TArray<FOTGHelperJob> Queue;
+	FString FocusId;                  // (the latest added: Job)
+	TMap<FString, FString> Seen;      // (each one's state and step last time: finishing ones told of)
 	bool bPolling = false;
 };

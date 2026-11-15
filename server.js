@@ -37,7 +37,8 @@ import { MevoClient, DEFAULT_SETUP } from './lib/mevo.js';
 import { FrpController } from './lib/frp.js';
 import { BridgeProcess, BRIDGES } from './lib/bridges.js';
 import { UnrealRound } from './lib/unrealplay.js';
-import { HELPER, ensureTile, noteBuild, buildState, startExport, jobState, progress as helperProgress, cancelExport, watchParent, cleanStale, findBrowser } from './lib/helper.js';
+import { HELPER, ensureTile, noteBuild, buildState, startExport, jobState, progress as helperProgress, cancelExport, watchParent, cleanStale, findBrowser, exportCourse, exportBusy } from './lib/helper.js';
+import { initQueue, queueState, addToQueue, removeFromQueue, retryInQueue, clearFinished } from './lib/queue.js';
 const BUILDING_TYPE_IDS = new Set(BUILDING_TYPES.map((t) => t.id));
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -562,6 +563,63 @@ const EZTREE = path.join(ROOT, 'node_modules', '@dgreenheck', 'ez-tree', 'build'
 const LEAFLET = path.join(ROOT, 'node_modules', 'leaflet', 'dist');
 const MARKERCLUSTER = path.join(ROOT, 'node_modules', 'leaflet.markercluster', 'dist');
 
+// Update a built course from OpenStreetMap: everything downloaded again (not from saved answers), the
+// course rebuilt in place, then its cart paths, buildings, car parks and roads fetched afresh.
+// Elevation and tree heights aren't from OpenStreetMap and are kept; the aerial photo is kept unless
+// another source now has a clearly clearer one. (The endpoint, and the game's queue: lib/queue.js)
+async function runUpdate(id, log) {
+  const f = courseFile(id);
+  const cd = f && readCourseData(f);
+  const b = cd?.GolfSimBuilder;
+  if (!b?.osmType || !b?.osmId) throw new Error('This course was not made with the builder, so it has no OpenStreetMap source');
+  // (trees added in the editor are the player's own: they carry over)
+  let keep = {};
+  try { const old = JSON.parse(fs.readFileSync(realFile(f), 'utf8')); keep = { userTrees: old.userTrees, treeAreas: old.treeAreas, tallGrass: old.tallGrass, removedTrees: old.removedTrees, buildingTypes: old.buildingTypes }; } catch { /* none */ }
+  return withForeground(() => withFreshOsm(async () => {
+    const r = await buildCourse({ osmType: b.osmType, osmId: b.osmId, group: b.group ?? null, name: cd.CourseName, location: cd.Location || '', id }, log);
+    if (keep.userTrees?.length || keep.treeAreas?.length || keep.tallGrass?.length || keep.removedTrees?.length || Object.keys(keep.buildingTypes || {}).length) {
+      const rfNew = realFile(r.dataFile), nr = JSON.parse(fs.readFileSync(rfNew, 'utf8'));
+      Object.assign(nr, { userTrees: keep.userTrees || [], treeAreas: keep.treeAreas || [], tallGrass: keep.tallGrass || [], removedTrees: keep.removedTrees || [], buildingTypes: keep.buildingTypes || {} });
+      fs.writeFileSync(rfNew, JSON.stringify(nr));
+      log('Kept the trees added in the editor.');
+    }
+    // (and the course's look chosen in the editor: mowing patterns, grass heights)
+    if (cd.Mowing || cd.Grass || cd.Surface || cd.TreesOff || cd.Plants) {
+      const nd0 = readCourseData(r.dataFile);
+      if (cd.TreesOff) nd0.TreesOff = cd.TreesOff;
+      if (cd.Plants) nd0.Plants = cd.Plants;
+      if (cd.Mowing) nd0.Mowing = cd.Mowing;
+      if (cd.Grass) nd0.Grass = cd.Grass;
+      if (cd.Surface) nd0.Surface = cd.Surface;
+      fs.writeFileSync(r.dataFile, JSON.stringify(nd0, null, 1));
+    }
+    const sat = satDir(r.dataFile);
+    for (const name of ['paths.json', 'buildings.json', 'parking.json', 'roads.json', 'phototrees.json', 'heather.json']) fs.rmSync(path.join(sat, name), { force: true });
+    summaries.delete(r.dataFile);
+    const real = JSON.parse(fs.readFileSync(realFile(r.dataFile), 'utf8'));
+    const nd = readCourseData(r.dataFile), geo = geoFor(nd, real);
+    if (geo && fs.existsSync(sat)) {
+      const oob = (nd.pOOB?.coords || []).map((c) => [c.x, c.z]);
+      log('', { step: 'paths' }); await ensurePaths(sat, geo, real.grid, oob, log);
+      log('', { step: 'buildings' }); await ensureBuildings(sat, geo, real.grid, log);
+      log('', { step: 'parking' }); await ensureParking(sat, geo, real.grid, log);
+      log('', { step: 'roads' }); await ensureRoads(sat, geo, real.grid, oob, log);
+      log('', { step: 'imagery' });
+      try { await recheckSatellite(sat, geo, real.grid, log); } catch (err) { log(`Aerial photo check skipped (${err.message})`); }
+    }
+    return r;
+  })).then((r) => ({ courseId: path.basename(path.dirname(r.dataFile)), needsReview: r.needsReview }));
+}
+
+// Build a course (the endpoint, and the game's queue): { courseId, needsReview }
+async function runBuild(b, log) {
+  const r = await withForeground(() => buildCourse({ osmType: b.osmType, osmId: b.osmId, group: b.group ?? null, name: b.name || null, location: b.location || '' }, log));
+  // (grass colours chosen in the builder)
+  if (b.surface === 'photo') { const cd0 = readCourseData(r.dataFile); cd0.Surface = 'photo'; fs.writeFileSync(r.dataFile, JSON.stringify(cd0, null, 1)); }
+  ensurePhoto(path.dirname(r.dataFile), photoInfo(r.dataFile), { log: (m) => console.log(`[photo] ${m}`) });
+  return { courseId: path.basename(path.dirname(r.dataFile)), needsReview: r.needsReview };
+}
+
 const httpServer = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
   const p = decodeURIComponent(url.pathname);
@@ -584,6 +642,17 @@ const httpServer = http.createServer(async (req, res) => {
       return json(res, r, r.error ? 409 : 200);
     }
     if (p === '/api/helper/cancel' && req.method === 'POST') { cancelExport(); return json(res, jobState()); }
+    // (the queue: courses built and put in the game in the background - lib/queue.js)
+    if (p === '/api/helper/queue' && req.method === 'GET') return json(res, queueState());
+    if (p === '/api/helper/queue' && req.method === 'POST') {
+      const b = await readBody(req);
+      if (b.kind !== 'build' && !courseFile(b.courseId || '')) return json(res, { error: 'No such course' }, 404);
+      const r = addToQueue(b);
+      return json(res, r, r.error ? 400 : 200);
+    }
+    if (p === '/api/helper/queue/remove' && req.method === 'POST') return json(res, removeFromQueue(url.searchParams.get('id') || ''));
+    if (p === '/api/helper/queue/retry' && req.method === 'POST') return json(res, retryInQueue(url.searchParams.get('id') || ''));
+    if (p === '/api/helper/queue/clear' && req.method === 'POST') return json(res, clearFinished());
     if (p === '/api/helper/quit' && req.method === 'POST' && HELPER) { json(res, { ok: true }); cancelExport(); setTimeout(() => process.exit(0), 100); return; }
     let m;
     if ((m = p.match(/^\/api\/courses\/([\w-]+)\/data$/))) {
@@ -1041,64 +1110,18 @@ const httpServer = http.createServer(async (req, res) => {
       const b = await readBody(req);
       const jobId = Date.now().toString(36);
       const log = (msg, extra) => { if (msg) console.log(`[build] ${msg}`); broadcast('build', { jobId, msg, ...extra }); };
-      withForeground(() => buildCourse({ osmType: b.osmType, osmId: b.osmId, group: b.group ?? null, name: b.name || null, location: b.location || '' }, log))
-        .then((r) => {
-          // (grass colours chosen in the builder)
-          if (b.surface === 'photo') { const cd0 = readCourseData(r.dataFile); cd0.Surface = 'photo'; fs.writeFileSync(r.dataFile, JSON.stringify(cd0, null, 1)); } ensurePhoto(path.dirname(r.dataFile), photoInfo(r.dataFile), { log: (m) => console.log(`[photo] ${m}`) }); return r; })
-        .then((r) => broadcast('build', { jobId, done: true, courseId: path.basename(path.dirname(r.dataFile)), needsReview: r.needsReview }))
+      runBuild(b, log)
+        .then((r) => broadcast('build', { jobId, done: true, courseId: r.courseId, needsReview: r.needsReview }))
         .catch((err) => { console.error(err); broadcast('build', { jobId, error: err.message }); });
       return json(res, { jobId });
     }
     if ((m = p.match(/^\/api\/courses\/([\w-]+)\/update$/)) && req.method === 'POST') {
-      // Update a built course from OpenStreetMap: everything downloaded again (not from saved
-      // answers), the course rebuilt in place, then its cart paths, buildings, car parks and roads
-      // fetched afresh.
-      // Elevation and tree heights aren't from OpenStreetMap and are kept; the aerial photo is
-      // kept unless another source now has a clearly clearer one.
-      const id = m[1], f = courseFile(id);
-      const cd = f && readCourseData(f);
-      const b = cd?.GolfSimBuilder;
-      if (!b?.osmType || !b?.osmId) return json(res, { error: 'This course was not made with the builder, so it has no OpenStreetMap source' }, 400);
+      const f = courseFile(m[1]);
+      if (!(f && readCourseData(f))?.GolfSimBuilder?.osmId) return json(res, { error: 'This course was not made with the builder, so it has no OpenStreetMap source' }, 400);
       const jobId = Date.now().toString(36);
       const log = (msg, extra) => { if (msg) console.log(`[update] ${msg}`); broadcast('build', { jobId, msg, ...extra }); };
-      // (trees added in the editor are the player's own: they carry over)
-      let keep = {};
-      try { const old = JSON.parse(fs.readFileSync(realFile(f), 'utf8')); keep = { userTrees: old.userTrees, treeAreas: old.treeAreas, tallGrass: old.tallGrass, removedTrees: old.removedTrees, buildingTypes: old.buildingTypes }; } catch { /* none */ }
-      withForeground(() => withFreshOsm(async () => {
-        const r = await buildCourse({ osmType: b.osmType, osmId: b.osmId, group: b.group ?? null, name: cd.CourseName, location: cd.Location || '', id }, log);
-        if (keep.userTrees?.length || keep.treeAreas?.length || keep.tallGrass?.length || keep.removedTrees?.length || Object.keys(keep.buildingTypes || {}).length) {
-          const rfNew = realFile(r.dataFile), nr = JSON.parse(fs.readFileSync(rfNew, 'utf8'));
-          Object.assign(nr, { userTrees: keep.userTrees || [], treeAreas: keep.treeAreas || [], tallGrass: keep.tallGrass || [], removedTrees: keep.removedTrees || [], buildingTypes: keep.buildingTypes || {} });
-          fs.writeFileSync(rfNew, JSON.stringify(nr));
-          log('Kept the trees added in the editor.');
-        }
-        // (and the course's look chosen in the editor: mowing patterns, grass heights)
-        if (cd.Mowing || cd.Grass || cd.Surface || cd.TreesOff || cd.Plants) {
-          const nd0 = readCourseData(r.dataFile);
-          if (cd.TreesOff) nd0.TreesOff = cd.TreesOff;
-          if (cd.Plants) nd0.Plants = cd.Plants;
-          if (cd.Mowing) nd0.Mowing = cd.Mowing;
-          if (cd.Grass) nd0.Grass = cd.Grass;
-          if (cd.Surface) nd0.Surface = cd.Surface;
-          fs.writeFileSync(r.dataFile, JSON.stringify(nd0, null, 1));
-        }
-        const sat = satDir(r.dataFile);
-        for (const name of ['paths.json', 'buildings.json', 'parking.json', 'roads.json', 'phototrees.json', 'heather.json']) fs.rmSync(path.join(sat, name), { force: true });
-        summaries.delete(r.dataFile);
-        const real = JSON.parse(fs.readFileSync(realFile(r.dataFile), 'utf8'));
-        const nd = readCourseData(r.dataFile), geo = geoFor(nd, real);
-        if (geo && fs.existsSync(sat)) {
-          const oob = (nd.pOOB?.coords || []).map((c) => [c.x, c.z]);
-          log('', { step: 'paths' }); await ensurePaths(sat, geo, real.grid, oob, log);
-          log('', { step: 'buildings' }); await ensureBuildings(sat, geo, real.grid, log);
-          log('', { step: 'parking' }); await ensureParking(sat, geo, real.grid, log);
-          log('', { step: 'roads' }); await ensureRoads(sat, geo, real.grid, oob, log);
-          log('', { step: 'imagery' });
-          try { await recheckSatellite(sat, geo, real.grid, log); } catch (err) { log(`Aerial photo check skipped (${err.message})`); }
-        }
-        return r;
-      }))
-        .then((r) => broadcast('build', { jobId, done: true, courseId: path.basename(path.dirname(r.dataFile)), needsReview: r.needsReview }))
+      runUpdate(m[1], log)
+        .then((r) => broadcast('build', { jobId, done: true, courseId: r.courseId, needsReview: r.needsReview }))
         .catch((err) => { console.error(err); broadcast('build', { jobId, error: err.message }); });
       return json(res, { jobId });
     }
@@ -1173,7 +1196,15 @@ httpServer.on('error', (err) => {
 httpServer.listen(HTTP_PORT, HELPER ? '127.0.0.1' : undefined, () => {
   console.log(`OpenTeeGolf ${VERSION} running at http://localhost:${HTTP_PORT}${HELPER ? ' (helper for the Unreal game)' : ''}`);
   // (the world's golf courses for the builder's map: the snapshot at once, then checked for new ones)
-  if (HELPER) { watchParent(); cleanStale(); worldCourses(0); console.log(`Courses folder: ${BUILT_DIR}`); return; }
+  if (HELPER) {
+    watchParent(); cleanStale(); worldCourses(0);
+    initQueue(path.join(process.env.OTG_DATA_DIR || path.join(ROOT, 'data'), 'queue.json'), {
+      build: runBuild, update: runUpdate, exportBusy, cancelExport,
+      exportCourse: (id, onProgress) => exportCourse(id, HTTP_PORT, onProgress),
+    });
+    console.log(`Courses folder: ${BUILT_DIR}`);
+    return;
+  }
   cleanUpAfterUpdate();
   checkForUpdate().then((u) => { if (u.available) console.log(`A new version is available: ${u.latest} (you have ${VERSION}). Update from the game's menu.`); }).catch(() => {});
   console.log(`Courses folder: ${BUILT_DIR} (${findCourses().length} course(s) found)`);

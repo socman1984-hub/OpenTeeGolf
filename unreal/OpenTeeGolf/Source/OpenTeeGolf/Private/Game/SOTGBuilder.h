@@ -131,7 +131,6 @@ private:
 	TArray<FBuilt> Built;
 	FString ConfirmDelete;
 	// a build going on: export it when it's done
-	bool bExportAfterBuild = false;
 	FString ReadyId;
 	FDelegateHandle JobHandle;
 	FString JobShown;
