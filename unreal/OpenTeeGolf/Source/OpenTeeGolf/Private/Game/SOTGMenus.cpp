@@ -259,6 +259,9 @@ void SOTGMainMenu::Construct(const FArguments&)
 	Setup.Picked.RemoveAll([&](const FString& Id) { return !Profiles.ContainsByPredicate([&](const FOTGPlayerProfile& P) { return P.Id == Id; }); });
 	if (UOTGCourseSubsystem* C = Courses()) CourseList = C->ListCourses();
 	if (CourseList.Num() && !CourseList.ContainsByPredicate([&](const FOTGCourseInfo& I) { return I.Id == Setup.CourseId; })) Setup.CourseId = CourseList[0].Id;
+	// (testing, even in a Shipping build, which has no console: -buildertest opens New course)
+	FString BuilderTest;
+	if (FParse::Value(FCommandLine::Get(), TEXT("buildertest="), BuilderTest)) Page = EPage::Build;
 	ChildSlot
 	[
 		SNew(SOverlay)

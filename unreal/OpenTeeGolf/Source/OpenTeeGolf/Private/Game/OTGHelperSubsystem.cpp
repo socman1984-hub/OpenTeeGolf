@@ -17,8 +17,106 @@
 #include "Serialization/JsonSerializer.h"
 #include "Dom/JsonObject.h"
 #include "Kismet/GameplayStatics.h"
+#include "Async/Async.h"
+#include "HAL/PlatformFileManager.h"
+#include "Misc/FileHelper.h"
+#include "Sockets.h"
+#include "SocketSubsystem.h"
+#include "IPAddress.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogOTGHelper, Log, All);
+
+namespace
+{
+	// The helper's own log (Saved/Logs/helper.log): a Shipping build writes no other, and this is
+	// where a course helper that won't start says why
+	void HelperLog(const FString& Line)
+	{
+		static bool bFresh = true;
+		const FString File = FPaths::Combine(FPaths::ProjectLogDir(), TEXT("helper.log"));
+		const FString Text = FDateTime::Now().ToString(TEXT("%H:%M:%S ")) + Line + LINE_TERMINATOR;
+		FFileHelper::SaveStringToFile(Text, *File, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM, &IFileManager::Get(), bFresh ? 0 : FILEWRITE_Append);
+		bFresh = false;
+	}
+	// (on the disk itself: a Shipping build's file system is the pak files', which may not see loose ones)
+	bool OnDisk(const FString& File) { return IPlatformFile::GetPlatformPhysical().FileExists(*File); }
+
+	// A request to the helper on this computer, over a plain socket: Unreal's HTTP module may refuse
+	// http:// (not https) in a Shipping build. Blocking: call it off the game thread.
+	struct FLocalReply { int32 Code = 0; FString Type, Body, Error; };
+	FLocalReply LocalHttp(int32 Port, const FString& Verb, const FString& Path, const FString& Body, double TimeoutS)
+	{
+		FLocalReply R;
+		ISocketSubsystem* SS = ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM);
+		if (!SS) { R.Error = TEXT("no sockets"); return R; }
+		FSocket* S = SS->CreateSocket(NAME_Stream, TEXT("OTG course helper"), false);
+		if (!S) { R.Error = TEXT("no socket"); return R; }
+		ON_SCOPE_EXIT { S->Close(); SS->DestroySocket(S); };
+		const TSharedRef<FInternetAddr> A = SS->CreateInternetAddr();
+		bool bValid = false;
+		A->SetIp(TEXT("127.0.0.1"), bValid);
+		A->SetPort(Port);
+		if (!S->Connect(*A)) { R.Error = TEXT("can't connect"); return R; }
+		const FTCHARToUTF8 B(*Body);
+		const FString Head = FString::Printf(TEXT("%s %s HTTP/1.1\r\nHost: 127.0.0.1:%d\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: %d\r\n\r\n"), *Verb, *Path, Port, B.Length());
+		const FTCHARToUTF8 H(*Head);
+		TArray<uint8> Out;
+		Out.Append((const uint8*)H.Get(), H.Length());
+		Out.Append((const uint8*)B.Get(), B.Length());
+		for (int32 Sent = 0; Sent < Out.Num();)
+		{
+			int32 N = 0;
+			if (!S->Send(Out.GetData() + Sent, Out.Num() - Sent, N) || N <= 0) { R.Error = TEXT("send failed"); return R; }
+			Sent += N;
+		}
+		// (the answer: all of it, until the helper closes the connection)
+		TArray<uint8> In;
+		const double End = FPlatformTime::Seconds() + TimeoutS;
+		uint8 Buf[65536];
+		for (;;)
+		{
+			if (FPlatformTime::Seconds() > End) { R.Error = TEXT("timed out"); return R; }
+			if (!S->Wait(ESocketWaitConditions::WaitForRead, FTimespan::FromSeconds(1))) continue;
+			int32 N = 0;
+			if (!S->Recv(Buf, sizeof(Buf), N) || N <= 0) break;
+			In.Append(Buf, N);
+		}
+		int32 HeadEnd = INDEX_NONE;
+		for (int32 i = 0; i + 3 < In.Num(); i++) if (In[i] == '\r' && In[i + 1] == '\n' && In[i + 2] == '\r' && In[i + 3] == '\n') { HeadEnd = i; break; }
+		if (HeadEnd == INDEX_NONE) { R.Error = TEXT("no answer"); return R; }
+		const FString Headers(FUTF8ToTCHAR((const ANSICHAR*)In.GetData(), HeadEnd).Get(), FUTF8ToTCHAR((const ANSICHAR*)In.GetData(), HeadEnd).Length());
+		TArray<FString> Lines;
+		Headers.ParseIntoArrayLines(Lines);
+		if (Lines.Num()) { TArray<FString> P; Lines[0].ParseIntoArrayWS(P); if (P.Num() > 1) R.Code = FCString::Atoi(*P[1]); }
+		bool bChunked = false;
+		for (const FString& L : Lines)
+		{
+			if (L.StartsWith(TEXT("Content-Type:"), ESearchCase::IgnoreCase)) R.Type = L.Mid(13).TrimStartAndEnd();
+			if (L.StartsWith(TEXT("Transfer-Encoding:"), ESearchCase::IgnoreCase) && L.Contains(TEXT("chunked"), ESearchCase::IgnoreCase)) bChunked = true;
+		}
+		TArray<uint8> Data(In.GetData() + HeadEnd + 4, In.Num() - HeadEnd - 4);
+		if (bChunked)
+		{
+			TArray<uint8> Plain;
+			int32 i = 0;
+			while (i < Data.Num())
+			{
+				int32 E = i;
+				while (E + 1 < Data.Num() && !(Data[E] == '\r' && Data[E + 1] == '\n')) E++;
+				const FString Hex(E - i, (const ANSICHAR*)Data.GetData() + i);
+				const int32 Len = FParse::HexNumber(*Hex);
+				if (Len <= 0) break;
+				i = E + 2;
+				Plain.Append(Data.GetData() + i, FMath::Min(Len, Data.Num() - i));
+				i += Len + 2;
+			}
+			Data = MoveTemp(Plain);
+		}
+		const FUTF8ToTCHAR Conv((const ANSICHAR*)Data.GetData(), Data.Num());
+		R.Body = FString(Conv.Length(), Conv.Get());
+		return R;
+	}
+}
 
 namespace
 {
@@ -116,7 +214,7 @@ void UOTGHelperSubsystem::Deinitialize()
 
 FString UOTGHelperSubsystem::HelperDir(bool* bDev) const
 {
-	auto Has = [](const FString& D) { return !D.IsEmpty() && FPaths::FileExists(FPaths::Combine(D, TEXT("server.js"))); };
+	auto Has = [](const FString& D) { return !D.IsEmpty() && OnDisk(FPaths::Combine(D, TEXT("server.js"))); };
 	if (bDev) *bDev = false;
 	FString D;
 	if (FParse::Value(FCommandLine::Get(), TEXT("helper="), D) && Has(D)) return D;
@@ -134,7 +232,7 @@ FString UOTGHelperSubsystem::HelperDir(bool* bDev) const
 FString UOTGHelperSubsystem::NodeExe(const FString& Dir) const
 {
 	const FString Own = FPaths::Combine(Dir, TEXT("node"), TEXT("node.exe"));
-	if (FPaths::FileExists(Own)) return Own;
+	if (OnDisk(Own)) return Own;
 	// (else the one on the PATH)
 	const FString Path = FPlatformMisc::GetEnvironmentVariable(TEXT("PATH"));
 	TArray<FString> Parts;
@@ -142,7 +240,7 @@ FString UOTGHelperSubsystem::NodeExe(const FString& Dir) const
 	for (const FString& P : Parts)
 	{
 		const FString Exe = FPaths::Combine(P.TrimQuotes(), TEXT("node.exe"));
-		if (FPaths::FileExists(Exe)) return Exe;
+		if (OnDisk(Exe)) return Exe;
 	}
 	return FString();
 }
@@ -169,7 +267,12 @@ void UOTGHelperSubsystem::Start(TFunction<void(bool)> Then)
 void UOTGHelperSubsystem::Launch()
 {
 	FString Why;
-	if (!Available(&Why)) { Finish(false, Why); return; }
+	if (!Available(&Why))
+	{
+		HelperLog(FString::Printf(TEXT("Not available: %s (root %s, project %s)"), *Why, *FPaths::ConvertRelativePathToFull(FPaths::RootDir()), *FPaths::ConvertRelativePathToFull(FPaths::ProjectDir())));
+		Finish(false, Why);
+		return;
+	}
 	bool bDev = false;
 	const FString Dir = HelperDir(&bDev);
 	const FString Node = NodeExe(Dir);
@@ -195,47 +298,49 @@ void UOTGHelperSubsystem::Launch()
 	uint32 Pid = 0;
 	Proc = FPlatformProcess::CreateProc(*Node, *Args, false, true, true, &Pid, 0, *Dir, PipeWrite, nullptr, PipeWrite);
 	ProcId = Pid;
-	if (!Proc.IsValid()) { Finish(false, FString::Printf(TEXT("The course helper didn't start (%s)"), *Node)); return; }
+	if (!Proc.IsValid()) { HelperLog(TEXT("CreateProc failed: ") + Node); Finish(false, FString::Printf(TEXT("The course helper didn't start (%s)"), *Node)); return; }
 	UE_LOG(LogOTGHelper, Display, TEXT("Course helper: %s %s on port %d (pid %u, %s)"), *Node, *Args, Port, Pid, bDev ? TEXT("development copy") : TEXT("release"));
+	HelperLog(FString::Printf(TEXT("Started %s %s in %s on port %d (pid %u, %s)"), *Node, *Args, *Dir, Port, Pid, bDev ? TEXT("development copy") : TEXT("release")));
 	Ping(0);
 }
 
 void UOTGHelperSubsystem::Ping(int32 Attempt)
 {
 	TWeakObjectPtr<UOTGHelperSubsystem> Self(this);
-	TSharedRef<IHttpRequest, ESPMode::ThreadSafe> R = FHttpModule::Get().CreateRequest();
-	R->SetURL(FString::Printf(TEXT("http://127.0.0.1:%d/api/helper/ping"), Port));
-	R->SetVerb(TEXT("GET"));
-	R->SetTimeout(2);
-	R->OnProcessRequestComplete().BindLambda([Self, Attempt](FHttpRequestPtr, FHttpResponsePtr Res, bool bOk) {
-		if (!Self.IsValid() || Self->State != EOTGHelperState::Starting) return;
-		if (bOk && Res.IsValid() && Res->GetResponseCode() == 200)
-		{
-			TSharedPtr<FJsonObject> J;
-			if (FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Res->GetContentAsString()), J) && J.IsValid() && J->GetBoolField(TEXT("helper")))
+	const int32 P = Port;
+	Async(EAsyncExecution::ThreadPool, [Self, Attempt, P]() {
+		const FLocalReply R = LocalHttp(P, TEXT("GET"), TEXT("/api/helper/ping"), FString(), 3);
+		AsyncTask(ENamedThreads::GameThread, [Self, Attempt, R]() {
+			if (!Self.IsValid() || Self->State != EOTGHelperState::Starting) return;
+			if (R.Code == 200)
 			{
-				UE_LOG(LogOTGHelper, Display, TEXT("Course helper ready: version %s, courses in %s, browser %s"),
-					*J->GetStringField(TEXT("version")), *J->GetStringField(TEXT("dir")), J->GetBoolField(TEXT("browser")) ? TEXT("found") : TEXT("missing"));
-				Self->Finish(true);
+				TSharedPtr<FJsonObject> J;
+				if (FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(R.Body), J) && J.IsValid() && J->GetBoolField(TEXT("helper")))
+				{
+					UE_LOG(LogOTGHelper, Display, TEXT("Course helper ready: version %s, courses in %s, browser %s"),
+						*J->GetStringField(TEXT("version")), *J->GetStringField(TEXT("dir")), J->GetBoolField(TEXT("browser")) ? TEXT("found") : TEXT("missing"));
+					HelperLog(TEXT("Answers: ") + R.Body);
+					Self->Finish(true);
+					return;
+				}
+			}
+			// (gone: its port taken, or it failed - another port, twice more)
+			if (!FPlatformProcess::IsProcRunning(Self->Proc))
+			{
+				FPlatformProcess::CloseProc(Self->Proc);
+				HelperLog(TEXT("It stopped as it started"));
+				if (Self->Tries < 3) { Self->Launch(); return; }
+				Self->Finish(false, TEXT("The course helper stopped as it started: ") + (Self->Output.Num() ? Self->Output.Last() : FString()));
 				return;
 			}
-		}
-		// (gone: its port taken, or it failed - another port, twice more)
-		if (!FPlatformProcess::IsProcRunning(Self->Proc))
-		{
-			FPlatformProcess::CloseProc(Self->Proc);
-			if (Self->Tries < 3) { Self->Launch(); return; }
-			Self->Finish(false, TEXT("The course helper stopped as it started: ") + (Self->Output.Num() ? Self->Output.Last() : FString()));
-			return;
-		}
-		if (Attempt > 60) { Self->Finish(false, TEXT("The course helper didn't answer")); return; }
-		// (again in a moment: the ticker's clock)
-		FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([Self, Attempt](float) {
-			if (Self.IsValid()) Self->Ping(Attempt + 1);
-			return false;
-		}), 0.3f);
+			if (Attempt > 60) { Self->Finish(false, TEXT("The course helper didn't answer (") + R.Error + TEXT(")")); return; }
+			// (again in a moment: the ticker's clock)
+			FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([Self, Attempt](float) {
+				if (Self.IsValid()) Self->Ping(Attempt + 1);
+				return false;
+			}), 0.3f);
+		});
 	});
-	R->ProcessRequest();
 }
 
 void UOTGHelperSubsystem::Finish(bool bOk, const FString& Why)
@@ -243,6 +348,7 @@ void UOTGHelperSubsystem::Finish(bool bOk, const FString& Why)
 	State = bOk ? EOTGHelperState::Ready : EOTGHelperState::Failed;
 	Message = bOk ? FString(TEXT("Ready")) : Why;
 	if (!bOk) UE_LOG(LogOTGHelper, Warning, TEXT("Course helper: %s"), *Why);
+	HelperLog(bOk ? FString(TEXT("Ready")) : TEXT("Failed: ") + Why);
 	TArray<TFunction<void(bool)>> Then = MoveTemp(Waiting);
 	Waiting.Reset();
 	for (TFunction<void(bool)>& F : Then) F(bOk);
@@ -285,6 +391,7 @@ bool UOTGHelperSubsystem::Tick(float)
 				Partial.RightChopInline(Nl + 1);
 				if (Line.IsEmpty()) continue;
 				UE_LOG(LogOTGHelper, Log, TEXT("| %s"), *Line);
+				HelperLog(TEXT("| ") + Line);
 				Output.Add(Line);
 				if (Output.Num() > 300) Output.RemoveAt(0, Output.Num() - 300);
 			}
@@ -313,25 +420,19 @@ void UOTGHelperSubsystem::Request(const FString& Verb, const FString& Path, cons
 	Start([Self, Verb, Path, Body, Done = MoveTemp(Done)](bool bOk) mutable {
 		if (!Self.IsValid()) return;
 		if (!bOk) { if (Done) Done(0, nullptr, Self->Message); return; }
-		TSharedRef<IHttpRequest, ESPMode::ThreadSafe> R = FHttpModule::Get().CreateRequest();
-		R->SetURL(FString::Printf(TEXT("http://127.0.0.1:%d%s"), Self->Port, *Path));
-		R->SetVerb(Verb);
 		// (searches and checks ask OpenStreetMap: a minute or two when it's busy)
-		R->SetTimeout(300);
-		if (!Body.IsEmpty() || Verb != TEXT("GET"))
-		{
-			R->SetHeader(TEXT("Content-Type"), TEXT("application/json"));
-			R->SetContentAsString(Body);
-		}
-		R->OnProcessRequestComplete().BindLambda([Done = MoveTemp(Done)](FHttpRequestPtr, FHttpResponsePtr Res, bool bOk2) {
-			if (!Done) return;
-			if (!bOk2 || !Res.IsValid()) { Done(0, nullptr, TEXT("No answer from the course helper")); return; }
-			const FString Text = Res->GetContentAsString();
-			TSharedPtr<FJsonValue> J;
-			if (Res->GetContentType().StartsWith(TEXT("application/json"))) FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Text), J);
-			Done(Res->GetResponseCode(), J, Text);
+		const int32 P = Self->Port;
+		Async(EAsyncExecution::ThreadPool, [P, Verb, Path, Body, Done = MoveTemp(Done)]() mutable {
+			const FLocalReply R = LocalHttp(P, Verb, Path, Body, 300);
+			AsyncTask(ENamedThreads::GameThread, [R, Path, Done = MoveTemp(Done)]() {
+				if (!R.Error.IsEmpty()) HelperLog(FString::Printf(TEXT("%s: %s"), *Path, *R.Error));
+				if (!Done) return;
+				if (!R.Code) { Done(0, nullptr, TEXT("No answer from the course helper (") + R.Error + TEXT(")")); return; }
+				TSharedPtr<FJsonValue> J;
+				if (R.Type.StartsWith(TEXT("application/json"))) FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(R.Body), J);
+				Done(R.Code, J, R.Body);
+			});
 		});
-		R->ProcessRequest();
 	});
 }
 
