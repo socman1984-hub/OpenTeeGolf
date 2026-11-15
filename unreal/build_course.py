@@ -2258,6 +2258,169 @@ def water_material():
     return mat
 
 
+SEA_DEEP = ((0.03, 0.11, 0.15), (1.6, 0.55, 0.45))      # (scattering, absorption per metre) offshore: deep blue-green, the bed hidden
+SEA_SHALLOW = ((0.035, 0.15, 0.14), (1.1, 0.38, 0.36))     # .. and in the last few metres to the beach: lighter, turquoise
+SEA_SWELL = 1.3   # how much the swells tilt the surface (x the web version's)
+
+
+def sea_material():
+    """The sea beside a seaside course (OTGRuntimeCourse.cpp's BuildSea, the web version's
+    oceanMaterial): Single Layer Water, deep blue-green offshore and turquoise in the shallows,
+    thick enough that the bed doesn't show; three swells rolling in (SwellDir: the way they travel)
+    that die down near the shore; lines of surf rolling in over the last 45 m and breaking into
+    white water; a band of foam along the beach. Per point, from its uvs: metres to the shore (U)
+    and the sea bed's depth (V, unused for now)."""
+    mat = new_material("M_Sea")
+    first_ok(mat, ("shading_model",), unreal.MaterialShadingModel.MSM_SINGLE_LAYER_WATER)
+    # (the normal worked out below is the world's: the surface is flat, facing up)
+    first_ok(mat, ("tangent_space_normal",), False)
+    E = lambda cls, x, y: mel.create_material_expression(mat, cls, x, y)
+
+    def const(v, x, y):
+        c = E(unreal.MaterialExpressionConstant, x, y)
+        c.set_editor_property("r", v)
+        return c
+
+    def const3(rgb, x, y):
+        c = E(unreal.MaterialExpressionConstant3Vector, x, y)
+        c.set_editor_property("constant", unreal.LinearColor(rgb[0], rgb[1], rgb[2], 1))
+        return c
+
+    def custom(code, out_type, inputs, x, y):
+        c = E(unreal.MaterialExpressionCustom, x, y)
+        c.set_editor_property("code", code)
+        c.set_editor_property("output_type", out_type)
+        ins = []
+        for n, node, out in inputs:
+            ci = unreal.CustomInput()
+            ci.set_editor_property("input_name", n)
+            ins.append(ci)
+        c.set_editor_property("inputs", ins)
+        for n, node, out in inputs:
+            mel.connect_material_expressions(node, out, c, n)
+        return c
+
+    def mask(node, chans, x, y, out=""):
+        m = E(unreal.MaterialExpressionComponentMask, x, y)
+        for ch in "rgba":
+            m.set_editor_property(ch, ch in chans)
+        mel.connect_material_expressions(node, out, m, "")
+        return m
+
+    wp = E(unreal.MaterialExpressionWorldPosition, -2200, 0)
+    tm = E(unreal.MaterialExpressionTime, -2200, 150)
+    tc = E(unreal.MaterialExpressionTextureCoordinate, -2200, 300)
+    shore = mask(tc, "r", -2000, 300)
+    swell = E(unreal.MaterialExpressionVectorParameter, -2200, 450)
+    swell.set_editor_property("parameter_name", "SwellDir")
+    swell.set_editor_property("default_value", unreal.LinearColor(0, 1, 0, 0))
+    F2 = unreal.CustomMaterialOutputType.CMOT_FLOAT2
+    # ripples: the game's ripple picture at two sizes, drifting (as the web version's sea)
+    nt = import_texture(os.path.join(GAME_TEXTURES, "water_normal.jpg"), "T_water_normal", "normal")
+    ripples = []
+    for k, code in enumerate(("return P.xy / 1400.0 + T * float2(0.012, 0.007);",
+                              "return P.xy / 1400.0 * 0.37 + T * float2(-0.009, 0.011);")):
+        uv = custom(code, F2, [("P", wp, ""), ("T", tm, "")], -1800, 600 + k * 250)
+        t = E(unreal.MaterialExpressionTextureSample, -1500, 600 + k * 250)
+        t.set_editor_property("texture", nt)
+        t.set_editor_property("sampler_type", unreal.MaterialSamplerType.SAMPLERTYPE_NORMAL)
+        mel.connect_material_expressions(uv, "", t, "UVs")
+        ripples.append(t)
+    # the surface's normal (xyz) and how much foam is on it (w)
+    sea = custom(
+        "float2 q = P.xy / 100.0;\n"
+        "float calm = smoothstep(4.0, 60.0, D);\n"
+        "float2 s0 = normalize(SW.xy + float2(1e-5, 0));\n"
+        "float2 dirs[3] = { s0, normalize(float2(s0.x * 0.9 - s0.y * 0.44, s0.y * 0.9 + s0.x * 0.44)), normalize(float2(s0.x * 0.9 + s0.y * 0.44, s0.y * 0.9 - s0.x * 0.44)) };\n"
+        "float Ls[3] = { 46.0, 27.0, 15.0 };\n"
+        "float As[3] = { 0.42, 0.22, 0.1 };\n"
+        "float2 sl = 0;\n"
+        "for (int i = 0; i < 3; i++) {\n"
+        "  float k = 6.2831853 / Ls[i], c = sqrt(9.81 / k);\n"
+        "  float ph = k * (dot(dirs[i], q) - c * T);\n"
+        "  sl += dirs[i] * cos(ph) * calm * As[i] * k;\n"
+        "}\n"
+        "sl *= SWELL;\n"
+        "float far = smoothstep(150.0, 900.0, length(P - C) / 100.0);\n"
+        "sl *= 1.0 - 0.5 * far;\n"
+        "float2 rn = (RA.xy + RB.xy) * (0.12 - 0.06 * calm) * (1.0 - 0.75 * far);\n"
+        "float3 n = normalize(float3(-sl.x + rn.x, -sl.y + rn.y, 1.0));\n"
+        "float froth = (RA.x + RB.y) * 0.5 + 0.5;\n"
+        "float wander = sin(q.x * 0.031 + q.y * 0.017) * 2.5 + sin(q.x * 0.011 - q.y * 0.027 + 1.3) * 3.0;\n"
+        "float ph = frac((D + wander) / 15.0 + T * 0.1);\n"
+        "float crest = smoothstep(0.91, 0.975, ph) * (1.0 - smoothstep(0.975, 1.0, ph)) * (1.0 - smoothstep(10.0, 45.0, D));\n"
+        "float surf = crest * smoothstep(lerp(0.5, 0.68, smoothstep(10.0, 45.0, D)), 0.85, froth);\n"
+        "float beach = (1.0 - smoothstep(1.5, 6.0, D)) * smoothstep(0.35, 0.7, froth + sin(T * 0.9 + D * 0.8) * 0.25);\n"
+        "return float4(n, saturate(beach + surf));",
+        unreal.CustomMaterialOutputType.CMOT_FLOAT4,
+        [("P", wp, ""), ("C", E(unreal.MaterialExpressionCameraPositionWS, -2200, 750), ""), ("T", tm, ""), ("D", shore, ""), ("SW", swell, ""), ("RA", ripples[0], "RGB"), ("RB", ripples[1], "RGB"),
+         ("SWELL", const(SEA_SWELL, -1800, 1200), "")], -1100, 300)
+    normal = mask(sea, "rgb", -800, 250)
+    foam = mask(sea, "a", -800, 400)
+    # shallow (1) .. deep (0): over the last 35 m to the beach
+    shallow = custom("return 1.0 - smoothstep(4.0, 35.0, D);", unreal.CustomMaterialOutputType.CMOT_FLOAT1, [("D", shore, "")], -1100, 700)
+    rough = E(unreal.MaterialExpressionLinearInterpolate, -600, 500)
+    mel.connect_material_expressions(const(0.04, -800, 500), "", rough, "A")
+    mel.connect_material_expressions(const(0.7, -800, 560), "", rough, "B")
+    mel.connect_material_expressions(foam, "", rough, "Alpha")
+
+    def water_coeffs(scat, absorb):
+        ext = tuple((sc + ab) * 0.01 for sc, ab in zip(scat, absorb))
+        alb = tuple(sc / max(1e-6, sc + ab) for sc, ab in zip(scat, absorb))
+        return alb, ext
+
+    deep, shal = water_coeffs(*SEA_DEEP), water_coeffs(*SEA_SHALLOW)
+    coeffs = []
+    for k in range(2):
+        v = E(unreal.MaterialExpressionLinearInterpolate, -400, 800 + k * 120)
+        mel.connect_material_expressions(const3(deep[k], -600, 800 + k * 120), "", v, "A")
+        mel.connect_material_expressions(const3(shal[k], -600, 850 + k * 120), "", v, "B")
+        mel.connect_material_expressions(shallow, "", v, "Alpha")
+        coeffs.append(v)
+    white = const3((0.85, 0.88, 0.86), -400, 100)
+    # (the old water output, without Substrate)
+    mel.connect_material_property(white, "", unreal.MaterialProperty.MP_BASE_COLOR)
+    mel.connect_material_property(foam, "", unreal.MaterialProperty.MP_OPACITY)
+    mel.connect_material_property(rough, "", unreal.MaterialProperty.MP_ROUGHNESS)
+    mel.connect_material_property(normal, "", unreal.MaterialProperty.MP_NORMAL)
+    # (the water output: the shading model needs one - the ray-traced shaders read it - even where
+    # Substrate's water below is what's drawn)
+    out = E(unreal.MaterialExpressionSingleLayerWaterMaterialOutput, -200, 1400)
+    for node, names in ((const3(tuple(c * 0.01 for c in SEA_DEEP[0]), -400, 1400), ("Scattering Coefficients", "ScatteringCoefficients")),
+                        (const3(tuple(c * 0.01 for c in SEA_DEEP[1]), -400, 1500), ("Absorption Coefficients", "AbsorptionCoefficients")),
+                        (const(0.1, -400, 1600), ("Phase G", "PhaseG"))):
+        if not any(mel.connect_material_expressions(node, "", out, n) for n in names):
+            warn("Sea: no '%s' input on the water output" % names[0])
+    if hasattr(unreal, "MaterialExpressionSubstrateSingleLayerWaterBSDF"):
+        try:
+            slw = E(unreal.MaterialExpressionSubstrateSingleLayerWaterBSDF, 0, 500)
+
+            def wire(node, names, out=""):
+                for n in names:
+                    if mel.connect_material_expressions(node, out, slw, n):
+                        return True
+                warn("Sea: no '%s' input on Substrate's water" % names[0])
+                return False
+
+            wire(white, ("Base Color", "BaseColor"))
+            wire(foam, ("Top Material Opacity", "TopMaterialOpacity"))
+            wire(coeffs[0], ("Water Albedo", "WaterAlbedo"))
+            wire(coeffs[1], ("Water Extinction", "WaterExtinction"))
+            wire(const(0.1, -200, 1100), ("Water Phase G", "WaterPhaseG"))
+            wire(const(0.5, -200, 1150), ("Specular",))
+            wire(rough, ("Roughness",))
+            wire(normal, ("Normal",))
+            if not mel.connect_material_property(slw, "", unreal.MaterialProperty.MP_FRONT_MATERIAL):
+                warn("Sea: Substrate's water not connected to the front material")
+            else:
+                log("Sea: Substrate Single Layer Water")
+        except Exception:
+            warn("Substrate sea skipped:\n" + traceback.format_exc())
+    mel.recompile_material(mat)
+    unreal.EditorAssetLibrary.save_loaded_asset(mat)
+    return mat
+
+
 # ------------------------------------------------------------------ built things
 
 def line_up(meshes, info):
@@ -2814,6 +2977,7 @@ def build_runtime_assets():
     step("Tree stand-ins", trees)
     step("Boulders", boulder_meshes)
     step("Water material", water_material)
+    step("Sea material", sea_material)
     step("Far land material", far_land_material)
     for kind in ("path", "path_gravel", "building", "car", "bridge"):
         step("Prop material " + kind, lambda kind=kind: prop_material(kind))

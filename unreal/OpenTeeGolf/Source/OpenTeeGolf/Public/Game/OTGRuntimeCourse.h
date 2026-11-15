@@ -51,6 +51,7 @@ private:
 	void BuildTrees();
 	void BuildBoulders();
 	void BuildWater();
+	void BuildSea();
 	void BuildFarLand();
 	bool BuildRealFarLand();   // (the export's farland.json: real heights and photos; false if it hasn't one)
 	void BuildProps();
@@ -65,6 +66,9 @@ private:
 	UPROPERTY() TArray<TObjectPtr<UStaticMeshComponent>> Tiles;
 	UPROPERTY() TArray<TObjectPtr<UActorComponent>> Parts;
 	double LandCm = 0;
+	// (the sea's level, metres in the export's frame: BuildSea. bSea false: no sea)
+	bool bSea = false;
+	double SeaLevelM = 0;
 	// (the steps still to do, BuildInSteps, and what to say)
 	TArray<TPair<FString, TFunction<void()>>> Steps;
 	int32 StepsTotal = 0;

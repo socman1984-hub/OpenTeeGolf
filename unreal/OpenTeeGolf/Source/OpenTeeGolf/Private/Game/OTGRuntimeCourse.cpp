@@ -139,6 +139,7 @@ void AOTGRuntimeCourse::Build(UOTGCourseData* D, TFunction<void(float, const FSt
 	if (Progress) Progress(0.75f, TEXT("Water, paths and buildings"));
 	BuildBoulders();
 	BuildWater();
+	BuildSea();
 	BuildFarLand();
 	BuildProps();
 	BuildGrass();
@@ -160,7 +161,7 @@ void AOTGRuntimeCourse::BuildInSteps(UOTGCourseData* D, TFunction<void(float, co
 	for (int32 From = 0; From < Total; From += Batch)
 		Steps.Add({ TEXT("The ground"), [this, From, Batch, Total]() { BuildGroundTiles(From, FMath::Min(From + Batch, Total)); } });
 	Steps.Add({ TEXT("Trees"), [this]() { BuildTrees(); } });
-	Steps.Add({ TEXT("Rocks and water"), [this]() { BuildBoulders(); BuildWater(); } });
+	Steps.Add({ TEXT("Rocks and water"), [this]() { BuildBoulders(); BuildWater(); BuildSea(); } });
 	Steps.Add({ TEXT("The land round it"), [this]() { BuildFarLand(); } });
 	Steps.Add({ TEXT("Paths and buildings"), [this]() { BuildProps(); } });
 	Steps.Add({ TEXT("Grass"), [this]() { BuildGrass(); } });
@@ -701,7 +702,10 @@ bool AOTGRuntimeCourse::BuildRealFarLand()
 			// back up - a few cm under - so it's the ground there: PlanGroundTiles)
 			const bool bInSquare = X > 0 && Z > 0 && X * 100.0 < LandCm && Z * 100.0 < LandCm;
 			const double Up = bInSquare && !GroundDrawnAt(X * 100.0, Z * 100.0) ? 3.95 : 0.0;
-			G.Positions.Add(FVector3f(X, Hts[j * Side + i] + Rim + Up, Z));   // (the export's frame: x east, y up, z south)
+			double H = Hts[j * Side + i] + Rim + Up;
+			// (at or just over the sea's level: the open sea's - BuildSea - so a little under it)
+			if (bSea && H < SeaLevelM + 0.5 && H > SeaLevelM - 3) H = SeaLevelM - 3;
+			G.Positions.Add(FVector3f(X, H, Z));   // (the export's frame: x east, y up, z south)
 			G.UVs.Add(FVector2f((X - (Cx - Widest.Half)) / (2 * Widest.Half), (Z - (Cz - Widest.Half)) / (2 * Widest.Half)));
 		}
 	G.Indices.Reserve(Grid * Grid * 6);
@@ -853,6 +857,78 @@ void AOTGRuntimeCourse::BuildWater()
 	C->bUseAsOccluder = false;
 	Parts.Add(C);
 	UE_LOG(LogOTGRuntimeCourse, Display, TEXT("Water: %d triangles"), G.Indices.Num() / 3);
+}
+
+// The sea beside a seaside course (sea.glb, sea.json: none inland), drawn as open sea - M_Sea:
+// swells, lines of surf rolling in, foam along the beach, deep blue-green that hides the bed - not
+// as a pond. Each point's metres to the shore and depth of the sea bed come in its colours (read
+// by the material from its uvs). Past the sea's own surface, out to the horizon, a flat sea at the
+// same level (the land round it, where it's at or under the sea, put under it: BuildRealFarLand).
+void AOTGRuntimeCourse::BuildSea()
+{
+	bSea = false;
+	otg::FGlbMesh G;
+	if (!otg::ReadGlb(FPaths::Combine(Data->ExportDir, TEXT("sea.glb")), G) || !G.Colors.Num()) return;
+	UMaterialInterface* Base = Load<UMaterialInterface>(TEXT("M_Sea"));
+	if (!Base)
+	{
+		UE_LOG(LogOTGRuntimeCourse, Warning, TEXT("Sea: no M_Sea - drawn as the ponds are"));
+		Base = Load<UMaterialInterface>(TEXT("M_Water"));
+	}
+	UMaterialInstanceDynamic* M = UMaterialInstanceDynamic::Create(Base, this);
+	FBox Box(ForceInit);
+	for (const FVector3f& P : G.Positions) Box += FVector(P);
+	bSea = true;
+	SeaLevelM = G.Positions[0].Y;
+	const TSharedPtr<FJsonValue> J = ReadJson(FPaths::Combine(Data->ExportDir, TEXT("sea.json")));
+	const TSharedPtr<FJsonObject>* Obj = nullptr;
+	if (J.IsValid() && J->TryGetObject(Obj))
+	{
+		double L = 0;
+		if ((*Obj)->TryGetNumberField(TEXT("levelMetres"), L)) SeaLevelM = L;
+		const TSharedPtr<FJsonObject>* Sw = nullptr;
+		if ((*Obj)->TryGetObjectField(TEXT("swell"), Sw))
+			M->SetVectorParameterValue(TEXT("SwellDir"), FLinearColor((*Sw)->GetNumberField(TEXT("x")), (*Sw)->GetNumberField(TEXT("y")), 0, 0));
+	}
+	auto Add = [&](const otg::FGlbMesh& Mesh)
+	{
+		UStaticMeshComponent* C = MeshFromGlb(this, Mesh, Data->LevelOrigin, WaterLiftCm, true, M);
+		C->SetCastShadow(false);
+		C->bUseAsOccluder = false;
+		Parts.Add(C);
+		return C;
+	};
+	Add(G);
+	// the open sea round it: a flat square 90 km across with the sea's own surface cut out (its
+	// bounds: where they're land, the land stands above it), as far from the shore as the material
+	// knows (full swell, deep)
+	otg::FGlbMesh O;
+	const double Far = 45000, Cx = LandCm / 200.0, Cz = LandCm / 200.0, Y = SeaLevelM;
+	const double X0 = Box.Min.X, X1 = Box.Max.X, Z0 = Box.Min.Z, Z1 = Box.Max.Z;
+	const double Xs[4] = { Cx - Far, X0, X1, Cx + Far }, Zs[4] = { Cz - Far, Z0, Z1, Cz + Far };
+	for (int32 j = 0; j < 4; j++)
+		for (int32 i = 0; i < 4; i++)
+		{
+			O.Positions.Add(FVector3f(Xs[i], Y, Zs[j]));
+			O.Normals.Add(FVector3f(0, 1, 0));
+			O.Colors.Add(FLinearColor(400, -50, 0, 1));
+		}
+	for (int32 j = 0; j < 3; j++)
+		for (int32 i = 0; i < 3; i++)
+		{
+			if (i == 1 && j == 1) continue;   // (the sea's own surface)
+			const int32 A = j * 4 + i, B = A + 1, C = A + 4, D = C + 1;
+			for (const FIntVector& T : { FIntVector(A, B, C), FIntVector(B, D, C) })
+			{
+				// (facing up)
+				const FVector3f& Pa = O.Positions[T.X];
+				if (FVector3f::CrossProduct(O.Positions[T.Y] - Pa, O.Positions[T.Z] - Pa).Y >= 0) O.Indices.Append({ T.X, T.Y, T.Z });
+				else O.Indices.Append({ T.X, T.Z, T.Y });
+			}
+		}
+	UStaticMeshComponent* Open = Add(O);
+	Open->SetCullDistance(0);
+	UE_LOG(LogOTGRuntimeCourse, Display, TEXT("Sea: %d triangles, at %.2f m"), G.Indices.Num() / 3, SeaLevelM);
 }
 
 // Cart paths, bridges, buildings and cars (props.json, props_<kind>.glb): the game's materials,

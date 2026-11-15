@@ -23,6 +23,11 @@
 //   water.glb          every pond, lake and stream surface as one mesh, in the same frame as the
 //                      landscape (glTF x = east, y = up, z = south, metres from the north-west
 //                      corner, up from heightBaseMetres); water.json: its bounds, to line it up
+//   sea.glb            the sea beside a seaside course (none inland), in the same frame, on its own:
+//                      the game draws it as open sea, not a pond. Vertex colours: red, metres to the
+//                      shore; green, the sea bed's depth (metres, negative). sea.json: its bounds,
+//                      levelMetres (up from heightBaseMetres) and swell (the way the swells travel,
+//                      Unreal X east, Y south)
 //   water_bodies.json  the water as Unreal's Water system wants it: lakes (an outline at a level) and
 //                      rivers (a centre line with a width and a falling level), Unreal centimetres:
 //                      [{ type: 'lake', points: [{ x, y, z }] } | { type: 'river', points: [{ x, y, z, w }] }]
@@ -382,6 +387,11 @@ export async function exportForUnreal({ course, scene, id, solids = [], status =
     await put('water.glb', await glb(water.mesh), 'model/gltf-binary');
     await put('water.json', JSON.stringify(water.info, null, 1), 'application/json');
   }
+  const sea = seaMesh(scene, wg, base);
+  if (sea) {
+    await put('sea.glb', await glb(sea.mesh), 'model/gltf-binary');
+    await put('sea.json', JSON.stringify(sea.info, null, 1), 'application/json');
+  }
   await put('water_bodies.json', JSON.stringify(waterBodies(course, ue)), 'application/json');
   status('Exporting buildings, paths, bridges and cars…');
   await tick();
@@ -641,8 +651,8 @@ function propMeshes(scene, x0, z1, base) {
 // stream meet. Here every grid point within WATER_REACH_M of some water takes that water's level
 // (the nearest: inside it first), and a square is water if any corner is inside the outline or
 // already lies below its level. The surface so reaches past the outline until the bank rises above
-// it, its edge tucked under the ground, and neighbouring pieces share their points. The sea keeps
-// the game's own surface (already grown under the beach). (wg: waterGrid's levels and distances)
+// it, its edge tucked under the ground, and neighbouring pieces share their points. The sea isn't
+// here: it's sea.glb (seaMesh). (wg: waterGrid's levels and distances)
 const WATER_REACH_M = 2; // (within the top of the bank the export gives low shores: see exportForUnreal)
 function waterMesh(scene, wg, { hts, N, step, base }) {
   const parts = [];
@@ -663,18 +673,6 @@ function waterMesh(scene, wg, { hts, N, step, base }) {
     gidx.push(va, vc, vb, vb, vc, ve); // (facing up: x east, z south)
   }
   if (gidx.length) parts.push({ pos: new Float32Array(gpos), index: gidx, n: gpos.length / 3 });
-  // ---- the sea, as the game draws it
-  for (const m of scene.waterMeshes || []) {
-    if (!m.geometry?.attributes?.position || !m.geometry.attributes.shore) continue;
-    m.updateWorldMatrix(true, false);
-    const g = m.geometry.clone().applyMatrix4(m.matrixWorld);
-    const p = g.attributes.position, out = new Float32Array(p.count * 3);
-    for (let i = 0; i < p.count; i++) {
-      // (scene x is the course's mirrored)
-      out[i * 3] = -p.getX(i) - wg.x0; out[i * 3 + 1] = p.getY(i) - base; out[i * 3 + 2] = wg.z1 - p.getZ(i);
-    }
-    parts.push({ pos: out, index: g.index ? g.index.array : null, n: p.count });
-  }
   if (!parts.length) return null;
   let nv = 0, ni = 0;
   for (const q of parts) { nv += q.n; ni += q.index ? q.index.length : q.n; }
@@ -704,6 +702,69 @@ function waterMesh(scene, wg, { hts, N, step, base }) {
   mesh.name = 'Water';
   // (its bounds in Unreal terms - X east, Y south, Z up, centimetres - to line the import up with)
   const info = { min: { x: b.min.x * 100, y: b.min.z * 100, z: b.min.y * 100 }, max: { x: b.max.x * 100, y: b.max.z * 100, z: b.max.y * 100 }, triangles: idx.length / 3 };
+  return { mesh, info };
+}
+
+// The sea, as the game draws it (scene.addOcean: a 3 m grid grown a little under the beach), in the
+// water's frame, on its own: the Unreal game draws it as open sea - swells, surf rolling in, foam
+// along the beach - not as a pond. Its colours carry what the sea's shader needs per point: red,
+// metres to the shore (up to 400); green, how far down the sea bed is (metres, negative).
+// info: its bounds (Unreal cm), its level (metres, up from the export's base) and the way the
+// swells travel (Unreal X east, Y south).
+function seaMesh(scene, wg, base) {
+  const parts = [];
+  let level = null;
+  for (const m of scene.waterMeshes || []) {
+    const g0 = m.geometry;
+    if (!g0?.attributes?.position || !g0.attributes.shore) continue;
+    m.updateWorldMatrix(true, false);
+    const g = g0.clone().applyMatrix4(m.matrixWorld);
+    const p = g.attributes.position, sh = g0.attributes.shore, bed = g0.attributes.seabed;
+    const pos = new Float32Array(p.count * 3), col = new Float32Array(p.count * 3);
+    for (let i = 0; i < p.count; i++) {
+      // (scene x is the course's mirrored)
+      pos[i * 3] = -p.getX(i) - wg.x0; pos[i * 3 + 1] = p.getY(i) - base; pos[i * 3 + 2] = wg.z1 - p.getZ(i);
+      col[i * 3] = sh.getX(i); col[i * 3 + 1] = bed ? bed.getX(i) : -50;
+    }
+    level ??= p.count ? p.getY(0) - base : null;
+    parts.push({ pos, col, index: g.index ? g.index.array : null, n: p.count });
+  }
+  if (!parts.length) return null;
+  let nv = 0, ni = 0;
+  for (const q of parts) { nv += q.n; ni += q.index ? q.index.length : q.n; }
+  const pos = new Float32Array(nv * 3), col = new Float32Array(nv * 3), idx = new Uint32Array(ni);
+  let ov = 0, oi = 0;
+  for (const q of parts) {
+    pos.set(q.pos, ov * 3); col.set(q.col, ov * 3);
+    if (q.index) for (let i = 0; i < q.index.length; i++) idx[oi++] = q.index[i] + ov;
+    else for (let i = 0; i < q.n; i++) idx[oi++] = ov + i;
+    ov += q.n;
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  g.setIndex(new THREE.BufferAttribute(idx, 1));
+  // (facing up: the mirroring turns the triangles over)
+  g.computeVertexNormals();
+  let up = 0;
+  for (let i = 1; i < g.attributes.normal.array.length; i += 3) up += g.attributes.normal.array[i];
+  if (up < 0) {
+    for (let i = 0; i < idx.length; i += 3) { const t = idx[i + 1]; idx[i + 1] = idx[i + 2]; idx[i + 2] = t; }
+    g.index.needsUpdate = true;
+  }
+  // (flat: straight up everywhere)
+  const nrm = g.attributes.normal.array;
+  for (let i = 0; i < nrm.length; i += 3) { nrm[i] = 0; nrm[i + 1] = 1; nrm[i + 2] = 0; }
+  g.computeBoundingBox();
+  const b = g.boundingBox;
+  const mesh = new THREE.Mesh(g, new THREE.MeshStandardMaterial({ name: 'Sea', vertexColors: true, roughness: 0.05 }));
+  mesh.name = 'Sea';
+  // (the scene's swell direction: x mirrored, z north -> Unreal X east, Y south)
+  const sw = scene.swellDir || [0, 1];
+  const info = {
+    min: { x: b.min.x * 100, y: b.min.z * 100, z: b.min.y * 100 }, max: { x: b.max.x * 100, y: b.max.z * 100, z: b.max.y * 100 },
+    triangles: idx.length / 3, levelMetres: level, swell: { x: -sw[0], y: -sw[1] },
+  };
   return { mesh, info };
 }
 
