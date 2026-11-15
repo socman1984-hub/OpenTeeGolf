@@ -72,11 +72,17 @@ in Explorer's address bar to open it); a new version of the game keeps them.
 
 Courses
 -------
-The game comes with no courses: you make your own in the web version of OpenTeeGolf (build or
-pick a course there, then click Export to Unreal on its card). The export goes to
-Documents\OpenTeeGolf\Courses, and the game lists every course in that folder under Play
-(restart the game, or click Refresh, after exporting). The first time a course is opened the game
-builds it (a loading screen shows how far along it is: under a minute for most courses).
+The game comes with no courses: you make your own on the New course page. Search for a course
+by name or town, or drag and zoom the map (the map or the aerial photos) and click its dot - every
+golf course mapped in OpenStreetMap is one; gold ones you've built. The game shows what's mapped
+there (and, at a club with more than one course, asks which holes), then Build downloads the map
+data, the ground's heights and aerial photos, builds the course and gets it ready to play (about 5
+to 20 minutes; you need to be online, and Microsoft Edge or Google Chrome installed - Windows has
+Edge). Then Play it. "Courses you've built" exports one again (after editing it), brings it up to
+date from OpenStreetMap, or deletes it. Built courses go in Documents\OpenTeeGolf\Courses, their
+sources in Documents\OpenTeeGolf\CourseSources. The first time a course is opened the game builds
+it (a loading screen shows how far along it is: under a minute for most courses). Courses exported
+from the web version of OpenTeeGolf (Export to Unreal) still work too.
 
 Settings > Courses folder shows where the game looks, opens it, and can point it somewhere else.
 To share a course, copy its folder into someone else's Courses folder.

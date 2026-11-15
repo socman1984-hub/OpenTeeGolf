@@ -1,0 +1,721 @@
+// See SOTGBuilder.h.
+
+#include "SOTGBuilder.h"
+
+#include "OTGUi.h"
+#include "OTGTextures.h"
+#include "OTGCourseSubsystem.h"
+#include "Game/OTGHelperSubsystem.h"
+#include "Brushes/SlateRoundedBoxBrush.h"
+#include "Dom/JsonObject.h"
+#include "Engine/Engine.h"
+#include "Engine/GameInstance.h"
+#include "Engine/GameViewportClient.h"
+#include "Engine/Texture2D.h"
+#include "Fonts/FontMeasure.h"
+#include "Framework/Application/SlateApplication.h"
+#include "Rendering/DrawElements.h"
+#include "HAL/IConsoleManager.h"
+#include "Misc/CommandLine.h"
+#include "Kismet/KismetSystemLibrary.h"
+#include "Widgets/Input/SEditableTextBox.h"
+#include "Widgets/Layout/SBox.h"
+#include "Widgets/Layout/SScrollBox.h"
+#include "Widgets/SBoxPanel.h"
+#include "Widgets/SOverlay.h"
+
+using namespace otg::ui;
+
+namespace
+{
+	UGameInstance* GI()
+	{
+		return GEngine && GEngine->GameViewport ? GEngine->GameViewport->GetGameInstance() : nullptr;
+	}
+	UOTGHelperSubsystem* HelperSub() { UGameInstance* G = GI(); return G ? G->GetSubsystem<UOTGHelperSubsystem>() : nullptr; }
+	constexpr double MinZoom = 2, MaxZoom = 18;
+	constexpr int32 MaxTiles = 400, MaxAsking = 8;
+	FString OsmTypeName(const FString& T) { return T == TEXT("n") ? FString(TEXT("node")) : T == TEXT("w") ? FString(TEXT("way")) : T == TEXT("r") ? FString(TEXT("relation")) : T; }
+}
+
+// ------------------------------------------------------------------ the map
+
+void SOTGWorldMap::Construct(const FArguments&)
+{
+	SetClipping(EWidgetClipping::ClipToBounds);
+}
+
+FVector2D SOTGWorldMap::ToPx(double InLat, double InLon, double Z) const
+{
+	// (Web Mercator, as the map tiles are)
+	const double N = 256.0 * FMath::Pow(2.0, Z);
+	const double La = FMath::DegreesToRadians(FMath::Clamp(InLat, -85.05, 85.05));
+	return FVector2D((InLon + 180.0) / 360.0 * N, (1.0 - FMath::Loge(FMath::Tan(La) + 1.0 / FMath::Cos(La)) / PI) / 2.0 * N);
+}
+
+void SOTGWorldMap::FromPx(const FVector2D& P, double Z, double& OutLat, double& OutLon) const
+{
+	const double N = 256.0 * FMath::Pow(2.0, Z);
+	OutLon = P.X / N * 360.0 - 180.0;
+	OutLat = FMath::RadiansToDegrees(FMath::Atan(FMath::Sinh(PI * (1.0 - 2.0 * P.Y / N))));
+}
+
+FVector2D SOTGWorldMap::ScreenOf(const FGeometry& G, double InLat, double InLon) const
+{
+	FVector2D D = ToPx(InLat, InLon, Zoom) - ToPx(Lat, Lon, Zoom);
+	// (the nearer way round the world)
+	const double W = 256.0 * FMath::Pow(2.0, Zoom);
+	if (D.X > W / 2) D.X -= W; else if (D.X < -W / 2) D.X += W;
+	return G.GetLocalSize() / 2 + D;
+}
+
+void SOTGWorldMap::FlyTo(double InLat, double InLon, double InZoom)
+{
+	Lat = InLat; Lon = InLon; Zoom = FMath::Clamp(InZoom, MinZoom, MaxZoom);
+}
+
+const FSlateBrush* SOTGWorldMap::Tile(int32 Z, int32 X, int32 Y) const
+{
+	const FString Key = FString::Printf(TEXT("%s/%d/%d/%d"), *Layer_, Z, X, Y);
+	FTile& T = Tiles.FindOrAdd(Key);
+	T.Used = FPlatformTime::Seconds();
+	if (T.Brush.IsValid()) return T.Brush.Get();
+	if (T.bAsked || T.bFailed || Asking >= MaxAsking) return nullptr;
+	UOTGHelperSubsystem* H = HelperSub();
+	if (!H || H->GetState() == EOTGHelperState::Failed) return nullptr;
+	T.bAsked = true;
+	Asking++;
+	TWeakPtr<const SOTGWorldMap> Weak = SharedThis(this);
+	H->Get(FString::Printf(TEXT("/api/helper/tile?layer=%s&z=%d&x=%d&y=%d"), *Layer_, Z, X, Y), [Weak, Key](int32 Code, TSharedPtr<FJsonValue> J, const FString&) {
+		TSharedPtr<const SOTGWorldMap> Self = Weak.Pin();
+		if (!Self.IsValid()) return;
+		Self->Asking--;
+		FTile* T = Self->Tiles.Find(Key);
+		if (!T) return;
+		FString File;
+		UTexture2D* Tex = nullptr;
+		if (Code == 200 && J.IsValid() && J->AsObject().IsValid() && J->AsObject()->TryGetStringField(TEXT("file"), File))
+			Tex = otg::LoadTexture(File, otg::ETexKind::Photo, 256, GetTransientPackage());
+		if (!Tex) { T->bFailed = true; return; }
+		T->Tex.Reset(Tex);
+		T->Brush = MakeShared<FSlateBrush>();
+		T->Brush->SetResourceObject(Tex);
+		T->Brush->ImageSize = FVector2D(256, 256);
+		T->Brush->DrawAs = ESlateBrushDrawType::Image;
+	});
+	// (the least lately used dropped, past a few hundred)
+	if (Tiles.Num() > MaxTiles)
+	{
+		TArray<FString> Keys;
+		Tiles.GetKeys(Keys);
+		Keys.Sort([this](const FString& A, const FString& B) { return Tiles[A].Used < Tiles[B].Used; });
+		for (int32 i = 0; i < Keys.Num() - MaxTiles; i++) if (!Tiles[Keys[i]].bAsked || Tiles[Keys[i]].Brush.IsValid()) Tiles.Remove(Keys[i]);
+	}
+	return nullptr;
+}
+
+int32 SOTGWorldMap::OnPaint(const FPaintArgs&, const FGeometry& G, const FSlateRect&, FSlateWindowElementList& Out, int32 Layer, const FWidgetStyle&, bool) const
+{
+	const FVector2D Size = G.GetLocalSize();
+	const FSlateBrush* White = FCoreStyle::Get().GetBrush("WhiteBrush");
+	FSlateDrawElement::MakeBox(Out, Layer, G.ToPaintGeometry(), White, ESlateDrawEffect::None, FLinearColor(0.08f, 0.1f, 0.12f, 1.f));
+	// the tiles: the zoom level nearest, scaled to the zoom between
+	const int32 Z = FMath::Clamp(FMath::FloorToInt32(Zoom + 0.4), 1, 18);
+	const double Scale = FMath::Pow(2.0, Zoom - Z), Ts = 256.0 * Scale;
+	const int32 N = 1 << Z;
+	const FVector2D C = ToPx(Lat, Lon, Z) * Scale;
+	const FVector2D Origin = Size / 2 - C;   // (where world pixel 0, 0 is on screen)
+	const int32 X0 = FMath::FloorToInt32(-Origin.X / Ts), X1 = FMath::FloorToInt32((Size.X - Origin.X) / Ts);
+	const int32 Y0 = FMath::Max(0, FMath::FloorToInt32(-Origin.Y / Ts)), Y1 = FMath::Min(N - 1, FMath::FloorToInt32((Size.Y - Origin.Y) / Ts));
+	for (int32 Y = Y0; Y <= Y1; Y++)
+		for (int32 X = X0; X <= X1; X++)
+		{
+			const int32 WX = ((X % N) + N) % N;
+			const FVector2D P = Origin + FVector2D(X * Ts, Y * Ts);
+			if (const FSlateBrush* B = Tile(Z, WX, Y))
+				FSlateDrawElement::MakeBox(Out, Layer + 1, G.ToPaintGeometry(FVector2D(Ts + 0.5, Ts + 0.5), FSlateLayoutTransform(P)), B);
+		}
+	// the courses: a dot each (gold: built already), the one picked bigger, with its name
+	static const FSlateRoundedBoxBrush Dot(FLinearColor::White, 8.f);
+	if (Courses)
+	{
+		int32 Shown = 0;
+		const double R = Zoom < 5 ? 2.5 : Zoom < 9 ? 3.5 : 5.0;
+		for (int32 i = 0; i < Courses->Num() && Shown < 6000; i++)
+		{
+			const FOTGMapCourse& M = (*Courses)[i];
+			const FVector2D P = ScreenOf(G, M.Lat, M.Lon);
+			if (P.X < -10 || P.Y < -10 || P.X > Size.X + 10 || P.Y > Size.Y + 10) continue;
+			Shown++;
+			const FLinearColor Col = M.BuiltId.IsEmpty() ? FLinearColor(0.35f, 1.f, 0.45f, 0.95f) : FLinearColor(1.f, 0.8f, 0.2f, 1.f);
+			FSlateDrawElement::MakeBox(Out, Layer + 2, G.ToPaintGeometry(FVector2D(2 * R + 2, 2 * R + 2), FSlateLayoutTransform(P - FVector2D(R + 1, R + 1))), &Dot, ESlateDrawEffect::None, FLinearColor(0, 0, 0, 0.7f));
+			FSlateDrawElement::MakeBox(Out, Layer + 3, G.ToPaintGeometry(FVector2D(2 * R, 2 * R), FSlateLayoutTransform(P - FVector2D(R, R))), &Dot, ESlateDrawEffect::None, Col);
+		}
+		if (Courses->IsValidIndex(Picked))
+		{
+			const FOTGMapCourse& M = (*Courses)[Picked];
+			const FVector2D P = ScreenOf(G, M.Lat, M.Lon);
+			FSlateDrawElement::MakeBox(Out, Layer + 4, G.ToPaintGeometry(FVector2D(20, 20), FSlateLayoutTransform(P - FVector2D(10, 10))), &Dot, ESlateDrawEffect::None, FLinearColor(1, 1, 1, 0.9f));
+			FSlateDrawElement::MakeBox(Out, Layer + 5, G.ToPaintGeometry(FVector2D(12, 12), FSlateLayoutTransform(P - FVector2D(6, 6))), &Dot, ESlateDrawEffect::None, FLinearColor(0.9f, 0.2f, 0.15f, 1.f));
+			const FSlateFontInfo F = Font(13, "Bold");
+			const FVector2D T = FSlateApplication::Get().GetRenderer()->GetFontMeasureService()->Measure(M.Name, F) + FVector2D(12, 6);
+			FSlateDrawElement::MakeBox(Out, Layer + 6, G.ToPaintGeometry(T, FSlateLayoutTransform(P + FVector2D(-T.X / 2, 14))), White, ESlateDrawEffect::None, FLinearColor(0, 0, 0, 0.75f));
+			FSlateDrawElement::MakeText(Out, Layer + 7, G.ToPaintGeometry(T, FSlateLayoutTransform(P + FVector2D(-T.X / 2 + 6, 17))), M.Name, F, ESlateDrawEffect::None, FLinearColor::White);
+		}
+	}
+	// whose map it is
+	const FString Credit = Layer_ == TEXT("map") ? FString(TEXT("© OpenStreetMap contributors")) : FString(TEXT("Imagery © Esri, Maxar, Earthstar Geographics"));
+	FSlateDrawElement::MakeBox(Out, Layer + 8, G.ToPaintGeometry(FVector2D(330, 20), FSlateLayoutTransform(FVector2D(Size.X - 330, Size.Y - 20))), White, ESlateDrawEffect::None, FLinearColor(0, 0, 0, 0.55f));
+	FSlateDrawElement::MakeText(Out, Layer + 9, G.ToPaintGeometry(FVector2D(320, 18), FSlateLayoutTransform(FVector2D(Size.X - 324, Size.Y - 18))), Credit, Font(10), ESlateDrawEffect::None, FLinearColor(1, 1, 1, 0.85f));
+	return Layer + 9;
+}
+
+int32 SOTGWorldMap::HitCourse(const FGeometry& G, const FVector2D& L) const
+{
+	if (!Courses) return INDEX_NONE;
+	int32 Best = INDEX_NONE;
+	double BestD = 9.0 * 9.0;
+	for (int32 i = 0; i < Courses->Num(); i++)
+	{
+		const double D = FVector2D::DistSquared(ScreenOf(G, (*Courses)[i].Lat, (*Courses)[i].Lon), L);
+		if (D < BestD) { BestD = D; Best = i; }
+	}
+	return Best;
+}
+
+FReply SOTGWorldMap::OnMouseButtonDown(const FGeometry& G, const FPointerEvent& E)
+{
+	if (E.GetEffectingButton() != EKeys::LeftMouseButton && E.GetEffectingButton() != EKeys::RightMouseButton) return FReply::Unhandled();
+	bDragging = true;
+	bMoved = false;
+	DragFrom = DragLast = G.AbsoluteToLocal(E.GetScreenSpacePosition());
+	return FReply::Handled().CaptureMouse(SharedThis(this));
+}
+
+FReply SOTGWorldMap::OnMouseMove(const FGeometry& G, const FPointerEvent& E)
+{
+	if (!bDragging) return FReply::Unhandled();
+	const FVector2D L = G.AbsoluteToLocal(E.GetScreenSpacePosition());
+	if (FVector2D::Distance(L, DragFrom) > 4) bMoved = true;
+	// (the map follows the mouse)
+	const FVector2D C = ToPx(Lat, Lon, Zoom) - (L - DragLast);
+	FromPx(C, Zoom, Lat, Lon);
+	Lon = FMath::Fmod(Lon + 540.0, 360.0) - 180.0;
+	DragLast = L;
+	return FReply::Handled();
+}
+
+FReply SOTGWorldMap::OnMouseButtonUp(const FGeometry& G, const FPointerEvent& E)
+{
+	if (!bDragging) return FReply::Unhandled();
+	bDragging = false;
+	if (!bMoved && E.GetEffectingButton() == EKeys::LeftMouseButton)
+	{
+		const int32 Hit = HitCourse(G, G.AbsoluteToLocal(E.GetScreenSpacePosition()));
+		if (Hit != INDEX_NONE && OnPick) OnPick(Hit);
+	}
+	return FReply::Handled().ReleaseMouseCapture();
+}
+
+FReply SOTGWorldMap::OnMouseWheel(const FGeometry& G, const FPointerEvent& E)
+{
+	// (zoomed round the point under the mouse)
+	const FVector2D L = G.AbsoluteToLocal(E.GetScreenSpacePosition());
+	const FVector2D Off = L - G.GetLocalSize() / 2;
+	double MLat, MLon;
+	FromPx(ToPx(Lat, Lon, Zoom) + Off, Zoom, MLat, MLon);
+	Zoom = FMath::Clamp(Zoom + E.GetWheelDelta() * 0.5, MinZoom, MaxZoom);
+	FromPx(ToPx(MLat, MLon, Zoom) - Off, Zoom, Lat, Lon);
+	return FReply::Handled();
+}
+
+FCursorReply SOTGWorldMap::OnCursorQuery(const FGeometry&, const FPointerEvent&) const
+{
+	return FCursorReply::Cursor(bDragging && bMoved ? EMouseCursor::GrabHandClosed : EMouseCursor::GrabHand);
+}
+
+// ------------------------------------------------------------------ the builder
+
+UOTGHelperSubsystem* SOTGCourseBuilder::Helper() const { return HelperSub(); }
+
+void SOTGCourseBuilder::Construct(const FArguments&)
+{
+	ChildSlot
+	[
+		SNew(SHorizontalBox)
+		+ SHorizontalBox::Slot().FillWidth(1).Padding(0, 0, 14, 0)
+		[
+			SNew(SOverlay)
+			+ SOverlay::Slot()[SAssignNew(Map, SOTGWorldMap)]
+			// Map / Aerial photos
+			+ SOverlay::Slot().HAlign(HAlign_Left).VAlign(VAlign_Top).Padding(10)
+			[
+				SNew(SHorizontalBox)
+				+ SHorizontalBox::Slot().AutoWidth().Padding(0, 0, 4, 0)[Button(TEXT("Map"), [this]() { Map->SetLayer(TEXT("map")); }, 12)]
+				+ SHorizontalBox::Slot().AutoWidth()[Button(TEXT("Aerial photos"), [this]() { Map->SetLayer(TEXT("photo")); }, 12)]
+			]
+		]
+		+ SHorizontalBox::Slot().AutoWidth()
+		[
+			SAssignNew(Side, SBox).WidthOverride(440)
+			[
+				SNew(SVerticalBox)
+				+ SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 6)
+				[
+					Box(SNew(SVerticalBox)
+						+ SVerticalBox::Slot().AutoHeight()[Text(TEXT("Find a course"), 15, Gold, "Bold")]
+						+ SVerticalBox::Slot().AutoHeight().Padding(0, 4, 0, 0)
+						[
+							SNew(SHorizontalBox)
+							+ SHorizontalBox::Slot().FillWidth(1)
+							[
+								SAssignNew(SearchBox, SEditableTextBox).Font(Font(14)).HintText(FText::FromString(TEXT("Course name or town")))
+								.OnTextCommitted_Lambda([this](const FText&, ETextCommit::Type T) { if (T == ETextCommit::OnEnter) Search(); })
+							]
+							+ SHorizontalBox::Slot().AutoWidth().Padding(6, 0, 0, 0)[Button(TEXT("Search"), [this]() { Search(); }, 13)]
+						]
+						+ SVerticalBox::Slot().AutoHeight().Padding(0, 4, 0, 0)
+						[
+							SNew(STextBlock).Font(Font(11)).ColorAndOpacity(Soft).WrapTextAt(400).Text_Lambda([this]() {
+								return FText::FromString(!Status.IsEmpty() ? Status
+									: bWorldDone ? FString::Printf(TEXT("%d golf courses on the map"), Courses.Num())
+									: FString::Printf(TEXT("Finding the world's golf courses: %d so far (%d%%)"), Courses.Num(), FMath::RoundToInt(WorldProgress * 100)));
+							})
+						], FMargin(12, 10), Solid)
+				]
+				+ SVerticalBox::Slot().FillHeight(1)[SAssignNew(Lower, SBox)]
+			]
+		]
+	];
+	Map->SetCourses(&Courses);
+	Map->OnPick = [this](int32 I) { Pick(I, false); };
+	if (UOTGHelperSubsystem* H = Helper())
+	{
+		JobHandle = H->OnJobDone.AddLambda([this](const FOTGHelperJob& J) { JobDone(J); });
+		FString Why;
+		if (!H->Available(&Why)) Status = Why;
+	}
+	LoadBuilt();
+	Rebuild();
+	if (FParse::Value(FCommandLine::Get(), TEXT("buildertest="), TestQuery, false) && !TestQuery.IsEmpty())
+	{
+		TestQuery.ReplaceInline(TEXT("+"), TEXT(" "));
+		bTestBuild = FParse::Param(FCommandLine::Get(), TEXT("buildertestbuild"));
+		TestStep = 1;
+		TestAt = FPlatformTime::Seconds() + 3;
+	}
+}
+
+void SOTGCourseBuilder::Tick(const FGeometry& Geometry, const double Time, const float Dt)
+{
+	SCompoundWidget::Tick(Geometry, Time, Dt);
+	// the world's courses: asked for a page at a time while the helper gathers them
+	if (!bWorldDone && !bWorldAsking && FPlatformTime::Seconds() >= NextWorld) LoadWorld();
+	// (the test: one step at a time)
+	if (TestStep > 0 && FPlatformTime::Seconds() >= TestAt)
+	{
+		UOTGHelperSubsystem* H = Helper();
+		auto Shot = [](const TCHAR* Name) { if (GEngine) GEngine->Exec(nullptr, *FString::Printf(TEXT("OTG.Shot %s"), Name)); };
+		auto Quit = []() { FPlatformMisc::RequestExit(false, TEXT("buildertest")); };
+		if (TestStep == 1) { SearchBox->SetText(FText::FromString(TestQuery)); Search(); TestStep = 2; TestAt = FPlatformTime::Seconds() + 1; }
+		else if (TestStep == 2 && Found.Num()) { Pick(Found[0], true); TestStep = 3; TestAt = FPlatformTime::Seconds() + 25; }
+		else if (TestStep == 2 && !Status.StartsWith(TEXT("Searching")) && FPlatformTime::Seconds() > TestAt + 60) { UE_LOG(LogTemp, Warning, TEXT("buildertest: nothing found")); Quit(); TestStep = 0; }
+		else if (TestStep == 3 && !bChecking) { Shot(TEXT("builder_picked")); TestStep = bTestBuild ? 4 : 9; TestAt = FPlatformTime::Seconds() + 3; }
+		else if (TestStep == 4)
+		{
+			if (Courses.IsValidIndex(Picked) && !Courses[Picked].BuiltId.IsEmpty()) { UE_LOG(LogTemp, Display, TEXT("buildertest: built already (%s): exporting"), *Courses[Picked].BuiltId); if (H) H->Export(Courses[Picked].BuiltId); }
+			else StartBuild();
+			TestStep = 5; TestAt = FPlatformTime::Seconds() + 30;
+		}
+		else if (TestStep == 5) { Shot(TEXT("builder_building")); TestStep = 6; TestAt = FPlatformTime::Seconds() + 5; }
+		else if (TestStep == 6 && H && !H->GetJob().IsRunning() && !bExportAfterBuild)
+		{
+			UE_LOG(LogTemp, Display, TEXT("buildertest: %s %s %s (ready: %s)"), *H->GetJob().Kind, *H->GetJob().State, *H->GetJob().Message, *ReadyId);
+			Shot(TEXT("builder_done"));
+			TestStep = 9; TestAt = FPlatformTime::Seconds() + 4;
+		}
+		else if (TestStep == 6) TestAt = FPlatformTime::Seconds() + 5;
+		else if (TestStep == 9) { TestStep = 0; Quit(); }
+	}
+	// a job going on: its line kept up to date
+	if (UOTGHelperSubsystem* H = Helper())
+	{
+		const FOTGHelperJob& J = H->GetJob();
+		const FString Now = J.Kind + J.State + J.Message + FString::SanitizeFloat(FMath::RoundToFloat(J.Frac * 100));
+		if (Now != JobShown) { JobShown = Now; Rebuild(); }
+	}
+}
+
+void SOTGCourseBuilder::LoadWorld()
+{
+	UOTGHelperSubsystem* H = Helper();
+	if (!H || !H->Available()) { bWorldDone = true; return; }
+	bWorldAsking = true;
+	TWeakPtr<SOTGCourseBuilder> Weak = SharedThis(this);
+	H->World(WorldFrom, [Weak](int32 Code, TSharedPtr<FJsonValue> J, const FString& Body) {
+		TSharedPtr<SOTGCourseBuilder> Self = Weak.Pin();
+		if (!Self.IsValid()) return;
+		Self->bWorldAsking = false;
+		Self->NextWorld = FPlatformTime::Seconds() + 2.0;
+		const TSharedPtr<FJsonObject> O = J.IsValid() ? J->AsObject() : nullptr;
+		if (Code != 200 || !O.IsValid()) { Self->NextWorld = FPlatformTime::Seconds() + 10.0; return; }
+		const TArray<TSharedPtr<FJsonValue>>* Rows = nullptr;
+		if (O->TryGetArrayField(TEXT("courses"), Rows))
+			for (const TSharedPtr<FJsonValue>& V : *Rows)
+			{
+				// [lat, lon, n|w|r, id, name]
+				const TArray<TSharedPtr<FJsonValue>>& R = V->AsArray();
+				if (R.Num() < 5) continue;
+				FOTGMapCourse M;
+				M.Lat = R[0]->AsNumber(); M.Lon = R[1]->AsNumber(); M.OsmType = OsmTypeName(R[2]->AsString()); M.OsmId = int64(R[3]->AsNumber()); M.Name = R[4]->AsString();
+				if (M.Name.IsEmpty()) M.Name = TEXT("Golf course");
+				if (Self->ById.Contains(M.OsmId)) continue;
+				for (const FBuilt& B : Self->Built) if (B.OsmId == M.OsmId) M.BuiltId = B.Id;
+				Self->ById.Add(M.OsmId, Self->Courses.Add(M));
+			}
+		Self->WorldFrom += Rows ? Rows->Num() : 0;
+		Self->bWorldDone = O->GetBoolField(TEXT("done"));
+		Self->WorldProgress = O->GetNumberField(TEXT("progress"));
+	});
+}
+
+void SOTGCourseBuilder::LoadBuilt()
+{
+	UOTGHelperSubsystem* H = Helper();
+	if (!H || !H->Available()) return;
+	TWeakPtr<SOTGCourseBuilder> Weak = SharedThis(this);
+	H->Get(TEXT("/api/courses"), [Weak](int32 Code, TSharedPtr<FJsonValue> J, const FString&) {
+		TSharedPtr<SOTGCourseBuilder> Self = Weak.Pin();
+		const TSharedPtr<FJsonObject> O = J.IsValid() ? J->AsObject() : nullptr;
+		if (!Self.IsValid() || Code != 200 || !O.IsValid()) return;
+		// (the ones the game has: exported to its courses folder)
+		TSet<FString> InGame;
+		if (UGameInstance* G = GI()) if (UOTGCourseSubsystem* C = G->GetSubsystem<UOTGCourseSubsystem>()) for (const FOTGCourseInfo& I : C->ListCourses()) if (!I.ExportDir.IsEmpty()) InGame.Add(I.Id);
+		Self->Built.Reset();
+		for (const TSharedPtr<FJsonValue>& V : O->GetArrayField(TEXT("courses")))
+		{
+			const TSharedPtr<FJsonObject> C = V->AsObject();
+			if (!C.IsValid()) continue;
+			FBuilt B;
+			B.Id = C->GetStringField(TEXT("id"));
+			B.Name = C->GetStringField(TEXT("name"));
+			C->TryGetStringField(TEXT("location"), B.Location);
+			double Id = 0;
+			if (C->TryGetNumberField(TEXT("osmId"), Id)) B.OsmId = int64(Id);
+			B.bInGame = InGame.Contains(B.Id);
+			Self->Built.Add(B);
+			if (const int32* I = Self->ById.Find(B.OsmId)) Self->Courses[*I].BuiltId = B.Id;
+		}
+		Self->Rebuild();
+	});
+}
+
+void SOTGCourseBuilder::Search()
+{
+	UOTGHelperSubsystem* H = Helper();
+	const FString Q = SearchBox.IsValid() ? SearchBox->GetText().ToString().TrimStartAndEnd() : FString();
+	if (!H || Q.Len() < 3) return;
+	Status = TEXT("Searching OpenStreetMap…");
+	Rebuild();
+	TWeakPtr<SOTGCourseBuilder> Weak = SharedThis(this);
+	H->Search(Q, [Weak](int32 Code, TSharedPtr<FJsonValue> J, const FString& Body) {
+		TSharedPtr<SOTGCourseBuilder> Self = Weak.Pin();
+		if (!Self.IsValid()) return;
+		const TSharedPtr<FJsonObject> O = J.IsValid() ? J->AsObject() : nullptr;
+		FString Err;
+		if (Code != 200 || !O.IsValid()) { Self->Status = O.IsValid() && O->TryGetStringField(TEXT("error"), Err) ? Err : FString(TEXT("The search didn't work: try again in a minute")); Self->Rebuild(); return; }
+		Self->Found.Reset();
+		for (const TSharedPtr<FJsonValue>& V : O->GetArrayField(TEXT("results")))
+		{
+			const TSharedPtr<FJsonObject> R = V->AsObject();
+			if (!R.IsValid()) continue;
+			const int64 Id = int64(R->GetNumberField(TEXT("osmId")));
+			int32 I;
+			if (const int32* Have = Self->ById.Find(Id)) I = *Have;
+			else
+			{
+				FOTGMapCourse M;
+				M.Lat = R->GetNumberField(TEXT("lat")); M.Lon = R->GetNumberField(TEXT("lon"));
+				M.OsmType = R->GetStringField(TEXT("osmType")); M.OsmId = Id;
+				I = Self->Courses.Add(M);
+				Self->ById.Add(Id, I);
+			}
+			FOTGMapCourse& M = Self->Courses[I];
+			M.Name = R->GetStringField(TEXT("name"));
+			R->TryGetStringField(TEXT("location"), M.Location);
+			FString B;
+			if (R->TryGetStringField(TEXT("built"), B)) M.BuiltId = B;
+			Self->Found.Add(I);
+		}
+		Self->Status = Self->Found.Num() ? FString::Printf(TEXT("%d found"), Self->Found.Num()) : FString(TEXT("No golf course by that name on OpenStreetMap"));
+		if (Self->Found.Num() == 1) Self->Pick(Self->Found[0], true);
+		else Self->Rebuild();
+	});
+}
+
+void SOTGCourseBuilder::Pick(int32 I, bool bFly)
+{
+	if (!Courses.IsValidIndex(I)) return;
+	Picked = I;
+	Map->SetPicked(I);
+	Checked.Reset();
+	bCheckFailed = false;
+	Group.Empty();
+	ReadyId.Empty();
+	Status.Empty();
+	FOTGMapCourse& M = Courses[I];
+	NameDraft = M.Name;
+	if (bFly) Map->FlyTo(M.Lat, M.Lon, 15);
+	// (where it is, when the world list didn't say)
+	if (M.Location.IsEmpty())
+		if (UOTGHelperSubsystem* H = Helper())
+		{
+			TWeakPtr<SOTGCourseBuilder> Weak = SharedThis(this);
+			H->Where(M.Lat, M.Lon, [Weak, I](int32 Code, TSharedPtr<FJsonValue> J, const FString&) {
+				TSharedPtr<SOTGCourseBuilder> Self = Weak.Pin();
+				FString L;
+				if (Self.IsValid() && Code == 200 && J.IsValid() && J->AsObject().IsValid() && J->AsObject()->TryGetStringField(TEXT("location"), L) && Self->Courses.IsValidIndex(I))
+				{
+					Self->Courses[I].Location = L;
+					Self->Rebuild();
+				}
+			});
+		}
+	Rebuild();
+	if (M.BuiltId.IsEmpty()) Check();
+}
+
+void SOTGCourseBuilder::Check()
+{
+	UOTGHelperSubsystem* H = Helper();
+	if (!H || !Courses.IsValidIndex(Picked)) return;
+	bChecking = true;
+	bCheckFailed = false;
+	const int32 I = Picked;
+	TWeakPtr<SOTGCourseBuilder> Weak = SharedThis(this);
+	H->Check(Courses[I].OsmType, Courses[I].OsmId, [Weak, I](int32 Code, TSharedPtr<FJsonValue> J, const FString& Body) {
+		TSharedPtr<SOTGCourseBuilder> Self = Weak.Pin();
+		if (!Self.IsValid() || Self->Picked != I) return;
+		Self->bChecking = false;
+		const TSharedPtr<FJsonObject> O = J.IsValid() ? J->AsObject() : nullptr;
+		FString Err;
+		if (Code != 200 || !O.IsValid())
+		{
+			Self->bCheckFailed = true;
+			Self->Status = O.IsValid() && O->TryGetStringField(TEXT("error"), Err) ? Err : FString(TEXT("OpenStreetMap didn't answer (it's busy at times)"));
+			Self->Rebuild();
+			return;
+		}
+		Self->Checked = O;
+		const FString Mapped = O->GetStringField(TEXT("name"));
+		Self->NameDraft = Mapped.IsEmpty() || Mapped == TEXT("Unnamed course") ? Self->Courses[I].Name : Mapped;
+		const TArray<TSharedPtr<FJsonValue>>* G = nullptr;
+		if (O->TryGetArrayField(TEXT("groups"), G) && G->Num()) Self->Group = (*G)[0]->AsObject()->GetStringField(TEXT("name"));
+		Self->Rebuild();
+	});
+	Rebuild();
+}
+
+void SOTGCourseBuilder::StartBuild()
+{
+	UOTGHelperSubsystem* H = Helper();
+	if (!H || !Courses.IsValidIndex(Picked) || H->GetJob().IsRunning()) return;
+	const FOTGMapCourse& M = Courses[Picked];
+	const FString Name = NameDraft.TrimStartAndEnd();
+	bExportAfterBuild = true;
+	H->Build(M.OsmType, M.OsmId, Name.IsEmpty() ? M.Name : Name, M.Location, Group);
+	Rebuild();
+}
+
+void SOTGCourseBuilder::JobDone(const FOTGHelperJob& J)
+{
+	UOTGHelperSubsystem* H = Helper();
+	if (!H) return;
+	if ((J.Kind == TEXT("build") || J.Kind == TEXT("update")) && J.State == TEXT("done") && !J.CourseId.IsEmpty())
+	{
+		// built: on to the export (the course drawn as the game draws it, into its courses folder)
+		LoadBuilt();
+		if (bExportAfterBuild || J.Kind == TEXT("update")) H->Export(J.CourseId);
+		bExportAfterBuild = false;
+	}
+	else if (J.Kind == TEXT("export") && J.State == TEXT("done"))
+	{
+		ReadyId = J.CourseId;
+		LoadBuilt();
+	}
+	else bExportAfterBuild = false;
+	Rebuild();
+}
+
+TSharedRef<SWidget> SOTGCourseBuilder::JobCard()
+{
+	UOTGHelperSubsystem* H = Helper();
+	if (!H || H->GetJob().Kind.IsEmpty()) return SNullWidget::NullWidget;
+	const FOTGHelperJob& J = H->GetJob();
+	const bool bRun = J.IsRunning();
+	const FString What = J.Kind == TEXT("export") ? FString(TEXT("Getting it ready for the game")) : J.Kind == TEXT("update") ? FString(TEXT("Bringing it up to date")) : FString(TEXT("Building the course"));
+	TSharedRef<SVerticalBox> V = SNew(SVerticalBox);
+	V->AddSlot().AutoHeight()[Text(bRun ? What : J.State == TEXT("done") ? What + TEXT(": done") : What + TEXT(": it didn't work"), 14, J.State == TEXT("failed") ? Warn : Gold, "Bold")];
+	if (J.Kind == TEXT("export") && bRun)
+	{
+		// (a bar: how far the export is)
+		V->AddSlot().AutoHeight().Padding(0, 6, 0, 2)
+		[
+			SNew(SBox).HeightOverride(8)
+			[
+				SNew(SOverlay)
+				+ SOverlay::Slot()[SNew(SBorder).BorderImage(FCoreStyle::Get().GetBrush("WhiteBrush")).BorderBackgroundColor(FLinearColor(1, 1, 1, 0.15f))]
+				+ SOverlay::Slot().HAlign(HAlign_Left)[SNew(SBox).WidthOverride(400.f * FMath::Clamp(J.Frac, 0.f, 1.f))[SNew(SBorder).BorderImage(FCoreStyle::Get().GetBrush("WhiteBrush")).BorderBackgroundColor(Green)]]
+			]
+		];
+	}
+	V->AddSlot().AutoHeight().Padding(0, 4, 0, 0)[SNew(STextBlock).Font(Font(12)).ColorAndOpacity(Soft).WrapTextAt(400).Text(FText::FromString(J.Message))];
+	if (J.Kind == TEXT("export") && bRun) V->AddSlot().AutoHeight().Padding(0, 6, 0, 0)[Button(TEXT("Stop"), [this]() { if (UOTGHelperSubsystem* H2 = Helper()) H2->Cancel(); }, 12)];
+	if (!ReadyId.IsEmpty() && !bRun)
+		V->AddSlot().AutoHeight().Padding(0, 8, 0, 0)[Button(TEXT("Play it"), [this]() { if (OnReady) OnReady(ReadyId); }, 15, true)];
+	return Box(V, FMargin(12, 10), Solid);
+}
+
+TSharedRef<SWidget> SOTGCourseBuilder::PickedCard()
+{
+	if (!Courses.IsValidIndex(Picked))
+		return Box(SNew(STextBlock).Font(Font(13)).ColorAndOpacity(Soft).WrapTextAt(400)
+			.Text(FText::FromString(TEXT("Find a course: search for it, or drag and zoom the map (the mouse wheel) and click its dot. Every dot is a golf course mapped in OpenStreetMap; gold ones you've built already."))), FMargin(12, 10), Solid);
+	const FOTGMapCourse& M = Courses[Picked];
+	UOTGHelperSubsystem* H = Helper();
+	const bool bBusy = H && H->GetJob().IsRunning();
+	TSharedRef<SVerticalBox> V = SNew(SVerticalBox);
+	V->AddSlot().AutoHeight()[SNew(STextBlock).Font(Font(18, "Bold")).ColorAndOpacity(Ink).WrapTextAt(400).Text(FText::FromString(M.Name))];
+	if (!M.Location.IsEmpty()) V->AddSlot().AutoHeight()[SNew(STextBlock).Font(Font(12)).ColorAndOpacity(Soft).WrapTextAt(400).Text(FText::FromString(M.Location))];
+	if (!M.BuiltId.IsEmpty())
+	{
+		const FBuilt* B = Built.FindByPredicate([&](const FBuilt& X) { return X.Id == M.BuiltId; });
+		V->AddSlot().AutoHeight().Padding(0, 8, 0, 0)[Text(B && B->bInGame ? TEXT("Built, and in the game.") : TEXT("Built (not in the game yet)."), 13, Green)];
+		TSharedRef<SHorizontalBox> Btns = SNew(SHorizontalBox);
+		const FString Id = M.BuiltId;
+		if (B && B->bInGame) Btns->AddSlot().AutoWidth().Padding(0, 0, 6, 0)[Button(TEXT("Play it"), [this, Id]() { if (OnReady) OnReady(Id); }, 13, true)];
+		if (!bBusy) Btns->AddSlot().AutoWidth().Padding(0, 0, 6, 0)[Button(B && B->bInGame ? TEXT("Export again") : TEXT("Put it in the game"), [this, Id]() { if (UOTGHelperSubsystem* H2 = Helper()) H2->Export(Id); Rebuild(); }, 13, !(B && B->bInGame))];
+		V->AddSlot().AutoHeight().Padding(0, 6, 0, 0)[Btns];
+		return Box(V, FMargin(12, 10), Solid);
+	}
+	if (bChecking) V->AddSlot().AutoHeight().Padding(0, 8, 0, 0)[Text(TEXT("Looking at what's mapped there…"), 13, Soft)];
+	if (bCheckFailed && !Checked.IsValid())
+	{
+		// (OpenStreetMap busy: again, or build without seeing what's mapped)
+		V->AddSlot().AutoHeight().Padding(0, 8, 0, 0)[SNew(STextBlock).Font(Font(12)).ColorAndOpacity(Warn).WrapTextAt(400).Text(FText::FromString(TEXT("Couldn't see what's mapped there: ") + Status))];
+		V->AddSlot().AutoHeight().Padding(0, 8, 0, 0)
+		[
+			SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot().AutoWidth().Padding(0, 0, 6, 0)[Button(TEXT("Check again"), [this]() { Status.Empty(); Check(); }, 13)]
+			+ SHorizontalBox::Slot().AutoWidth()[bBusy ? StaticCastSharedRef<SWidget>(SNullWidget::NullWidget) : StaticCastSharedRef<SWidget>(Button(TEXT("Build anyway"), [this]() { StartBuild(); }, 13, true))]
+		];
+	}
+	if (Checked.IsValid())
+	{
+		auto N = [this](const TCHAR* K) { return int32(Checked->GetNumberField(K)); };
+		V->AddSlot().AutoHeight().Padding(0, 8, 0, 0)[SNew(STextBlock).Font(Font(13)).ColorAndOpacity(Ink).WrapTextAt(400).Text(FText::FromString(FString::Printf(
+			TEXT("Mapped: %d holes, %d greens, %d fairways, %d tees, %d bunkers, %d water, %d trees%s"), N(TEXT("holes")), N(TEXT("greens")), N(TEXT("fairways")), N(TEXT("tees")), N(TEXT("bunkers")), N(TEXT("water")), N(TEXT("trees")),
+			Checked->GetBoolField(TEXT("hasBoundary")) ? TEXT(", the boundary") : TEXT(""))))];
+		const FString Q = Checked->GetStringField(TEXT("quality"));
+		for (const TSharedPtr<FJsonValue>& Note : Checked->GetArrayField(TEXT("notes")))
+			V->AddSlot().AutoHeight().Padding(0, 3, 0, 0)[SNew(STextBlock).Font(Font(12)).ColorAndOpacity(Q == TEXT("good") ? Green : Q == TEXT("partial") ? Gold : Warn).WrapTextAt(400).Text(FText::FromString(Note->AsString()))];
+		// (a club with more than one set of holes: which to build)
+		const TArray<TSharedPtr<FJsonValue>>& Groups = Checked->GetArrayField(TEXT("groups"));
+		if (Groups.Num() > 1)
+		{
+			V->AddSlot().AutoHeight().Padding(0, 8, 0, 2)[Text(TEXT("Which holes"), 13, Soft)];
+			TSharedRef<SVerticalBox> GB = SNew(SVerticalBox);
+			for (const TSharedPtr<FJsonValue>& GV : Groups)
+			{
+				const TSharedPtr<FJsonObject> G = GV->AsObject();
+				const FString Name = G->GetStringField(TEXT("name"));
+				const FString Label = FString::Printf(TEXT("%s (%d holes, par %d)"), Name.IsEmpty() ? TEXT("The holes") : *Name, int32(G->GetNumberField(TEXT("holes"))), int32(G->GetNumberField(TEXT("par"))));
+				GB->AddSlot().AutoHeight().Padding(0, 2)[Button(Label, [this, Name]() { Group = Name; Rebuild(); }, 12, Group == Name)];
+			}
+			V->AddSlot().AutoHeight()[GB];
+		}
+		V->AddSlot().AutoHeight().Padding(0, 10, 0, 2)[Text(TEXT("Its name in the game"), 12, Soft)];
+		V->AddSlot().AutoHeight()[SAssignNew(NameBox, SEditableTextBox).Text(FText::FromString(NameDraft)).Font(Font(14))
+			.OnTextChanged_Lambda([this](const FText& T) { NameDraft = T.ToString(); })];
+		V->AddSlot().AutoHeight().Padding(0, 10, 0, 0)
+		[
+			bBusy ? StaticCastSharedRef<SWidget>(Text(TEXT("(another course is being built)"), 12, Soft))
+				: StaticCastSharedRef<SWidget>(Button(TEXT("Build this course"), [this]() { StartBuild(); }, 15, true))
+		];
+		V->AddSlot().AutoHeight().Padding(0, 6, 0, 0)[SNew(STextBlock).Font(Font(11)).ColorAndOpacity(Soft).WrapTextAt(400)
+			.Text(FText::FromString(TEXT("It downloads the map data, the ground's heights and aerial photos, builds the course, then gets it ready for the game - about 5 to 20 minutes, most of it the last step.")))];
+	}
+	return Box(V, FMargin(12, 10), Solid);
+}
+
+TSharedRef<SWidget> SOTGCourseBuilder::BuiltList()
+{
+	if (!Built.Num()) return SNullWidget::NullWidget;
+	UOTGHelperSubsystem* H = Helper();
+	const bool bBusy = H && H->GetJob().IsRunning();
+	TSharedRef<SVerticalBox> V = SNew(SVerticalBox);
+	V->AddSlot().AutoHeight().Padding(0, 0, 0, 4)[Text(TEXT("Courses you've built"), 15, Gold, "Bold")];
+	for (const FBuilt& B : Built)
+	{
+		const FString Id = B.Id;
+		TSharedRef<SHorizontalBox> Row = SNew(SHorizontalBox);
+		Row->AddSlot().FillWidth(1).VAlign(VAlign_Center)
+		[
+			SNew(SVerticalBox)
+			+ SVerticalBox::Slot().AutoHeight()[Text(B.Name, 13, Ink, "Bold")]
+			+ SVerticalBox::Slot().AutoHeight()[Text(B.bInGame ? TEXT("in the game") : TEXT("not in the game yet"), 11, B.bInGame ? Green : Soft)]
+		];
+		if (!bBusy)
+		{
+			Row->AddSlot().AutoWidth().VAlign(VAlign_Center).Padding(4, 0, 0, 0)[Button(B.bInGame ? TEXT("Export again") : TEXT("Export"), [this, Id]() { if (UOTGHelperSubsystem* H2 = Helper()) H2->Export(Id); Rebuild(); }, 11)];
+			Row->AddSlot().AutoWidth().VAlign(VAlign_Center).Padding(4, 0, 0, 0)[Button(TEXT("Update"), [this, Id]() { if (UOTGHelperSubsystem* H2 = Helper()) H2->Update(Id); Rebuild(); }, 11)];
+			Row->AddSlot().AutoWidth().VAlign(VAlign_Center).Padding(4, 0, 0, 0)[Button(ConfirmDelete == Id ? TEXT("Sure? Delete") : TEXT("Delete"), [this, Id]() {
+				if (ConfirmDelete != Id) { ConfirmDelete = Id; Rebuild(); return; }
+				ConfirmDelete.Empty();
+				// (the course's source: what the game has of it, in its courses folder, stays)
+				if (UOTGHelperSubsystem* H2 = Helper())
+				{
+					TWeakPtr<SOTGCourseBuilder> Weak = SharedThis(this);
+					H2->Request(TEXT("DELETE"), TEXT("/api/courses/") + Id, FString(), [Weak](int32, TSharedPtr<FJsonValue>, const FString&) { if (TSharedPtr<SOTGCourseBuilder> S = Weak.Pin()) S->LoadBuilt(); });
+				}
+			}, 11, ConfirmDelete == Id)];
+		}
+		V->AddSlot().AutoHeight().Padding(0, 3)[Row];
+	}
+	V->AddSlot().AutoHeight().Padding(0, 4, 0, 0)[SNew(STextBlock).Font(Font(11)).ColorAndOpacity(Soft).WrapTextAt(400)
+		.Text(FText::FromString(TEXT("Export again after editing a course. Update fetches its map data afresh (your trees, grass and looks are kept). Delete removes what it was built from; the game keeps what it has.")))];
+	return Box(V, FMargin(12, 10), Solid);
+}
+
+void SOTGCourseBuilder::Rebuild()
+{
+	if (!Lower.IsValid()) return;
+	TSharedRef<SVerticalBox> V = SNew(SVerticalBox);
+	// what the search found
+	if (Found.Num())
+	{
+		TSharedRef<SVerticalBox> F = SNew(SVerticalBox);
+		for (int32 I : Found)
+		{
+			if (!Courses.IsValidIndex(I)) continue;
+			const FOTGMapCourse& M = Courses[I];
+			F->AddSlot().AutoHeight().Padding(0, 2)
+			[
+				SNew(SButton).ButtonStyle(&ButtonStyle(I == Picked)).ContentPadding(FMargin(10, 4))
+				.OnClicked_Lambda([this, I]() { Pick(I, true); return FReply::Handled(); })
+				[
+					SNew(SVerticalBox)
+					+ SVerticalBox::Slot().AutoHeight()[Text(M.Name + (M.BuiltId.IsEmpty() ? FString() : FString(TEXT("  (built)"))), 13, Ink, "Bold")]
+					+ SVerticalBox::Slot().AutoHeight()[Text(M.Location, 11, Soft)]
+				]
+			];
+		}
+		V->AddSlot().AutoHeight().Padding(0, 0, 0, 6)[SNew(SBox).MaxDesiredHeight(180)[SNew(SScrollBox) + SScrollBox::Slot()[F]]];
+	}
+	TSharedRef<SVerticalBox> Rest = SNew(SVerticalBox);
+	Rest->AddSlot().AutoHeight().Padding(0, 0, 0, 6)[PickedCard()];
+	Rest->AddSlot().AutoHeight().Padding(0, 0, 0, 6)[JobCard()];
+	Rest->AddSlot().AutoHeight()[BuiltList()];
+	V->AddSlot().FillHeight(1)[SNew(SScrollBox) + SScrollBox::Slot()[Rest]];
+	Lower->SetContent(V);
+}

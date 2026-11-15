@@ -379,8 +379,9 @@ void UOTGHelperSubsystem::Build(const FString& OsmType, int64 OsmId, const FStri
 	});
 }
 
-void UOTGHelperSubsystem::Update(const FString& CourseId)
+void UOTGHelperSubsystem::Update(const FString& InCourseId)
 {
+	const FString CourseId = InCourseId;
 	if (Job.IsRunning()) { UE_LOG(LogOTGHelper, Warning, TEXT("Already %s %s"), *Job.Kind, *Job.Id); return; }
 	Job = FOTGHelperJob();
 	Job.Kind = TEXT("update"); Job.State = TEXT("start"); Job.CourseId = CourseId; Job.Message = TEXT("Starting the update…");
@@ -394,8 +395,10 @@ void UOTGHelperSubsystem::Update(const FString& CourseId)
 	});
 }
 
-void UOTGHelperSubsystem::Export(const FString& CourseId, bool bVisible)
+void UOTGHelperSubsystem::Export(const FString& InCourseId, bool bVisible)
 {
+	// (a copy: the id may be the last job's, which is cleared below)
+	const FString CourseId = InCourseId;
 	if (Job.IsRunning()) { UE_LOG(LogOTGHelper, Warning, TEXT("Already %s %s"), *Job.Kind, *Job.Id); return; }
 	Job = FOTGHelperJob();
 	Job.Kind = TEXT("export"); Job.Id = CourseId; Job.CourseId = CourseId; Job.State = TEXT("start"); Job.Message = TEXT("Starting the export…");

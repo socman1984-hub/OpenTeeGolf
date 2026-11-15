@@ -2,6 +2,7 @@
 // page: mevo-page.js.)
 
 #include "SOTGMenus.h"
+#include "SOTGBuilder.h"
 
 #include "Engine/Engine.h"
 #include "Engine/GameInstance.h"
@@ -364,7 +365,7 @@ void SOTGMainMenu::Rebuild()
 {
 	// the tabs, the page shown lit
 	TSharedRef<SHorizontalBox> Tabs = SNew(SHorizontalBox);
-	const TPair<FString, EPage> Pages[] = { { TEXT("Play"), EPage::Play }, { TEXT("Players"), EPage::Players }, { TEXT("Launch monitor"), EPage::LaunchMonitor }, { TEXT("Settings"), EPage::Settings } };
+	const TPair<FString, EPage> Pages[] = { { TEXT("Play"), EPage::Play }, { TEXT("New course"), EPage::Build }, { TEXT("Players"), EPage::Players }, { TEXT("Launch monitor"), EPage::LaunchMonitor }, { TEXT("Settings"), EPage::Settings } };
 	for (const auto& T : Pages)
 	{
 		const EPage P = T.Value;
@@ -380,6 +381,21 @@ void SOTGMainMenu::Rebuild()
 	if (Page == EPage::Play) Body->SetContent(PlayPage());
 	else if (Page == EPage::Players) Body->SetContent(PlayersPage());
 	else if (Page == EPage::Settings) Body->SetContent(SettingsPage());
+	else if (Page == EPage::Build)
+	{
+		if (!Builder.IsValid())
+		{
+			SAssignNew(Builder, SOTGCourseBuilder);
+			// (built and ready: on to Play with it picked)
+			Builder->OnReady = [this](const FString& Id) {
+				if (UOTGCourseSubsystem* S = Courses()) CourseList = S->ListCourses();
+				if (CourseList.ContainsByPredicate([&](const FOTGCourseInfo& I) { return I.Id == Id; })) { Setup.CourseId = Id; Remember(); }
+				Page = EPage::Play;
+				Rebuild();
+			};
+		}
+		Body->SetContent(Builder.ToSharedRef());
+	}
 	else Body->SetContent(SNew(SScrollBox) + SScrollBox::Slot()[Box(SNew(SOTGLaunchMonitorPanel), FMargin(20, 16), Solid)]);
 }
 
@@ -389,7 +405,7 @@ TSharedRef<SWidget> SOTGMainMenu::PlayPage()
 	TSharedRef<SVerticalBox> List = SNew(SVerticalBox);
 	List->AddSlot().AutoHeight().Padding(0, 0, 0, 6)[Heading(TEXT("Course"))];
 	if (!CourseList.Num())
-		List->AddSlot().AutoHeight()[SNew(STextBlock).Text(FText::FromString(TEXT("No courses yet. In OpenTeeGolf's web version, click Export to Unreal on a course's card: it appears here (restart the game if it's open)."))).Font(Font(14)).ColorAndOpacity(Soft).AutoWrapText(true)];
+		List->AddSlot().AutoHeight()[SNew(STextBlock).Text(FText::FromString(TEXT("No courses yet. Make one on the New course page: find a real course on the map and build it."))).Font(Font(14)).ColorAndOpacity(Soft).AutoWrapText(true)];
 	// (where the game looks, and a way to open it)
 	if (UOTGCourseSubsystem* C = Courses())
 	{
@@ -605,7 +621,7 @@ TSharedRef<SWidget> SOTGMainMenu::PlayersPage()
 
 void SOTGMainMenu::ShowPage(const FString& Name)
 {
-	Page = Name == TEXT("players") ? EPage::Players : Name == TEXT("lm") ? EPage::LaunchMonitor : Name == TEXT("settings") ? EPage::Settings : EPage::Play;
+	Page = Name == TEXT("players") ? EPage::Players : Name == TEXT("lm") ? EPage::LaunchMonitor : Name == TEXT("settings") ? EPage::Settings : Name == TEXT("build") ? EPage::Build : EPage::Play;
 	if (Page == EPage::Players) { Draft = Profiles; ConfirmRemove = -1; }
 	Rebuild();
 }

@@ -1,8 +1,9 @@
 // The game's menus, in Slate:
 //
 //  - SOTGMainMenu (the start level): Play (the course, tees, pins, where to start, 18 or 9 holes,
-//    who's playing and the game), Players (the profiles: name, colour, handicap, hand, tees) and
-//    Launch monitor
+//    who's playing and the game), New course (find a real course on the map and build it:
+//    SOTGCourseBuilder), Players (the profiles: name, colour, handicap, hand, tees), Launch monitor
+//    and Settings
 //  - SOTGLaunchMonitorPanel: how shots arrive, the device's status, and the Mevo+ setup (also in the
 //    round's pause menu)
 
@@ -51,10 +52,10 @@ public:
 	void Construct(const FArguments& Args);
 	void Start();      // the round as set up
 	virtual bool SupportsKeyboardFocus() const override { return true; }
-	void ShowPage(const FString& Name);   // play, players, lm, settings
+	void ShowPage(const FString& Name);   // play, build, players, lm, settings
 
 private:
-	enum class EPage : uint8 { Play, Players, LaunchMonitor, Settings };
+	enum class EPage : uint8 { Play, Build, Players, LaunchMonitor, Settings };
 	void Rebuild();
 	TSharedRef<SWidget> PlayPage();
 	TSharedRef<SWidget> PlayersPage();
@@ -66,6 +67,7 @@ private:
 	void Remember() { FOTGPlayers::SaveSetup(Setup); }
 
 	TSharedPtr<SBox> Body;
+	TSharedPtr<class SOTGCourseBuilder> Builder;   // (made once: it keeps its map and searches)
 	EPage Page = EPage::Play;
 	TArray<FOTGCourseInfo> CourseList;
 	FOTGRoundSetup Setup;

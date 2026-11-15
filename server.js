@@ -22,7 +22,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { normalizeSpin } from './public/js/physics.js';
 import { TREE_SPECIES, TREE_MIXES } from './public/js/treeplace.js';
 import { BUILDING_TYPES } from './public/js/buildingtypes.js';
-import { searchCourses, worldCourses, placeName, withFreshOsm } from './lib/realdata.js';
+import { searchCourses, worldCourses, placeName, withFreshOsm, UA } from './lib/realdata.js';
 import { VERSION, checkForUpdate, installUpdate, canInstall, cleanUpAfterUpdate } from './lib/updater.js';
 import { checkCourse, buildCourse, BUILT_DIR } from './lib/builder.js';
 import { geoFor, ensureSatellite, recheckSatellite } from './lib/imagery.js';
@@ -37,7 +37,7 @@ import { MevoClient, DEFAULT_SETUP } from './lib/mevo.js';
 import { FrpController } from './lib/frp.js';
 import { BridgeProcess, BRIDGES } from './lib/bridges.js';
 import { UnrealRound } from './lib/unrealplay.js';
-import { HELPER, noteBuild, buildState, startExport, jobState, progress as helperProgress, cancelExport, watchParent, cleanStale, findBrowser } from './lib/helper.js';
+import { HELPER, ensureTile, noteBuild, buildState, startExport, jobState, progress as helperProgress, cancelExport, watchParent, cleanStale, findBrowser } from './lib/helper.js';
 const BUILDING_TYPE_IDS = new Set(BUILDING_TYPES.map((t) => t.id));
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -570,6 +570,11 @@ const httpServer = http.createServer(async (req, res) => {
     // ---- helper mode (the Unreal game builds and exports courses through these: lib/helper.js)
     if (p === '/api/helper/ping') return json(res, { ok: true, helper: HELPER, version: VERSION, browser: !!findBrowser(), dir: BUILT_DIR, game: GAME_COURSES });
     if (p === '/api/helper/job') return json(res, jobState());
+    if (p === '/api/helper/tile') {
+      const q = (k) => +url.searchParams.get(k);
+      const file = await ensureTile(process.env.OTG_DATA_DIR || path.join(ROOT, 'data'), UA, url.searchParams.get('layer') || 'photo', q('z'), q('x'), q('y'));
+      return json(res, { file });
+    }
     if (p === '/api/helper/build') return json(res, buildState(url.searchParams.get('job') || ''));
     if (p === '/api/helper/progress' && req.method === 'POST') { helperProgress(await readBody(req).catch(() => ({}))); return json(res, { ok: true }); }
     if (p === '/api/helper/export' && req.method === 'POST') {

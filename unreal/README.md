@@ -151,6 +151,14 @@ Everything the golf needs runs inside the game, in C++.
   colour: only kinds in its colours (`bEven`: rough, rough_clump) may grow on it. Console:
   `OTG.Grass.List`, `OTG.Grass.Set <kind> on|surface|density|height|vary|out|patch|cover <v>`,
   `OTG.Grass.Add <folder>`, `OTG.Grass.Save`, `OTG.Grass.Reset`.
+- Finding and building a course (the menu's New course page, `SOTGCourseBuilder`, phase 3): a world
+  map (`SOTGWorldMap`: OpenStreetMap or Esri's aerial photos, tiles fetched and kept on disk by the
+  helper, `/api/helper/tile`), the world's mapped courses as dots (`/api/builder/world`, paged while
+  the helper gathers them), a search, the picked course's check (holes, greens ..., the set of
+  holes at a club with several), Build (`/api/builder/build`, then the export, its progress from
+  `/api/helper/job`), Play it; the courses built, to export again, update or delete.
+  `-ExecCmds="OTG.Menu.Page build" -buildertest=<words> [-buildertestbuild]` searches, picks the
+  first, takes `Saved/Screenshots/builder_*.png` (and builds and exports it), then quits.
 - The tree designer (R, the "Trees and rocks" tab, `SOTGTreeDesigner`, phase 2): each course's
   `trees_design.json` (`FOTGTreeDesign`): per species the model it's drawn with (the game's choice
   by height, or beech, hornbeam, Norway spruce, Baltic pine), its size and how many (fewer: taken
