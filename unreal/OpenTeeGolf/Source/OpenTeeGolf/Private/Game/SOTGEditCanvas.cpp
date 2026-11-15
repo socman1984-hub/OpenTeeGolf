@@ -210,7 +210,8 @@ int32 SOTGEditCanvas::OnPaint(const FPaintArgs&, const FGeometry& G, const FSlat
 		}
 		L += 3;
 	}
-	// the tall grass painted (amber), rubbed out (grey)
+	// the tall grass the game found in the photo, then what's painted (amber) and rubbed out (grey)
+	if (Ed->bShowGrass && Ed->HeatherBrush.IsValid()) Picture(Ed->HeatherBrush.Get(), Ed->HeatherX0, Ed->HeatherZ1, Ed->HeatherW, Ed->HeatherH, FLinearColor::White);
 	if (Ed->bShowGrass)
 		for (const FOTGGrassStroke& St : S.TallGrass)
 		{
@@ -242,7 +243,10 @@ int32 SOTGEditCanvas::OnPaint(const FPaintArgs&, const FGeometry& G, const FSlat
 			if (P.X < -10 || P.Y < -10 || P.X > Size.X + 10 || P.Y > Size.Y + 10) continue;
 			const bool bSel = i == Ed->SelFound || Ed->SelMany.Contains(i);
 			const bool bOff = S.TreesOff.Contains(F.Kind);
-			Dot(Out, L, G, P, FMath::Max(Rf, float(F.R * Scale * 0.6)), bSel ? FLinearColor(1, 0.85f, 0.2f, 1) : bOff ? FLinearColor(0.45f, 0.45f, 0.45f, 0.6f) : FLinearColor(0.1f, 0.42f, 0.12f, 0.75f), bSel);
+			// (each species its own colour, when asked)
+			FLinearColor C = FLinearColor(0.1f, 0.42f, 0.12f, 0.75f);
+			if (Ed->bColourSpecies) { C = FLinearColor::MakeFromHSV8(uint8(GetTypeHash(F.Kind) * 37 % 255), 190, 230); C.A = 0.9f; }
+			Dot(Out, L, G, P, FMath::Max(Rf, float(F.R * Scale * 0.6)), bSel ? FLinearColor(1, 0.85f, 0.2f, 1) : bOff ? FLinearColor(0.45f, 0.45f, 0.45f, 0.6f) : C, bSel);
 		}
 		for (int32 i = 0; i < S.RemovedTrees.Num(); i++)
 		{

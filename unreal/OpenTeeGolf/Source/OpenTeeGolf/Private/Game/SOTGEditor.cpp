@@ -211,6 +211,41 @@ void SOTGCourseEditor::LoadExtras()
 				Found.Add(F);
 			}
 	}
+	// the tall grass the game found in the aerial photo ({ minX, maxZ, res, w, h, runs: [start, length, ...] }), amber
+	if (UOTGHelperSubsystem* H = Helper())
+	{
+		TWeakPtr<SOTGCourseEditor> Weak = SharedThis(this);
+		H->Get(FString::Printf(TEXT("/api/courses/%s/heather"), *Id), [Weak](int32 Code, TSharedPtr<FJsonValue> J, const FString&) {
+			TSharedPtr<SOTGCourseEditor> Self = Weak.Pin();
+			const TSharedPtr<FJsonObject> O = J.IsValid() ? J->AsObject() : nullptr;
+			const TArray<TSharedPtr<FJsonValue>>* Runs = nullptr;
+			if (!Self.IsValid() || Code != 200 || !O.IsValid() || !O->TryGetArrayField(TEXT("runs"), Runs)) return;
+			const int32 W = O->GetIntegerField(TEXT("w")), Hh = O->GetIntegerField(TEXT("h"));
+			const double Res = O->GetNumberField(TEXT("res"));
+			if (W <= 0 || Hh <= 0 || int64(W) * Hh > 16 * 1024 * 1024) return;
+			TArray<FColor> Px;
+			Px.Init(FColor(0, 0, 0, 0), W * Hh);
+			for (int32 k = 0; k + 1 < Runs->Num(); k += 2)
+			{
+				const int32 A = int32((*Runs)[k]->AsNumber()), L = int32((*Runs)[k + 1]->AsNumber());
+				for (int32 q = A; q < A + L && q < Px.Num(); q++) if (q >= 0) Px[q] = FColor(240, 160, 40, 95);   // (amber)
+			}
+			UTexture2D* T = UTexture2D::CreateTransient(W, Hh, PF_B8G8R8A8);
+			if (!T) return;
+			void* Data = T->GetPlatformData()->Mips[0].BulkData.Lock(LOCK_READ_WRITE);
+			FMemory::Memcpy(Data, Px.GetData(), Px.Num() * sizeof(FColor));
+			T->GetPlatformData()->Mips[0].BulkData.Unlock();
+			T->Filter = TF_Nearest;
+			T->UpdateResource();
+			Self->Heather.Reset(T);
+			Self->HeatherBrush = MakeShared<FSlateBrush>();
+			Self->HeatherBrush->SetResourceObject(T);
+			Self->HeatherBrush->ImageSize = FVector2D(W, Hh);
+			Self->HeatherX0 = O->GetNumberField(TEXT("minX")); Self->HeatherZ1 = O->GetNumberField(TEXT("maxZ"));
+			Self->HeatherW = W * Res; Self->HeatherH = Hh * Res;
+			Self->Changed();
+		});
+	}
 	// the buildings round the course
 	if (UOTGHelperSubsystem* H = Helper())
 	{
@@ -548,7 +583,8 @@ EActiveTimerReturnType SOTGCourseEditor::Pulse(double Time, float Dt)
 	if (TestStep > 0 && TestStep < 9 && FPlatformTime::Seconds() >= TestAt)
 	{
 		auto Shot = [](const TCHAR* N) { if (GEngine) GEngine->Exec(nullptr, *FString::Printf(TEXT("OTG.Shot %s"), N)); };
-		if (TestStep == 1) { Shot(TEXT("editor_open")); TestStep = 2; TestAt = FPlatformTime::Seconds() + 2; }
+		if (TestStep == 1 && FParse::Param(FCommandLine::Get(), TEXT("editortestlook")) && !bColourSpecies) { bColourSpecies = true; Canvas->Scale = 2.5; Changed(); TestAt = FPlatformTime::Seconds() + 2; }
+		else if (TestStep == 1) { Shot(TEXT("editor_open")); TestStep = 2; TestAt = FPlatformTime::Seconds() + 2; }
 		else if (TestStep == 2)
 		{
 			if (FParse::Param(FCommandLine::Get(), TEXT("editortestall")) && Src.Holes.IsValidIndex(HoleI))
@@ -590,6 +626,26 @@ EActiveTimerReturnType SOTGCourseEditor::Pulse(double Time, float Dt)
 }
 
 // ------------------------------------------------------------------ the panels
+
+// A mowing pattern, light and dark as the ground's material draws it (mowing.js mowShade), 1 px = 0.25 m
+void SOTGMowSwatch::Construct(const FArguments& A) { Id = A._Pattern; Width = A._WidthM; }
+
+int32 SOTGMowSwatch::OnPaint(const FPaintArgs&, const FGeometry& G, const FSlateRect&, FSlateWindowElementList& Out, int32 Layer, const FWidgetStyle&, bool) const
+{
+	const FSlateBrush* White = FCoreStyle::Get().GetBrush("WhiteBrush");
+	const int32 N = 16;
+	const double Cell = 64.0 / N, M = 0.25 * 64 / N * 2;   // (each cell this many metres)
+	auto S = [this](double A) { return FMath::Clamp(FMath::Sin(A / Width * PI) * 6, -1.0, 1.0); };
+	for (int32 j = 0; j < N; j++)
+		for (int32 i = 0; i < N; i++)
+		{
+			const double U = i * M, V = j * M, D1 = (U + V) / UE_SQRT_2, D2 = (V - U) / UE_SQRT_2;
+			const double Sh = Id == TEXT("stripes") ? S(U) : Id == TEXT("diagonal") ? S(D1) : Id == TEXT("checker") ? S(U) * S(V) : Id == TEXT("diamond") ? S(D1) * S(D2) : 0;
+			const float L = float(0.32 + 0.06 * Sh);
+			FSlateDrawElement::MakeBox(Out, Layer, G.ToPaintGeometry(FVector2D(Cell + 0.5, Cell + 0.5), FSlateLayoutTransform(FVector2D(i * Cell, j * Cell))), White, ESlateDrawEffect::None, FLinearColor(L * 0.55f, L, L * 0.4f, 1));
+		}
+	return Layer;
+}
 
 void SOTGCourseEditor::Rebuild()
 {
@@ -669,8 +725,13 @@ TSharedRef<SWidget> SOTGCourseEditor::CoursePanel()
 	};
 	Slide(TEXT("Rough height"), &Src.RoughScale, 0.3f, 1.6f, [](float S) { return FString::Printf(TEXT("%d cm"), FOTGCourseSource::RoughCm(S)); });
 	Slide(TEXT("Tall grass height"), &Src.NativeScale, 0.4f, 1.8f, [](float S) { return FString::Printf(TEXT("%d cm"), FOTGCourseSource::NativeCm(S)); });
-	V->AddSlot().AutoHeight().Padding(0, 2)[Row(TEXT("Fairway mowing"), Button(FOTGCourseSource::MowLabel(Src.MowFairway), [this]() { Change(); Src.MowFairway = Next(FOTGCourseSource::MowPatterns(), Src.MowFairway); Changed(); }, 12))];
-	V->AddSlot().AutoHeight().Padding(0, 2)[Row(TEXT("Green mowing"), Button(FOTGCourseSource::MowLabel(Src.MowGreen), [this]() { Change(); Src.MowGreen = Next(FOTGCourseSource::MowPatterns(), Src.MowGreen); Changed(); }, 12))];
+	auto Mow = [this, &V](const FString& Label, FString* Id, double WidthM) {
+		V->AddSlot().AutoHeight().Padding(0, 2)[Row(Label, SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)[Button(FOTGCourseSource::MowLabel(*Id), [this, Id]() { Change(); *Id = Next(FOTGCourseSource::MowPatterns(), *Id); Changed(); }, 12)]
+			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(8, 0, 0, 0)[SNew(SOTGMowSwatch).Pattern(*Id).WidthM(WidthM)])];
+	};
+	Mow(TEXT("Fairway mowing"), &Src.MowFairway, 3.5);
+	Mow(TEXT("Green mowing"), &Src.MowGreen, 1);
 	V->AddSlot().AutoHeight().Padding(0, 4, 0, 0)[Note(TEXT("The game's grass designer (R in a round) sets what the rough and tall grass are made of."))];
 	return Section(TEXT("Course"), V);
 }
@@ -890,7 +951,9 @@ TSharedRef<SWidget> SOTGCourseEditor::TreePanel()
 	static const TArray<FString> Dens = { TEXT("sparse"), TEXT("medium"), TEXT("dense") };
 	TArray<FString> Kinds = FOTGCourseSource::Mixes(); Kinds.Append(FOTGCourseSource::Species());
 	auto KLabel = [](const FString& K) { return FOTGCourseSource::Mixes().Contains(K) ? FOTGCourseSource::MixLabel(K) : FOTGTreeDesign::SpeciesLabel(K); };
-	V->AddSlot().AutoHeight()[Row(TEXT("On the map"), Button(bShowTrees ? TEXT("Shown") : TEXT("Hidden"), [this]() { bShowTrees = !bShowTrees; Changed(); }, 12, bShowTrees))];
+	V->AddSlot().AutoHeight()[Row(TEXT("On the map"), SNew(SHorizontalBox)
+		+ SHorizontalBox::Slot().AutoWidth().Padding(0, 0, 6, 0)[Button(bShowTrees ? TEXT("Shown") : TEXT("Hidden"), [this]() { bShowTrees = !bShowTrees; Changed(); }, 12, bShowTrees)]
+		+ SHorizontalBox::Slot().AutoWidth()[Button(TEXT("Colour by species"), [this]() { bColourSpecies = !bColourSpecies; Changed(); }, 12, bColourSpecies)])];
 	if (!Found.Num()) V->AddSlot().AutoHeight()[Note(TEXT("The trees the game plants show once the course is in the game (Save and put in the game)."))];
 	V->AddSlot().AutoHeight().Padding(0, 6, 0, 2)
 	[

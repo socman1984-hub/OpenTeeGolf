@@ -171,7 +171,8 @@ Everything the golf needs runs inside the game, in C++.
   move, remove brush, remove or replace found ones, shift-drag a box, review those in the line of
   play, species on the course on/off), tall grass brush and rubber, buildings' types, the course's
   looks (name, location, stimp, game or photo colours, rough and tall grass heights, mowing), the
-  shrubs, flowers and grasses, undo, Save, "Save and put in the game" (the export). Its picture:
+  shrubs, flowers and grasses, trees coloured by species, mowing swatches, the tall grass the game found
+  in the photo (`/api/courses/<id>/heather`) under your strokes, undo, Save, "Save and put in the game" (the export). Its picture:
   the export's photo, or shading from the source's heights. The found trees come from the course's
   play data (when it's in the game), the buildings from the helper. Panels are made again from an
   active timer, not Tick (made while drawing, they're drawn once unmeasured). `-ExecCmds="OTG.Menu.Edit

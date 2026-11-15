@@ -64,6 +64,23 @@ private:
 	void Label(FSlateWindowElementList& Out, int32 Layer, const FGeometry& G, const FVector2D& P, const FString& S, const FLinearColor& C) const;
 };
 
+// A mowing pattern's look (the course panel)
+class SOTGMowSwatch : public SLeafWidget
+{
+public:
+	SLATE_BEGIN_ARGS(SOTGMowSwatch) : _WidthM(3.5) {}
+		SLATE_ARGUMENT(FString, Pattern)
+		SLATE_ARGUMENT(double, WidthM)
+	SLATE_END_ARGS()
+	void Construct(const FArguments& Args);
+	virtual int32 OnPaint(const FPaintArgs& Args, const FGeometry& Geometry, const FSlateRect& Culling, FSlateWindowElementList& Out, int32 Layer, const FWidgetStyle& Style, bool bParentEnabled) const override;
+	virtual FVector2D ComputeDesiredSize(float) const override { return FVector2D(64, 64); }
+
+private:
+	FString Id;
+	double Width = 3.5;
+};
+
 class SOTGCourseEditor : public SCompoundWidget
 {
 public:
@@ -96,8 +113,9 @@ public:
 	struct FBuilding { TArray<FVector2D> Pts; FString Name, Kind, Key; double Area = 0; };
 	TArray<FBuilding> Buildings;
 	// the map's picture: the aerial photo over [X0, X0 + SizeM] x [Z1 - SizeM, Z1], or the ground's shading
-	TStrongObjectPtr<UTexture2D> Photo, Shade;
-	TSharedPtr<FSlateBrush> PhotoBrush, ShadeBrush;
+	TStrongObjectPtr<UTexture2D> Photo, Shade, Heather;
+	TSharedPtr<FSlateBrush> PhotoBrush, ShadeBrush, HeatherBrush;
+	double HeatherX0 = 0, HeatherZ1 = 0, HeatherW = 0, HeatherH = 0;   // (the tall grass the game found in the aerial photo)
 	double PhotoX0 = 0, PhotoZ1 = 0, PhotoSizeM = 0, ShadeX0 = 0, ShadeZ1 = 0, ShadeW = 0, ShadeH = 0;
 	// reviewing the trees in the line of play: the found ones, one at a time
 	TArray<int32> Review;
