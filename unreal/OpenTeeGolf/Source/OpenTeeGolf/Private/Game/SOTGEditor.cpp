@@ -592,6 +592,7 @@ EActiveTimerReturnType SOTGCourseEditor::Pulse(double Time, float Dt)
 		auto Shot = [](const TCHAR* N) { if (GEngine) GEngine->Exec(nullptr, *FString::Printf(TEXT("OTG.Shot %s"), N)); };
 		int32 WantTab = -1;
 		if (TestStep == 1 && FParse::Value(FCommandLine::Get(), TEXT("editortesttab="), WantTab) && Tab != WantTab) { Tab = WantTab; Changed(); TestAt = FPlatformTime::Seconds() + 1; }
+		else if (double Z = 0; TestStep == 1 && FParse::Value(FCommandLine::Get(), TEXT("editortestzoom="), Z) && Z > 0 && FMath::Abs(Canvas->Scale - Z) > 1e-3) { Canvas->Scale = Z; Changed(); TestAt = FPlatformTime::Seconds() + 1; }
 		else if (TestStep == 1 && FParse::Param(FCommandLine::Get(), TEXT("editortestlook")) && !bColourSpecies) { bColourSpecies = true; Canvas->Scale = 2.5; Changed(); TestAt = FPlatformTime::Seconds() + 2; }
 		else if (TestStep == 1) { Shot(TEXT("editor_open")); TestStep = 2; TestAt = FPlatformTime::Seconds() + 2; }
 		else if (TestStep == 2)

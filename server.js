@@ -608,7 +608,7 @@ async function runUpdate(id, log) {
       try { await recheckSatellite(sat, geo, real.grid, log); } catch (err) { log(`Aerial photo check skipped (${err.message})`); }
     }
     return r;
-  })).then((r) => ({ courseId: path.basename(path.dirname(r.dataFile)), needsReview: r.needsReview }));
+  })).then((r) => ({ courseId: path.basename(path.dirname(r.dataFile)), needsReview: r.needsReview, guessed: r.guessed }));
 }
 
 // Build a course (the endpoint, and the game's queue): { courseId, needsReview }
@@ -617,7 +617,7 @@ async function runBuild(b, log) {
   // (grass colours chosen in the builder)
   if (b.surface === 'photo') { const cd0 = readCourseData(r.dataFile); cd0.Surface = 'photo'; fs.writeFileSync(r.dataFile, JSON.stringify(cd0, null, 1)); }
   ensurePhoto(path.dirname(r.dataFile), photoInfo(r.dataFile), { log: (m) => console.log(`[photo] ${m}`) });
-  return { courseId: path.basename(path.dirname(r.dataFile)), needsReview: r.needsReview };
+  return { courseId: path.basename(path.dirname(r.dataFile)), needsReview: r.needsReview, guessed: r.guessed };
 }
 
 const httpServer = http.createServer(async (req, res) => {

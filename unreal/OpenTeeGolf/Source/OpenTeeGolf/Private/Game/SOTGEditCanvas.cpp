@@ -93,7 +93,16 @@ namespace
 		}
 		for (int32 i = 1; i + 1 < V.Num(); i++) Out.Append({ V[0], V[i], V[i + 1] });
 	}
-	const FSlateRoundedBoxBrush& Round() { static const FSlateRoundedBoxBrush B(FLinearColor::White, 20.f); return B; }
+	// (a round brush for a dot this many pixels across: a rounded box's corners no bigger than half
+	// its side, or Slate draws it wrong - zoomed out, the trees' dots weren't drawn at all)
+	const FSlateBrush* Round(float Side)
+	{
+		static TMap<int32, TSharedPtr<FSlateRoundedBoxBrush>> Cache;
+		const int32 K = FMath::Clamp(FMath::RoundToInt32(Side), 2, 400);
+		TSharedPtr<FSlateRoundedBoxBrush>& B = Cache.FindOrAdd(K);
+		if (!B.IsValid()) B = MakeShared<FSlateRoundedBoxBrush>(FLinearColor::White, K * 0.5f);
+		return B.Get();
+	}
 }
 
 void SOTGEditCanvas::Construct(const FArguments&, SOTGCourseEditor* InEditor)
@@ -151,8 +160,14 @@ void SOTGEditCanvas::PolyLine(FSlateWindowElementList& Out, int32 Layer, const F
 
 void SOTGEditCanvas::Dot(FSlateWindowElementList& Out, int32 Layer, const FGeometry& G, const FVector2D& P, float R, const FLinearColor& C, bool bOutline) const
 {
-	if (bOutline) FSlateDrawElement::MakeBox(Out, Layer, G.ToPaintGeometry(FVector2D(2 * R + 3, 2 * R + 3), FSlateLayoutTransform(P - FVector2D(R + 1.5, R + 1.5))), &Round(), ESlateDrawEffect::None, FLinearColor(0, 0, 0, 0.8f));
-	FSlateDrawElement::MakeBox(Out, Layer + 1, G.ToPaintGeometry(FVector2D(2 * R, 2 * R), FSlateLayoutTransform(P - FVector2D(R, R))), &Round(), ESlateDrawEffect::None, C);
+	// (tiny: a square, as the web editor draws them)
+	if (R < 2.f)
+	{
+		FSlateDrawElement::MakeBox(Out, Layer + 1, G.ToPaintGeometry(FVector2D(3, 3), FSlateLayoutTransform(P - FVector2D(1.5, 1.5))), FCoreStyle::Get().GetBrush("WhiteBrush"), ESlateDrawEffect::None, C);
+		return;
+	}
+	if (bOutline) FSlateDrawElement::MakeBox(Out, Layer, G.ToPaintGeometry(FVector2D(2 * R + 3, 2 * R + 3), FSlateLayoutTransform(P - FVector2D(R + 1.5, R + 1.5))), Round(2 * R + 3), ESlateDrawEffect::None, FLinearColor(0, 0, 0, 0.8f));
+	FSlateDrawElement::MakeBox(Out, Layer + 1, G.ToPaintGeometry(FVector2D(2 * R, 2 * R), FSlateLayoutTransform(P - FVector2D(R, R))), Round(2 * R), ESlateDrawEffect::None, C);
 }
 
 void SOTGEditCanvas::Label(FSlateWindowElementList& Out, int32 Layer, const FGeometry& G, const FVector2D& P, const FString& S, const FLinearColor& C) const
@@ -235,7 +250,6 @@ int32 SOTGEditCanvas::OnPaint(const FPaintArgs&, const FGeometry& G, const FSlat
 	// the trees: found (dark), removed (a cross), your own (bright, sized)
 	if (Ed->bShowTrees)
 	{
-		const float Rf = FMath::Clamp(float(2.0 * Scale), 1.5f, 6.f);
 		for (int32 i = 0; i < Ed->Found.Num(); i++)
 		{
 			const SOTGCourseEditor::FFound& F = Ed->Found[i];
@@ -243,10 +257,15 @@ int32 SOTGEditCanvas::OnPaint(const FPaintArgs&, const FGeometry& G, const FSlat
 			if (P.X < -10 || P.Y < -10 || P.X > Size.X + 10 || P.Y > Size.Y + 10) continue;
 			const bool bSel = i == Ed->SelFound || Ed->SelMany.Contains(i);
 			const bool bOff = S.TreesOff.Contains(F.Kind);
-			// (each species its own colour, when asked)
-			FLinearColor C = FLinearColor(0.1f, 0.42f, 0.12f, 0.75f);
+			// (as the web editor draws them: the crown its size, dark with a light edge; too small for
+			// that, a small square; each species its own colour when asked)
+			const float R = float(FMath::Max(0.5, F.R) * Scale);
+			FLinearColor C = R < 2.f ? FLinearColor(0.12f, 0.35f, 0.12f, 0.9f) : FLinearColor(0.086f, 0.28f, 0.094f, 0.6f);
 			if (Ed->bColourSpecies) { C = FLinearColor::MakeFromHSV8(uint8(GetTypeHash(F.Kind) * 37 % 255), 190, 230); C.A = 0.9f; }
-			Dot(Out, L, G, P, FMath::Max(Rf, float(F.R * Scale * 0.6)), bSel ? FLinearColor(1, 0.85f, 0.2f, 1) : bOff ? FLinearColor(0.45f, 0.45f, 0.45f, 0.6f) : C, bSel);
+			if (bSel) C = FLinearColor(1, 0.85f, 0.2f, 1);
+			else if (bOff) C = FLinearColor(0.45f, 0.45f, 0.45f, 0.6f);
+			if (R >= 2.f && !bSel) Dot(Out, L, G, P, R + 1.f, FLinearColor(0.59f, 0.86f, 0.51f, 0.55f));
+			Dot(Out, L + 1, G, P, R, C, bSel);
 		}
 		for (int32 i = 0; i < S.RemovedTrees.Num(); i++)
 		{
@@ -259,7 +278,7 @@ int32 SOTGEditCanvas::OnPaint(const FPaintArgs&, const FGeometry& G, const FSlat
 		{
 			const FOTGSourceTree& T = S.UserTrees[i];
 			const float R = T.Size == TEXT("small") ? 3.f : T.Size == TEXT("large") ? 6.f : 4.5f;
-			Dot(Out, L + 3, G, ToScreen(T.P), FMath::Max(3.f, float(R * Scale)), i == Ed->SelTree ? FLinearColor(1, 0.85f, 0.2f, 1) : FLinearColor(0.35f, 0.95f, 0.35f, 0.95f));
+			Dot(Out, L + 4, G, ToScreen(T.P), FMath::Max(1.5f, float(R * Scale)), i == Ed->SelTree ? FLinearColor(1, 0.85f, 0.2f, 1) : FLinearColor(0.35f, 0.95f, 0.35f, 0.95f));
 		}
 	}
 	L += 5;
