@@ -49,6 +49,9 @@ def gh(*args, capture=True):
     return r.stdout
 
 
+MAX_ON_RELEASE = 950   # (new files on the release itself; GitHub's limit is 1000 assets)
+
+
 def scenery(path):
     name = os.path.basename(path)
     return name.startswith("pakchunk") and not name.startswith("pakchunk0")
@@ -87,15 +90,25 @@ def main():
         os.remove(os.path.join(tmp, "manifest.json"))
 
     up = os.path.join(tmp, "up")
+    extra_up = os.path.join(tmp, "extra")
     os.makedirs(up)
+    os.makedirs(extra_up)
+    # (GitHub holds at most 1000 files a release: past MAX_ON_RELEASE new ones - with the installer,
+    # the starter zip and manifest.json - the rest go on a companion pre-release, EXTRA; the manifest
+    # gives each file's own address, and the game's updater skips pre-releases)
+    extra_tag = tag + "-files2"
+    new_shas = []
     new_bytes = reused = 0
     for f in manifest["files"]:
         if f["sha1"] in known:
             f["url"] = known[f["sha1"]]
             reused += 1
             continue
-        f["url"] = "https://github.com/%s/releases/download/%s/%s" % (repo, tag, f["sha1"])
-        dest = os.path.join(up, f["sha1"])
+        if f["sha1"] not in new_shas:
+            new_shas.append(f["sha1"])
+        on_extra = new_shas.index(f["sha1"]) >= MAX_ON_RELEASE
+        f["url"] = "https://github.com/%s/releases/download/%s/%s" % (repo, extra_tag if on_extra else tag, f["sha1"])
+        dest = os.path.join(extra_up if on_extra else up, f["sha1"])
         if not os.path.exists(dest):
             src = os.path.join(stage, f["path"])
             try:
@@ -125,8 +138,9 @@ def main():
         sys.exit("The installer is over 2 GB")
 
     files = sorted(os.listdir(up))
-    print("%s: %d files to upload (%.2f GB), %d already on earlier releases; installer %.0f MB, starter zip %.0f MB"
-          % (tag, len(files) - 3, new_bytes / 1024 ** 3, reused, os.path.getsize(setup) / 1024 ** 2, os.path.getsize(starter) / 1024 ** 2))
+    extra = sorted(os.listdir(extra_up))
+    print("%s: %d files to upload (%.2f GB; %d of them on %s), %d already on earlier releases; installer %.0f MB, starter zip %.0f MB"
+          % (tag, len(files) - 3 + len(extra), new_bytes / 1024 ** 3, len(extra), extra_tag, reused, os.path.getsize(setup) / 1024 ** 2, os.path.getsize(starter) / 1024 ** 2))
     if dry:
         # (the release folder as it was: a dry run changes nothing)
         with open(os.path.join(stage, "manifest.json"), "w", encoding="utf-8") as fh:
@@ -137,8 +151,24 @@ def main():
              "Windows may say it protected your PC: More info, Run anyway). Or download %s.zip, unzip it anywhere and run "
              "OpenTeeGolf.exe. On its first start the game downloads its scenery (about 3 GB) and restarts.\n\n"
              "Already have it: the game updates itself (it checks when it starts)." % (version, version, name))
-    gh("release", "create", tag, "--title", "OpenTeeGolf for Unreal %s" % version, "--notes", notes, "--latest=false", capture=False)
-    gh("release", "upload", tag, *[os.path.join(up, f) for f in files], capture=False)
+    def upload(t, folder, names):
+        # (in batches: Windows' command line holds about 32,000 characters)
+        for i in range(0, len(names), 100):
+            gh("release", "upload", t, *[os.path.join(folder, f) for f in names[i:i + 100]], capture=False)
+            print("%s: uploaded %d of %d" % (t, min(i + 100, len(names)), len(names)), flush=True)
+    # the companion first (published as a pre-release, so its addresses work), then the release
+    if extra:
+        gh("release", "create", extra_tag, "--title", "OpenTeeGolf for Unreal %s (more files)" % version, "--notes",
+           "Files of OpenTeeGolf for Unreal %s that didn't fit on its release (GitHub holds 1000 a release). Download the game from %s." % (version, tag),
+           "--prerelease", "--latest=false", "--draft", capture=False)
+        upload(extra_tag, extra_up, extra)
+        gh("release", "edit", extra_tag, "--draft=false", "--prerelease", "--latest=false", capture=False)
+    # (a draft while its files go up: the game's updater skips drafts, so it never finds a release half there)
+    gh("release", "create", tag, "--title", "OpenTeeGolf for Unreal %s" % version, "--notes", notes, "--latest=false", "--draft", capture=False)
+    # (manifest.json last, so the game's updater never reads one whose files aren't up yet)
+    upload(tag, up, [f for f in files if f != "manifest.json"])
+    gh("release", "upload", tag, os.path.join(up, "manifest.json"), capture=False)
+    gh("release", "edit", tag, "--draft=false", "--latest=false", capture=False)
     shutil.rmtree(tmp, ignore_errors=True)
     print("Published %s" % tag)
 
