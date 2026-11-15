@@ -1586,6 +1586,9 @@ void AOTGRound::ApplyLook()
 		if (It->GetWorld() != GetWorld()) continue;
 		if (OrigMie < 0) { OrigMie = It->MieScatteringScale; OrigRayleigh = It->RayleighScatteringScale; }
 		It->SetMieScatteringScale(OrigMie * CVarLookHaze.GetValueOnGameThread());
+		// (the level's own blue back: the weather greys it from this, not from what it greyed last
+		// time - each new time of day under cloud would grey it again, to a black sky)
+		It->SetRayleighScatteringScale(OrigRayleigh);
 		break;
 	}
 	for (TActorIterator<ASkyLight> It(GetWorld()); It; ++It)
