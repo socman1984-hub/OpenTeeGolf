@@ -80,8 +80,9 @@ data, the ground's heights and aerial photos, builds the course and gets it read
 to 20 minutes; you need to be online, and Microsoft Edge or Google Chrome installed - Windows has
 Edge). Then Play it. Edit opens the course editor: the holes (tees, aim points, pins, par), the
 shapes (greens, fairways, bunkers, tees, water, penalty areas, the boundary, tree areas), trees,
-tall grass, buildings and the course's looks, on its aerial photo; "Save and put in the game"
-gets it ready again. "Courses you've built" exports one again, brings it up to date from
+tall grass, buildings and the course's looks, on its aerial photo; "Save and update the game"
+puts most changes in the game in seconds (the holes, greens, fairways, tees, bunkers, trees and
+tall grass); "Put in the game (full)" gets it all ready again, water and the rest (5-20 minutes). "Courses you've built" exports one again, brings it up to date from
 OpenStreetMap, or deletes it. Built courses go in Documents\OpenTeeGolf\Courses, their
 sources in Documents\OpenTeeGolf\CourseSources. The first time a course is opened the game builds
 it (a loading screen shows how far along it is: under a minute for most courses). Courses exported

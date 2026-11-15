@@ -8,6 +8,8 @@
 #include "OTGCourseSubsystem.h"
 #include "Game/OTGHelperSubsystem.h"
 #include "Game/OTGTreeDesign.h"
+#include "OTGQuickUpdate.h"
+#include "Async/Async.h"
 #include "Dom/JsonObject.h"
 #include "Engine/Engine.h"
 #include "Engine/GameInstance.h"
@@ -133,6 +135,7 @@ void SOTGCourseEditor::Construct(const FArguments&, const FString& CourseId)
 void SOTGCourseEditor::Loaded()
 {
 	bLoaded = true;
+	Applied = Src;
 	Status = Src.CourseJson.IsValid() && Src.CourseJson->HasField(TEXT("GolfSimBuilder")) && Src.CourseJson->GetObjectField(TEXT("GolfSimBuilder"))->HasTypedField<EJson::Boolean>(TEXT("needsReview"))
 		&& Src.CourseJson->GetObjectField(TEXT("GolfSimBuilder"))->GetBoolField(TEXT("needsReview")) ? FString(TEXT("Some parts were guessed: check the tees, pins and par on each hole.")) : FString();
 	MakeShade();
@@ -461,7 +464,7 @@ void SOTGCourseEditor::ShowReview()
 
 // ------------------------------------------------------------------ saving
 
-void SOTGCourseEditor::Save(bool bExport)
+void SOTGCourseEditor::Save(int32 Then)
 {
 	UOTGHelperSubsystem* H = Helper();
 	if (!H || !bLoaded) return;
@@ -469,21 +472,54 @@ void SOTGCourseEditor::Save(bool bExport)
 	Status = TEXT("Saving…");
 	Changed();
 	TWeakPtr<SOTGCourseEditor> Weak = SharedThis(this);
-	H->SaveSource(Id, Src.SaveBody(), [Weak, bExport](int32 Code, TSharedPtr<FJsonValue> J, const FString& Body) {
+	H->SaveSource(Id, Src.SaveBody(), [Weak, Then](int32 Code, TSharedPtr<FJsonValue> J, const FString& Body) {
 		TSharedPtr<SOTGCourseEditor> Self = Weak.Pin();
 		if (!Self.IsValid()) return;
 		if (Code != 200) { Self->Status = FString::Printf(TEXT("Save failed (%d): %s"), Code, *Body.Left(200)); Self->Changed(); return; }
 		Self->bDirty = false;
 		Self->Status = FString::Printf(TEXT("Saved %s"), *FDateTime::Now().ToString(TEXT("%H:%M:%S")));
-		if (bExport)
+		if (Then == 1) Self->Quick();
+		if (Then == 2)
 		{
 			if (UOTGHelperSubsystem* H2 = Self->Helper())
 			{
 				if (H2->GetJob().IsRunning()) Self->Status = TEXT("Saved. Something else is being built: put it in the game when that's done");
-				else { H2->Export(Self->Id); Self->bExporting = true; }
+				else { H2->Export(Self->Id); Self->bExporting = true; Self->Applied = Self->Src; }
 			}
 		}
 		Self->Changed();
+	});
+}
+
+void SOTGCourseEditor::Quick()
+{
+	UGameInstance* G = GI();
+	UOTGCourseSubsystem* C = G ? G->GetSubsystem<UOTGCourseSubsystem>() : nullptr;
+	if (!C || bQuicking) return;
+	const FString Dir = FPaths::Combine(C->CoursesFolder(), Id);
+	if (!FPaths::FileExists(FPaths::Combine(Dir, TEXT("play.json")))) { Status = TEXT("Saved. It isn't in the game yet: put it in the game (full) once"); Changed(); return; }
+	bQuicking = true;
+	Status = TEXT("Saved. Updating the game…");
+	Changed();
+	TWeakPtr<SOTGCourseEditor> Weak = SharedThis(this);
+	const FOTGCourseSource Before = Applied, After = Src;
+	Async(EAsyncExecution::Thread, [Weak, Dir, Before, After]() {
+		const otg::FQuickResult R = otg::QuickUpdate(Dir, Before, After);
+		AsyncTask(ENamedThreads::GameThread, [Weak, R, After]() {
+			TSharedPtr<SOTGCourseEditor> Self = Weak.Pin();
+			if (!Self.IsValid()) return;
+			Self->bQuicking = false;
+			if (R.bOk)
+			{
+				Self->Applied = After;
+				// (the game reads the course afresh next time it's played)
+				if (UGameInstance* G2 = GI()) if (UOTGCourseSubsystem* C2 = G2->GetSubsystem<UOTGCourseSubsystem>()) C2->LastExport = nullptr;
+				Self->Status = FString::Printf(TEXT("In the game (%.1f s)."), R.Seconds) + (R.NeedsFull.Num() ? TEXT(" Still to come with Put in the game (full): ") + FString::Join(R.NeedsFull, TEXT(", ")) : FString());
+				Self->bExported = true;
+			}
+			else Self->Status = TEXT("Saved, but the game couldn't be updated: ") + R.Message;
+			Self->Changed();
+		});
 	});
 }
 
@@ -546,7 +582,8 @@ EActiveTimerReturnType SOTGCourseEditor::Pulse(double Time, float Dt)
 				}
 			TestStep = 3; TestAt = FPlatformTime::Seconds() + 2;
 		}
-		else if (TestStep == 3) { Shot(TEXT("editor_fixed")); Save(false); TestStep = 4; TestAt = FPlatformTime::Seconds() + 5; }
+		else if (TestStep == 3) { Shot(TEXT("editor_fixed")); Save(FParse::Param(FCommandLine::Get(), TEXT("editortestquick")) ? 1 : 0); TestStep = 4; TestAt = FPlatformTime::Seconds() + 5; }
+		else if (TestStep == 4 && (bQuicking || Status.StartsWith(TEXT("Saving")))) TestAt = FPlatformTime::Seconds() + 1;
 		else if (TestStep == 4) { UE_LOG(LogTemp, Display, TEXT("editortest: %s (dirty %d)"), *Status, bDirty ? 1 : 0); TestStep = 9; FPlatformMisc::RequestExit(false, TEXT("editortest")); }
 	}
 	return EActiveTimerReturnType::Continue;
@@ -599,8 +636,9 @@ TSharedRef<SWidget> SOTGCourseEditor::TopBar()
 		+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(4, 0)[Button(TEXT("Hole"), [this]() { FitHole(); }, 12)]
 		+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(4, 0)[Button(TEXT("Course"), [this]() { FitAll(); }, 12)]
 		+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(4, 0)[Button(bShowPhoto && PhotoBrush.IsValid() ? TEXT("Photo") : TEXT("Shading"), [this]() { bShowPhoto = !bShowPhoto; Changed(); }, 12)]
-		+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(12, 0, 4, 0)[Button(TEXT("Save"), [this]() { Save(false); }, 14, bDirty)]
-		+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(4, 0)[Button(bExporting ? TEXT("Putting it in the game…") : TEXT("Save and put in the game"), [this]() { if (!bExporting) Save(true); }, 14, !bExporting)]
+		+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(12, 0, 4, 0)[Button(TEXT("Save"), [this]() { Save(0); }, 14, bDirty)]
+		+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(4, 0)[Button(bQuicking ? TEXT("Updating the game…") : TEXT("Save and update the game"), [this]() { if (!bQuicking && !bExporting) Save(1); }, 14, !bQuicking && !bExporting)]
+		+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(4, 0)[Button(bExporting ? TEXT("Putting it in the game…") : TEXT("Put in the game (full)"), [this]() { if (!bExporting && !bQuicking) Save(2); }, 12)]
 		+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(12, 0, 0, 0)[Button(bDirty && Status == TEXT("Close without saving?") ? TEXT("Yes, close") : TEXT("Close"), [this]() {
 			if (bDirty && Status != TEXT("Close without saving?")) { Status = TEXT("Close without saving?"); Changed(); return; }
 			if (OnClose) OnClose(bExported);

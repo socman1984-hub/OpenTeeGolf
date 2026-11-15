@@ -128,7 +128,11 @@ private:
 	void LoadExtras();
 	void MakeShade();
 	void Rebuild();
-	void Save(bool bExport);
+	// 0 save; 1 save and update the game at once (OTGQuickUpdate); 2 save and the full export
+	void Save(int32 Then);
+	void Quick();
+	FOTGCourseSource Applied;   // (the course as the game's folder has it: what the quick update compares with)
+	bool bQuicking = false;
 	TSharedRef<SWidget> TopBar();
 	TSharedRef<SWidget> CoursePanel();
 	TSharedRef<SWidget> HolePanel();

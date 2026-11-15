@@ -151,6 +151,18 @@ Everything the golf needs runs inside the game, in C++.
   colour: only kinds in its colours (`bEven`: rough, rough_clump) may grow on it. Console:
   `OTG.Grass.List`, `OTG.Grass.Set <kind> on|surface|density|height|vary|out|patch|cover <v>`,
   `OTG.Grass.Add <folder>`, `OTG.Grass.Save`, `OTG.Grass.Reset`.
+- Quick updates (phase 5, `otg::QuickUpdate`, the editor's "Save and update the game"): the course's
+  edits put in its export folder in seconds, without the web game's export - the holes (play.json,
+  holes.json, with course.js's path and green radius), the play surfaces and the green/fairway/tee/
+  bunker/rough masks round greens, fairways, tees and bunkers that changed (surfaceAt's rules:
+  fringe 1.5 m, first cut 2 m, paths kept; masks as exact distances, 0.5 on the outline, 3 m either
+  way), new bunkers' hollows (heightmap.png), tall grass strokes added, trees removed, your own
+  added or moved and new tree areas planted (trees.json and play.json's trees together), then
+  layer_native/fringe/mow.png made again from the play data (a port of derive-layers.js). Water,
+  the boundary, penalty areas, tree areas changed or removed, strokes or trees taken back,
+  building types, species and looks wait for the full export (it says which). It compares with the
+  course as the editor opened it (the export folder is taken to match the saved course then).
+  `-editortestquick` with `-editortestall` runs it.
 - The course editor (phase 4; Edit on a built course in New course, `SOTGCourseEditor`,
   `SOTGEditCanvas`): the web editor's map and panels - holes (number, par, handicap, the eight
   tees with yardages, two aim points, the green's centre, four pins, Spread pins, add and delete),
