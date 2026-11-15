@@ -86,9 +86,18 @@ void UOTGCourseSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 	{
 		FTimerHandle Handle;
 		GetGameInstance()->GetTimerManager().SetTimer(Handle, FTimerDelegate::CreateWeakLambda(this, [this]() {
-			FString Pos, Rot;
+			FString Pos, Rot, Cmd;
 			UWorld* World = GetGameInstance()->GetWorld();
 			APlayerController* PC = World ? World->GetFirstPlayerController() : nullptr;
+			// (-shotcmd=<console command>[;<another>], + for a space: run first, as the round is set - a
+			// time of day, the weather - so a screenshot can show them)
+			if (PC && FParse::Value(FCommandLine::Get(), TEXT("shotcmd="), Cmd, false))
+			{
+				Cmd.ReplaceInline(TEXT("+"), TEXT(" "));
+				TArray<FString> Cmds;
+				Cmd.ParseIntoArray(Cmds, TEXT(";"));
+				for (const FString& C : Cmds) PC->ConsoleCommand(C.TrimStartAndEnd());
+			}
 			if (World && PC && FParse::Value(FCommandLine::Get(), TEXT("shotpos="), Pos, false))
 			{
 				// (a camera of its own there, looked through)
