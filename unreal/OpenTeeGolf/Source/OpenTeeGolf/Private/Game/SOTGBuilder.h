@@ -31,6 +31,8 @@ struct FOTGMapCourse
 	FString OsmType;     // node, way, relation
 	int64 OsmId = 0;
 	FString BuiltId;     // (built already: its course id)
+	bool bInGame = false;  // (built and in the game's courses folder)
+	bool bFound = false;   // (in the last search's results)
 };
 
 class SOTGWorldMap : public SLeafWidget
@@ -56,6 +58,12 @@ public:
 	TFunction<void(int32 Index)> OnPick;   // (a course's dot clicked)
 
 private:
+	// What's drawn (builder.js's map): the courses not built yet in clusters - a count in a blue disc,
+	// within 60 px of each other, until zoom 12 - each alone a blue dot; the ones you've built green
+	// with a yellow ring (white: not in the game yet), a search's results orange, all on top
+	struct FDot { FVector2D P; int32 N = 1; int32 Index = INDEX_NONE; FVector2D Sum = FVector2D::ZeroVector; };
+	void Layout(const FGeometry& G) const;
+	mutable TArray<FDot> Dots;
 	FVector2D ToPx(double Lat, double Lon, double Z) const;      // world pixels at zoom Z
 	void FromPx(const FVector2D& P, double Z, double& Lat, double& Lon) const;
 	FVector2D ScreenOf(const FGeometry& G, double Lat, double Lon) const;
@@ -112,6 +120,7 @@ private:
 	bool bWorldDone = false, bWorldAsking = false;
 	double NextWorld = 0;
 	float WorldProgress = 0;
+	int32 WorldSeeded = 0;   // (courses from the list that comes with the game)
 	FString Status;
 	// the course picked: what's mapped there
 	TSharedPtr<FJsonObject> Checked;

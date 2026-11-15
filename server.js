@@ -22,7 +22,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { normalizeSpin } from './public/js/physics.js';
 import { TREE_SPECIES, TREE_MIXES } from './public/js/treeplace.js';
 import { BUILDING_TYPES } from './public/js/buildingtypes.js';
-import { searchCourses, worldCourses, placeName, withFreshOsm, UA } from './lib/realdata.js';
+import { searchCourses, worldCourses, placeName, withFreshOsm, withForeground, UA } from './lib/realdata.js';
 import { VERSION, checkForUpdate, installUpdate, canInstall, cleanUpAfterUpdate } from './lib/updater.js';
 import { checkCourse, buildCourse, BUILT_DIR } from './lib/builder.js';
 import { geoFor, ensureSatellite, recheckSatellite } from './lib/imagery.js';
@@ -1018,7 +1018,7 @@ const httpServer = http.createServer(async (req, res) => {
     if (p === '/api/builder/search') {
       const q = (url.searchParams.get('q') || '').trim();
       if (q.length < 3) return json(res, { error: 'Type at least 3 letters' }, 400);
-      const results = await searchCourses(q);
+      const results = await withForeground(() => searchCourses(q));
       const built = findCourses();
       for (const r of results) r.built = built.find((c) => c.osmId === r.osmId)?.id || null;
       return json(res, { results });
@@ -1035,13 +1035,13 @@ const httpServer = http.createServer(async (req, res) => {
     }
     if (p === '/api/builder/check') {
       const id = url.searchParams.get('id');
-      return json(res, await checkCourse(url.searchParams.get('type'), id, (msg) => broadcast('check', { osmId: +id, msg })));
+      return json(res, await withForeground(() => checkCourse(url.searchParams.get('type'), id, (msg) => broadcast('check', { osmId: +id, msg }))));
     }
     if (p === '/api/builder/build' && req.method === 'POST') {
       const b = await readBody(req);
       const jobId = Date.now().toString(36);
       const log = (msg, extra) => { if (msg) console.log(`[build] ${msg}`); broadcast('build', { jobId, msg, ...extra }); };
-      buildCourse({ osmType: b.osmType, osmId: b.osmId, group: b.group ?? null, name: b.name || null, location: b.location || '' }, log)
+      withForeground(() => buildCourse({ osmType: b.osmType, osmId: b.osmId, group: b.group ?? null, name: b.name || null, location: b.location || '' }, log))
         .then((r) => {
           // (grass colours chosen in the builder)
           if (b.surface === 'photo') { const cd0 = readCourseData(r.dataFile); cd0.Surface = 'photo'; fs.writeFileSync(r.dataFile, JSON.stringify(cd0, null, 1)); } ensurePhoto(path.dirname(r.dataFile), photoInfo(r.dataFile), { log: (m) => console.log(`[photo] ${m}`) }); return r; })
@@ -1064,7 +1064,7 @@ const httpServer = http.createServer(async (req, res) => {
       // (trees added in the editor are the player's own: they carry over)
       let keep = {};
       try { const old = JSON.parse(fs.readFileSync(realFile(f), 'utf8')); keep = { userTrees: old.userTrees, treeAreas: old.treeAreas, tallGrass: old.tallGrass, removedTrees: old.removedTrees, buildingTypes: old.buildingTypes }; } catch { /* none */ }
-      withFreshOsm(async () => {
+      withForeground(() => withFreshOsm(async () => {
         const r = await buildCourse({ osmType: b.osmType, osmId: b.osmId, group: b.group ?? null, name: cd.CourseName, location: cd.Location || '', id }, log);
         if (keep.userTrees?.length || keep.treeAreas?.length || keep.tallGrass?.length || keep.removedTrees?.length || Object.keys(keep.buildingTypes || {}).length) {
           const rfNew = realFile(r.dataFile), nr = JSON.parse(fs.readFileSync(rfNew, 'utf8'));
@@ -1097,7 +1097,7 @@ const httpServer = http.createServer(async (req, res) => {
           try { await recheckSatellite(sat, geo, real.grid, log); } catch (err) { log(`Aerial photo check skipped (${err.message})`); }
         }
         return r;
-      })
+      }))
         .then((r) => broadcast('build', { jobId, done: true, courseId: path.basename(path.dirname(r.dataFile)), needsReview: r.needsReview }))
         .catch((err) => { console.error(err); broadcast('build', { jobId, error: err.message }); });
       return json(res, { jobId });
@@ -1172,7 +1172,8 @@ httpServer.on('error', (err) => {
 });
 httpServer.listen(HTTP_PORT, HELPER ? '127.0.0.1' : undefined, () => {
   console.log(`OpenTeeGolf ${VERSION} running at http://localhost:${HTTP_PORT}${HELPER ? ' (helper for the Unreal game)' : ''}`);
-  if (HELPER) { watchParent(); cleanStale(); console.log(`Courses folder: ${BUILT_DIR}`); return; }
+  // (the world's golf courses for the builder's map: the snapshot at once, then checked for new ones)
+  if (HELPER) { watchParent(); cleanStale(); worldCourses(0); console.log(`Courses folder: ${BUILT_DIR}`); return; }
   cleanUpAfterUpdate();
   checkForUpdate().then((u) => { if (u.available) console.log(`A new version is available: ${u.latest} (you have ${VERSION}). Update from the game's menu.`); }).catch(() => {});
   console.log(`Courses folder: ${BUILT_DIR} (${findCourses().length} course(s) found)`);

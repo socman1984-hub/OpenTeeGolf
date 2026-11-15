@@ -56,6 +56,12 @@ foreach ($b in @(@('10over', 'v0.2.0'), @('allsquare', 'v0.2.0'))) {
   Invoke-WebRequest "https://raw.githubusercontent.com/divotmaker/$($b[0])/$($b[1])/LICENSE-MIT" -OutFile (Join-Path $bridgesOut "$($b[0])-LICENSE-MIT.txt") -UseBasicParsing
 }
 
+# ---- the world's golf courses for the course builder's map (lib/world-courses.json.gz): brought up
+# to date from OpenStreetMap (tiles fetched in the last month come from data\cache)
+Push-Location $Root
+try { node scripts/world-courses.js | Select-Object -Last 1 } finally { Pop-Location }
+if ($LASTEXITCODE -ne 0) { throw 'Updating the world course list failed.' }
+
 # ---- the course helper (Helper\: the web version's server and its Node.js, run hidden by the game
 # to find, build and export courses: UOTGHelperSubsystem, lib/helper.js); not its launch monitor
 # bridges (the game has its own), tests or starter

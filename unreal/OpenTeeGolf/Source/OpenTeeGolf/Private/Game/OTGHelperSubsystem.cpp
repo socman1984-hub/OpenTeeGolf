@@ -469,7 +469,7 @@ void UOTGHelperSubsystem::Build(const FString& OsmType, int64 OsmId, const FStri
 	FString Body;
 	FJsonSerializer::Serialize(B, TJsonWriterFactory<>::Create(&Body));
 	Job = FOTGHelperJob();
-	Job.Kind = TEXT("build"); Job.State = TEXT("start"); Job.Message = TEXT("Starting the build…");
+	Job.Kind = TEXT("build"); Job.State = TEXT("start"); Job.Message = TEXT("Starting the build…"); Job.StartedAt = FPlatformTime::Seconds(); Job.Log.Add(Job.Message);
 	TWeakObjectPtr<UOTGHelperSubsystem> Self(this);
 	Request(TEXT("POST"), TEXT("/api/builder/build"), Body, [Self](int32 Code, TSharedPtr<FJsonValue> J, const FString& Text) {
 		if (!Self.IsValid()) return;
@@ -485,7 +485,7 @@ void UOTGHelperSubsystem::Update(const FString& InCourseId)
 	const FString CourseId = InCourseId;
 	if (Job.IsRunning()) { UE_LOG(LogOTGHelper, Warning, TEXT("Already %s %s"), *Job.Kind, *Job.Id); return; }
 	Job = FOTGHelperJob();
-	Job.Kind = TEXT("update"); Job.State = TEXT("start"); Job.CourseId = CourseId; Job.Message = TEXT("Starting the update…");
+	Job.Kind = TEXT("update"); Job.State = TEXT("start"); Job.CourseId = CourseId; Job.Message = TEXT("Starting the update…"); Job.StartedAt = FPlatformTime::Seconds(); Job.Log.Add(Job.Message);
 	TWeakObjectPtr<UOTGHelperSubsystem> Self(this);
 	Request(TEXT("POST"), FString::Printf(TEXT("/api/courses/%s/update"), *CourseId), FString(), [Self](int32 Code, TSharedPtr<FJsonValue> J, const FString& Text) {
 		if (!Self.IsValid()) return;
@@ -502,7 +502,7 @@ void UOTGHelperSubsystem::Export(const FString& InCourseId, bool bVisible)
 	const FString CourseId = InCourseId;
 	if (Job.IsRunning()) { UE_LOG(LogOTGHelper, Warning, TEXT("Already %s %s"), *Job.Kind, *Job.Id); return; }
 	Job = FOTGHelperJob();
-	Job.Kind = TEXT("export"); Job.Id = CourseId; Job.CourseId = CourseId; Job.State = TEXT("start"); Job.Message = TEXT("Starting the export…");
+	Job.Kind = TEXT("export"); Job.Id = CourseId; Job.CourseId = CourseId; Job.State = TEXT("start"); Job.Message = TEXT("Starting the export…"); Job.StartedAt = FPlatformTime::Seconds(); Job.Log.Add(Job.Message);
 	UE_LOG(LogOTGHelper, Display, TEXT("Exporting %s"), *CourseId);
 	TWeakObjectPtr<UOTGHelperSubsystem> Self(this);
 	Request(TEXT("POST"), FString::Printf(TEXT("/api/helper/export?course=%s%s"), *FGenericPlatformHttp::UrlEncode(CourseId), bVisible ? TEXT("&visible=1") : TEXT("")), FString(),
@@ -543,13 +543,27 @@ void UOTGHelperSubsystem::PollJob()
 		{
 			FString S;
 			if (O->TryGetStringField(TEXT("msg"), S) && !S.IsEmpty()) Jb.Message = S;
+			const TArray<TSharedPtr<FJsonValue>>* L = nullptr;
+			if (O->TryGetArrayField(TEXT("log"), L)) { Jb.Log.Reset(); for (const TSharedPtr<FJsonValue>& V : *L) Jb.Log.Add(V->AsString()); }
 			FString Err;
 			if (O->TryGetStringField(TEXT("error"), Err) && !Err.IsEmpty()) { Jb.State = TEXT("failed"); Jb.Message = Err; }
 			else if (O->GetBoolField(TEXT("done"))) { Jb.State = TEXT("done"); O->TryGetStringField(TEXT("courseId"), Jb.CourseId); }
 		}
-		if (Jb.Message != Before) UE_LOG(LogOTGHelper, Display, TEXT("%s %s: %.0f%% %s"), *Jb.Kind, *Jb.Id, Jb.Frac * 100, *Jb.Message);
+		if (Jb.Message != Before)
+		{
+			UE_LOG(LogOTGHelper, Display, TEXT("%s %s: %.0f%% %s"), *Jb.Kind, *Jb.Id, Jb.Frac * 100, *Jb.Message);
+			// (an export's: its messages kept here, the step changes and the last of each)
+			if (Jb.Kind == TEXT("export") && !Jb.Message.IsEmpty())
+			{
+				auto Stem = [](const FString& M) { int32 I; return M.FindChar(TEXT('\u2026'), I) ? M.Left(I) : M; };
+				if (Jb.Log.Num() && Stem(Jb.Log.Last()) == Stem(Jb.Message)) Jb.Log.Last() = Jb.Message; else Jb.Log.Add(Jb.Message);
+				if (Jb.Log.Num() > 40) Jb.Log.RemoveAt(0);
+			}
+		}
 		if (!Jb.IsRunning())
 		{
+			Jb.EndedAt = FPlatformTime::Seconds();
+			HelperLog(FString::Printf(TEXT("%s %s: %s (%s) after %.0f s"), *Jb.Kind, *Jb.Id, *Jb.State, *Jb.Message, Jb.EndedAt - Jb.StartedAt));
 			UE_LOG(LogOTGHelper, Display, TEXT("%s %s: %s %s"), *Jb.Kind, *Jb.Id, *Jb.State, *Jb.CourseId);
 			Self->OnJobDone.Broadcast(Jb);
 		}

@@ -45,6 +45,9 @@ struct FOTGHelperJob
 	UPROPERTY() FString Message;
 	UPROPERTY() FString CourseId;    // a finished build's course
 	UPROPERTY() int32 Seconds = 0;
+	double StartedAt = 0;              // (FPlatformTime::Seconds when it began: the card's clock)
+	double EndedAt = 0;
+	TArray<FString> Log;               // (what it said, last first-come: the card shows the latest)
 	bool IsRunning() const { return State == TEXT("start") || State == TEXT("run"); }
 };
 

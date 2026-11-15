@@ -135,52 +135,102 @@ int32 SOTGWorldMap::OnPaint(const FPaintArgs&, const FGeometry& G, const FSlateR
 			if (const FSlateBrush* B = Tile(Z, WX, Y))
 				FSlateDrawElement::MakeBox(Out, Layer + 1, G.ToPaintGeometry(FVector2D(Ts + 0.5, Ts + 0.5), FSlateLayoutTransform(P)), B);
 		}
-	// the courses: a dot each (gold: built already), the one picked bigger, with its name
-	static const FSlateRoundedBoxBrush Dot(FLinearColor::White, 8.f);
+	// the courses: clusters and dots (Layout), the one picked bigger, with its name
+	// (circles: a rounded box whose corners are half its side - larger, and Slate draws nonsense)
+	static TMap<int32, TSharedPtr<FSlateRoundedBoxBrush>> Circles;
+	auto Circle = [](double Side) -> const FSlateBrush* {
+		const int32 K = FMath::Max(2, FMath::RoundToInt32(Side));
+		TSharedPtr<FSlateRoundedBoxBrush>& B = Circles.FindOrAdd(K);
+		if (!B.IsValid()) B = MakeShared<FSlateRoundedBoxBrush>(FLinearColor::White, K * 0.5f);
+		return B.Get();
+	};
 	if (Courses)
 	{
-		int32 Shown = 0;
-		const double R = Zoom < 5 ? 2.5 : Zoom < 9 ? 3.5 : 5.0;
-		for (int32 i = 0; i < Courses->Num() && Shown < 6000; i++)
+		Layout(G);
+		const FLinearColor Blue(0.18f, 0.55f, 0.9f, 0.95f), Orange(1.f, 0.62f, 0.18f, 1.f), GreenC(0.18f, 0.68f, 0.31f, 1.f), Ring(1.f, 0.85f, 0.29f, 1.f);
+		const FSlateFontInfo CountFont = Font(11, "Bold");
+		const TSharedRef<FSlateFontMeasure> Measure = FSlateApplication::Get().GetRenderer()->GetFontMeasureService();
+		int32 L = Layer + 2;
+		auto Disc = [&](const FVector2D& P, double R, const FLinearColor& Fill, const FLinearColor& Edge, double EdgeW) {
+			const double Rr = FMath::RoundToDouble(R), In = Rr - EdgeW;
+			FSlateDrawElement::MakeBox(Out, L, G.ToPaintGeometry(FVector2D(2 * Rr + 2, 2 * Rr + 2), FSlateLayoutTransform(FVector2D(FMath::RoundToDouble(P.X), FMath::RoundToDouble(P.Y)) - FVector2D(Rr + 1, Rr + 1))), Circle(2 * Rr + 2), ESlateDrawEffect::None, FLinearColor(0, 0, 0, 0.45f));
+			FSlateDrawElement::MakeBox(Out, L + 1, G.ToPaintGeometry(FVector2D(2 * Rr, 2 * Rr), FSlateLayoutTransform(FVector2D(FMath::RoundToDouble(P.X), FMath::RoundToDouble(P.Y)) - FVector2D(Rr, Rr))), Circle(2 * Rr), ESlateDrawEffect::None, Edge);
+			FSlateDrawElement::MakeBox(Out, L + 2, G.ToPaintGeometry(FVector2D(2 * In, 2 * In), FSlateLayoutTransform(FVector2D(FMath::RoundToDouble(P.X), FMath::RoundToDouble(P.Y)) - FVector2D(In, In))), Circle(2 * In), ESlateDrawEffect::None, Fill);
+		};
+		for (const FDot& D : Dots)
 		{
-			const FOTGMapCourse& M = (*Courses)[i];
-			const FVector2D P = ScreenOf(G, M.Lat, M.Lon);
-			if (P.X < -10 || P.Y < -10 || P.X > Size.X + 10 || P.Y > Size.Y + 10) continue;
-			Shown++;
-			const FLinearColor Col = M.BuiltId.IsEmpty() ? FLinearColor(0.35f, 1.f, 0.45f, 0.95f) : FLinearColor(1.f, 0.8f, 0.2f, 1.f);
-			FSlateDrawElement::MakeBox(Out, Layer + 2, G.ToPaintGeometry(FVector2D(2 * R + 2, 2 * R + 2), FSlateLayoutTransform(P - FVector2D(R + 1, R + 1))), &Dot, ESlateDrawEffect::None, FLinearColor(0, 0, 0, 0.7f));
-			FSlateDrawElement::MakeBox(Out, Layer + 3, G.ToPaintGeometry(FVector2D(2 * R, 2 * R), FSlateLayoutTransform(P - FVector2D(R, R))), &Dot, ESlateDrawEffect::None, Col);
+			if (D.N > 1)
+			{
+				// (a cluster: how many in it, bigger for more)
+				const double R = (D.N < 100 ? 30 : D.N < 1000 ? 38 : 46) / 2.0;
+				Disc(D.P, R, FLinearColor(0.23f, 0.56f, 0.85f, 0.88f), FLinearColor(1, 1, 1, 0.9f), 2);
+				const FString T = D.N < 1000 ? FString::FromInt(D.N) : FString::Printf(TEXT("%.1fk"), FMath::RoundToDouble(D.N / 100.0) / 10.0);
+				const FVector2D TS = Measure->Measure(T, CountFont);
+				FSlateDrawElement::MakeText(Out, L + 3, G.ToPaintGeometry(TS, FSlateLayoutTransform(D.P - TS / 2)), T, CountFont, ESlateDrawEffect::None, FLinearColor::White);
+				continue;
+			}
+			const FOTGMapCourse& M = (*Courses)[D.Index];
+			if (!M.BuiltId.IsEmpty()) Disc(D.P, 9, GreenC, M.bInGame ? Ring : FLinearColor::White, 2);
+			else if (M.bFound) Disc(D.P, 7, Orange, FLinearColor::White, 2);
+			else Disc(D.P, 7, Blue, FLinearColor::White, 2);
 		}
+		Layer = L + 4 - 4;
 		if (Courses->IsValidIndex(Picked))
 		{
 			const FOTGMapCourse& M = (*Courses)[Picked];
 			const FVector2D P = ScreenOf(G, M.Lat, M.Lon);
-			FSlateDrawElement::MakeBox(Out, Layer + 4, G.ToPaintGeometry(FVector2D(20, 20), FSlateLayoutTransform(P - FVector2D(10, 10))), &Dot, ESlateDrawEffect::None, FLinearColor(1, 1, 1, 0.9f));
-			FSlateDrawElement::MakeBox(Out, Layer + 5, G.ToPaintGeometry(FVector2D(12, 12), FSlateLayoutTransform(P - FVector2D(6, 6))), &Dot, ESlateDrawEffect::None, FLinearColor(0.9f, 0.2f, 0.15f, 1.f));
+			FSlateDrawElement::MakeBox(Out, Layer + 6, G.ToPaintGeometry(FVector2D(22, 22), FSlateLayoutTransform(P - FVector2D(11, 11))), Circle(22), ESlateDrawEffect::None, FLinearColor(1, 1, 1, 0.95f));
+			FSlateDrawElement::MakeBox(Out, Layer + 7, G.ToPaintGeometry(FVector2D(14, 14), FSlateLayoutTransform(P - FVector2D(7, 7))), Circle(14), ESlateDrawEffect::None, FLinearColor(0.9f, 0.2f, 0.15f, 1.f));
 			const FSlateFontInfo F = Font(13, "Bold");
 			const FVector2D T = FSlateApplication::Get().GetRenderer()->GetFontMeasureService()->Measure(M.Name, F) + FVector2D(12, 6);
-			FSlateDrawElement::MakeBox(Out, Layer + 6, G.ToPaintGeometry(T, FSlateLayoutTransform(P + FVector2D(-T.X / 2, 14))), White, ESlateDrawEffect::None, FLinearColor(0, 0, 0, 0.75f));
-			FSlateDrawElement::MakeText(Out, Layer + 7, G.ToPaintGeometry(T, FSlateLayoutTransform(P + FVector2D(-T.X / 2 + 6, 17))), M.Name, F, ESlateDrawEffect::None, FLinearColor::White);
+			FSlateDrawElement::MakeBox(Out, Layer + 8, G.ToPaintGeometry(T, FSlateLayoutTransform(P + FVector2D(-T.X / 2, 14))), White, ESlateDrawEffect::None, FLinearColor(0, 0, 0, 0.75f));
+			FSlateDrawElement::MakeText(Out, Layer + 9, G.ToPaintGeometry(T, FSlateLayoutTransform(P + FVector2D(-T.X / 2 + 6, 17))), M.Name, F, ESlateDrawEffect::None, FLinearColor::White);
 		}
 	}
 	// whose map it is
 	const FString Credit = Layer_ == TEXT("map") ? FString(TEXT("© OpenStreetMap contributors")) : FString(TEXT("Imagery © Esri, Maxar, Earthstar Geographics"));
-	FSlateDrawElement::MakeBox(Out, Layer + 8, G.ToPaintGeometry(FVector2D(330, 20), FSlateLayoutTransform(FVector2D(Size.X - 330, Size.Y - 20))), White, ESlateDrawEffect::None, FLinearColor(0, 0, 0, 0.55f));
-	FSlateDrawElement::MakeText(Out, Layer + 9, G.ToPaintGeometry(FVector2D(320, 18), FSlateLayoutTransform(FVector2D(Size.X - 324, Size.Y - 18))), Credit, Font(10), ESlateDrawEffect::None, FLinearColor(1, 1, 1, 0.85f));
-	return Layer + 9;
+	FSlateDrawElement::MakeBox(Out, Layer + 10, G.ToPaintGeometry(FVector2D(330, 20), FSlateLayoutTransform(FVector2D(Size.X - 330, Size.Y - 20))), White, ESlateDrawEffect::None, FLinearColor(0, 0, 0, 0.55f));
+	FSlateDrawElement::MakeText(Out, Layer + 11, G.ToPaintGeometry(FVector2D(320, 18), FSlateLayoutTransform(FVector2D(Size.X - 324, Size.Y - 18))), Credit, Font(10), ESlateDrawEffect::None, FLinearColor(1, 1, 1, 0.85f));
+	return Layer + 11;
+}
+
+void SOTGWorldMap::Layout(const FGeometry& G) const
+{
+	Dots.Reset();
+	if (!Courses) return;
+	const FVector2D Size = G.GetLocalSize();
+	const bool bCluster = Zoom < 12;
+	constexpr double Cell = 60;
+	// (the clusters on a grid of the world's own pixels, so they keep still as the map moves)
+	TMap<FIntPoint, int32> Cells;
+	TArray<FDot> Top;   // (built and found: over the rest)
+	for (int32 i = 0; i < Courses->Num(); i++)
+	{
+		const FOTGMapCourse& M = (*Courses)[i];
+		const FVector2D P = ScreenOf(G, M.Lat, M.Lon);
+		if (P.X < -Cell || P.Y < -Cell || P.X > Size.X + Cell || P.Y > Size.Y + Cell) continue;
+		if (!M.BuiltId.IsEmpty() || M.bFound || !bCluster) { FDot D; D.P = P; D.Index = i; (M.BuiltId.IsEmpty() && !M.bFound ? Dots : Top).Add(D); continue; }
+		const FVector2D W = ToPx(M.Lat, M.Lon, Zoom);
+		const FIntPoint K(FMath::FloorToInt32(W.X / Cell), FMath::FloorToInt32(W.Y / Cell));
+		if (const int32* C = Cells.Find(K)) { FDot& D = Dots[*C]; D.N++; D.Sum += P; }
+		else { FDot D; D.P = P; D.Index = i; D.Sum = P; Cells.Add(K, Dots.Add(D)); }
+	}
+	for (FDot& D : Dots) if (D.N > 1) D.P = D.Sum / D.N;
+	// (the built ones over the found ones)
+	Top.StableSort([this](const FDot& A, const FDot& B) { return (*Courses)[A.Index].BuiltId.IsEmpty() && !(*Courses)[B.Index].BuiltId.IsEmpty(); });
+	Dots.Append(Top);
 }
 
 int32 SOTGWorldMap::HitCourse(const FGeometry& G, const FVector2D& L) const
 {
-	if (!Courses) return INDEX_NONE;
-	int32 Best = INDEX_NONE;
-	double BestD = 9.0 * 9.0;
-	for (int32 i = 0; i < Courses->Num(); i++)
+	// (the top one under the mouse: a cluster's index is -2 - its place in Dots)
+	for (int32 k = Dots.Num() - 1; k >= 0; k--)
 	{
-		const double D = FVector2D::DistSquared(ScreenOf(G, (*Courses)[i].Lat, (*Courses)[i].Lon), L);
-		if (D < BestD) { BestD = D; Best = i; }
+		const FDot& D = Dots[k];
+		const double R = D.N > 1 ? (D.N < 100 ? 15 : D.N < 1000 ? 19 : 23) : 11;
+		if (FVector2D::DistSquared(D.P, L) <= R * R) return D.N > 1 ? -2 - k : D.Index;
 	}
-	return Best;
+	return INDEX_NONE;
 }
 
 FReply SOTGWorldMap::OnMouseButtonDown(const FGeometry& G, const FPointerEvent& E)
@@ -212,7 +262,14 @@ FReply SOTGWorldMap::OnMouseButtonUp(const FGeometry& G, const FPointerEvent& E)
 	if (!bMoved && E.GetEffectingButton() == EKeys::LeftMouseButton)
 	{
 		const int32 Hit = HitCourse(G, G.AbsoluteToLocal(E.GetScreenSpacePosition()));
-		if (Hit != INDEX_NONE && OnPick) OnPick(Hit);
+		if (Hit <= -2 && Dots.IsValidIndex(-2 - Hit))
+		{
+			// (a cluster: closer in, round it, until its courses come apart)
+			const FDot& D = Dots[-2 - Hit];
+			FromPx(ToPx(Lat, Lon, Zoom) + (D.P - G.GetLocalSize() / 2), Zoom, Lat, Lon);
+			Zoom = FMath::Clamp(Zoom + 2, MinZoom, MaxZoom);
+		}
+		else if (Hit >= 0 && OnPick) OnPick(Hit);
 	}
 	return FReply::Handled().ReleaseMouseCapture();
 }
@@ -247,6 +304,37 @@ void SOTGCourseBuilder::Construct(const FArguments&)
 		[
 			SNew(SOverlay)
 			+ SOverlay::Slot()[SAssignNew(Map, SOTGWorldMap)]
+			// the key, and how far the world's courses are gathered (builder.js map-note)
+			+ SOverlay::Slot().HAlign(HAlign_Left).VAlign(VAlign_Bottom).Padding(10, 10, 10, 30)
+			[
+				Box(SNew(SVerticalBox)
+					+ SVerticalBox::Slot().AutoHeight()
+					[
+						SNew(SHorizontalBox)
+						+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)[SNew(SBox).WidthOverride(14).HeightOverride(14)[SNew(SBorder).BorderImage(new FSlateRoundedBoxBrush(FLinearColor(0.18f, 0.68f, 0.31f, 1.f), 7.f, FLinearColor(1.f, 0.85f, 0.29f, 1.f), 2.f))]]
+						+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(5, 0, 14, 0)[Text(TEXT("Built"), 12)]
+						+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)[SNew(SBox).WidthOverride(12).HeightOverride(12)[SNew(SBorder).BorderImage(new FSlateRoundedBoxBrush(FLinearColor(0.18f, 0.55f, 0.9f, 1.f), 6.f, FLinearColor::White, 2.f))]]
+						+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(5, 0, 14, 0)[Text(TEXT("Not built yet"), 12)]
+						+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)[SNew(SBox).WidthOverride(12).HeightOverride(12)[SNew(SBorder).BorderImage(new FSlateRoundedBoxBrush(FLinearColor(1.f, 0.62f, 0.18f, 1.f), 6.f, FLinearColor::White, 2.f))]]
+						+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(5, 0, 14, 0)[Text(TEXT("Search results"), 12)]
+						+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)[SNew(SBox).WidthOverride(16).HeightOverride(16)[SNew(SBorder).BorderImage(new FSlateRoundedBoxBrush(FLinearColor(0.23f, 0.56f, 0.85f, 0.9f), 8.f, FLinearColor::White, 2.f))]]
+						+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(5, 0, 0, 0)[Text(TEXT("Several: click to zoom in"), 12)]
+					]
+					+ SVerticalBox::Slot().AutoHeight().Padding(0, 4, 0, 0)
+					[
+						SNew(STextBlock).Font(Font(12, "Bold")).ColorAndOpacity_Lambda([this]() { return bWorldDone ? FSlateColor(Soft) : FSlateColor(Gold); }).Text_Lambda([this]() {
+							int32 Built = 0;
+							for (const FOTGMapCourse& M : Courses) Built += M.BuiltId.IsEmpty() ? 0 : 1;
+							if (bWorldDone) return FText::FromString(FString::Printf(TEXT("%s golf courses (%d built) - click one to build it, or search"), *FText::AsNumber(Courses.Num()).ToString(), Built));
+							// (from the list that comes with the game, checked for courses mapped since)
+							if (WorldSeeded > 0)
+								return FText::FromString(FString::Printf(TEXT("%s golf courses (%d built) - checking OpenStreetMap for new ones (%d%%)"),
+									*FText::AsNumber(Courses.Num()).ToString(), Built, FMath::RoundToInt(WorldProgress * 100)));
+							return FText::FromString(FString::Printf(TEXT("Gathering every golf course in OpenStreetMap: %s so far (%d%% of the world; the first time takes a few minutes)"),
+								*FText::AsNumber(Courses.Num()).ToString(), FMath::RoundToInt(WorldProgress * 100)));
+						})
+					], FMargin(10, 6), FLinearColor(0.02f, 0.03f, 0.02f, 0.78f))
+			]
 			// Map / Aerial photos
 			+ SOverlay::Slot().HAlign(HAlign_Left).VAlign(VAlign_Top).Padding(10)
 			[
@@ -317,7 +405,15 @@ EActiveTimerReturnType SOTGCourseBuilder::Pulse(double Time, float Dt)
 		UOTGHelperSubsystem* H = Helper();
 		auto Shot = [](const TCHAR* Name) { if (GEngine) GEngine->Exec(nullptr, *FString::Printf(TEXT("OTG.Shot %s"), Name)); };
 		auto Quit = []() { FPlatformMisc::RequestExit(false, TEXT("buildertest")); };
-		if (TestStep == 1) { SearchBox->SetText(FText::FromString(TestQuery)); Search(); TestStep = 2; TestAt = FPlatformTime::Seconds() + 1; }
+		// (-buildertest=world: the map zoomed out, then over Ohio, no search)
+		if (TestStep == 1 && TestQuery == TEXT("world")) { Map->FlyTo(38, -40, 2.6); TestStep = 20; TestAt = FPlatformTime::Seconds() + 25; }
+		// (each shot a frame before the map moves on: a screenshot is taken at the end of its frame)
+		else if (TestStep == 20) { Shot(TEXT("builder_world")); TestStep = 21; TestAt = FPlatformTime::Seconds() + 1; }
+		else if (TestStep == 21) { Map->FlyTo(40, -84, 6.5); TestStep = 22; TestAt = FPlatformTime::Seconds() + 10; }
+		else if (TestStep == 22) { Shot(TEXT("builder_ohio")); TestStep = 23; TestAt = FPlatformTime::Seconds() + 1; }
+		else if (TestStep == 23) { Map->FlyTo(39.33, -84.43, 10); TestStep = 24; TestAt = FPlatformTime::Seconds() + 10; }
+		else if (TestStep == 24) { Shot(TEXT("builder_near")); TestStep = 9; TestAt = FPlatformTime::Seconds() + 3; }
+		else if (TestStep == 1) { SearchBox->SetText(FText::FromString(TestQuery)); Search(); TestStep = 2; TestAt = FPlatformTime::Seconds() + 1; }
 		else if (TestStep == 2 && Found.Num()) { Pick(Found[0], true); TestStep = 3; TestAt = FPlatformTime::Seconds() + 25; }
 		else if (TestStep == 2 && !Status.StartsWith(TEXT("Searching")) && FPlatformTime::Seconds() > TestAt + 60) { UE_LOG(LogTemp, Warning, TEXT("buildertest: nothing found")); Quit(); TestStep = 0; }
 		else if (TestStep == 3 && !bChecking) { Shot(TEXT("builder_picked")); TestStep = bTestBuild ? 4 : 9; TestAt = FPlatformTime::Seconds() + 3; }
@@ -371,12 +467,13 @@ void SOTGCourseBuilder::LoadWorld()
 				M.Lat = R[0]->AsNumber(); M.Lon = R[1]->AsNumber(); M.OsmType = OsmTypeName(R[2]->AsString()); M.OsmId = int64(R[3]->AsNumber()); M.Name = R[4]->AsString();
 				if (M.Name.IsEmpty()) M.Name = TEXT("Golf course");
 				if (Self->ById.Contains(M.OsmId)) continue;
-				for (const FBuilt& B : Self->Built) if (B.OsmId == M.OsmId) M.BuiltId = B.Id;
+				for (const FBuilt& B : Self->Built) if (B.OsmId == M.OsmId) { M.BuiltId = B.Id; M.bInGame = B.bInGame; }
 				Self->ById.Add(M.OsmId, Self->Courses.Add(M));
 			}
 		Self->WorldFrom += Rows ? Rows->Num() : 0;
 		Self->bWorldDone = O->GetBoolField(TEXT("done"));
 		Self->WorldProgress = O->GetNumberField(TEXT("progress"));
+		O->TryGetNumberField(TEXT("seeded"), Self->WorldSeeded);
 	});
 }
 
@@ -405,7 +502,21 @@ void SOTGCourseBuilder::LoadBuilt()
 			if (C->TryGetNumberField(TEXT("osmId"), Id)) B.OsmId = int64(Id);
 			B.bInGame = InGame.Contains(B.Id);
 			Self->Built.Add(B);
-			if (const int32* I = Self->ById.Find(B.OsmId)) Self->Courses[*I].BuiltId = B.Id;
+			double La = 0, Lo = 0;
+			C->TryGetNumberField(TEXT("lat"), La); C->TryGetNumberField(TEXT("lon"), Lo);
+			// (its dot: the world's list's, or one of its own until that list brings it)
+			int32 Idx = INDEX_NONE;
+			if (const int32* Have = B.OsmId ? Self->ById.Find(B.OsmId) : nullptr) Idx = *Have;
+			else if (La || Lo)
+			{
+				FOTGMapCourse M;
+				M.Lat = La; M.Lon = Lo; M.Name = B.Name; M.Location = B.Location; M.OsmId = B.OsmId;
+				FString T;
+				M.OsmType = C->TryGetStringField(TEXT("osmType"), T) ? T : FString(TEXT("way"));
+				Idx = Self->Courses.Add(M);
+				if (B.OsmId) Self->ById.Add(B.OsmId, Idx);
+			}
+			if (Self->Courses.IsValidIndex(Idx)) { Self->Courses[Idx].BuiltId = B.Id; Self->Courses[Idx].bInGame = B.bInGame; }
 		}
 		Self->Rebuild();
 	});
@@ -425,6 +536,7 @@ void SOTGCourseBuilder::Search()
 		const TSharedPtr<FJsonObject> O = J.IsValid() ? J->AsObject() : nullptr;
 		FString Err;
 		if (Code != 200 || !O.IsValid()) { Self->Status = O.IsValid() && O->TryGetStringField(TEXT("error"), Err) ? Err : FString(TEXT("The search didn't work: try again in a minute")); Self->Rebuild(); return; }
+		for (int32 F : Self->Found) if (Self->Courses.IsValidIndex(F)) Self->Courses[F].bFound = false;
 		Self->Found.Reset();
 		for (const TSharedPtr<FJsonValue>& V : O->GetArrayField(TEXT("results")))
 		{
@@ -446,6 +558,7 @@ void SOTGCourseBuilder::Search()
 			R->TryGetStringField(TEXT("location"), M.Location);
 			FString B;
 			if (R->TryGetStringField(TEXT("built"), B)) M.BuiltId = B;
+			M.bFound = true;
 			Self->Found.Add(I);
 		}
 		Self->Status = Self->Found.Num() ? FString::Printf(TEXT("%d found"), Self->Found.Num()) : FString(TEXT("No golf course by that name on OpenStreetMap"));
@@ -553,10 +666,22 @@ TSharedRef<SWidget> SOTGCourseBuilder::JobCard()
 	UOTGHelperSubsystem* H = Helper();
 	if (!H || H->GetJob().Kind.IsEmpty()) return SNullWidget::NullWidget;
 	const FOTGHelperJob& J = H->GetJob();
-	const bool bRun = J.IsRunning();
+	const bool bRun = J.IsRunning(), bFailed = J.State == TEXT("failed");
 	const FString What = J.Kind == TEXT("export") ? FString(TEXT("Getting it ready for the game")) : J.Kind == TEXT("update") ? FString(TEXT("Bringing it up to date")) : FString(TEXT("Building the course"));
 	TSharedRef<SVerticalBox> V = SNew(SVerticalBox);
-	V->AddSlot().AutoHeight()[Text(bRun ? What : J.State == TEXT("done") ? What + TEXT(": done") : What + TEXT(": it didn't work"), 14, J.State == TEXT("failed") ? Warn : Gold, "Bold")];
+	// its name and a clock (it ticks: you can see it's still going)
+	V->AddSlot().AutoHeight()
+	[
+		SNew(SHorizontalBox)
+		+ SHorizontalBox::Slot().FillWidth(1)[Text(bRun ? What : !bFailed ? What + TEXT(": done") : What + TEXT(": it didn't work"), 14, bFailed ? Warn : Gold, "Bold")]
+		+ SHorizontalBox::Slot().AutoWidth()[SNew(STextBlock).Font(Font(13, "Bold")).ColorAndOpacity(Soft).Text_Lambda([this]() {
+			const UOTGHelperSubsystem* H2 = Helper();
+			if (!H2 || !H2->GetJob().StartedAt) return FText::GetEmpty();
+			const FOTGHelperJob& Jn = H2->GetJob();
+			const int32 S = FMath::Max(0, FMath::RoundToInt32((Jn.IsRunning() ? FPlatformTime::Seconds() : Jn.EndedAt) - Jn.StartedAt));
+			return FText::FromString(FString::Printf(TEXT("%d:%02d"), S / 60, S % 60));
+		})]
+	];
 	if (J.Kind == TEXT("export") && bRun)
 	{
 		// (a bar: how far the export is)
@@ -570,8 +695,23 @@ TSharedRef<SWidget> SOTGCourseBuilder::JobCard()
 			]
 		];
 	}
-	V->AddSlot().AutoHeight().Padding(0, 4, 0, 0)[SNew(STextBlock).Font(Font(12)).ColorAndOpacity(Soft).WrapTextAt(400).Text(FText::FromString(J.Message))];
+	// what it's doing now, and what it did before (the last few)
+	V->AddSlot().AutoHeight().Padding(0, 4, 0, 0)[SNew(STextBlock).Font(Font(12, "Bold")).ColorAndOpacity(bFailed ? Warn : Ink).WrapTextAt(400).Text(FText::FromString(J.Message))];
+	const int32 From = FMath::Max(0, J.Log.Num() - 7);
+	for (int32 i = J.Log.Num() - 2; i >= From; i--)
+		if (!J.Log[i].IsEmpty() && J.Log[i] != J.Message)
+			V->AddSlot().AutoHeight().Padding(0, 1, 0, 0)[SNew(STextBlock).Font(Font(11)).ColorAndOpacity(FLinearColor(0.8f, 0.84f, 0.78f, 0.75f)).WrapTextAt(400).Text(FText::FromString(J.Log[i]))];
+	if (bRun && J.Message.Contains(TEXT("OpenStreetMap")))
+		V->AddSlot().AutoHeight().Padding(0, 4, 0, 0)[SNew(STextBlock).Font(Font(11)).ColorAndOpacity(Soft).WrapTextAt(400)
+			.Text(FText::FromString(TEXT("OpenStreetMap's public servers are busy at times: it tries the next one, then the main OpenStreetMap site.")))];
 	if (J.Kind == TEXT("export") && bRun) V->AddSlot().AutoHeight().Padding(0, 6, 0, 0)[Button(TEXT("Stop"), [this]() { if (UOTGHelperSubsystem* H2 = Helper()) H2->Cancel(); }, 12)];
+	if (bFailed && J.Kind == TEXT("build") && Courses.IsValidIndex(Picked) && Courses[Picked].BuiltId.IsEmpty())
+		V->AddSlot().AutoHeight().Padding(0, 8, 0, 0)[Button(TEXT("Try again"), [this]() { StartBuild(); }, 13, true)];
+	if (bFailed && J.Kind == TEXT("export") && !J.CourseId.IsEmpty())
+	{
+		const FString Id = J.CourseId;
+		V->AddSlot().AutoHeight().Padding(0, 8, 0, 0)[Button(TEXT("Try again"), [this, Id]() { if (UOTGHelperSubsystem* H2 = Helper()) H2->Export(Id); Rebuild(); }, 13, true)];
+	}
 	if (!ReadyId.IsEmpty() && !bRun)
 		V->AddSlot().AutoHeight().Padding(0, 8, 0, 0)[Button(TEXT("Play it"), [this]() { if (OnReady) OnReady(ReadyId); }, 15, true)];
 	return Box(V, FMargin(12, 10), Solid);
