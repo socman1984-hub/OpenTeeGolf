@@ -1611,7 +1611,7 @@ def wind_offset(mat, height, scale, flutter, wave_cm=0.0, flutter_rate=2.3, sway
 # crown 10 m up bends in a full wind (cm; WIND_FULL_MPS)
 LEAF_TINT = (1.25, 1.2, 0.85)
 LEAF_THROUGH = (0.55, 0.7, 0.25)
-LEAF_SWAY = 70.0
+LEAF_SWAY = 15.0   # (was 70: crowns swaying and leaves fluttering read as smeared, jittering leaves - kept very slight)
 BARK_TINT = (1.0, 0.97, 0.92)
 
 
@@ -1682,11 +1682,11 @@ def tree_parent_material(kind):
         mel.connect_material_property(col, "", unreal.MaterialProperty.MP_BASE_COLOR)
         mel.connect_material_property(const(0.85, -500, 400), "", unreal.MaterialProperty.MP_ROUGHNESS)
         mel.connect_material_property(const(0.3, -500, 500), "", unreal.MaterialProperty.MP_SPECULAR)
-    # the wind: the whole tree bends from its foot (its pivot), more the higher up, each tree in
-    # its own time, its branches fluttering out of step (leaves and wood alike, so the leaves stay
-    # on) - but not the trunk: the flutter fades in with the distance out from it
+    # the wind: the whole tree leans a very little from its foot (its pivot), more the higher up,
+    # each tree in its own time - and no flutter: leaves fluttering in the wind smeared and jittered
+    # (the upscaler blending moving leaves between frames)
     try:
-        wpo = wind_offset(mat, world_height(mat), LEAF_SWAY / 1000000.0, 0.25, flutter_rate=4.0, sway=0.4,
+        wpo = wind_offset(mat, world_height(mat), LEAF_SWAY / 1000000.0, 0.0, flutter_rate=4.0, sway=0.4,
                           parts_cm=250.0, reach=world_reach(mat))
         mel.connect_material_property(wpo, "", unreal.MaterialProperty.MP_WORLD_POSITION_OFFSET)
     except Exception:
