@@ -62,8 +62,11 @@ public:
 	void TogglePerf();                 // (P: frame rate and timings)
 	// the weather panel (L): the weather changed as you play
 	void ToggleWeatherPanel();
-	// the grass designer (R): the course's rough and tall grass, changed over the course itself
-	void ToggleGrassDesigner();
+	// the course designer (R): the course's grass, trees and rocks, changed over the course itself;
+	// the ball's trees made again as the designer has them, and the free view flown to a tree
+	void ToggleGrassDesigner(int32 Tab = -1);   // (-1: the tab it was on)
+	void RefreshTrees();
+	void ShowTree(const FString& Kind);
 	void SetWeatherKey(const FString& Key);
 	void SetWindMph(double Mph);
 	void SetWindFrom(double RelDeg);

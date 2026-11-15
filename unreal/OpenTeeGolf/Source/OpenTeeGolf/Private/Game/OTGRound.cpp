@@ -91,7 +91,45 @@ namespace
 			R->FreeLookAt(bPin ? R->PinWorld() + FVector(0, 0, 200) : FVector(Arg(0, 0), Arg(1, 0), Arg(2, 0)), Arg(O, 800), Arg(O + 1, 300), Arg(O + 2, 30));
 		}));
 	FAutoConsoleCommandWithWorldAndArgs PerfCmd(TEXT("OTG.Round.Perf"), TEXT("Frame rate and timings (the P key)"), FCmd::CreateLambda([](const TArray<FString>&, UWorld* W) { if (AOTGRound* R = RoundIn(W)) R->TogglePerf(); }));
-	FAutoConsoleCommandWithWorldAndArgs GrassCmd(TEXT("OTG.Round.GrassDesigner"), TEXT("The grass designer (the R key)"), FCmd::CreateLambda([](const TArray<FString>&, UWorld* W) { if (AOTGRound* R = RoundIn(W)) R->ToggleGrassDesigner(); }));
+	// (the tree designer's changes, for testing: OTG.Trees.Set <species|all|rocks> model|size|density|on <value>,
+	// OTG.Trees.Save, OTG.Trees.Show <species>, OTG.Trees.List)
+	AOTGRuntimeCourse* CourseOf(UWorld* W) { if (W) for (TActorIterator<AOTGRuntimeCourse> It(W); It; ++It) return *It; return nullptr; }
+	FAutoConsoleCommandWithWorldAndArgs TreesSetCmd(TEXT("OTG.Trees.Set"), TEXT("OTG.Trees.Set <species|all|rocks> model|size|density|on <value>"), FCmd::CreateLambda([](const TArray<FString>& A, UWorld* W) {
+		AOTGRuntimeCourse* C = CourseOf(W);
+		if (!C || A.Num() < 3) return;
+		FOTGTreeDesign D = C->TreeDesign();
+		const FString F = A[1].ToLower();
+		const float V = FCString::Atof(*A[2]);
+		if (A[0] == TEXT("all")) { if (F == TEXT("size")) D.AllSize = V; else if (F == TEXT("density")) D.AllDensity = V; }
+		else if (A[0] == TEXT("rocks")) { if (F == TEXT("size")) D.RockSize = V; else if (F == TEXT("density")) D.RockDensity = V; else if (F == TEXT("on")) D.bRocks = V != 0; }
+		else
+		{
+			FOTGSpeciesLook& L = D.Species.FindOrAdd(A[0]);
+			if (F == TEXT("model") && FOTGTreeDesign::Models().Contains(A[2])) L.Model = A[2];
+			else if (F == TEXT("size")) L.Size = V;
+			else if (F == TEXT("density")) L.Density = V;
+		}
+		C->SetTreeDesign(D);
+		if (AOTGRound* R = RoundIn(W)) R->RefreshTrees();
+	}));
+	FAutoConsoleCommandWithWorldAndArgs TreesSaveCmd(TEXT("OTG.Trees.Save"), TEXT("Save the course's trees and rocks as they are now (trees_design.json)"), FCmd::CreateLambda([](const TArray<FString>&, UWorld* W) {
+		FString Where;
+		if (AOTGRuntimeCourse* C = CourseOf(W)) UE_LOG(LogTemp, Display, TEXT("Trees %s %s"), C->SaveTreeDesign(&Where) ? TEXT("saved to") : TEXT("NOT saved to"), *Where);
+	}));
+	FAutoConsoleCommandWithWorldAndArgs TreesShowCmd(TEXT("OTG.Trees.Show"), TEXT("OTG.Trees.Show <species>: the free view flown to one"), FCmd::CreateLambda([](const TArray<FString>& A, UWorld* W) {
+		if (AOTGRound* R = RoundIn(W)) if (A.Num()) R->ShowTree(A[0]);
+	}));
+	FAutoConsoleCommandWithWorldAndArgs TreesListCmd(TEXT("OTG.Trees.List"), TEXT("The species on the course, and the trees and rocks drawn"), FCmd::CreateLambda([](const TArray<FString>&, UWorld* W) {
+		AOTGRuntimeCourse* C = CourseOf(W);
+		if (!C) return;
+		for (const TPair<FString, int32>& S : C->TreeSpecies())
+		{
+			const FOTGSpeciesLook L = C->TreeDesign().For(S.Key);
+			UE_LOG(LogTemp, Display, TEXT("%-12s %5d  %s size %.2f density %.2f"), *S.Key, S.Value, *L.Model, L.Size, L.Density);
+		}
+		UE_LOG(LogTemp, Display, TEXT("Drawn: %d trees, %d rocks"), C->TreesDrawn(), C->RocksDrawn());
+	}));
+	FAutoConsoleCommandWithWorldAndArgs GrassCmd(TEXT("OTG.Round.GrassDesigner"), TEXT("The course designer (the R key; OTG.Round.GrassDesigner trees: on its trees tab)"), FCmd::CreateLambda([](const TArray<FString>& A, UWorld* W) { if (AOTGRound* R = RoundIn(W)) R->ToggleGrassDesigner(A.Num() && A[0] == TEXT("trees") ? 1 : -1); }));
 	FAutoConsoleCommandWithWorldAndArgs WxCmd(TEXT("OTG.Round.WeatherPanel"), TEXT("The weather panel (the L key)"), FCmd::CreateLambda([](const TArray<FString>&, UWorld* W) { if (AOTGRound* R = RoundIn(W)) R->ToggleWeatherPanel(); }));
 	FAutoConsoleCommandWithWorldAndArgs TimeCmd(TEXT("OTG.Round.Time"), TEXT("OTG.Round.Time <hour, 5.5-19.5> | auto: (testing) the time of day"), FCmd::CreateLambda([](const TArray<FString>& A, UWorld* W) {
 		if (AOTGRound* R = RoundIn(W)) R->SetSunHour(A.Num() && A[0] != TEXT("auto") ? FCString::Atod(*A[0]) : -1.0);

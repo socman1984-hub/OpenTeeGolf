@@ -55,10 +55,13 @@ Space                          a quick test shot with the club in hand
 Enter                          skip the ball's flight; the next hole
 Tab                            the scorecard
 Backspace                      mulligan
-R                              grass designer: what the rough and the tall grass are made of (which
-                               grasses, how many, how tall, how far out, in what patches; add any
-                               Megascans plant to the tall grass), changed as you watch. "Save for
-                               this course" keeps it (grass.json in the course's folder)
+R                              the course designer, changed as you watch. Grass: what the rough and
+                               the tall grass are made of (which grasses, how many, how tall, how
+                               far out, in what patches; add any Megascans plant to the tall grass).
+                               Trees and rocks: each species' model, size and how many (more grows
+                               others round them; the ball meets the trees as you see them), "Show
+                               me" flies to one. "Save for this course" keeps it (grass.json,
+                               trees_design.json in the course's folder)
 Esc                            pause: resume, scorecard, launch monitor, quit to the menu
 
 The map at the top right shows the hole, your aim and the yardages; the box above it the wind

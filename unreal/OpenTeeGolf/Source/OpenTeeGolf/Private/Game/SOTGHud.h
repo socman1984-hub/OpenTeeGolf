@@ -14,7 +14,7 @@ class SOTGMinimap;
 class SOTGWind;
 class SOTGShotPanel;
 class SOTGWeatherPanel;
-class SOTGGrassDesigner;
+class SOTGCourseDesigner;
 class SBox;
 class SBorder;
 class SVerticalBox;
@@ -62,9 +62,9 @@ public:
 	TSharedPtr<SOTGWeatherPanel> WeatherPanel() const { return WxPanel; }
 	void ShowWeatherPanel(bool bShow);
 	bool IsWeatherPanelShown() const;
-	TSharedPtr<SOTGGrassDesigner> GrassDesigner() const { return GrassPanel; }
-	void ShowGrassDesigner(bool bShow);
-	bool IsGrassDesignerShown() const;
+	TSharedPtr<SOTGCourseDesigner> Designer() const { return DesignPanel; }
+	void ShowDesigner(bool bShow);
+	bool IsDesignerShown() const;
 	void ShowPerf(bool bShow);
 	bool IsPerfShown() const;
 
@@ -78,7 +78,7 @@ private:
 	TSharedPtr<SOTGWind> WindBox;
 	TSharedPtr<SOTGShotPanel> Shots;
 	TSharedPtr<SOTGWeatherPanel> WxPanel;
-	TSharedPtr<SOTGGrassDesigner> GrassPanel;
+	TSharedPtr<SOTGCourseDesigner> DesignPanel;
 	TSharedPtr<SBorder> PerfBox;
 	TSharedPtr<STextBlock> PerfText;
 	double PerfShown = 0;

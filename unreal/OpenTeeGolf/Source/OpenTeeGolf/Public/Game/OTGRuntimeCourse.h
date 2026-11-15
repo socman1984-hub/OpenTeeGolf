@@ -13,6 +13,7 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
 #include "Game/OTGGrassFwd.h"
+#include "Game/OTGTreeDesign.h"
 #include "OTGRuntimeCourse.generated.h"
 
 class UOTGCourseData;
@@ -54,6 +55,19 @@ public:
 	int32 GrassInstances() const;
 	TArray<otg::FGrassKind> SavedGrassKinds() const;   // (as saved for the course, or the game's own)
 
+	// The tree designer's view (SOTGTreeDesigner): the trees and rocks drawn again with a design
+	// (the course data's, which the ball's trees follow too: AOTGRound::RefreshTrees), saved for
+	// the course (trees_design.json), the species on the course and how many of each, and the
+	// nearest tree of a species to a point (the level's cm; false: none)
+	const FOTGTreeDesign& TreeDesign() const;
+	void SetTreeDesign(const FOTGTreeDesign& Design);
+	bool SaveTreeDesign(FString* Where = nullptr) const;
+	FOTGTreeDesign SavedTreeDesign() const;
+	TArray<TPair<FString, int32>> TreeSpecies() const;
+	bool NearestTree(const FString& Kind, const FVector& From, FVector& OutBase, double& OutHeightCm) const;
+	int32 TreesDrawn() const { return TreeCount; }
+	int32 RocksDrawn() const { return RockCount; }
+
 private:
 	void LoadPictures();
 	void BuildGround(TFunction<void(float, const FString&)> Progress);
@@ -63,6 +77,14 @@ private:
 	double GroundAt(double X, double Y) const;
 	void BuildTrees();
 	void BuildBoulders();
+	struct FTreeRec { double X = 0, Y = 0, Z = 0, H = 0; FString Kind; };   // (trees.json: cm)
+	TArray<FTreeRec> TreeRecs;
+	struct FRockRec { FVector P = FVector::ZeroVector; double Size = 0, Yaw = 0, Flat = 1; int32 Kind = 0; };   // (boulders.json)
+	TArray<FRockRec> RockRecs;
+	bool bTreesRead = false, bRocksRead = false;
+	UPROPERTY() TArray<TObjectPtr<class UHierarchicalInstancedStaticMeshComponent>> TreeComps;
+	UPROPERTY() TArray<TObjectPtr<class UHierarchicalInstancedStaticMeshComponent>> RockComps;
+	int32 TreeCount = 0, RockCount = 0;
 	void BuildWater();
 	void BuildSea();
 	void BuildFarLand();

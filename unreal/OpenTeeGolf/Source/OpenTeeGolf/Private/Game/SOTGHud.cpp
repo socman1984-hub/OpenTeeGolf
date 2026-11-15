@@ -51,10 +51,10 @@ void SOTGHud::Construct(const FArguments&)
 		[
 			SAssignNew(WxPanel, SOTGWeatherPanel).Visibility(EVisibility::Collapsed)
 		]
-		// the grass designer (R), on the left so the course shows beside it
+		// the course designer (R: the grass, the trees and rocks), on the left so the course shows beside it
 		+ SOverlay::Slot().HAlign(HAlign_Left).VAlign(VAlign_Center).Padding(24, 60, 24, 24)
 		[
-			SAssignNew(GrassPanel, SOTGGrassDesigner).Visibility(EVisibility::Collapsed)
+			SAssignNew(DesignPanel, SOTGCourseDesigner).Visibility(EVisibility::Collapsed)
 		]
 		// the frame rate and timings (P)
 		+ SOverlay::Slot().HAlign(HAlign_Center).VAlign(VAlign_Top).Padding(0, 24, 0, 0)
@@ -88,7 +88,7 @@ void SOTGHud::Construct(const FArguments&)
 		+ SOverlay::Slot().HAlign(HAlign_Left).VAlign(VAlign_Bottom).Padding(24)
 		[
 			SAssignNew(Keys, STextBlock).Font(Font(12)).ColorAndOpacity(FLinearColor(1, 1, 1, 0.7f)).ShadowOffset(FVector2D(1, 1))
-			.Text(FText::FromString(TEXT("Click the ground or the map to aim     Left / Right: fine aim     Up / Down: club     T: test shot panel     Space: quick test shot     Enter: skip / continue     Tab: scorecard     Backspace: mulligan     F: free view     G: slope grid     L: weather     R: grass     P: frame rate     Esc: menu")))
+			.Text(FText::FromString(TEXT("Click the ground or the map to aim     Left / Right: fine aim     Up / Down: club     T: test shot panel     Space: quick test shot     Enter: skip / continue     Tab: scorecard     Backspace: mulligan     F: free view     G: slope grid     L: weather     R: designer     P: frame rate     Esc: menu")))
 		]
 		// banners and toasts
 		+ SOverlay::Slot().HAlign(HAlign_Center).VAlign(VAlign_Top).Padding(0, 140, 0, 0)
@@ -322,14 +322,14 @@ bool SOTGHud::IsWeatherPanelShown() const
 	return WxPanel->GetVisibility() == EVisibility::Visible;
 }
 
-void SOTGHud::ShowGrassDesigner(bool bShow)
+void SOTGHud::ShowDesigner(bool bShow)
 {
-	GrassPanel->SetVisibility(bShow ? EVisibility::Visible : EVisibility::Collapsed);
+	DesignPanel->SetVisibility(bShow ? EVisibility::Visible : EVisibility::Collapsed);
 }
 
-bool SOTGHud::IsGrassDesignerShown() const
+bool SOTGHud::IsDesignerShown() const
 {
-	return GrassPanel->GetVisibility() == EVisibility::Visible;
+	return DesignPanel->GetVisibility() == EVisibility::Visible;
 }
 
 void SOTGHud::ShowPerf(bool bShow)

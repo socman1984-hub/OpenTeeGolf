@@ -8,6 +8,7 @@
 #include "Widgets/Input/SSlider.h"
 #include "Widgets/Layout/SBox.h"
 #include "Widgets/Layout/SScrollBox.h"
+#include "Widgets/Layout/SWidgetSwitcher.h"
 #include "Widgets/SBoxPanel.h"
 
 using namespace otg::ui;
@@ -224,4 +225,188 @@ void SOTGGrassDesigner::Rebuild()
 		})
 	];
 	Body->SetContent(Box(V, FMargin(14, 10), Solid));
+}
+
+// ------------------------------------------------------------------ the tree designer
+
+void SOTGTreeDesigner::Construct(const FArguments&)
+{
+	ChildSlot[SAssignNew(Body, SBox).WidthOverride(520).MaxDesiredHeight(760)];
+}
+
+void SOTGTreeDesigner::Open(AOTGRuntimeCourse* InCourse)
+{
+	Course = InCourse;
+	Edit = InCourse ? InCourse->TreeDesign() : FOTGTreeDesign();
+	Species = InCourse ? InCourse->TreeSpecies() : TArray<TPair<FString, int32>>();
+	Status.Empty();
+	Rebuild();
+}
+
+void SOTGTreeDesigner::Apply()
+{
+	if (!Course.IsValid()) return;
+	Course->SetTreeDesign(Edit);
+	if (OnChanged) OnChanged();
+	Status = TEXT("Not saved yet");
+}
+
+void SOTGTreeDesigner::Rebuild()
+{
+	TSharedRef<SVerticalBox> V = SNew(SVerticalBox);
+	V->AddSlot().AutoHeight().Padding(0, 0, 0, 4)
+	[
+		SNew(SHorizontalBox)
+		+ SHorizontalBox::Slot().AutoWidth()[Text(TEXT("Trees and rocks"), 18, Ink, "Bold")]
+		+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Bottom).Padding(8, 0, 0, 2)[Text(TEXT("seen at once  ·  R: close"), 12, Soft)]
+	];
+	if (!Course.IsValid() || !Species.Num())
+	{
+		V->AddSlot().AutoHeight()[Text(TEXT("This course has no trees to design (a course pack, or still loading)."), 12, Soft)];
+		Body->SetContent(Box(V, FMargin(14, 10), Solid));
+		return;
+	}
+	TSharedRef<SVerticalBox> List = SNew(SVerticalBox);
+	// a slider on a number in Edit (Get gives its address), the trees drawn again when it's let go
+	auto Slider = [this](TSharedRef<SVerticalBox> To, const FString& Label, float Lo, float Hi, TFunction<float*(FOTGTreeDesign&)> Get, TFunction<FString(float)> Fmt) {
+		To->AddSlot().AutoHeight().Padding(18, 2, 0, 0)
+		[
+			SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)[SNew(SBox).WidthOverride(112)[Text(Label, 12, Soft)]]
+			+ SHorizontalBox::Slot().FillWidth(1).VAlign(VAlign_Center)
+			[
+				SNew(SSlider)
+				.Value_Lambda([this, Lo, Hi, Get]() { return FMath::Clamp((*Get(Edit) - Lo) / (Hi - Lo), 0.f, 1.f); })
+				.OnValueChanged_Lambda([this, Lo, Hi, Get](float X) { *Get(Edit) = FMath::RoundToFloat((Lo + (Hi - Lo) * X) * 20) / 20; })
+				.OnMouseCaptureEnd_Lambda([this]() { Apply(); })
+				.OnControllerCaptureEnd_Lambda([this]() { Apply(); })
+			]
+			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(8, 0, 0, 0)
+			[
+				SNew(SBox).WidthOverride(140)[SNew(STextBlock).Font(Font(12, "Bold")).ColorAndOpacity(Ink).Text_Lambda([this, Get, Fmt]() { return FText::FromString(Fmt(*Get(Edit))); })]
+			]
+		];
+	};
+	auto Times = [](float F) { return F < 0.025f ? FString(TEXT("none")) : FMath::IsNearlyEqual(F, 1.f) ? FString(TEXT("as mapped")) : FString::Printf(TEXT("%d%%"), FMath::RoundToInt(F * 100)); };
+	auto SizeFmt = [](float F) { return FMath::IsNearlyEqual(F, 1.f) ? FString(TEXT("as mapped")) : FString::Printf(TEXT("%d%%"), FMath::RoundToInt(F * 100)); };
+
+	List->AddSlot().AutoHeight().Padding(0, 6, 0, 0)[Text(TEXT("All trees"), 15, Gold, "Bold")];
+	Slider(List, TEXT("Size"), 0.5f, 1.8f, [](FOTGTreeDesign& D) { return &D.AllSize; }, SizeFmt);
+	Slider(List, TEXT("How many"), 0.f, 2.5f, [](FOTGTreeDesign& D) { return &D.AllDensity; }, Times);
+
+	List->AddSlot().AutoHeight().Padding(0, 12, 0, 0)[Text(TEXT("Species on this course"), 15, Gold, "Bold")];
+	List->AddSlot().AutoHeight()[SNew(STextBlock).Font(Font(11)).ColorAndOpacity(Soft).WrapTextAt(470)
+		.Text(FText::FromString(TEXT("More than as mapped grows others round them - never on the fairways, greens, tees, sand, paths or water. The ball meets the trees as you see them.")))];
+	for (const TPair<FString, int32>& Sp : Species)
+	{
+		const FString Kind = Sp.Key;
+		FOTGSpeciesLook& L = Edit.Species.FindOrAdd(Kind);
+		TSharedRef<SVerticalBox> Row = SNew(SVerticalBox);
+		Row->AddSlot().AutoHeight().Padding(0, 8, 0, 2)
+		[
+			SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot().FillWidth(1).VAlign(VAlign_Center)
+			[
+				SNew(SHorizontalBox)
+				+ SHorizontalBox::Slot().AutoWidth()[Text(FOTGTreeDesign::SpeciesLabel(Kind), 14, Ink, "Bold")]
+				+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Bottom).Padding(6, 0, 0, 1)[Text(FString::Printf(TEXT("%d trees"), Sp.Value), 11, Soft)]
+			]
+			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(4, 0, 0, 0)[Button(TEXT("Show me"), [this, Kind]() { if (OnShow) OnShow(Kind); }, 11)]
+		];
+		// the model it's drawn with: the next one at each click
+		Row->AddSlot().AutoHeight().Padding(18, 2, 0, 0)
+		[
+			SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)[SNew(SBox).WidthOverride(112)[Text(TEXT("Drawn as"), 12, Soft)]]
+			+ SHorizontalBox::Slot().AutoWidth()[Button(FOTGTreeDesign::ModelLabel(L.Model), [this, Kind]() {
+				FOTGSpeciesLook& X = Edit.Species.FindOrAdd(Kind);
+				const TArray<FString>& M = FOTGTreeDesign::Models();
+				X.Model = M[(M.IndexOfByKey(X.Model) + 1) % M.Num()];
+				Apply();
+				Rebuild();
+			}, 12)]
+		];
+		Slider(Row, TEXT("Size"), 0.4f, 2.f, [Kind](FOTGTreeDesign& D) { return &D.Species.FindOrAdd(Kind).Size; }, SizeFmt);
+		Slider(Row, TEXT("How many"), 0.f, 3.f, [Kind](FOTGTreeDesign& D) { return &D.Species.FindOrAdd(Kind).Density; }, Times);
+		List->AddSlot().AutoHeight()[Row];
+	}
+
+	List->AddSlot().AutoHeight().Padding(0, 12, 0, 0)
+	[
+		SNew(SHorizontalBox)
+		+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0, 0, 8, 0)[Button(Edit.bRocks ? TEXT("On") : TEXT("Off"), [this]() { Edit.bRocks = !Edit.bRocks; Apply(); Rebuild(); }, 12, Edit.bRocks)]
+		+ SHorizontalBox::Slot().FillWidth(1).VAlign(VAlign_Center)[Text(TEXT("Rocks"), 15, Gold, "Bold")]
+	];
+	if (Edit.bRocks)
+	{
+		Slider(List, TEXT("Size"), 0.4f, 2.5f, [](FOTGTreeDesign& D) { return &D.RockSize; }, SizeFmt);
+		Slider(List, TEXT("How many"), 0.f, 1.f, [](FOTGTreeDesign& D) { return &D.RockDensity; }, Times);
+	}
+	V->AddSlot().AutoHeight()[SNew(SBox).MaxDesiredHeight(600)[SNew(SScrollBox) + SScrollBox::Slot()[List]]];
+
+	V->AddSlot().AutoHeight().Padding(0, 12, 0, 0)
+	[
+		SNew(SHorizontalBox)
+		+ SHorizontalBox::Slot().AutoWidth().Padding(0, 0, 6, 0)[Button(TEXT("Save for this course"), [this]() {
+			FString Where;
+			const bool bOk = Course.IsValid() && Course->SaveTreeDesign(&Where);
+			Status = bOk ? FString(TEXT("Saved: the course looks like this from now on")) : FString(TEXT("Couldn't save ")) + Where;
+		}, 13, true)]
+		+ SHorizontalBox::Slot().AutoWidth().Padding(0, 0, 6, 0)[Button(TEXT("As saved"), [this]() {
+			if (!Course.IsValid()) return;
+			Edit = Course->SavedTreeDesign();
+			Apply();
+			Status = TEXT("Back as it was saved");
+			Rebuild();
+		}, 12)]
+		+ SHorizontalBox::Slot().AutoWidth()[Button(TEXT("As mapped"), [this]() {
+			Edit = FOTGTreeDesign();
+			Apply();
+			Status = TEXT("As mapped (not saved yet)");
+			Rebuild();
+		}, 12)]
+	];
+	V->AddSlot().AutoHeight().Padding(0, 6, 0, 0)
+	[
+		SNew(STextBlock).Font(Font(11)).ColorAndOpacity(Soft).Text_Lambda([this]() {
+			const int32 T = Course.IsValid() ? Course->TreesDrawn() : 0, R = Course.IsValid() ? Course->RocksDrawn() : 0;
+			return FText::FromString(FString::Printf(TEXT("%s%s%d trees, %d rocks"), *Status, Status.IsEmpty() ? TEXT("") : TEXT("  ·  "), T, R));
+		})
+	];
+	Body->SetContent(Box(V, FMargin(14, 10), Solid));
+}
+
+// ------------------------------------------------------------------ both, on tabs
+
+void SOTGCourseDesigner::Construct(const FArguments&)
+{
+	ChildSlot
+	[
+		SNew(SVerticalBox)
+		+ SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 4)[SAssignNew(TabRow, SBox)]
+		+ SVerticalBox::Slot().AutoHeight()
+		[
+			SAssignNew(Switch, SWidgetSwitcher)
+			+ SWidgetSwitcher::Slot()[SAssignNew(GrassPanel, SOTGGrassDesigner)]
+			+ SWidgetSwitcher::Slot()[SAssignNew(TreePanel, SOTGTreeDesigner)]
+		]
+	];
+	ShowTab(0);
+}
+
+void SOTGCourseDesigner::ShowTab(int32 Tab)
+{
+	Current = Tab;
+	Switch->SetActiveWidgetIndex(Tab);
+	TabRow->SetContent(
+		SNew(SHorizontalBox)
+		+ SHorizontalBox::Slot().AutoWidth().Padding(0, 0, 4, 0)[Button(TEXT("Grass"), [this]() { ShowTab(0); }, 13, Current == 0)]
+		+ SHorizontalBox::Slot().AutoWidth()[Button(TEXT("Trees and rocks"), [this]() { ShowTab(1); }, 13, Current == 1)]);
+}
+
+void SOTGCourseDesigner::Open(AOTGRuntimeCourse* Course)
+{
+	GrassPanel->Open(Course);
+	TreePanel->Open(Course);
+	ShowTab(Current);
 }

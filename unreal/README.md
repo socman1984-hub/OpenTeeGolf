@@ -151,6 +151,17 @@ Everything the golf needs runs inside the game, in C++.
   colour: only kinds in its colours (`bEven`: rough, rough_clump) may grow on it. Console:
   `OTG.Grass.List`, `OTG.Grass.Set <kind> on|surface|density|height|vary|out|patch|cover <v>`,
   `OTG.Grass.Add <folder>`, `OTG.Grass.Save`, `OTG.Grass.Reset`.
+- The tree designer (R, the "Trees and rocks" tab, `SOTGTreeDesigner`, phase 2): each course's
+  `trees_design.json` (`FOTGTreeDesign`): per species the model it's drawn with (the game's choice
+  by height, or beech, hornbeam, Norway spruce, Baltic pine), its size and how many (fewer: taken
+  out by a hash of the position; more: copies round each tree, never on mown grass, sand, paths or
+  water), all trees together, and the rocks (on, size, how many). `trees.json` (drawn) and
+  `play.json`'s trees (the ball's) are the same trees in the same order, so both go through
+  `UOTGCourseData::ForEachDesignedTree`: the ball meets the trees as drawn
+  (`AOTGRound::RefreshTrees` after each change). "Show me" flies the free view to the nearest tree
+  of a species. Console: `OTG.Trees.List`, `OTG.Trees.Set <species|all|rocks>
+  model|size|density|on <v>`, `OTG.Trees.Save`, `OTG.Trees.Show <species>`,
+  `OTG.Round.GrassDesigner trees` (the designer on that tab).
 - The course helper (making courses from the game, phase 0 of moving the course builder and editor
   into it): `UOTGHelperSubsystem` runs the web version's server hidden (`OTG_HELPER=1`,
   `lib/helper.js`: this computer only, no launch monitor listeners, gone with the game) on a free

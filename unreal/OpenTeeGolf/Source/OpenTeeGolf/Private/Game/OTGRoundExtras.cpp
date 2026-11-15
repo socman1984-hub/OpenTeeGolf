@@ -11,6 +11,8 @@
 #include "ProceduralMeshComponent.h"
 #include "SOTGHud.h"
 #include "SOTGDesigner.h"
+#include "GameFramework/PlayerController.h"
+#include "Camera/PlayerCameraManager.h"
 #include "Game/OTGRuntimeCourse.h"
 #include "EngineUtils.h"
 
@@ -165,17 +167,43 @@ void AOTGRound::ToggleWeatherPanel()
 	if (Hud) Hud->ShowWeatherPanel(!Hud->IsWeatherPanelShown());
 }
 
-void AOTGRound::ToggleGrassDesigner()
+void AOTGRound::ToggleGrassDesigner(int32 Tab)
 {
 	if (!Hud) return;
-	const bool bShow = !Hud->IsGrassDesignerShown();
+	const bool bShow = !Hud->IsDesignerShown();
 	if (bShow)
 	{
 		AOTGRuntimeCourse* C = nullptr;
 		for (TActorIterator<AOTGRuntimeCourse> It(GetWorld()); It; ++It) { C = *It; break; }
-		Hud->GrassDesigner()->Open(C);
+		TWeakObjectPtr<AOTGRound> Self(this);
+		Hud->Designer()->Trees()->OnChanged = [Self]() { if (Self.IsValid()) Self->RefreshTrees(); };
+		Hud->Designer()->Trees()->OnShow = [Self](const FString& Kind) { if (Self.IsValid()) Self->ShowTree(Kind); };
+		Hud->Designer()->Open(C);
+		if (Tab >= 0) Hud->Designer()->ShowTab(Tab);
 	}
-	Hud->ShowGrassDesigner(bShow);
+	Hud->ShowDesigner(bShow);
+}
+
+void AOTGRound::RefreshTrees()
+{
+	if (!Data) return;
+	Data->FillTrees(Trees);
+	UE_LOG(LogTemp, Display, TEXT("The ball's trees: %d"), int32(Trees.all.size()));
+}
+
+void AOTGRound::ShowTree(const FString& Kind)
+{
+	AOTGRuntimeCourse* C = nullptr;
+	for (TActorIterator<AOTGRuntimeCourse> It(GetWorld()); It; ++It) { C = *It; break; }
+	APlayerController* PC = GetWorld() ? GetWorld()->GetFirstPlayerController() : nullptr;
+	const FVector From = PC && PC->PlayerCameraManager ? PC->PlayerCameraManager->GetCameraLocation() : FVector::ZeroVector;
+	FVector Base;
+	double H = 0;
+	if (!C || !C->NearestTree(Kind, From, Base, H)) return;
+	// (from the side you're on, far enough back to see it whole)
+	const FVector Dir = (Base - From).GetSafeNormal2D();
+	const double Yaw = FMath::RadiansToDegrees(FMath::Atan2(Dir.Y, Dir.X));
+	FreeLookAt(Base + FVector(0, 0, H * 0.5), FMath::Max(2000.0, H * 2.6), H * 0.15, Yaw);
 }
 
 void AOTGRound::WeatherChanged()

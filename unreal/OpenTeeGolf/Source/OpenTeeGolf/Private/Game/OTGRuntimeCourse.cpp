@@ -495,68 +495,169 @@ UHierarchicalInstancedStaticMeshComponent* AOTGRuntimeCourse::Instances(UStaticM
 // The trees (trees.json): Unreal's own models - each tree one of the three nearest its height
 // (picked by its position, so the woods mix), scaled to the game's height within reason, turned
 // at random; conifers the pine and spruce models (pines for the pines). As build_course.py does it.
+// Then as the course's tree designer has them (UOTGCourseData::ForEachDesignedTree, as the ball's
+// trees are): a species drawn with the model picked for it, larger or smaller, fewer or more.
 void AOTGRuntimeCourse::BuildTrees()
 {
-	const TSharedPtr<FJsonValue> J = ReadJson(FPaths::Combine(Data->ExportDir, TEXT("trees.json")));
-	if (!J.IsValid()) return;
+	if (!bTreesRead)
+	{
+		bTreesRead = true;
+		const TSharedPtr<FJsonValue> J = ReadJson(FPaths::Combine(Data->ExportDir, TEXT("trees.json")));
+		if (J.IsValid())
+			for (const TSharedPtr<FJsonValue>& V : J->AsArray())
+			{
+				const TSharedPtr<FJsonObject> T = V->AsObject();
+				if (!T.IsValid()) continue;
+				FTreeRec R;
+				R.X = T->GetNumberField(TEXT("x")); R.Y = T->GetNumberField(TEXT("y")); R.Z = T->GetNumberField(TEXT("z")); R.H = T->GetNumberField(TEXT("h"));
+				T->TryGetStringField(TEXT("kind"), R.Kind);
+				TreeRecs.Add(R);
+			}
+	}
+	for (UHierarchicalInstancedStaticMeshComponent* C : TreeComps) if (C) { Parts.Remove(C); C->DestroyComponent(); }
+	TreeComps.Reset();
+	TreeCount = 0;
+	if (!TreeRecs.Num()) return;
 	const TArray<FTreeModel> Broad = TreeModels(BroadleafFolders, UE_ARRAY_COUNT(BroadleafFolders), true);
 	const TArray<FTreeModel> Cones = TreeModels(ConiferFolders, UE_ARRAY_COUNT(ConiferFolders), false);
-	TArray<FTreeModel> PineModels, Spruces;
+	TArray<FTreeModel> PineModels, Spruces, Beeches, Hornbeams;
 	for (const FTreeModel& M : Cones) (M.Mesh->GetName().Contains(TEXT("pine"), ESearchCase::IgnoreCase) ? PineModels : Spruces).Add(M);
+	for (const FTreeModel& M : Broad) (M.Mesh->GetName().Contains(TEXT("Hornbeam"), ESearchCase::IgnoreCase) ? Hornbeams : Beeches).Add(M);
 	if (!PineModels.Num()) PineModels = Spruces;
 	if (!Spruces.Num()) Spruces = PineModels;
+	if (!Beeches.Num()) Beeches = Broad;
+	if (!Hornbeams.Num()) Hornbeams = Broad;
 	if (!Broad.Num() && !Cones.Num()) { UE_LOG(LogOTGRuntimeCourse, Warning, TEXT("No tree models in the game")); return; }
+	const FOTGTreeDesign& Design = Data->TreeDesign;
 	TMap<UStaticMesh*, TArray<FTransform>> ByMesh;
-	for (const TSharedPtr<FJsonValue>& V : J->AsArray())
-	{
-		const TSharedPtr<FJsonObject> T = V->AsObject();
-		if (!T.IsValid()) continue;
-		const double X = T->GetNumberField(TEXT("x")), Y = T->GetNumberField(TEXT("y")), Zc = T->GetNumberField(TEXT("z")), H = T->GetNumberField(TEXT("h"));
-		FString Kind;
-		T->TryGetStringField(TEXT("kind"), Kind);
-		const TArray<FTreeModel>& Pool = Conifers.Contains(Kind) ? (Pines.Contains(Kind) ? PineModels : Spruces) : Broad;
-		if (!Pool.Num()) continue;
+	auto Place = [&](const FString& Kind, double X, double Y, double Zc, double H, double Scale) {
+		const FString Model = Design.For(Kind).Model;
+		const TArray<FTreeModel>& Pool = Model == TEXT("beech") ? Beeches : Model == TEXT("hornbeam") ? Hornbeams : Model == TEXT("spruce") ? Spruces : Model == TEXT("pine") ? PineModels
+			: Conifers.Contains(Kind) ? (Pines.Contains(Kind) ? PineModels : Spruces) : Broad;
+		if (!Pool.Num()) return;
 		TArray<FTreeModel> Near = Pool;
 		Near.Sort([H](const FTreeModel& A, const FTreeModel& B) { return FMath::Abs(A.Height - H) < FMath::Abs(B.Height - H); });
 		Near.SetNum(FMath::Min(3, Near.Num()));
 		const FTreeModel& M = Near[int32(Hash01(X, Y, 3.1) * Near.Num()) % Near.Num()];
-		const double S = FMath::Clamp(H / FMath::Max(1.0, M.Height), 0.7, 1.4) * (0.92 + 0.16 * Hash01(X, Y, 5.3));
+		// (scaled to its height within reason - further when the designer made it bigger or smaller)
+		const double S = FMath::Clamp(H / FMath::Max(1.0, M.Height), 0.7 * FMath::Min(1.0, Scale), 1.4 * FMath::Max(1.0, Scale)) * (0.92 + 0.16 * Hash01(X, Y, 5.3));
 		const double Yaw = Hash01(X, Y, 2.9) * 360;
 		ByMesh.FindOrAdd(M.Mesh).Add(FTransform(FRotator(0, Yaw, 0), Data->LevelOrigin + FVector(X, Y, Zc - 10), FVector(S)));
+	};
+	if (TreeRecs.Num() == Data->Trees.Num())
+	{
+		Data->ForEachDesignedTree([&](int32 Src, double X, double Z, double Ground, float Scale) {
+			const FTreeRec& R = TreeRecs[Src];
+			const FOTGTreeShape& S = Data->Trees[Src];
+			const double Zc = R.Z + (Ground - Data->GroundAt(S.X, S.Z)) * 100.0;
+			Place(R.Kind, (X - Data->HeightX0) * 100.0, (Data->HeightZ1 - Z) * 100.0, Zc, R.H * Scale, Scale);
+		});
 	}
-	int32 N = 0, Standins = 0;
+	else
+	{
+		UE_LOG(LogOTGRuntimeCourse, Warning, TEXT("trees.json (%d) and play.json (%d) disagree: the trees drawn as exported"), TreeRecs.Num(), Data->Trees.Num());
+		for (const FTreeRec& R : TreeRecs) Place(R.Kind, R.X, R.Y, R.Z, R.H, 1.0);
+	}
+	int32 Standins = 0;
 	for (auto& P : ByMesh)
 	{
 		UHierarchicalInstancedStaticMeshComponent* C = Instances(P.Key, P.Value, TreeCull[0], TreeCull[1]);
+		TreeComps.Add(C);
 		// (the Fab trees' own materials need a master the game hasn't got: their stand-ins)
 		const TArray<FStaticMaterial>& Mats = P.Key->GetStaticMaterials();
 		for (int32 i = 0; i < Mats.Num(); i++)
 			if (Mats[i].MaterialInterface)
 				if (UMaterialInterface* Sub = Find<UMaterialInterface>(TEXT("MI_Standin_") + Mats[i].MaterialInterface->GetName())) { C->SetMaterial(i, Sub); Standins++; }
-		N += P.Value.Num();
+		TreeCount += P.Value.Num();
 	}
-	UE_LOG(LogOTGRuntimeCourse, Display, TEXT("Trees: %d from %d models (%d stand-in materials)"), N, ByMesh.Num(), Standins);
+	UE_LOG(LogOTGRuntimeCourse, Display, TEXT("Trees: %d from %d models (%d stand-in materials)%s"), TreeCount, ByMesh.Num(), Standins, Design.IsDefault() ? TEXT("") : TEXT(", as the course's tree designer has them"));
 }
 
-// Boulders (boulders.json: [x, y, z, size cm, yaw, flat, kind]): the game's six stones
+// Boulders (boulders.json: [x, y, z, size cm, yaw, flat, kind]): the game's six stones (as the
+// tree designer has them: there or not, how many, how big)
 void AOTGRuntimeCourse::BuildBoulders()
 {
-	const TSharedPtr<FJsonValue> J = ReadJson(FPaths::Combine(Data->ExportDir, TEXT("boulders.json")));
-	if (!J.IsValid()) return;
+	if (!bRocksRead)
+	{
+		bRocksRead = true;
+		const TSharedPtr<FJsonValue> J = ReadJson(FPaths::Combine(Data->ExportDir, TEXT("boulders.json")));
+		if (J.IsValid())
+			for (const TSharedPtr<FJsonValue>& V : J->AsArray())
+			{
+				const TArray<TSharedPtr<FJsonValue>>& B = V->AsArray();
+				if (B.Num() < 7) continue;
+				FRockRec R;
+				R.P = FVector(B[0]->AsNumber(), B[1]->AsNumber(), B[2]->AsNumber());
+				R.Size = B[3]->AsNumber(); R.Yaw = B[4]->AsNumber(); R.Flat = B[5]->AsNumber(); R.Kind = int32(B[6]->AsNumber()) % BoulderKinds;
+				RockRecs.Add(R);
+			}
+	}
+	for (UHierarchicalInstancedStaticMeshComponent* C : RockComps) if (C) { Parts.Remove(C); C->DestroyComponent(); }
+	RockComps.Reset();
+	RockCount = 0;
 	TArray<UStaticMesh*> Meshes;
 	for (int32 k = 0; k < BoulderKinds; k++) Meshes.Add(Find<UStaticMesh>(FString::Printf(TEXT("SM_Boulder_%d"), k)));
+	const FOTGTreeDesign& Design = Data->TreeDesign;
 	TMap<int32, TArray<FTransform>> ByKind;
-	for (const TSharedPtr<FJsonValue>& V : J->AsArray())
+	for (const FRockRec& R : RockRecs)
 	{
-		const TArray<TSharedPtr<FJsonValue>>& B = V->AsArray();
-		if (B.Num() < 7) continue;
-		const double S = B[3]->AsNumber() / 100.0;
-		ByKind.FindOrAdd(int32(B[6]->AsNumber()) % BoulderKinds).Add(FTransform(FRotator(0, B[4]->AsNumber(), 0),
-			Data->LevelOrigin + FVector(B[0]->AsNumber(), B[1]->AsNumber(), B[2]->AsNumber()), FVector(S, S, S * B[5]->AsNumber())));
+		if (!Design.KeepRock(R.P.X / 100.0, R.P.Y / 100.0)) continue;
+		const double S = R.Size / 100.0 * Design.RockSize;
+		// (a bigger stone sits a little deeper)
+		ByKind.FindOrAdd(R.Kind).Add(FTransform(FRotator(0, R.Yaw, 0), Data->LevelOrigin + R.P - FVector(0, 0, (Design.RockSize - 1) * R.Size * 0.15), FVector(S, S, S * R.Flat)));
 	}
-	int32 N = 0;
-	for (auto& P : ByKind) if (Meshes[P.Key]) { Instances(Meshes[P.Key], P.Value, BoulderCull[0], BoulderCull[1]); N += P.Value.Num(); }
-	UE_LOG(LogOTGRuntimeCourse, Display, TEXT("Boulders: %d"), N);
+	for (auto& P : ByKind) if (Meshes[P.Key]) { RockComps.Add(Instances(Meshes[P.Key], P.Value, BoulderCull[0], BoulderCull[1])); RockCount += P.Value.Num(); }
+	UE_LOG(LogOTGRuntimeCourse, Display, TEXT("Boulders: %d"), RockCount);
+}
+
+const FOTGTreeDesign& AOTGRuntimeCourse::TreeDesign() const
+{
+	static const FOTGTreeDesign None;
+	return Data ? Data->TreeDesign : None;
+}
+
+void AOTGRuntimeCourse::SetTreeDesign(const FOTGTreeDesign& Design)
+{
+	if (!Data) return;
+	Data->TreeDesign = Design;
+	BuildTrees();
+	BuildBoulders();
+}
+
+bool AOTGRuntimeCourse::SaveTreeDesign(FString* Where) const
+{
+	if (!Data) return false;
+	if (Where) *Where = FPaths::Combine(Data->ExportDir, TEXT("trees_design.json"));
+	return Data->TreeDesign.Save(Data->ExportDir);
+}
+
+FOTGTreeDesign AOTGRuntimeCourse::SavedTreeDesign() const
+{
+	return Data ? FOTGTreeDesign::Load(Data->ExportDir) : FOTGTreeDesign();
+}
+
+TArray<TPair<FString, int32>> AOTGRuntimeCourse::TreeSpecies() const
+{
+	TMap<FString, int32> N;
+	if (Data) for (const FOTGTreeShape& S : Data->Trees) N.FindOrAdd(S.Kind)++;
+	TArray<TPair<FString, int32>> Out;
+	for (const auto& KV : N) Out.Add(TPair<FString, int32>(KV.Key, KV.Value));
+	Out.Sort([](const TPair<FString, int32>& A, const TPair<FString, int32>& B) { return A.Value > B.Value; });
+	return Out;
+}
+
+bool AOTGRuntimeCourse::NearestTree(const FString& Kind, const FVector& From, FVector& OutBase, double& OutHeightCm) const
+{
+	if (!Data || TreeRecs.Num() != Data->Trees.Num()) return false;
+	double Best = TNumericLimits<double>::Max();
+	Data->ForEachDesignedTree([&](int32 Src, double X, double Z, double Ground, float Scale) {
+		if (Data->Trees[Src].Kind != Kind) return;
+		const FVector P = Data->CourseToWorld(FVector(X, Ground, Z));
+		const double D = FVector::DistSquared2D(P, From);
+		// (not right on top of you: one you can see)
+		if (D < Best && D > 2500.0 * 2500.0) { Best = D; OutBase = P; OutHeightCm = TreeRecs[Src].H * Scale; }
+	});
+	return Best < TNumericLimits<double>::Max();
 }
 
 namespace

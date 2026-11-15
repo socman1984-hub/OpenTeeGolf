@@ -46,6 +46,7 @@ bool UOTGCourseData::LoadFromExport(const FString& Dir, FString* OutError)
 	TSharedPtr<FJsonObject> Play;
 	if (!FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Text), Play) || !Play.IsValid()) return Fail(TEXT("play.json doesn't read"));
 
+	TreeDesign = FOTGTreeDesign::Load(Dir);
 	CourseId = Play->GetStringField(TEXT("id"));
 	CourseName = Play->GetStringField(TEXT("name"));
 	Play->TryGetStringField(TEXT("location"), Location);
@@ -157,16 +158,64 @@ void UOTGCourseData::FillTrees(otg::PlayTrees& Out) const
 {
 	Out.all.clear();
 	Out.all.reserve(Trees.Num());
-	for (const FOTGTreeShape& S : Trees)
-	{
+	// (as the tree designer has them: the drawn trees go the same way - AOTGRuntimeCourse::BuildTrees)
+	ForEachDesignedTree([&](int32 Src, double X, double Z, double Ground, float Scale) {
+		const FOTGTreeShape& S = Trees[Src];
+		const double G0 = GroundAt(S.X, S.Z);
+		// (heights above the tree's own ground, scaled, onto the ground where it stands)
+		auto Up = [&](double Y) { return Ground + (Y - G0) * Scale; };
 		otg::Tree T;
-		T.x = S.X; T.z = S.Z; T.trunkTop = S.TrunkTop; T.trunkR = S.TrunkR; T.kind = TCHAR_TO_UTF8(*S.Kind);
+		T.x = X; T.z = Z; T.trunkTop = Up(S.TrunkTop); T.trunkR = S.TrunkR * Scale; T.kind = TCHAR_TO_UTF8(*S.Kind);
 		T.cone = S.bCone;
-		if (S.bCone) { T.coneBase = S.A; T.coneH = S.B; T.coneR = S.C; }
-		else { T.cy = S.A; T.rh = S.B; T.rv = S.C; }
+		if (S.bCone) { T.coneBase = Up(S.A); T.coneH = S.B * Scale; T.coneR = S.C * Scale; }
+		else { T.cy = Up(S.A); T.rh = S.B * Scale; T.rv = S.C * Scale; }
 		Out.all.push_back(T);
-	}
+	});
 	Out.Build();
+}
+
+double UOTGCourseData::GroundAt(double X, double Z) const
+{
+	const int32 N = HeightSamples;
+	if (N < 2 || Heights.Num() < N * N) return 0;
+	const double U = FMath::Clamp((X - HeightX0) / MetresPerSample, 0.0, N - 1.001), V = FMath::Clamp((HeightZ1 - Z) / MetresPerSample, 0.0, N - 1.001);
+	const int32 I = FMath::FloorToInt32(U), J = FMath::FloorToInt32(V);
+	const double FU = U - I, FV = V - J;
+	auto H = [&](int32 A, int32 B) { return double(Heights[B * N + A]); };
+	const double Raw = FMath::Lerp(FMath::Lerp(H(I, J), H(I + 1, J), FU), FMath::Lerp(H(I, J + 1), H(I + 1, J + 1), FU), FV);
+	return HeightBase + Raw * HeightRange / 65535.0;
+}
+
+uint8 UOTGCourseData::SurfaceCodeAt(double X, double Z) const
+{
+	const int32 I = FMath::FloorToInt32((X - SurfaceMinX) / SurfaceRes), J = FMath::FloorToInt32((SurfaceMaxZ - Z) / SurfaceRes);
+	if (I < 0 || J < 0 || I >= SurfaceW || J >= SurfaceH || !Surfaces.Num()) return 0;
+	return Surfaces[J * SurfaceW + I];
+}
+
+void UOTGCourseData::ForEachDesignedTree(TFunctionRef<void(int32, double, double, double, float)> Fn) const
+{
+	// (never on water, sand, a path or the mown grass: on the rough, the tall grass, in the woods)
+	auto Free = [this](double X, double Z) {
+		using S = otg::Surface;
+		const S Sf = S(SurfaceCodeAt(X, Z));
+		return Sf != S::Water && Sf != S::Green && Sf != S::Fringe && Sf != S::Fairway && Sf != S::Tee && Sf != S::FirstCut && Sf != S::Path && Sf != S::Sand;
+	};
+	for (int32 i = 0; i < Trees.Num(); i++)
+	{
+		const FOTGTreeShape& S = Trees[i];
+		const int32 N = TreeDesign.Copies(S.Kind, S.X, S.Z);
+		const float Size = TreeDesign.SizeOf(S.Kind);
+		if (N >= 1) Fn(i, S.X, S.Z, GroundAt(S.X, S.Z), Size);
+		// (more: grown round it, off the mown grass, sand, paths and water, a little smaller or larger)
+		const double R = S.bCone ? S.C : S.B;
+		for (int32 k = 1; k < N; k++)
+		{
+			const FVector2D P = FOTGTreeDesign::CopyAt(S.X, S.Z, k, R * Size);
+			if (!Free(P.X, P.Y)) continue;
+			Fn(i, P.X, P.Y, GroundAt(P.X, P.Y), Size * float(0.8 + 0.35 * FOTGTreeDesign::Hash01(P.X, P.Y, 5)));
+		}
+	}
 }
 
 FVector UOTGCourseData::CourseToWorld(const FVector& P) const
