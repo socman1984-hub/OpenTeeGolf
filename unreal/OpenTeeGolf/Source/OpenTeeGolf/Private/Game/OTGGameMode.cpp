@@ -27,6 +27,8 @@ namespace
 		FConsoleCommandDelegate::CreateLambda([]() { if (TSharedPtr<SOTGMainMenu> M = TheMenu.Pin()) M->Start(); }));
 	FAutoConsoleCommand MenuPageCmd(TEXT("OTG.Menu.Page"), TEXT("OTG.Menu.Page play|players|lm"),
 		FConsoleCommandWithArgsDelegate::CreateLambda([](const TArray<FString>& A) { if (TSharedPtr<SOTGMainMenu> M = TheMenu.Pin(); M && A.Num()) M->ShowPage(A[0]); }));
+	FAutoConsoleCommand MenuEditCmd(TEXT("OTG.Menu.Edit"), TEXT("OTG.Menu.Edit <course id>: the course editor"),
+		FConsoleCommandWithArgsDelegate::CreateLambda([](const TArray<FString>& A) { if (TSharedPtr<SOTGMainMenu> M = TheMenu.Pin(); M && A.Num()) M->EditCourse(A[0]); }));
 	FAutoConsoleCommand ShotCmd(TEXT("OTG.Shot"), TEXT("OTG.Shot <name>: a screenshot, HUD and all, in Saved/Screenshots/<name>.png"),
 		FConsoleCommandWithArgsDelegate::CreateLambda([](const TArray<FString>& Args) {
 			const FString Name = Args.Num() ? Args[0] : TEXT("otg");

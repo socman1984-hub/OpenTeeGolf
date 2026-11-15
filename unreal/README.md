@@ -151,6 +151,20 @@ Everything the golf needs runs inside the game, in C++.
   colour: only kinds in its colours (`bEven`: rough, rough_clump) may grow on it. Console:
   `OTG.Grass.List`, `OTG.Grass.Set <kind> on|surface|density|height|vary|out|patch|cover <v>`,
   `OTG.Grass.Add <folder>`, `OTG.Grass.Save`, `OTG.Grass.Reset`.
+- The course editor (phase 4; Edit on a built course in New course, `SOTGCourseEditor`,
+  `SOTGEditCanvas`): the web editor's map and panels - holes (number, par, handicap, the eight
+  tees with yardages, two aim points, the green's centre, four pins, Spread pins, add and delete),
+  shapes (draw, pick, drag corners, add corners, move, change kind, delete; water as a stream;
+  penalty areas with OOB inside; tree areas with density, species and heights), trees (add, pick,
+  move, remove brush, remove or replace found ones, shift-drag a box, review those in the line of
+  play, species on the course on/off), tall grass brush and rubber, buildings' types, the course's
+  looks (name, location, stimp, game or photo colours, rough and tall grass heights, mowing), the
+  shrubs, flowers and grasses, undo, Save, "Save and put in the game" (the export). Its picture:
+  the export's photo, or shading from the source's heights. The found trees come from the course's
+  play data (when it's in the game), the buildings from the helper. Panels are made again from an
+  active timer, not Tick (made while drawing, they're drawn once unmeasured). `-ExecCmds="OTG.Menu.Edit
+  <id>" -editortest=<id> [-editortestfix | -editortestall]` (a par of 10+ set to 4 / each tool's
+  change, two undone) saves and quits, with `Saved/Screenshots/editor_*.png`.
 - Finding and building a course (the menu's New course page, `SOTGCourseBuilder`, phase 3): a world
   map (`SOTGWorldMap`: OpenStreetMap or Esri's aerial photos, tiles fetched and kept on disk by the
   helper, `/api/helper/tile`), the world's mapped courses as dots (`/api/builder/world`, paged while

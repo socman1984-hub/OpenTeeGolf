@@ -51,6 +51,62 @@ const TArray<FString>& FOTGCourseSource::TeesOrder()
 	return T;
 }
 
+const TArray<FString>& FOTGCourseSource::MowPatterns()
+{
+	static const TArray<FString> M = { TEXT("none"), TEXT("stripes"), TEXT("diagonal"), TEXT("checker"), TEXT("diamond") };
+	return M;
+}
+
+FString FOTGCourseSource::MowLabel(const FString& Id)
+{
+	if (Id == TEXT("stripes")) return TEXT("Straight stripes");
+	if (Id == TEXT("diagonal")) return TEXT("Diagonal stripes");
+	if (Id == TEXT("checker")) return TEXT("Checkerboard");
+	if (Id == TEXT("diamond")) return TEXT("Diamonds");
+	return TEXT("None (plain)");
+}
+
+const TArray<FOTGCourseSource::FPlant>& FOTGCourseSource::Plants()
+{
+	static const TArray<FPlant> P = {
+		{ TEXT("boxwood"), TEXT("Boxwood"), TEXT("Shrubs") }, { TEXT("hedge"), TEXT("Clubhouse hedge"), TEXT("Shrubs") }, { TEXT("azalea"), TEXT("Azalea"), TEXT("Shrubs") },
+		{ TEXT("rhododendron"), TEXT("Rhododendron"), TEXT("Shrubs") }, { TEXT("holly"), TEXT("Holly shrub"), TEXT("Shrubs") },
+		{ TEXT("bedred"), TEXT("Red flower beds"), TEXT("Flower beds") }, { TEXT("bedyellow"), TEXT("Yellow flower beds"), TEXT("Flower beds") },
+		{ TEXT("bedpurple"), TEXT("Purple flower beds"), TEXT("Flower beds") }, { TEXT("bedwhite"), TEXT("White and pink flower beds"), TEXT("Flower beds") },
+		{ TEXT("fountaingrass"), TEXT("Fountain grass"), TEXT("Ornamental grasses") }, { TEXT("pampas"), TEXT("Pampas grass"), TEXT("Ornamental grasses") },
+		{ TEXT("muhly"), TEXT("Pink muhly grass"), TEXT("Ornamental grasses") }, { TEXT("fern"), TEXT("Fern"), TEXT("Under the trees") },
+		{ TEXT("palmetto"), TEXT("Saw palmetto"), TEXT("Under the trees") }, { TEXT("sagebrush"), TEXT("Sagebrush"), TEXT("Desert plants") },
+		{ TEXT("creosote"), TEXT("Creosote bush"), TEXT("Desert plants") }, { TEXT("yucca"), TEXT("Yucca"), TEXT("Desert plants") },
+		{ TEXT("pricklypear"), TEXT("Prickly pear"), TEXT("Desert plants") },
+	};
+	return P;
+}
+
+const TArray<FString>& FOTGCourseSource::Species()
+{
+	static const TArray<FString> S = { TEXT("oak"), TEXT("maple"), TEXT("redmaple"), TEXT("tuliptree"), TEXT("beech"), TEXT("elm"), TEXT("dogwood"), TEXT("crapemyrtle"),
+		TEXT("holly"), TEXT("ash"), TEXT("birch"), TEXT("aspen"), TEXT("poplar"), TEXT("willow"), TEXT("pine"), TEXT("loblolly"), TEXT("redcedar"), TEXT("douglasfir"),
+		TEXT("ponderosa"), TEXT("spruce"), TEXT("hemlock"), TEXT("juniper"), TEXT("palm"), TEXT("liveoak"), TEXT("magnolia"), TEXT("sycamore"), TEXT("cypress"),
+		TEXT("baldcypress"), TEXT("olive"), TEXT("mesquite"), TEXT("paloverde"), TEXT("saguaro") };
+	return S;
+}
+
+const TArray<FString>& FOTGCourseSource::Mixes()
+{
+	static const TArray<FString> M = { TEXT("auto"), TEXT("broadleaf"), TEXT("conifer"), TEXT("desert"), TEXT("ornamental") };
+	return M;
+}
+
+FString FOTGCourseSource::MixLabel(const FString& Id)
+{
+	if (Id == TEXT("auto")) return TEXT("Automatic (from the photo)");
+	if (Id == TEXT("broadleaf")) return TEXT("Mixed broadleaf");
+	if (Id == TEXT("conifer")) return TEXT("Mixed conifers");
+	if (Id == TEXT("desert")) return TEXT("Desert mix");
+	if (Id == TEXT("ornamental")) return TEXT("Ornamental mix");
+	return Id;
+}
+
 const TArray<FString>& FOTGCourseSource::PinDays()
 {
 	static const TArray<FString> D = { TEXT("Thursday"), TEXT("Friday"), TEXT("Saturday"), TEXT("Sunday") };
@@ -69,6 +125,46 @@ bool FOTGCourseSource::Load(const FString& InId, const TSharedPtr<FJsonObject>& 
 	Course->TryGetStringField(TEXT("CourseName"), Name);
 	Course->TryGetStringField(TEXT("Location"), Location);
 	if (!Course->TryGetNumberField(TEXT("DefaultStimp"), Stimp) || Stimp <= 0) Stimp = 10;
+
+	// ---- the course's looks (mowing.js courseSurface, courseMowing, courseGrass; coursePlants)
+	FString Sf;
+	const TSharedPtr<FJsonObject>* SfO = nullptr;
+	if (Course->TryGetStringField(TEXT("Surface"), Sf) && Sf == TEXT("photo")) bPhotoFairway = bPhotoGreen = bPhotoRough = true;
+	else if (Course->TryGetObjectField(TEXT("Surface"), SfO))
+	{
+		auto Photo = [&](const TCHAR* K) { FString V; return (*SfO)->TryGetStringField(K, V) && V == TEXT("photo"); };
+		bPhotoFairway = Photo(TEXT("fairway")); bPhotoGreen = Photo(TEXT("green")); bPhotoRough = Photo(TEXT("rough"));
+	}
+	const TSharedPtr<FJsonObject>* Mow = nullptr;
+	if (Course->TryGetObjectField(TEXT("Mowing"), Mow))
+	{
+		FString V;
+		if ((*Mow)->TryGetStringField(TEXT("fairway"), V) && MowPatterns().Contains(V)) MowFairway = V;
+		if ((*Mow)->TryGetStringField(TEXT("green"), V) && MowPatterns().Contains(V)) MowGreen = V;
+	}
+	const TSharedPtr<FJsonObject>* Gr = nullptr;
+	if (Course->TryGetObjectField(TEXT("Grass"), Gr))
+	{
+		auto Scale = [&](const TCHAR* Key, const TCHAR* Preset, float Lo, float Hi, TMap<FString, float> Presets, float& Out) {
+			double V;
+			FString P;
+			if ((*Gr)->TryGetNumberField(Key, V) && FMath::IsFinite(V)) Out = FMath::Clamp(float(V), Lo, Hi);
+			else if ((*Gr)->TryGetStringField(Preset, P) && Presets.Contains(P)) Out = Presets[P];
+		};
+		Scale(TEXT("roughScale"), TEXT("rough"), 0.3f, 1.6f, { { TEXT("short"), 0.55f }, { TEXT("medium"), 0.8f }, { TEXT("long"), 1.1f } }, RoughScale);
+		Scale(TEXT("nativeScale"), TEXT("native"), 0.4f, 1.8f, { { TEXT("short"), 0.7f }, { TEXT("medium"), 1.f }, { TEXT("tall"), 1.3f } }, NativeScale);
+	}
+	const TArray<TSharedPtr<FJsonValue>>* Off = nullptr;
+	if (Course->TryGetArrayField(TEXT("TreesOff"), Off)) for (const TSharedPtr<FJsonValue>& V : *Off) TreesOff.Add(V->AsString());
+	const TSharedPtr<FJsonObject>* Pl = nullptr;
+	if (Course->TryGetObjectField(TEXT("Plants"), Pl))
+	{
+		const TArray<TSharedPtr<FJsonValue>>* L = nullptr;
+		if ((*Pl)->TryGetArrayField(TEXT("off"), L)) for (const TSharedPtr<FJsonValue>& V : *L) PlantsOff.Add(V->AsString());
+		if ((*Pl)->TryGetArrayField(TEXT("extra"), L)) for (const TSharedPtr<FJsonValue>& V : *L) PlantsExtra.Add(V->AsString());
+		double A;
+		if ((*Pl)->TryGetNumberField(TEXT("amount"), A) && FMath::IsFinite(A)) PlantAmount = FMath::Clamp(float(A), 0.f, 2.f);
+	}
 
 	// ---- holes (editor.js load(): tees, aim points, the green's centre, pins)
 	for (const TSharedPtr<FJsonValue>& HV : *HoleList)
@@ -254,7 +350,6 @@ TSharedRef<FJsonObject> FOTGCourseSource::SaveBody() const
 
 	// ---- the course file (coursefile.js makeCourseData)
 	const TSharedRef<FJsonObject> C = MakeShared<FJsonObject>();
-	auto Copy = [this, &C](const TCHAR* Key) { if (CourseJson.IsValid() && CourseJson->HasField(Key)) C->SetField(Key, CourseJson->TryGetField(Key)); };
 	C->SetNumberField(TEXT("gkversion"), 3.0);
 	C->SetStringField(TEXT("CourseName"), Name);
 	C->SetStringField(TEXT("Location"), Location);
@@ -266,8 +361,47 @@ TSharedRef<FJsonObject> FOTGCourseSource::SaveBody() const
 	C->SetNumberField(TEXT("CourseLat"), Lat);
 	C->SetNumberField(TEXT("CourseLong"), Lon);
 	C->SetNumberField(TEXT("DefaultStimp"), Stimp);
-	// (the course's looks, chosen in the editor: as they came)
-	for (const TCHAR* K : { TEXT("Mowing"), TEXT("Grass"), TEXT("TreesOff"), TEXT("Plants"), TEXT("Surface") }) Copy(K);
+	// (the course's looks, as makeCourseData writes them)
+	{
+		const TSharedRef<FJsonObject> Mow = MakeShared<FJsonObject>();
+		Mow->SetStringField(TEXT("fairway"), MowFairway);
+		Mow->SetStringField(TEXT("green"), MowGreen);
+		C->SetObjectField(TEXT("Mowing"), Mow);
+		// (the nearest preset too, for versions before the sliders)
+		auto Nearest = [](float S, TArray<TPair<FString, float>> P) { FString Best; float D = 1e9f; for (const auto& X : P) if (FMath::Abs(X.Value - S) < D) { D = FMath::Abs(X.Value - S); Best = X.Key; } return Best; };
+		const TSharedRef<FJsonObject> Gr = MakeShared<FJsonObject>();
+		Gr->SetStringField(TEXT("rough"), Nearest(RoughScale, { { TEXT("short"), 0.55f }, { TEXT("medium"), 0.8f }, { TEXT("long"), 1.1f } }));
+		Gr->SetStringField(TEXT("native"), Nearest(NativeScale, { { TEXT("short"), 0.7f }, { TEXT("medium"), 1.f }, { TEXT("tall"), 1.3f } }));
+		Gr->SetNumberField(TEXT("roughScale"), FMath::RoundToDouble(RoughScale * 100) / 100);
+		Gr->SetNumberField(TEXT("nativeScale"), FMath::RoundToDouble(NativeScale * 100) / 100);
+		C->SetObjectField(TEXT("Grass"), Gr);
+		if (TreesOff.Num())
+		{
+			TArray<TSharedPtr<FJsonValue>> L;
+			for (const FString& S : TreesOff) L.Add(MakeShared<FJsonValueString>(S));
+			C->SetArrayField(TEXT("TreesOff"), L);
+		}
+		if (PlantsOff.Num() || PlantsExtra.Num() || PlantAmount != 1.f)
+		{
+			const TSharedRef<FJsonObject> Pl = MakeShared<FJsonObject>();
+			TArray<TSharedPtr<FJsonValue>> A, B;
+			for (const FString& S : PlantsOff) A.Add(MakeShared<FJsonValueString>(S));
+			for (const FString& S : PlantsExtra) B.Add(MakeShared<FJsonValueString>(S));
+			Pl->SetArrayField(TEXT("off"), A);
+			Pl->SetArrayField(TEXT("extra"), B);
+			Pl->SetNumberField(TEXT("amount"), FMath::RoundToDouble(PlantAmount * 100) / 100);
+			C->SetObjectField(TEXT("Plants"), Pl);
+		}
+		if (bPhotoFairway && bPhotoGreen && bPhotoRough) C->SetStringField(TEXT("Surface"), TEXT("photo"));
+		else if (bPhotoFairway || bPhotoGreen || bPhotoRough)
+		{
+			const TSharedRef<FJsonObject> S = MakeShared<FJsonObject>();
+			S->SetStringField(TEXT("fairway"), bPhotoFairway ? TEXT("photo") : TEXT("game"));
+			S->SetStringField(TEXT("green"), bPhotoGreen ? TEXT("photo") : TEXT("game"));
+			S->SetStringField(TEXT("rough"), bPhotoRough ? TEXT("photo") : TEXT("game"));
+			C->SetObjectField(TEXT("Surface"), S);
+		}
+	}
 	double Alt = 0;
 	if (CourseJson.IsValid()) CourseJson->TryGetNumberField(TEXT("altitudeV2"), Alt);
 	C->SetNumberField(TEXT("altitudeV2"), Alt);

@@ -297,6 +297,7 @@ void SOTGCourseBuilder::Construct(const FArguments&)
 	}
 	LoadBuilt();
 	Rebuild();
+	RegisterActiveTimer(0.f, FWidgetActiveTimerDelegate::CreateSP(this, &SOTGCourseBuilder::Pulse));
 	if (FParse::Value(FCommandLine::Get(), TEXT("buildertest="), TestQuery, false) && !TestQuery.IsEmpty())
 	{
 		TestQuery.ReplaceInline(TEXT("+"), TEXT(" "));
@@ -306,9 +307,8 @@ void SOTGCourseBuilder::Construct(const FArguments&)
 	}
 }
 
-void SOTGCourseBuilder::Tick(const FGeometry& Geometry, const double Time, const float Dt)
+EActiveTimerReturnType SOTGCourseBuilder::Pulse(double Time, float Dt)
 {
-	SCompoundWidget::Tick(Geometry, Time, Dt);
 	// the world's courses: asked for a page at a time while the helper gathers them
 	if (!bWorldDone && !bWorldAsking && FPlatformTime::Seconds() >= NextWorld) LoadWorld();
 	// (the test: one step at a time)
@@ -344,6 +344,7 @@ void SOTGCourseBuilder::Tick(const FGeometry& Geometry, const double Time, const
 		const FString Now = J.Kind + J.State + J.Message + FString::SanitizeFloat(FMath::RoundToFloat(J.Frac * 100));
 		if (Now != JobShown) { JobShown = Now; Rebuild(); }
 	}
+	return EActiveTimerReturnType::Continue;
 }
 
 void SOTGCourseBuilder::LoadWorld()
@@ -594,6 +595,7 @@ TSharedRef<SWidget> SOTGCourseBuilder::PickedCard()
 		TSharedRef<SHorizontalBox> Btns = SNew(SHorizontalBox);
 		const FString Id = M.BuiltId;
 		if (B && B->bInGame) Btns->AddSlot().AutoWidth().Padding(0, 0, 6, 0)[Button(TEXT("Play it"), [this, Id]() { if (OnReady) OnReady(Id); }, 13, true)];
+		if (!bBusy) Btns->AddSlot().AutoWidth().Padding(0, 0, 6, 0)[Button(TEXT("Edit"), [this, Id]() { if (OnEdit) OnEdit(Id); }, 13)];
 		if (!bBusy) Btns->AddSlot().AutoWidth().Padding(0, 0, 6, 0)[Button(B && B->bInGame ? TEXT("Export again") : TEXT("Put it in the game"), [this, Id]() { if (UOTGHelperSubsystem* H2 = Helper()) H2->Export(Id); Rebuild(); }, 13, !(B && B->bInGame))];
 		V->AddSlot().AutoHeight().Padding(0, 6, 0, 0)[Btns];
 		return Box(V, FMargin(12, 10), Solid);
@@ -667,6 +669,7 @@ TSharedRef<SWidget> SOTGCourseBuilder::BuiltList()
 		];
 		if (!bBusy)
 		{
+			Row->AddSlot().AutoWidth().VAlign(VAlign_Center).Padding(4, 0, 0, 0)[Button(TEXT("Edit"), [this, Id]() { if (OnEdit) OnEdit(Id); }, 11)];
 			Row->AddSlot().AutoWidth().VAlign(VAlign_Center).Padding(4, 0, 0, 0)[Button(B.bInGame ? TEXT("Export again") : TEXT("Export"), [this, Id]() { if (UOTGHelperSubsystem* H2 = Helper()) H2->Export(Id); Rebuild(); }, 11)];
 			Row->AddSlot().AutoWidth().VAlign(VAlign_Center).Padding(4, 0, 0, 0)[Button(TEXT("Update"), [this, Id]() { if (UOTGHelperSubsystem* H2 = Helper()) H2->Update(Id); Rebuild(); }, 11)];
 			Row->AddSlot().AutoWidth().VAlign(VAlign_Center).Padding(4, 0, 0, 0)[Button(ConfirmDelete == Id ? TEXT("Sure? Delete") : TEXT("Delete"), [this, Id]() {

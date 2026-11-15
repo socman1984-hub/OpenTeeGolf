@@ -79,8 +79,12 @@ public:
 	SLATE_BEGIN_ARGS(SOTGCourseBuilder) {}
 	SLATE_END_ARGS()
 	void Construct(const FArguments& Args);
-	virtual void Tick(const FGeometry& Geometry, const double Time, const float Dt) override;
+	// (each frame, before the layout - not in Tick, which runs as it's drawn: panels made there
+	// are drawn once unmeasured, piled on each other)
+	EActiveTimerReturnType Pulse(double Time, float Dt);
 	TFunction<void(const FString& CourseId)> OnReady;   // (a course built and exported: play it)
+	TFunction<void(const FString& CourseId)> OnEdit;    // (a built course to edit)
+	void Refresh() { LoadBuilt(); }
 
 private:
 	UOTGHelperSubsystem* Helper() const;

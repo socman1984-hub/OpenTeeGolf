@@ -3,6 +3,7 @@
 
 #include "SOTGMenus.h"
 #include "SOTGBuilder.h"
+#include "SOTGEditor.h"
 
 #include "Engine/Engine.h"
 #include "Engine/GameInstance.h"
@@ -393,9 +394,11 @@ void SOTGMainMenu::Rebuild()
 				Page = EPage::Play;
 				Rebuild();
 			};
+			Builder->OnEdit = [this](const FString& Id) { OpenEditor(Id); };
 		}
 		Body->SetContent(Builder.ToSharedRef());
 	}
+	else if (Page == EPage::Edit && Editor.IsValid()) Body->SetContent(Editor.ToSharedRef());
 	else Body->SetContent(SNew(SScrollBox) + SScrollBox::Slot()[Box(SNew(SOTGLaunchMonitorPanel), FMargin(20, 16), Solid)]);
 }
 
@@ -617,6 +620,20 @@ TSharedRef<SWidget> SOTGMainMenu::PlayersPage()
 		}, 15, true)]
 	];
 	return SNew(SScrollBox) + SScrollBox::Slot()[Box(V, FMargin(20, 16), Solid)];
+}
+
+void SOTGMainMenu::OpenEditor(const FString& Id)
+{
+	SAssignNew(Editor, SOTGCourseEditor, Id);
+	Editor->OnClose = [this](bool bExported) {
+		if (bExported) if (UOTGCourseSubsystem* S = Courses()) CourseList = S->ListCourses();
+		if (Builder.IsValid()) Builder->Refresh();
+		Page = EPage::Build;
+		Editor.Reset();
+		Rebuild();
+	};
+	Page = EPage::Edit;
+	Rebuild();
 }
 
 void SOTGMainMenu::ShowPage(const FString& Name)

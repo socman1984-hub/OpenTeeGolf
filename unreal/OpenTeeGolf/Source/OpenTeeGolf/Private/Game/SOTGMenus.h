@@ -55,7 +55,7 @@ public:
 	void ShowPage(const FString& Name);   // play, build, players, lm, settings
 
 private:
-	enum class EPage : uint8 { Play, Build, Players, LaunchMonitor, Settings };
+	enum class EPage : uint8 { Play, Build, Edit, Players, LaunchMonitor, Settings };
 	void Rebuild();
 	TSharedRef<SWidget> PlayPage();
 	TSharedRef<SWidget> PlayersPage();
@@ -68,6 +68,11 @@ private:
 
 	TSharedPtr<SBox> Body;
 	TSharedPtr<class SOTGCourseBuilder> Builder;   // (made once: it keeps its map and searches)
+	TSharedPtr<class SOTGCourseEditor> Editor;     // (the course being edited)
+	void OpenEditor(const FString& Id);
+public:
+	void EditCourse(const FString& Id) { OpenEditor(Id); }
+private:
 	EPage Page = EPage::Play;
 	TArray<FOTGCourseInfo> CourseList;
 	FOTGRoundSetup Setup;

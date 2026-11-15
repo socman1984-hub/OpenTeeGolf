@@ -68,6 +68,7 @@ public:
 	// The ground's height (m) where the course has heights, else 0 (bilinear, as the editor's heightAt)
 	double HeightAt(double X, double Z) const;
 	bool HasHeights() const { return Heights.Num() > 0; }
+	FBox2D GridBounds() const { return Heights.Num() ? FBox2D(FVector2D(GridMinX, GridMinZ), FVector2D(GridMinX + (Nx - 1) * GridCell, GridMinZ + (Nz - 1) * GridCell)) : FBox2D(ForceInit); }
 	FString Summary() const;
 
 	FString Id;
@@ -79,6 +80,26 @@ public:
 	TArray<FVector2D> RemovedTrees;
 	TArray<FOTGGrassStroke> TallGrass;
 	TMap<FString, FString> BuildingTypes;         // "x,z" -> type
+
+	// The course's looks (the web editor's Course panel; public/js/mowing.js, plants-data.js)
+	bool bPhotoFairway = false, bPhotoGreen = false, bPhotoRough = false;   // colours from the aerial photo
+	FString MowFairway = TEXT("stripes"), MowGreen = TEXT("checker");     // none stripes diagonal checker diamond
+	float RoughScale = 0.8f, NativeScale = 1.f;                           // grass heights (0.3-1.6, 0.4-1.8)
+	TSet<FString> TreesOff;                                                // species turned off (their trees become others)
+	TSet<FString> PlantsOff, PlantsExtra;                                  // shrubs, flowers and grasses
+	float PlantAmount = 1.f;                                               // 0-2
+
+	static const TArray<FString>& MowPatterns();                           // (in the shader's order)
+	static FString MowLabel(const FString& Id);
+	static int32 RoughCm(float Scale) { return FMath::RoundToInt(Scale * 7); }
+	static int32 NativeCm(float Scale) { return FMath::RoundToInt(Scale * 60); }
+	// The shrubs, flowers and grasses (plants-data.js PLANTS): id, label, group
+	struct FPlant { const TCHAR* Id; const TCHAR* Label; const TCHAR* Group; };
+	static const TArray<FPlant>& Plants();
+	// The tree species (treeplace.js TREE_SPECIES) and the mixes a tree area or a tree can take
+	static const TArray<FString>& Species();
+	static const TArray<FString>& Mixes();      // auto broadleaf conifer desert ornamental
+	static FString MixLabel(const FString& Id);
 
 	// As loaded (what the model doesn't hold goes back from these)
 	TSharedPtr<FJsonObject> CourseJson, RealJson;
