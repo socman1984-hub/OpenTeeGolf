@@ -321,6 +321,11 @@ void SOTGCourseEditor::SetMode(EMode M, const FString& Kind, const FString& Key)
 {
 	Mode = M; ModeKind = Kind; ModeKey = Key;
 	DrawPts.Reset();
+	// (its section shown: the hole's points, the shapes, the trees, the tall grass)
+	if (M == EMode::Place) Tab = 0;
+	else if (M == EMode::Draw) Tab = Kind == TEXT("trees") ? 2 : 1;
+	else if (M == EMode::AddTree || M == EMode::Cut) Tab = 2;
+	else if (M == EMode::Paint || M == EMode::Erase) Tab = 3;
 	Changed();
 }
 
@@ -583,7 +588,9 @@ EActiveTimerReturnType SOTGCourseEditor::Pulse(double Time, float Dt)
 	if (TestStep > 0 && TestStep < 9 && FPlatformTime::Seconds() >= TestAt)
 	{
 		auto Shot = [](const TCHAR* N) { if (GEngine) GEngine->Exec(nullptr, *FString::Printf(TEXT("OTG.Shot %s"), N)); };
-		if (TestStep == 1 && FParse::Param(FCommandLine::Get(), TEXT("editortestlook")) && !bColourSpecies) { bColourSpecies = true; Canvas->Scale = 2.5; Changed(); TestAt = FPlatformTime::Seconds() + 2; }
+		int32 WantTab = -1;
+		if (TestStep == 1 && FParse::Value(FCommandLine::Get(), TEXT("editortesttab="), WantTab) && Tab != WantTab) { Tab = WantTab; Changed(); TestAt = FPlatformTime::Seconds() + 1; }
+		else if (TestStep == 1 && FParse::Param(FCommandLine::Get(), TEXT("editortestlook")) && !bColourSpecies) { bColourSpecies = true; Canvas->Scale = 2.5; Changed(); TestAt = FPlatformTime::Seconds() + 2; }
 		else if (TestStep == 1) { Shot(TEXT("editor_open")); TestStep = 2; TestAt = FPlatformTime::Seconds() + 2; }
 		else if (TestStep == 2)
 		{
@@ -653,17 +660,32 @@ void SOTGCourseEditor::Rebuild()
 	if (Top.IsValid()) Top->SetContent(TopBar());
 	if (!Side.IsValid()) return;
 	if (!bLoaded) { Side->SetContent(SNullWidget::NullWidget); return; }
+	// the tabs: one section at a time, no scrolling past the others
+	static const TCHAR* Names[] = { TEXT("Hole"), TEXT("Shapes"), TEXT("Trees"), TEXT("Tall grass"), TEXT("Course"), TEXT("Plants"), TEXT("Buildings") };
+	TSharedRef<SWrapBox> Tabs = SNew(SWrapBox).UseAllottedSize(true);
+	for (int32 t = 0; t < UE_ARRAY_COUNT(Names); t++)
+		Tabs->AddSlot().Padding(0, 0, 4, 4)[Button(Names[t], [this, t]() { Tab = t; Changed(); }, 13, Tab == t)];
 	TSharedRef<SVerticalBox> V = SNew(SVerticalBox);
 	auto Add = [&](TSharedRef<SWidget> W) { V->AddSlot().AutoHeight().Padding(0, 0, 0, 8)[W]; };
-	Add(SelectionPanel());
-	Add(HolePanel());
-	Add(ShapePanel());
-	Add(TreePanel());
-	Add(GrassPanel());
-	Add(CoursePanel());
-	Add(PlantPanel());
-	Add(BuildingPanel());
-	Side->SetContent(SNew(SScrollBox) + SScrollBox::Slot()[V]);
+	// (what's picked on the map, over the tab: only while something is)
+	const bool bPicked = Src.Shapes.IsValidIndex(SelShape) || Src.UserTrees.IsValidIndex(SelTree) || Found.IsValidIndex(SelFound) || SelMany.Num()
+		|| Src.RemovedTrees.IsValidIndex(SelRemoved) || Buildings.IsValidIndex(SelBuilding);
+	if (bPicked) Add(SelectionPanel());
+	switch (Tab)
+	{
+	case 0: Add(HolePanel()); break;
+	case 1: Add(ShapePanel()); break;
+	case 2: Add(TreePanel()); break;
+	case 3: Add(GrassPanel()); break;
+	case 4: Add(CoursePanel()); break;
+	case 5: Add(PlantPanel()); break;
+	default: Add(BuildingPanel()); break;
+	}
+	if (!bPicked)
+		Add(Note(TEXT("Click something on the map to pick it: a shape, a tree, a building. Shift-drag a box round found trees. The mouse wheel zooms; drag (or right-drag) moves the map.")));
+	Side->SetContent(SNew(SVerticalBox)
+		+ SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 6)[Box(Tabs, FMargin(8, 8, 4, 4), Solid)]
+		+ SVerticalBox::Slot().FillHeight(1)[SNew(SScrollBox) + SScrollBox::Slot()[V]]);
 }
 
 TSharedRef<SWidget> SOTGCourseEditor::TopBar()
@@ -907,7 +929,7 @@ TSharedRef<SWidget> SOTGCourseEditor::SelectionPanel()
 		V->AddSlot().AutoHeight().Padding(0, 4)[Button(TEXT("Put it back"), [this]() { RestoreRemoved(); }, 12)];
 		return Section(TEXT("Removed tree"), V);
 	}
-	if (!Src.Shapes.IsValidIndex(SelShape)) return Section(TEXT("Picked"), Note(TEXT("Click something on the map to pick it: a shape, a tree, a building. Shift-drag a box round found trees. The mouse wheel zooms; drag (or right-drag) moves the map.")));
+	if (!Src.Shapes.IsValidIndex(SelShape)) return SNullWidget::NullWidget;
 	FOTGSourceShape& S = Src.Shapes[SelShape];
 	TArray<FString> Kinds = DrawKinds; Kinds.Add(TEXT("trees"));
 	V->AddSlot().AutoHeight()[Row(TEXT("It's a"), Button(KindLabel(S.Kind), [this, Kinds]() {
@@ -987,7 +1009,11 @@ TSharedRef<SWidget> SOTGCourseEditor::TreePanel()
 	for (const FString& Off : Src.TreesOff) Count.FindOrAdd(Off);
 	if (Count.Num())
 	{
-		V->AddSlot().AutoHeight().Padding(0, 8, 0, 2)[Text(TEXT("Tree species on this course"), 13, Gold, "Bold")];
+		int32 Off = 0;
+		for (const auto& KV : Count) Off += Src.TreesOff.Contains(KV.Key) ? 1 : 0;
+		V->AddSlot().AutoHeight().Padding(0, 8, 0, 2)[Button(FString::Printf(TEXT("%s Tree species on this course (%d%s)"), bSpeciesOpen ? TEXT("\u25BE") : TEXT("\u25B8"), Count.Num(),
+			Off ? *FString::Printf(TEXT(", %d off"), Off) : TEXT("")), [this]() { bSpeciesOpen = !bSpeciesOpen; Changed(); }, 12)];
+		if (!bSpeciesOpen) return Section(TEXT("Trees"), V);
 		Count.ValueSort([](int32 A, int32 B) { return A > B; });
 		TSharedRef<SWrapBox> W = SNew(SWrapBox).UseAllottedSize(true);
 		for (const auto& KV : Count)

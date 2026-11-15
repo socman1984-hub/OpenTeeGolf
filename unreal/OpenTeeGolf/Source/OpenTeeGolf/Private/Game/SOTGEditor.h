@@ -181,6 +181,12 @@ private:
 	FString JobShown;
 	int32 PanelKey = 0;   // (bumped when the panels need making again)
 	int32 PanelBuilt = -1;
+	// the side panel: one section at a time, on tabs (Hole Shapes Trees Tall grass Course Plants Buildings)
+	int32 Tab = 0;
+	bool bSpeciesOpen = false;   // (the trees' species list, folded away until opened)
+public:
+	void ShowTab(int32 T) { Tab = T; Changed(); }
+private:
 	// (-editortest=<id>: the editor open, a screenshot; -editortestfix: a hole's par of 10 or more set to 4, saved, quit)
 	int32 TestStep = 0;
 	double TestAt = 0;
