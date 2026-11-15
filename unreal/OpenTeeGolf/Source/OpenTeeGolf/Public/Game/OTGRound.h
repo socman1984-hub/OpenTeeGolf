@@ -62,6 +62,8 @@ public:
 	void TogglePerf();                 // (P: frame rate and timings)
 	// the weather panel (L): the weather changed as you play
 	void ToggleWeatherPanel();
+	// the grass designer (R): the course's rough and tall grass, changed over the course itself
+	void ToggleGrassDesigner();
 	void SetWeatherKey(const FString& Key);
 	void SetWindMph(double Mph);
 	void SetWindFrom(double RelDeg);

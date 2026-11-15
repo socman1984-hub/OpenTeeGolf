@@ -154,6 +154,7 @@ void AOTGPlayerController::SetupInputComponent()
 	Bind(EKeys::G, [](AOTGRound* R) { R->ToggleSlopeGrid(); }, true);
 	Bind(EKeys::P, [](AOTGRound* R) { R->TogglePerf(); }, true);
 	Bind(EKeys::L, [](AOTGRound* R) { R->ToggleWeatherPanel(); }, true);
+	Bind(EKeys::R, [](AOTGRound* R) { R->ToggleGrassDesigner(); }, true);
 	// a click on the ground aims there
 	Bind(EKeys::LeftMouseButton, [this](AOTGRound* R) {
 		// (along the line under the cursor to where it meets the course's ground: the course's own

@@ -18,6 +18,8 @@
 class UOTGCourseData;
 class UStaticMeshComponent;
 class UMaterialInstanceDynamic;
+class UMaterialInterface;
+class UStaticMesh;
 class UTexture2D;
 
 UCLASS()
@@ -41,6 +43,17 @@ public:
 	const TMap<FName, TObjectPtr<UTexture2D>>& Pictures() const { return Textures; }
 	double LandSizeCm() const { return LandCm; }
 
+	// The grass designer's view (SOTGGrassDesigner): the kinds growing now, others grown at once
+	// (not saved), saved for the course (grass.json in its folder), the Megascans plants the game
+	// has (their folders), and a kind's height at scale 1 (cm; 0: no mesh)
+	const TArray<otg::FGrassKind>& GrassKinds() const;
+	void SetGrassKinds(const TArray<otg::FGrassKind>& Kinds);
+	bool SaveGrassKinds(FString* Where = nullptr) const;
+	TArray<FString> GrassPlants() const;
+	float GrassHeightCm(const FString& Kind) const;
+	int32 GrassInstances() const;
+	TArray<otg::FGrassKind> SavedGrassKinds() const;   // (as saved for the course, or the game's own)
+
 private:
 	void LoadPictures();
 	void BuildGround(TFunction<void(float, const FString&)> Progress);
@@ -56,6 +69,8 @@ private:
 	bool BuildRealFarLand();   // (the export's farland.json: real heights and photos; false if it hasn't one)
 	void BuildProps();
 	void BuildGrass();
+	TMap<FString, TArray<TPair<UStaticMesh*, UMaterialInterface*>>> GrassMeshes(const TArray<otg::FGrassKind>& Kinds);
+	TMap<FString, TArray<TPair<UStaticMesh*, UMaterialInterface*>>> GrassMeshCache;
 	void SetPictures(UMaterialInstanceDynamic* M) const;
 	class UHierarchicalInstancedStaticMeshComponent* Instances(class UStaticMesh* Mesh, const TArray<FTransform>& Xfs, int32 CullFrom, int32 CullTo);
 

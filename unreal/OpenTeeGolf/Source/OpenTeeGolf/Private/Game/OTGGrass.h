@@ -6,6 +6,12 @@
 // TURF_GRASS: SM_Turf_<Name>, made in game-assets mode) or Megascans plants from Fab (Content/Fab/
 // Megascans/Plants/<folder>: every variant mesh of each, a patch taking one at random, drawn with
 // our foliage material so they sway in the game's wind, their own billboards far off).
+//
+// The kinds are the game's own (DefaultKinds) as the course's grass designer changed them
+// (SOTGGrassDesigner; saved in the course's folder as grass.json: LoadKinds, SaveKinds): which
+// grow, on the rough or the tall grass, how dense, how tall, how far out, in what patches, and
+// Megascans plants added. SetKinds grows them again at once. The rough stays one even colour: only
+// kinds in its own colours (bEven) grow on it; the others only in the tall grass.
 
 #pragma once
 
@@ -22,7 +28,12 @@ namespace otg
 {
 	struct FGrassKind
 	{
-		FString Name;                  // (TURF_GRASS's key: SM_Turf_<Name>, M_Turf_<Name>)
+		FString Name;                  // (TURF_GRASS's key: SM_Turf_<Name>, M_Turf_<Name>; fab_<folder> for an added plant)
+		FString Label;                 // (as the designer shows it)
+		FString FarOf;                 // (a far-off copy of that kind: follows it, not shown on its own)
+		bool bOn = true;
+		bool bEven = false;            // in the rough's own colours: may grow on the rough
+		bool bAdded = false;           // a Megascans plant added in the designer
 		TArray<FString> Masks;         // the surfaces it grows on
 		float Density = 0;             // patches per 100 m2
 		float DrawFrom = 0, DrawTo = 0; // m: fading out between them
@@ -42,14 +53,27 @@ namespace otg
 		// Set up for the course: its masks (by name: fairway, water ...), heights, size; the kinds'
 		// meshes and materials (null where the game hasn't got them)
 		void Init(AActor* Owner, UOTGCourseData* Data, const TMap<FString, FPicture>& Masks, double LandCm,
-			const TMap<FString, TArray<TPair<UStaticMesh*, UMaterialInterface*>>>& Kinds);
+			const TArray<FGrassKind>& Kinds, const TMap<FString, TArray<TPair<UStaticMesh*, UMaterialInterface*>>>& Meshes);
+		// Other kinds, grown again at once (every cell dropped; the near ones come back in a moment)
+		void SetKinds(const TArray<FGrassKind>& Kinds, const TMap<FString, TArray<TPair<UStaticMesh*, UMaterialInterface*>>>& Meshes);
+		const TArray<FGrassKind>& Kinds() const { return KindList; }
+		// (a kind's first mesh's height, cm, at scale 1; 0 if it has none)
+		float MeshHeightCm(int32 Kind) const;
 		// Each frame: cells added round the camera, far ones dropped (a few at a time)
 		void Update(const FVector& Camera);
 		int32 Instances() const { return Count; }
 		// (no worker still placing: before the course goes)
 		void Wait() const { while (InFlight.IsValid() && InFlight->GetValue() > 0) FPlatformProcess::Sleep(0.002f); }
 
-		static const TArray<FGrassKind>& Kinds();
+		// The game's own kinds (build_course.py TURF_GRASS, and the Megascans grasses)
+		static const TArray<FGrassKind>& DefaultKinds();
+		// The course's (grass.json in its folder, over the game's own), and saving them there
+		static TArray<FGrassKind> LoadKinds(const FString& Dir);
+		static bool SaveKinds(const FString& Dir, const TArray<FGrassKind>& Kinds);
+		// The far-off copies made to follow the kinds they copy (after any change)
+		static void Derive(TArray<FGrassKind>& Kinds);
+		// A Megascans plant (its folder under Content/Fab/Megascans/Plants) as a kind of tall grass
+		static FGrassKind PlantKind(const FString& Folder);
 
 	private:
 		struct FCellKey { int32 Kind, X, Y; bool operator==(const FCellKey& O) const { return Kind == O.Kind && X == O.X && Y == O.Y; } };
@@ -65,7 +89,9 @@ namespace otg
 		UOTGCourseData* Data = nullptr;
 		TMap<FString, FPicture> Pics;
 		double Land = 0;
-		TArray<int32> KindIndex;                              // (kinds the game has a mesh for)
+		void Clear();
+		TArray<FGrassKind> KindList;
+		TArray<int32> KindIndex;                              // (kinds on, that the game has a mesh for)
 		TArray<TArray<UStaticMesh*>> Meshes;                   // (by kind, its variants)
 		TArray<TArray<UMaterialInterface*>> Mats;
 		TMap<FCellKey, FCell> Cells;

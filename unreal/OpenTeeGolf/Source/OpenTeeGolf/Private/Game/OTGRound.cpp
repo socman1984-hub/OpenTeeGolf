@@ -91,6 +91,7 @@ namespace
 			R->FreeLookAt(bPin ? R->PinWorld() + FVector(0, 0, 200) : FVector(Arg(0, 0), Arg(1, 0), Arg(2, 0)), Arg(O, 800), Arg(O + 1, 300), Arg(O + 2, 30));
 		}));
 	FAutoConsoleCommandWithWorldAndArgs PerfCmd(TEXT("OTG.Round.Perf"), TEXT("Frame rate and timings (the P key)"), FCmd::CreateLambda([](const TArray<FString>&, UWorld* W) { if (AOTGRound* R = RoundIn(W)) R->TogglePerf(); }));
+	FAutoConsoleCommandWithWorldAndArgs GrassCmd(TEXT("OTG.Round.GrassDesigner"), TEXT("The grass designer (the R key)"), FCmd::CreateLambda([](const TArray<FString>&, UWorld* W) { if (AOTGRound* R = RoundIn(W)) R->ToggleGrassDesigner(); }));
 	FAutoConsoleCommandWithWorldAndArgs WxCmd(TEXT("OTG.Round.WeatherPanel"), TEXT("The weather panel (the L key)"), FCmd::CreateLambda([](const TArray<FString>&, UWorld* W) { if (AOTGRound* R = RoundIn(W)) R->ToggleWeatherPanel(); }));
 	FAutoConsoleCommandWithWorldAndArgs TimeCmd(TEXT("OTG.Round.Time"), TEXT("OTG.Round.Time <hour, 5.5-19.5> | auto: (testing) the time of day"), FCmd::CreateLambda([](const TArray<FString>& A, UWorld* W) {
 		if (AOTGRound* R = RoundIn(W)) R->SetSunHour(A.Num() && A[0] != TEXT("auto") ? FCString::Atod(*A[0]) : -1.0);

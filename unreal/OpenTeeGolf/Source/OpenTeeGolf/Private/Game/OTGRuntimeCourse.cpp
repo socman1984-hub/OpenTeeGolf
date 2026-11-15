@@ -28,6 +28,8 @@
 #include "StaticMeshAttributes.h"
 #include "StaticMeshResources.h"
 #include "Misc/Paths.h"
+#include "EngineUtils.h"
+#include "HAL/IConsoleManager.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogOTGRuntimeCourse, Log, All);
 
@@ -989,13 +991,15 @@ void AOTGRuntimeCourse::BuildProps()
 }
 
 // The grass: each kind's turf patch and its material (reading this course's pictures), grown round
-// the camera as it moves (otg::FGrass)
-void AOTGRuntimeCourse::BuildGrass()
+// the camera as it moves (otg::FGrass): the game's kinds as the course's grass designer left them
+// (grass.json in its folder)
+TMap<FString, TArray<TPair<UStaticMesh*, UMaterialInterface*>>> AOTGRuntimeCourse::GrassMeshes(const TArray<otg::FGrassKind>& Kinds)
 {
 	TMap<FString, TArray<TPair<UStaticMesh*, UMaterialInterface*>>> Have;
-	int32 FabMeshes = 0;
-	for (const otg::FGrassKind& K : otg::FGrass::Kinds())
+	for (const otg::FGrassKind& K : Kinds)
 	{
+		// (each kind's meshes found once: the designer asks again whenever it changes something)
+		if (const TArray<TPair<UStaticMesh*, UMaterialInterface*>>* Was = GrassMeshCache.Find(K.Name)) { Have.Add(K.Name, *Was); continue; }
 		TArray<TPair<UStaticMesh*, UMaterialInterface*>>& V = Have.Add(K.Name);
 		if (K.Fab.Num())
 		{
@@ -1011,24 +1015,145 @@ void AOTGRuntimeCourse::BuildGrass()
 					if (!Mesh || !Mesh->GetStaticMaterials().Num()) continue;
 					TurfMeshes.Add(Mesh);
 					V.Add(TPair<UStaticMesh*, UMaterialInterface*>(Mesh, nullptr));   // (its own)
-					FabMeshes++;
 				}
 			}
 			if (!V.Num()) UE_LOG(LogOTGRuntimeCourse, Warning, TEXT("Grass %s: none of its Megascans plants are in the game (Content/Fab)"), *K.Name);
-			continue;
 		}
-		UStaticMesh* Mesh = Find<UStaticMesh>(TEXT("SM_Turf_") + K.Name);
-		UMaterialInterface* Base = Load<UMaterialInterface>(TEXT("M_Turf_") + K.Name);
-		if (!Mesh || !Base) { UE_LOG(LogOTGRuntimeCourse, Warning, TEXT("Grass %s: not in the game's content"), *K.Name); continue; }
-		UMaterialInstanceDynamic* M = UMaterialInstanceDynamic::Create(Base, this);
-		SetPictures(M);
-		TurfMats.Add(M);
-		TurfMeshes.Add(Mesh);
-		V.Add(TPair<UStaticMesh*, UMaterialInterface*>(Mesh, M));
+		else
+		{
+			UStaticMesh* Mesh = Find<UStaticMesh>(TEXT("SM_Turf_") + K.Name);
+			UMaterialInterface* Base = Load<UMaterialInterface>(TEXT("M_Turf_") + K.Name);
+			if (!Mesh || !Base) { UE_LOG(LogOTGRuntimeCourse, Warning, TEXT("Grass %s: not in the game's content"), *K.Name); }
+			else
+			{
+				UMaterialInstanceDynamic* M = UMaterialInstanceDynamic::Create(Base, this);
+				SetPictures(M);
+				TurfMats.Add(M);
+				TurfMeshes.Add(Mesh);
+				V.Add(TPair<UStaticMesh*, UMaterialInterface*>(Mesh, M));
+			}
+		}
+		GrassMeshCache.Add(K.Name, V);
 	}
+	return Have;
+}
+
+void AOTGRuntimeCourse::BuildGrass()
+{
+	const TArray<otg::FGrassKind> Kinds = otg::FGrass::LoadKinds(Data->ExportDir);
+	const TMap<FString, TArray<TPair<UStaticMesh*, UMaterialInterface*>>> Have = GrassMeshes(Kinds);
 	Grass = MakeShared<otg::FGrass>();
-	Grass->Init(this, Data, MaskPixels, LandCm, Have);
-	UE_LOG(LogOTGRuntimeCourse, Display, TEXT("Grass: %d kinds, %d Megascans plant meshes"), Have.Num(), FabMeshes);
+	Grass->Init(this, Data, MaskPixels, LandCm, Kinds, Have);
+	int32 On = 0;
+	for (const otg::FGrassKind& K : Kinds) On += K.bOn ? 1 : 0;
+	UE_LOG(LogOTGRuntimeCourse, Display, TEXT("Grass: %d kinds (%d growing)%s"), Kinds.Num(), On,
+		FPaths::FileExists(FPaths::Combine(Data->ExportDir, TEXT("grass.json"))) ? TEXT(", as the course's grass designer left them") : TEXT(""));
+}
+
+// The grass designer's changes from the console (testing, screenshots): OTG.Grass.List,
+// OTG.Grass.Set <kind> on|surface|density|height|vary|out|patch|cover <value>, OTG.Grass.Add
+// <Megascans folder>, OTG.Grass.Save, OTG.Grass.Reset (the game's own)
+namespace
+{
+	AOTGRuntimeCourse* CourseIn(UWorld* W)
+	{
+		if (W) for (TActorIterator<AOTGRuntimeCourse> It(W); It; ++It) return *It;
+		return nullptr;
+	}
+	using FGrassCmd = FConsoleCommandWithWorldAndArgsDelegate;
+	FAutoConsoleCommandWithWorldAndArgs GrassListCmd(TEXT("OTG.Grass.List"), TEXT("The course's grass kinds as they grow now"), FGrassCmd::CreateLambda([](const TArray<FString>&, UWorld* W) {
+		if (AOTGRuntimeCourse* C = CourseIn(W))
+			for (const otg::FGrassKind& K : C->GrassKinds())
+				UE_LOG(LogOTGRuntimeCourse, Display, TEXT("%-22s %-3s %-6s density %6.0f scale %.2f-%.2f out to %3.0f m patch %4.1f m %.2f-%.2f%s"), *K.Name, K.bOn ? TEXT("on") : TEXT("off"),
+					K.Masks.Num() ? *K.Masks[0] : TEXT("-"), K.Density, K.ScaleLo, K.ScaleHi, K.DrawTo, K.PatchM, K.PatchLo, K.PatchHi, K.FarOf.IsEmpty() ? TEXT("") : TEXT(" (follows)"));
+	}));
+	FAutoConsoleCommandWithWorldAndArgs GrassSetCmd(TEXT("OTG.Grass.Set"), TEXT("OTG.Grass.Set <kind> on|surface|density|height|vary|out|patch|cover <value>"), FGrassCmd::CreateLambda([](const TArray<FString>& A, UWorld* W) {
+		AOTGRuntimeCourse* C = CourseIn(W);
+		if (!C || A.Num() < 3) return;
+		TArray<otg::FGrassKind> K = C->GrassKinds();
+		otg::FGrassKind* G = K.FindByPredicate([&](const otg::FGrassKind& X) { return X.Name == A[0]; });
+		if (!G) { UE_LOG(LogOTGRuntimeCourse, Warning, TEXT("No grass kind %s"), *A[0]); return; }
+		const FString F = A[1].ToLower();
+		const float V = FCString::Atof(*A[2]);
+		const float Mid = (G->ScaleLo + G->ScaleHi) / 2, Spr = (G->ScaleHi - G->ScaleLo) / FMath::Max(0.01f, G->ScaleHi + G->ScaleLo);
+		if (F == TEXT("on")) G->bOn = A[2] == TEXT("1") || A[2].ToLower() == TEXT("true") || A[2].ToLower() == TEXT("on");
+		else if (F == TEXT("surface") && (A[2] == TEXT("native") || (A[2] == TEXT("rough") && G->bEven))) G->Masks = { A[2] };
+		else if (F == TEXT("density")) G->Density = FMath::Max(0.f, V);
+		else if (F == TEXT("height")) { G->ScaleLo = V * (1 - Spr); G->ScaleHi = V * (1 + Spr); }
+		else if (F == TEXT("vary")) { G->ScaleLo = Mid * (1 - V); G->ScaleHi = Mid * (1 + V); }
+		else if (F == TEXT("out")) { const float R = G->DrawTo > 0 ? G->DrawFrom / G->DrawTo : 0.7f; G->DrawTo = V; G->DrawFrom = V * R; }
+		else if (F == TEXT("patch")) G->PatchM = V;
+		else if (F == TEXT("cover")) { const float Wd = G->PatchHi - G->PatchLo, Cn = 0.27f + 0.19f * (G->bInvert ? V : 1 - V); G->PatchLo = Cn - Wd / 2; G->PatchHi = Cn + Wd / 2; }
+		else { UE_LOG(LogOTGRuntimeCourse, Warning, TEXT("OTG.Grass.Set: no field %s"), *F); return; }
+		C->SetGrassKinds(K);
+	}));
+	FAutoConsoleCommandWithWorldAndArgs GrassAddCmd(TEXT("OTG.Grass.Add"), TEXT("OTG.Grass.Add <Megascans plant folder>: a plant added to the tall grass"), FGrassCmd::CreateLambda([](const TArray<FString>& A, UWorld* W) {
+		AOTGRuntimeCourse* C = CourseIn(W);
+		if (!C || !A.Num()) return;
+		TArray<otg::FGrassKind> K = C->GrassKinds();
+		K.Add(otg::FGrass::PlantKind(A[0]));
+		C->SetGrassKinds(K);
+	}));
+	FAutoConsoleCommandWithWorldAndArgs GrassSaveCmd(TEXT("OTG.Grass.Save"), TEXT("Save the course's grass as it grows now (grass.json)"), FGrassCmd::CreateLambda([](const TArray<FString>&, UWorld* W) {
+		FString Where;
+		if (AOTGRuntimeCourse* C = CourseIn(W)) UE_LOG(LogOTGRuntimeCourse, Display, TEXT("Grass %s %s"), C->SaveGrassKinds(&Where) ? TEXT("saved to") : TEXT("NOT saved to"), *Where);
+	}));
+	FAutoConsoleCommandWithWorldAndArgs GrassResetCmd(TEXT("OTG.Grass.Reset"), TEXT("The game's own grass (not saved)"), FGrassCmd::CreateLambda([](const TArray<FString>&, UWorld* W) {
+		if (AOTGRuntimeCourse* C = CourseIn(W)) C->SetGrassKinds(otg::FGrass::DefaultKinds());
+	}));
+}
+
+const TArray<otg::FGrassKind>& AOTGRuntimeCourse::GrassKinds() const
+{
+	static const TArray<otg::FGrassKind> None;
+	return Grass.IsValid() ? Grass->Kinds() : None;
+}
+
+void AOTGRuntimeCourse::SetGrassKinds(const TArray<otg::FGrassKind>& Kinds)
+{
+	if (!Grass.IsValid()) return;
+	TArray<otg::FGrassKind> K = Kinds;
+	otg::FGrass::Derive(K);
+	Grass->SetKinds(K, GrassMeshes(K));
+}
+
+bool AOTGRuntimeCourse::SaveGrassKinds(FString* Where) const
+{
+	if (!Grass.IsValid() || !Data) return false;
+	if (Where) *Where = FPaths::Combine(Data->ExportDir, TEXT("grass.json"));
+	return otg::FGrass::SaveKinds(Data->ExportDir, Grass->Kinds());
+}
+
+TArray<FString> AOTGRuntimeCourse::GrassPlants() const
+{
+	TSet<FString> Folders;
+	for (const FAssetData& A : AssetsUnder(TEXT("/Game/Fab/Megascans/Plants"), UStaticMesh::StaticClass()))
+	{
+		// (/Game/Fab/Megascans/Plants/<folder>/...)
+		TArray<FString> Bits;
+		A.PackagePath.ToString().ParseIntoArray(Bits, TEXT("/"));
+		if (Bits.Num() >= 5) Folders.Add(Bits[4]);
+	}
+	TArray<FString> Out = Folders.Array();
+	Out.Sort();
+	return Out;
+}
+
+float AOTGRuntimeCourse::GrassHeightCm(const FString& Kind) const
+{
+	if (!Grass.IsValid()) return 0;
+	const int32 I = Grass->Kinds().IndexOfByPredicate([&](const otg::FGrassKind& K) { return K.Name == Kind; });
+	return I == INDEX_NONE ? 0 : Grass->MeshHeightCm(I);
+}
+
+TArray<otg::FGrassKind> AOTGRuntimeCourse::SavedGrassKinds() const
+{
+	return Data ? otg::FGrass::LoadKinds(Data->ExportDir) : otg::FGrass::DefaultKinds();
+}
+
+int32 AOTGRuntimeCourse::GrassInstances() const
+{
+	return Grass.IsValid() ? Grass->Instances() : 0;
 }
 
 void AOTGRuntimeCourse::Tick(float Dt)

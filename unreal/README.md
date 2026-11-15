@@ -141,6 +141,16 @@ Everything the golf needs runs inside the game, in C++.
   start. The game project needs the Fab trees in its `Content` folder (not in git).
   Course packs (levels built in the editor under `/Game/Courses`) are retired: the editor tools
   are still there, but packs are never cooked into the game.
+- The grass designer (R in a round, `SOTGGrassDesigner`, phase 1): the grass kinds are no longer a
+  fixed table: `otg::FGrass::DefaultKinds()` is the game's own (plus tall wild grass, golden fescue
+  and tussocks from `TURF_GRASS`, off until picked), and each course's `grass.json` (in its folder)
+  changes them - which grow and where, density, height and its spread, draw distance, patch size
+  and cover - and adds Megascans plants (any folder under `Content/Fab/Megascans/Plants`, all
+  cooked) to the tall grass. `AOTGRuntimeCourse::SetGrassKinds` grows them again at once; the
+  far-off copies (`_far`) follow their near kinds (`FGrass::Derive`). The rough stays one even
+  colour: only kinds in its colours (`bEven`: rough, rough_clump) may grow on it. Console:
+  `OTG.Grass.List`, `OTG.Grass.Set <kind> on|surface|density|height|vary|out|patch|cover <v>`,
+  `OTG.Grass.Add <folder>`, `OTG.Grass.Save`, `OTG.Grass.Reset`.
 - The course helper (making courses from the game, phase 0 of moving the course builder and editor
   into it): `UOTGHelperSubsystem` runs the web version's server hidden (`OTG_HELPER=1`,
   `lib/helper.js`: this computer only, no launch monitor listeners, gone with the game) on a free

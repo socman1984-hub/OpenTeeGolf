@@ -10,6 +10,9 @@
 #include "OTGCourseData.h"
 #include "ProceduralMeshComponent.h"
 #include "SOTGHud.h"
+#include "SOTGDesigner.h"
+#include "Game/OTGRuntimeCourse.h"
+#include "EngineUtils.h"
 
 // ------------------------------------------------------------------ the free view
 
@@ -160,6 +163,19 @@ void AOTGRound::UpdateFlag(float Dt)
 void AOTGRound::ToggleWeatherPanel()
 {
 	if (Hud) Hud->ShowWeatherPanel(!Hud->IsWeatherPanelShown());
+}
+
+void AOTGRound::ToggleGrassDesigner()
+{
+	if (!Hud) return;
+	const bool bShow = !Hud->IsGrassDesignerShown();
+	if (bShow)
+	{
+		AOTGRuntimeCourse* C = nullptr;
+		for (TActorIterator<AOTGRuntimeCourse> It(GetWorld()); It; ++It) { C = *It; break; }
+		Hud->GrassDesigner()->Open(C);
+	}
+	Hud->ShowGrassDesigner(bShow);
 }
 
 void AOTGRound::WeatherChanged()

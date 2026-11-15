@@ -9,6 +9,11 @@
 #include "Engine/StaticMesh.h"
 #include "GameFramework/Actor.h"
 #include "Materials/MaterialInterface.h"
+#include "Misc/FileHelper.h"
+#include "Misc/Paths.h"
+#include "Dom/JsonObject.h"
+#include "Serialization/JsonReader.h"
+#include "Serialization/JsonSerializer.h"
 
 namespace
 {
@@ -39,24 +44,39 @@ namespace
 }
 
 // build_course.py TURF_GRASS, as the game grows it (keep the two the same)
-const TArray<otg::FGrassKind>& otg::FGrass::Kinds()
+const TArray<otg::FGrassKind>& otg::FGrass::DefaultKinds()
 {
 	static const TArray<FGrassKind> K = [] {
 		TArray<FGrassKind> Out;
-		auto Add = [&](const TCHAR* Name, TArray<FString> Masks, float Density, float From, float To, float Jitter, float SLo, float SHi, float PatchM = 0, float PLo = 0, float PHi = 0, bool bInv = false) -> FGrassKind& {
+		auto Add = [&](const TCHAR* Name, const TCHAR* Label, TArray<FString> Masks, float Density, float From, float To, float Jitter, float SLo, float SHi, float PatchM = 0, float PLo = 0, float PHi = 0, bool bInv = false) -> FGrassKind& {
 			FGrassKind G;
-			G.Name = Name; G.Masks = MoveTemp(Masks); G.Density = Density; G.DrawFrom = From; G.DrawTo = To; G.Jitter = Jitter;
+			G.Name = Name; G.Label = Label; G.Masks = MoveTemp(Masks); G.Density = Density; G.DrawFrom = From; G.DrawTo = To; G.Jitter = Jitter;
 			G.ScaleLo = SLo; G.ScaleHi = SHi; G.PatchM = PatchM; G.PatchLo = PLo; G.PatchHi = PHi; G.bInvert = bInv;
 			return Out.Add_GetRef(G);
 		};
-		Add(TEXT("rough"), { TEXT("rough") }, 2400, 70, 100, 1.0f, 0.85f, 1.2f);
+		// the far-off copy of a kind of tall grass: a fifth as many patches, bigger, from 150 m out
+		auto Far = [&](const TCHAR* Of) {
+			FGrassKind F = *Out.FindByPredicate([Of](const FGrassKind& X) { return X.Name == Of; });
+			F.FarOf = F.Name;
+			F.Name += TEXT("_far");
+			F.Label += TEXT(" (far off)");
+			F.Density /= 5;
+			F.DrawFrom = 380; F.DrawTo = 450;
+			F.ScaleLo *= 1.3f; F.ScaleHi *= 1.3f;
+			F.MinDrawM = 150;
+			F.CellM = 64;
+			Out.Add(F);
+		};
+		Add(TEXT("rough"), TEXT("Rough grass"), { TEXT("rough") }, 2400, 70, 100, 1.0f, 0.85f, 1.2f).bEven = true;
 		// the rough far off, 80 to 220 m: fewer, wider blades in bigger patches (build_course.py's
 		// rough_far), so the rough keeps a grass texture past where its near blades go - it ended in a
 		// bare band at 100 m. Off with the other far kinds (OTG.Grass.Far 0)
 		{
-			FGrassKind& G = Add(TEXT("rough_far"), { TEXT("rough") }, 200, 170, 220, 1.0f, 1.1f, 1.45f);
+			FGrassKind& G = Add(TEXT("rough_far"), TEXT("Rough grass (far off)"), { TEXT("rough") }, 200, 170, 220, 1.0f, 1.1f, 1.45f);
 			G.MinDrawM = 80;
 			G.CellM = 48;
+			G.FarOf = TEXT("rough");
+			G.bEven = true;
 		}
 		// (no blades on the mown surfaces - fairways, tees, fringes, greens: mown that short, real turf
 		// reads as a smooth surface, and blades on it looked like rough; the ground draws them)
@@ -64,8 +84,9 @@ const TArray<otg::FGrassKind>& otg::FGrass::Kinds()
 		// rough_clump) - a kept rough is one even green; the Megascans clumps here before came in their
 		// own straw and lime. Kept a little inside it, clear of the fairways
 		{
-			FGrassKind& G = Add(TEXT("rough_clump"), { TEXT("rough") }, 70, 60, 90, 1.0f, 0.75f, 1.3f);
+			FGrassKind& G = Add(TEXT("rough_clump"), TEXT("Rough tufts"), { TEXT("rough") }, 70, 60, 90, 1.0f, 0.75f, 1.3f);
 			G.Margin = 0.3f;
+			G.bEven = true;
 		}
 		// the tall grass, Megascans plants in drifts, kept low and dense as the heathland rough round a
 		// links or heath course is - knee high, 30 to 60 cm, not the 1 to 2 m of a hay meadow: fescue
@@ -73,39 +94,172 @@ const TArray<otg::FGrassKind>& otg::FGrass::Kinds()
 		// in the others, each out to 450 m (their own billboards far off), and our short meadow grass
 		// under them as a base. (Wheat grass and rough meadow grass, 1.2-1.7 m with seed heads, are
 		// out: too tall however they're scaled.) Their colours: make_game_assets.py's fab_tints
-		Add(TEXT("native_short"), { TEXT("native") }, 520, 110, 160, 1.0f, 0.75f, 1.25f, 16, 0.31f, 0.39f, true);
+		Add(TEXT("native_short"), TEXT("Short meadow grass"), { TEXT("native") }, 520, 110, 160, 1.0f, 0.75f, 1.25f, 16, 0.31f, 0.39f, true);
 		{
-			FGrassKind& G = Add(TEXT("fescue"), { TEXT("native") }, 560, 300, 450, 1.0f, 0.42f, 0.6f, 22, 0.33f, 0.40f, false);
+			FGrassKind& G = Add(TEXT("fescue"), TEXT("Fescue (Megascans)"), { TEXT("native") }, 560, 300, 450, 1.0f, 0.42f, 0.6f, 22, 0.33f, 0.40f, false);
 			G.Fab = { TEXT("Tall_Grass_rbEkI"), TEXT("Tall_Grass_rbEkP"), TEXT("Tall_Grass_rbEla") };
 			G.Margin = 0.5f;
 			G.CellM = 48;
 		}
 		{
-			FGrassKind& G = Add(TEXT("meadow"), { TEXT("native") }, 480, 250, 400, 1.0f, 0.5f, 0.72f, 22, 0.33f, 0.40f, true);
+			FGrassKind& G = Add(TEXT("meadow"), TEXT("Wild and tundra grass (Megascans)"), { TEXT("native") }, 480, 250, 400, 1.0f, 0.5f, 0.72f, 22, 0.33f, 0.40f, true);
 			G.Fab = { TEXT("Wild_Grass_vczndjqja"), TEXT("Tundra_Grass_wk2oaeyqx"), TEXT("Grass_smdrailr"), TEXT("Grass_slBm1") };
 			G.Margin = 0.6f;
 			G.CellM = 48;
 		}
-		{
-			FGrassKind F = *Out.FindByPredicate([](const FGrassKind& X) { return X.Name == TEXT("native_short"); });   // (native_short far off)
-			F.Name += TEXT("_far");
-			F.Density /= 5;
-			F.DrawFrom = 380; F.DrawTo = 450;
-			F.ScaleLo *= 1.3f; F.ScaleHi *= 1.3f;
-			F.MinDrawM = 150;
-			F.CellM = 64;
-			Out.Add(F);
-		}
-		Add(TEXT("flowers_yellow"), { TEXT("native") }, 70, 70, 100, 1.0f, 0.85f, 1.2f, 9, 0.43f, 0.48f, false);
-		Add(TEXT("flowers_white"), { TEXT("native") }, 70, 70, 100, 1.0f, 0.85f, 1.2f, 11, 0.44f, 0.49f, false);
-		Add(TEXT("flowers_purple"), { TEXT("native") }, 60, 70, 100, 1.0f, 0.85f, 1.2f, 7, 0.44f, 0.5f, false);
+		Far(TEXT("native_short"));
+		Add(TEXT("flowers_yellow"), TEXT("Yellow wildflowers"), { TEXT("native") }, 70, 70, 100, 1.0f, 0.85f, 1.2f, 9, 0.43f, 0.48f, false);
+		Add(TEXT("flowers_white"), TEXT("White wildflowers"), { TEXT("native") }, 70, 70, 100, 1.0f, 0.85f, 1.2f, 11, 0.44f, 0.49f, false);
+		Add(TEXT("flowers_purple"), TEXT("Purple wildflowers"), { TEXT("native") }, 60, 70, 100, 1.0f, 0.85f, 1.2f, 7, 0.44f, 0.5f, false);
+		// the game's other tall grasses (TURF_GRASS: made, not grown unless the designer picks them)
+		Add(TEXT("native"), TEXT("Tall wild grass"), { TEXT("native") }, 320, 140, 200, 1.0f, 0.7f, 1.3f, 16, 0.31f, 0.39f, false).bOn = false;
+		Far(TEXT("native"));
+		Add(TEXT("fescue_gold"), TEXT("Golden fescue, gone over"), { TEXT("native") }, 280, 140, 200, 1.0f, 0.6f, 1.4f, 22, 0.34f, 0.39f, false).bOn = false;
+		Far(TEXT("fescue_gold"));
+		Add(TEXT("tussock"), TEXT("Tussocks"), { TEXT("native") }, 90, 110, 160, 1.0f, 0.6f, 1.5f).bOn = false;
+		Far(TEXT("tussock"));
 		return Out;
 	}();
 	return K;
 }
 
+otg::FGrassKind otg::FGrass::PlantKind(const FString& Folder)
+{
+	FGrassKind G;
+	G.Name = TEXT("fab_") + Folder;
+	// (Wild_Grass_vlkhcbxia: "Wild grass")
+	FString L = Folder;
+	int32 Us;
+	if (L.FindLastChar(TEXT('_'), Us) && L.Len() - Us > 6) L = L.Left(Us);
+	L = L.Replace(TEXT("_"), TEXT(" ")).ToLower();
+	if (L.Len()) L[0] = FChar::ToUpper(L[0]);
+	G.Label = L + TEXT(" (Megascans)");
+	G.Masks = { TEXT("native") };
+	G.Density = 200; G.DrawFrom = 250; G.DrawTo = 400;
+	G.ScaleLo = 0.45f; G.ScaleHi = 0.65f;
+	G.PatchM = 22; G.PatchLo = 0.33f; G.PatchHi = 0.40f;
+	G.Margin = 0.6f;
+	G.CellM = 48;
+	G.Fab = { Folder };
+	G.bAdded = true;
+	return G;
+}
+
+void otg::FGrass::Derive(TArray<FGrassKind>& Kinds)
+{
+	const TArray<FGrassKind>& Def = DefaultKinds();
+	auto DefOf = [&](const FString& N) { return Def.FindByPredicate([&](const FGrassKind& X) { return X.Name == N; }); };
+	for (FGrassKind& F : Kinds)
+	{
+		if (F.FarOf.IsEmpty()) continue;
+		const FGrassKind* P = Kinds.FindByPredicate([&](const FGrassKind& X) { return X.Name == F.FarOf; });
+		const FGrassKind* DF = DefOf(F.Name);
+		const FGrassKind* DP = DefOf(F.FarOf);
+		if (!P || !DF || !DP) continue;
+		// (as many, as tall, as its near kind is against the game's own, and starting where it ends)
+		F.bOn = P->bOn;
+		F.Masks = P->Masks;
+		F.Density = DF->Density * P->Density / FMath::Max(1.f, DP->Density);
+		const float S = (P->ScaleLo + P->ScaleHi) / FMath::Max(0.01f, DP->ScaleLo + DP->ScaleHi);
+		F.ScaleLo = DF->ScaleLo * S; F.ScaleHi = DF->ScaleHi * S;
+		F.MinDrawM = DF->MinDrawM * P->DrawTo / FMath::Max(1.f, DP->DrawTo);
+		F.DrawTo = FMath::Max(DF->DrawTo, F.MinDrawM + 60);
+		F.DrawFrom = F.DrawTo - (DF->DrawTo - DF->DrawFrom);
+		F.PatchM = P->PatchM; F.PatchLo = P->PatchLo; F.PatchHi = P->PatchHi; F.bInvert = P->bInvert;
+	}
+}
+
+namespace
+{
+	TSharedRef<FJsonObject> KindJson(const otg::FGrassKind& K)
+	{
+		const TSharedRef<FJsonObject> O = MakeShared<FJsonObject>();
+		O->SetStringField(TEXT("name"), K.Name);
+		O->SetBoolField(TEXT("on"), K.bOn);
+		O->SetStringField(TEXT("surface"), K.Masks.Num() ? K.Masks[0] : FString(TEXT("native")));
+		O->SetNumberField(TEXT("density"), K.Density);
+		O->SetNumberField(TEXT("scaleLo"), K.ScaleLo);
+		O->SetNumberField(TEXT("scaleHi"), K.ScaleHi);
+		O->SetNumberField(TEXT("drawTo"), K.DrawTo);
+		O->SetNumberField(TEXT("patchM"), K.PatchM);
+		O->SetNumberField(TEXT("patchLo"), K.PatchLo);
+		O->SetNumberField(TEXT("patchHi"), K.PatchHi);
+		O->SetBoolField(TEXT("invert"), K.bInvert);
+		O->SetNumberField(TEXT("margin"), K.Margin);
+		if (K.bAdded)
+		{
+			TArray<TSharedPtr<FJsonValue>> F;
+			for (const FString& P : K.Fab) F.Add(MakeShared<FJsonValueString>(P));
+			O->SetArrayField(TEXT("fab"), F);
+			O->SetStringField(TEXT("label"), K.Label);
+		}
+		return O;
+	}
+}
+
+TArray<otg::FGrassKind> otg::FGrass::LoadKinds(const FString& Dir)
+{
+	TArray<FGrassKind> Out = DefaultKinds();
+	FString Text;
+	TSharedPtr<FJsonObject> J;
+	const TArray<TSharedPtr<FJsonValue>>* List = nullptr;
+	if (!FFileHelper::LoadFileToString(Text, *FPaths::Combine(Dir, TEXT("grass.json"))) || !FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Text), J)
+		|| !J.IsValid() || !J->TryGetArrayField(TEXT("kinds"), List))
+		return Out;
+	for (const TSharedPtr<FJsonValue>& V : *List)
+	{
+		const TSharedPtr<FJsonObject> O = V.IsValid() ? V->AsObject() : nullptr;
+		FString Name;
+		if (!O.IsValid() || !O->TryGetStringField(TEXT("name"), Name)) continue;
+		FGrassKind* K = Out.FindByPredicate([&](const FGrassKind& X) { return X.Name == Name; });
+		if (!K)
+		{
+			// (a Megascans plant added in the designer)
+			const TArray<TSharedPtr<FJsonValue>>* Fab = nullptr;
+			if (!Name.StartsWith(TEXT("fab_")) || !O->TryGetArrayField(TEXT("fab"), Fab) || !Fab->Num()) continue;
+			FGrassKind A = PlantKind((*Fab)[0]->AsString());
+			A.Name = Name;
+			O->TryGetStringField(TEXT("label"), A.Label);
+			K = &Out.Add_GetRef(A);
+		}
+		if (!K->FarOf.IsEmpty()) continue;   // (follows its near kind)
+		O->TryGetBoolField(TEXT("on"), K->bOn);
+		FString Surface;
+		// (the rough stays one even colour: only kinds in its colours grow on it)
+		if (O->TryGetStringField(TEXT("surface"), Surface) && (Surface == TEXT("native") || (Surface == TEXT("rough") && K->bEven))) K->Masks = { Surface };
+		auto Num = [&](const TCHAR* F, float& Val, float Lo, float Hi) { double D; if (O->TryGetNumberField(F, D) && FMath::IsFinite(D)) Val = FMath::Clamp(float(D), Lo, Hi); };
+		const float From = K->DrawTo > 0 ? K->DrawFrom / K->DrawTo : 0.7f;
+		Num(TEXT("density"), K->Density, 1, 20000);
+		Num(TEXT("scaleLo"), K->ScaleLo, 0.05f, 5);
+		Num(TEXT("scaleHi"), K->ScaleHi, 0.05f, 5);
+		Num(TEXT("drawTo"), K->DrawTo, 10, 800);
+		K->DrawFrom = K->DrawTo * From;
+		Num(TEXT("patchM"), K->PatchM, 0, 200);
+		Num(TEXT("patchLo"), K->PatchLo, 0, 1);
+		Num(TEXT("patchHi"), K->PatchHi, 0, 1);
+		Num(TEXT("margin"), K->Margin, 0, 5);
+		O->TryGetBoolField(TEXT("invert"), K->bInvert);
+		if (K->ScaleHi < K->ScaleLo) Swap(K->ScaleLo, K->ScaleHi);
+		if (K->PatchM > 0 && K->PatchHi < K->PatchLo + 0.01f) K->PatchHi = K->PatchLo + 0.01f;
+	}
+	Derive(Out);
+	return Out;
+}
+
+bool otg::FGrass::SaveKinds(const FString& Dir, const TArray<FGrassKind>& Kinds)
+{
+	const TSharedRef<FJsonObject> J = MakeShared<FJsonObject>();
+	J->SetNumberField(TEXT("version"), 1);
+	TArray<TSharedPtr<FJsonValue>> List;
+	for (const FGrassKind& K : Kinds) if (K.FarOf.IsEmpty()) List.Add(MakeShared<FJsonValueObject>(KindJson(K)));
+	J->SetArrayField(TEXT("kinds"), List);
+	FString Text;
+	FJsonSerializer::Serialize(J, TJsonWriterFactory<>::Create(&Text));
+	return FFileHelper::SaveStringToFile(Text, *FPaths::Combine(Dir, TEXT("grass.json")), FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
+}
+
 void otg::FGrass::Init(AActor* InOwner, UOTGCourseData* InData, const TMap<FString, FPicture>& Masks, double LandCm,
-	const TMap<FString, TArray<TPair<UStaticMesh*, UMaterialInterface*>>>& KindsHave)
+	const TArray<FGrassKind>& InKinds, const TMap<FString, TArray<TPair<UStaticMesh*, UMaterialInterface*>>>& KindsHave)
 {
 	Owner = InOwner;
 	Data = InData;
@@ -113,15 +267,40 @@ void otg::FGrass::Init(AActor* InOwner, UOTGCourseData* InData, const TMap<FStri
 	Land = LandCm;
 	Done = MakeShared<TQueue<TPair<FCellKey, FPlaced>, EQueueMode::Mpsc>>();
 	InFlight = MakeShared<FThreadSafeCounter>();
-	for (int32 k = 0; k < Kinds().Num(); k++)
+	SetKinds(InKinds, KindsHave);
+}
+
+void otg::FGrass::Clear()
+{
+	Wait();
+	TPair<FCellKey, FPlaced> Job;
+	while (Done.IsValid() && Done->Dequeue(Job)) {}
+	for (auto& C : Cells) for (UInstancedStaticMeshComponent* ISM : C.Value.Comps) if (ISM) ISM->DestroyComponent();
+	Cells.Empty();
+	Count = 0;
+}
+
+void otg::FGrass::SetKinds(const TArray<FGrassKind>& InKinds, const TMap<FString, TArray<TPair<UStaticMesh*, UMaterialInterface*>>>& KindsHave)
+{
+	Clear();
+	KindList = InKinds;
+	Meshes.Reset(); Mats.Reset(); KindIndex.Reset();
+	for (int32 k = 0; k < KindList.Num(); k++)
 	{
 		TArray<UStaticMesh*>& M = Meshes.AddDefaulted_GetRef();
 		TArray<UMaterialInterface*>& Mt = Mats.AddDefaulted_GetRef();
-		if (const TArray<TPair<UStaticMesh*, UMaterialInterface*>>* Have = KindsHave.Find(Kinds()[k].Name))
+		if (const TArray<TPair<UStaticMesh*, UMaterialInterface*>>* Have = KindsHave.Find(KindList[k].Name))
 			for (const TPair<UStaticMesh*, UMaterialInterface*>& V : *Have)
 				if (V.Key) { M.Add(V.Key); Mt.Add(V.Value); }
-		if (M.Num()) KindIndex.Add(k);
+		if (M.Num() && KindList[k].bOn && KindList[k].Density > 0) KindIndex.Add(k);
 	}
+}
+
+float otg::FGrass::MeshHeightCm(int32 Kind) const
+{
+	if (!Meshes.IsValidIndex(Kind) || !Meshes[Kind].Num() || !Meshes[Kind][0]) return 0;
+	const FBox B = Meshes[Kind][0]->GetBoundingBox();
+	return float(B.Max.Z - FMath::Min(0.0, B.Min.Z));
 }
 
 // A mask's value (0..1: the distance fields, 0.5 on the outline) at a level position (cm)
@@ -154,7 +333,7 @@ double otg::FGrass::GroundZ(double X, double Y, FVector* OutNormal) const
 // map would have it (the mask past its edge, not in the water or on a path, in its meadow patch)
 otg::FGrass::FPlaced otg::FGrass::Place(int32 KindI, int32 CX, int32 CY) const
 {
-	const FGrassKind& K = Kinds()[KindI]; const double Cell = CellFor(K);
+	const FGrassKind& K = KindList[KindI]; const double Cell = CellFor(K);
 	const int32 NV = FMath::Max(1, Meshes.IsValidIndex(KindI) ? Meshes[KindI].Num() : 1);
 	FPlaced Out;
 	Out.SetNum(NV);
@@ -220,7 +399,7 @@ void otg::FGrass::Update(const FVector& Camera)
 		FCell* Cell = Cells.Find(Job.Key);
 		if (!Cell) continue;   // (dropped meanwhile)
 		Cell->bPending = false;
-		const FGrassKind& K = Kinds()[Job.Key.Kind];
+		const FGrassKind& K = KindList[Job.Key.Kind];
 		for (int32 v = 0; v < Job.Value.Num(); v++)
 		{
 			if (!Job.Value[v].Num() || !Meshes[Job.Key.Kind].IsValidIndex(v)) continue;
@@ -245,7 +424,7 @@ void otg::FGrass::Update(const FVector& Camera)
 	// far cells: dropped
 	for (auto It = Cells.CreateIterator(); It; ++It)
 	{
-		const FGrassKind& K = Kinds()[It->Key.Kind]; const double Cell = CellFor(K);
+		const FGrassKind& K = KindList[It->Key.Kind]; const double Cell = CellFor(K);
 		const bool bOff = K.MinDrawM > 0 && !CVarFarGrass.GetValueOnGameThread();
 		const FVector2D Mid((It->Key.X + 0.5) * Cell * 100, (It->Key.Y + 0.5) * Cell * 100);
 		if (bOff || FVector2D::Distance(Mid, FVector2D(C)) > (K.DrawTo + Cell) * 100)
@@ -258,7 +437,7 @@ void otg::FGrass::Update(const FVector& Camera)
 	int32 Started = 0;
 	for (int32 KindI : KindIndex)
 	{
-		const FGrassKind& K = Kinds()[KindI]; const double Cell = CellFor(K);
+		const FGrassKind& K = KindList[KindI]; const double Cell = CellFor(K);
 		if (K.MinDrawM > 0 && !CVarFarGrass.GetValueOnGameThread()) continue;
 		const int32 Rad = FMath::CeilToInt(K.DrawTo / Cell);
 		const int32 CX0 = FMath::FloorToInt(C.X / (Cell * 100)), CY0 = FMath::FloorToInt(C.Y / (Cell * 100));
