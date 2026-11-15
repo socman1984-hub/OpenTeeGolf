@@ -165,6 +165,14 @@ export async function exportForUnreal({ course, scene, id, solids = [], status =
     c.width = c.height = P;
     const g = c.getContext('2d');
     g.fillStyle = '#4b6b35'; g.fillRect(0, 0, P, P);
+    // (under everything, the distant land's sharpest satellite photo, when the game has it: the
+    // landscape's square reaches past the wider photo round the course, and was flat green there -
+    // a dark band between the course and the far land)
+    const near = scene.farField && scene.farLayers?.[0];
+    if (near?.tex.image?.width) {
+      const F = scene.farField, h = near.half, kk = P / span;
+      g.drawImage(near.tex.image, (F.cx - h - x0) * kk, (z1 - (F.cz + h)) * kk, 2 * h * kk, 2 * h * kk);
+    }
     // (the land around first, from the wider, coarser photo the game puts round the course; then
     // the course canvas, which covers [minX, maxX] x [minZ, maxZ], row 0 at maxZ)
     const k = P / span;
@@ -174,6 +182,45 @@ export async function exportForUnreal({ course, scene, id, solids = [], status =
     }
     g.drawImage(src, (minX - x0) * k, (z1 - maxZ) * k, W * k, H * k);
     await put('photo.jpg', await new Promise((r) => c.toBlob(r, 'image/jpeg', 0.9)), 'image/jpeg');
+  }
+
+  // ---- the land to the horizon, as the game draws it: real heights and satellite photos over a
+  // square 80 km across (lib/farland.js), so Unreal's distant hills stand where they are and look
+  // like the land round the course instead of plain green
+  if (scene.farField && scene.farLayers?.length) {
+    status('Exporting the distant land…');
+    await tick();
+    const F = scene.farField, G = 448;
+    // (points closest together near the course, as the game's mesh has them: row j, column i at
+    // z = cz - s(j / G) * half, x = cx + s(i / G) * half, s(f) = sign(2f-1) (2f-1)^2; row 0 north)
+    const s = (f) => { const u = f * 2 - 1; return Math.sign(u) * u * u; };
+    const hf = new Float32Array((G + 1) * (G + 1));
+    for (let j = 0; j <= G; j++) {
+      for (let i = 0; i <= G; i++) {
+        const x = F.cx + s(i / G) * F.half, z = F.cz - s(j / G) * F.half;
+        // (the spacing here, for groundBeyond's smoothing; under the course's own ground, 4 m down)
+        const span = (4 * Math.max(Math.abs(i / G * 2 - 1), Math.abs(j / G * 2 - 1)) * F.half) / G + 1;
+        const covered = x > x0 + 20 && x < x0 + (N - 1) * step - 20 && z < z1 - 20 && z > z1 - (N - 1) * step + 20;
+        hf[j * (G + 1) + i] = scene.groundBeyond(x, z, span) - base - (covered ? 4 : 0);
+      }
+      if (j % 64 === 0) await tick();
+    }
+    await put('farland_heights.bin', new Blob([hf.buffer]), 'application/octet-stream');
+    // the photo layers, sharpest (nearest) first: each a square centred where the land is, half its
+    // side given; row 0 north, column 0 west
+    const layers = [];
+    for (let k = 0; k < scene.farLayers.length; k++) {
+      const L = scene.farLayers[k], img = L.tex.image;
+      if (!img?.width) continue;
+      const file = `far_${k}.jpg`;
+      await put(file, await new Promise((r) => img.toBlob(r, 'image/jpeg', 0.88)), 'image/jpeg');
+      layers.push({ file, halfMetres: L.half });
+    }
+    // (in the export's frame: metres east and south of the landscape's north-west corner, heights
+    // up from heightBaseMetres)
+    await put('farland.json', JSON.stringify({
+      centre: { x: F.cx - x0, z: z1 - F.cz }, halfMetres: F.half, grid: G, heights: 'farland_heights.bin', layers,
+    }, null, 1), 'application/json');
   }
 
   // ---- surfaces, as distance fields: each pixel how far it is from the edge of the course's

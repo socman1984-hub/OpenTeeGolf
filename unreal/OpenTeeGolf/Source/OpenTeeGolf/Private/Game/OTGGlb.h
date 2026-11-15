@@ -13,6 +13,7 @@ namespace otg
 		TArray<FVector3f> Positions;
 		TArray<FVector3f> Normals;     // (empty if the file has none)
 		TArray<FLinearColor> Colors;   // (empty if the file has none)
+		TArray<FVector2f> UVs;         // (meshes made in the game only: the far land's photo coordinates)
 		TArray<int32> Indices;
 	};
 

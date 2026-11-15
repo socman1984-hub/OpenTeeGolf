@@ -52,6 +52,7 @@ private:
 	void BuildBoulders();
 	void BuildWater();
 	void BuildFarLand();
+	bool BuildRealFarLand();   // (the export's farland.json: real heights and photos; false if it hasn't one)
 	void BuildProps();
 	void BuildGrass();
 	void SetPictures(UMaterialInstanceDynamic* M) const;
@@ -71,6 +72,11 @@ private:
 	TFunction<void()> StepsDone;
 	// (the ground's tiles, PrepareGround: their count a side and samples a side)
 	int32 TileCount = 0, TileQuads = 64;
+	// (the ground's tiles near the course - its surfaces or trees in them or the next ones - drawn;
+	// the rest left out, the land round it showing there: PlanGroundTiles. Empty: all drawn)
+	TArray<bool> TileKeep;
+	void PlanGroundTiles();
+	bool GroundDrawnAt(double XCm, double YCm) const;
 	TMap<FString, struct otg::FPicture> MaskPixels;   // (the masks the grass reads, on the CPU)
 	TSharedPtr<class otg::FGrass> Grass;
 	UPROPERTY() TArray<TObjectPtr<UMaterialInstanceDynamic>> TurfMats;

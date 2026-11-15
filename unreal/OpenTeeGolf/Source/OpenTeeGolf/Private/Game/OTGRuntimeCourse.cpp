@@ -215,6 +215,81 @@ void AOTGRuntimeCourse::PrepareGround()
 	const int32 N = Data->HeightSamples;
 	TileQuads = N > 2049 ? 128 : 64;   // (a tile's samples a side: bigger tiles on a big course)
 	TileCount = FMath::DivideAndRoundUp(N - 1, TileQuads);
+	PlanGroundTiles();
+}
+
+// Which of the ground's tiles to draw. The ground is a square round the course, and past the course
+// - fields, roads, houses - it drew the rough: the rough's colour from a blurred photo, a flat dark
+// green band between the course and the land round it (the satellite photos, BuildRealFarLand).
+// Where the export has that land, a tile is drawn only if it, or one next to it, has some of the
+// course in it - its surfaces (not the rough: that's everywhere) or its trees; the land round it
+// shows through the rest, the grass kept off it.
+void AOTGRuntimeCourse::PlanGroundTiles()
+{
+	TileKeep.Reset();
+	if (!FPaths::FileExists(FPaths::Combine(Data->ExportDir, TEXT("farland.json"))) || TileCount <= 0) return;
+	const int32 Count = TileCount, N = Data->HeightSamples;
+	const double TileCm = TileQuads * Data->MetresPerSample * 100.0;
+	// the course's surfaces in each tile (the masks: 0.5 on each outline) - not the rough or the meadow:
+	// the meadow's mask is speckled over the fields all round, and kept them all
+	TArray<bool> Has;
+	Has.SetNumZeroed(Count * Count);
+	auto TileOf = [&](double XCm, double YCm) {
+		const int32 tx = FMath::FloorToInt(XCm / TileCm), ty = FMath::FloorToInt(YCm / TileCm);
+		return tx >= 0 && ty >= 0 && tx < Count && ty < Count ? ty * Count + tx : INDEX_NONE;
+	};
+	for (const TCHAR* K : { TEXT("fairway"), TEXT("green"), TEXT("tee"), TEXT("bunker"), TEXT("water"), TEXT("stream"), TEXT("path"), TEXT("fringe") })
+	{
+		const otg::FPicture* P = MaskPixels.Find(K);
+		if (!P || !P->W || P->Pixels.Num() < P->W * P->H) continue;
+		for (int32 j = 0; j < P->H; j++)
+			for (int32 i = 0; i < P->W; i++)
+				if (P->Pixels[j * P->W + i] > 128)
+					if (const int32 t = TileOf((i + 0.5) / P->W * LandCm, (j + 0.5) / P->H * LandCm); t != INDEX_NONE) Has[t] = true;
+	}
+	// and its woods: a tile with a stand of trees in it (a few here and there don't count)
+	TArray<int32> TreesIn;
+	TreesIn.SetNumZeroed(Count * Count);
+	if (const TSharedPtr<FJsonValue> J = ReadJson(FPaths::Combine(Data->ExportDir, TEXT("trees.json"))))
+		if (J.IsValid() && J->Type == EJson::Array)
+			for (const TSharedPtr<FJsonValue>& V : J->AsArray())
+				if (const TSharedPtr<FJsonObject> T = V->AsObject())
+					if (const int32 t = TileOf(T->GetNumberField(TEXT("x")), T->GetNumberField(TEXT("y"))); t != INDEX_NONE) TreesIn[t]++;
+	const int32 Woods = FMath::Max(4, FMath::RoundToInt(15.0 * FMath::Square(TileCm / 6400.0)));   // (15 to a 64 m tile)
+	// drawn: within about 130 m of the course's surfaces, or woods
+	const int32 R = FMath::Max(1, FMath::CeilToInt(13000.0 / TileCm));
+	TileKeep.SetNumZeroed(Count * Count);
+	int32 Kept = 0;
+	for (int32 ty = 0; ty < Count; ty++)
+		for (int32 tx = 0; tx < Count; tx++)
+		{
+			bool bNear = TreesIn[ty * Count + tx] >= Woods;
+			for (int32 dy = -R; dy <= R && !bNear; dy++)
+				for (int32 dx = -R; dx <= R && !bNear; dx++)
+				{
+					const int32 x = tx + dx, y = ty + dy;
+					bNear = x >= 0 && y >= 0 && x < Count && y < Count && Has[y * Count + x];
+				}
+			TileKeep[ty * Count + tx] = bNear;
+			Kept += bNear;
+		}
+	// the grass kept off what's left out (it grows by the masks: the rough's and the meadow's)
+	for (const TCHAR* K : { TEXT("rough"), TEXT("native") })
+		if (otg::FPicture* P = MaskPixels.Find(K))
+			for (int32 j = 0; j < P->H && P->Pixels.Num() >= P->W * P->H; j++)
+				for (int32 i = 0; i < P->W; i++)
+					if (!GroundDrawnAt((i + 0.5) / P->W * LandCm, (j + 0.5) / P->H * LandCm)) P->Pixels[j * P->W + i] = 0;
+	UE_LOG(LogOTGRuntimeCourse, Display, TEXT("Ground: %d of %d tiles near the course drawn, the land round it in the rest"), Kept, Count * Count);
+	(void)N;
+}
+
+bool AOTGRuntimeCourse::GroundDrawnAt(double XCm, double YCm) const
+{
+	if (!TileKeep.Num()) return true;
+	const double TileCm = TileQuads * Data->MetresPerSample * 100.0;
+	const int32 tx = FMath::FloorToInt(XCm / TileCm), ty = FMath::FloorToInt(YCm / TileCm);
+	if (tx < 0 || ty < 0 || tx >= TileCount || ty >= TileCount) return false;
+	return TileKeep[ty * TileCount + tx];
 }
 
 // The heights the ground is drawn with. Round each pond (water_bodies.json's lakes: outline and
@@ -311,6 +386,7 @@ void AOTGRuntimeCourse::BuildGroundTiles(int32 From, int32 To)
 	for (int32 Idx = From; Idx < To; Idx++)
 		{
 			const int32 tx = Idx % Count, ty = Idx / Count;
+			if (TileKeep.IsValidIndex(Idx) && !TileKeep[Idx]) continue;   // (the land round it shows here: PlanGroundTiles)
 			const int32 I0 = tx * Quads, J0 = ty * Quads;
 			const int32 I1 = FMath::Min(I0 + Quads, N - 1), J1 = FMath::Min(J0 + Quads, N - 1);
 			TArray<FMeshDescription> Descs;
@@ -522,6 +598,7 @@ namespace
 				UV.Set(VI, 0, FVector2f(G.Colors[i].R, G.Colors[i].G));
 				UV.Set(VI, 1, FVector2f(G.Colors[i].B, 0));
 			}
+			else if (G.UVs.IsValidIndex(i)) UV.Set(VI, 0, G.UVs[i]);
 			Inst[i] = VI;
 		}
 		for (int32 t = 0; t + 2 < G.Indices.Num(); t += 3)
@@ -556,8 +633,123 @@ namespace
 // 100 km left a strip of the sky's below-horizon blue; hills 20 km and more away were darkened to
 // navy by that much air.) Fields and woods in patches of colour (the prop materials' vertex
 // colours), the haze doing the rest.
+// The real land round the course, when the export has it (farland.json, from the web version's
+// distant land: lib/farland.js): its heights on a grid over a square 80 km across, the points
+// closest together near the course, and its satellite photos - up to three, each sharper over less
+// ground nearer the course - on it, each spot taking the sharpest that covers it (M_FarLand). The
+// hills stand where they really are and look like the country round the course, not plain green.
+// Under the course's own ground it sits 4 m down (the export lowered it).
+bool AOTGRuntimeCourse::BuildRealFarLand()
+{
+	const FString Dir = Data->ExportDir;
+	const TSharedPtr<FJsonValue> J = ReadJson(FPaths::Combine(Dir, TEXT("farland.json")));
+	const TSharedPtr<FJsonObject>* Obj = nullptr;
+	if (!J.IsValid() || !J->TryGetObject(Obj)) return false;
+	const TSharedPtr<FJsonObject>& F = *Obj;
+	const TSharedPtr<FJsonObject>* CentreObj = nullptr;
+	if (!F->TryGetObjectField(TEXT("centre"), CentreObj)) return false;
+	const double Cx = (*CentreObj)->GetNumberField(TEXT("x")), Cz = (*CentreObj)->GetNumberField(TEXT("z"));
+	const double Half = F->GetNumberField(TEXT("halfMetres"));
+	const int32 Grid = int32(F->GetNumberField(TEXT("grid")));
+	TArray<uint8> Raw;
+	const int32 Side = Grid + 1;
+	if (Half <= 0 || Grid < 8 || !FFileHelper::LoadFileToArray(Raw, *FPaths::Combine(Dir, F->GetStringField(TEXT("heights"))))
+		|| Raw.Num() != Side * Side * int32(sizeof(float)))
+	{
+		UE_LOG(LogOTGRuntimeCourse, Warning, TEXT("The land round it: farland.json without its heights - made-up hills instead"));
+		return false;
+	}
+	const float* Hts = reinterpret_cast<const float*>(Raw.GetData());
+	// the photos, sharpest first
+	struct FLayer { UTexture2D* Tex; double Half; };
+	TArray<FLayer> Photos;
+	const TArray<TSharedPtr<FJsonValue>>* LayerList = nullptr;
+	if (F->TryGetArrayField(TEXT("layers"), LayerList))
+		for (int32 k = 0; k < LayerList->Num(); k++)
+		{
+			const TSharedPtr<FJsonObject> L = (*LayerList)[k]->AsObject();
+			if (!L.IsValid()) continue;
+			// (the nearest at full size, the wider ones smaller: they're only ever seen far off)
+			UTexture2D* T = otg::LoadTexture(FPaths::Combine(Dir, L->GetStringField(TEXT("file"))), otg::ETexKind::Photo, Photos.Num() ? 2048 : 4096, this);
+			if (!T) continue;
+			Textures.Add(FName(*FString::Printf(TEXT("Far%d"), Photos.Num())), T);
+			Photos.Add({ T, L->GetNumberField(TEXT("halfMetres")) });
+		}
+	UMaterialInterface* Base = Load<UMaterialInterface>(TEXT("M_FarLand"));
+	if (!Photos.Num() || !Base)
+	{
+		UE_LOG(LogOTGRuntimeCourse, Warning, TEXT("The land round it: no photos or no M_FarLand - made-up hills instead"));
+		return false;
+	}
+	// the mesh: the export's grid (row j, column i at x = Cx + s(i / Grid) * Half, z = Cz + s(j / Grid)
+	// * Half, s(f) = sign(2f-1) (2f-1)^2, z south), the uvs over the widest photo
+	const FLayer& Widest = Photos.Last();
+	auto S = [](double f) { const double u = f * 2 - 1; return FMath::Sign(u) * u * u; };
+	otg::FGlbMesh G;
+	G.Positions.Reserve(Side * Side);
+	G.UVs.Reserve(Side * Side);
+	for (int32 j = 0; j < Side; j++)
+		for (int32 i = 0; i < Side; i++)
+		{
+			const double X = Cx + S(double(i) / Grid) * Half, Z = Cz + S(double(j) / Grid) * Half;
+			// (the last few km rise into a line of hills, 250 to 650 m: the land ends 40 km out, and
+			// over its edge - the earth's curve taking it down - a strip of the sky's below-horizon
+			// navy showed; the haze makes them distant hills)
+			const double Out = FMath::Max(FMath::Abs(S(double(i) / Grid)), FMath::Abs(S(double(j) / Grid)));
+			const double Rim = FMath::SmoothStep(0.82, 1.0, Out) * (250.0 + 400.0 * (0.5 + 0.5 * FMath::PerlinNoise2D(FVector2D(X, Z) / 6000.0)));
+			// (the export put it 4 m under the course's whole square; where the ground's left out,
+			// back up - a few cm under - so it's the ground there: PlanGroundTiles)
+			const bool bInSquare = X > 0 && Z > 0 && X * 100.0 < LandCm && Z * 100.0 < LandCm;
+			const double Up = bInSquare && !GroundDrawnAt(X * 100.0, Z * 100.0) ? 3.95 : 0.0;
+			G.Positions.Add(FVector3f(X, Hts[j * Side + i] + Rim + Up, Z));   // (the export's frame: x east, y up, z south)
+			G.UVs.Add(FVector2f((X - (Cx - Widest.Half)) / (2 * Widest.Half), (Z - (Cz - Widest.Half)) / (2 * Widest.Half)));
+		}
+	G.Indices.Reserve(Grid * Grid * 6);
+	for (int32 j = 0; j < Grid; j++)
+		for (int32 i = 0; i < Grid; i++)
+		{
+			const int32 A = j * Side + i, B = A + 1, C = A + Side, D = C + 1;
+			for (const FIntVector& T : { FIntVector(A, B, C), FIntVector(B, D, C) })
+			{
+				// (facing up, as the made-up land's are)
+				const FVector3f& Pa = G.Positions[T.X];
+				if (FVector3f::CrossProduct(G.Positions[T.Y] - Pa, G.Positions[T.Z] - Pa).Y >= 0) G.Indices.Append({ T.X, T.Y, T.Z });
+				else G.Indices.Append({ T.X, T.Z, T.Y });
+			}
+		}
+	G.Normals.SetNumZeroed(G.Positions.Num());
+	for (int32 t = 0; t + 2 < G.Indices.Num(); t += 3)
+	{
+		const FVector3f& Pa = G.Positions[G.Indices[t]];
+		FVector3f Nn = FVector3f::CrossProduct(G.Positions[G.Indices[t + 1]] - Pa, G.Positions[G.Indices[t + 2]] - Pa);
+		if (Nn.Y < 0) Nn = -Nn;
+		for (int32 k = 0; k < 3; k++) G.Normals[G.Indices[t + k]] += Nn;
+	}
+	for (FVector3f& Nn : G.Normals) Nn = Nn.GetSafeNormal();
+	// the material: the three photos (fewer: the widest stands in) and how much each is zoomed in
+	// from the widest's uvs
+	UMaterialInstanceDynamic* M = UMaterialInstanceDynamic::Create(Base, this);
+	const int32 NL = Photos.Num();
+	const FLayer& L0 = Photos[0];
+	const FLayer& L1 = NL >= 3 ? Photos[1] : Widest;
+	M->SetTextureParameterValue(TEXT("Photo0"), L0.Tex);
+	M->SetTextureParameterValue(TEXT("Photo1"), L1.Tex);
+	M->SetTextureParameterValue(TEXT("Photo2"), Widest.Tex);
+	M->SetScalarParameterValue(TEXT("Zoom0"), float(Widest.Half / L0.Half));
+	M->SetScalarParameterValue(TEXT("Zoom1"), float(Widest.Half / L1.Half));
+	UStaticMeshComponent* C = MeshFromGlb(this, G, Data->LevelOrigin, 0, false, M);
+	C->SetCastShadow(false);
+	C->bUseAsOccluder = false;
+	C->SetCullDistance(0);
+	C->SetBoundsScale(1.f);
+	Parts.Add(C);
+	UE_LOG(LogOTGRuntimeCourse, Display, TEXT("The land round it: real heights and %d photos, %d km across"), NL, FMath::RoundToInt(Half * 2 / 1000));
+	return true;
+}
+
 void AOTGRuntimeCourse::BuildFarLand()
 {
+	if (BuildRealFarLand()) return;
 	const int32 N = Data->HeightSamples;
 	if (Data->Heights.Num() != N * N) return;
 	const double SizeM = (N - 1) * Data->MetresPerSample;

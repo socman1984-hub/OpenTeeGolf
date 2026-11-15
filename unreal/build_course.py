@@ -76,8 +76,10 @@ BANK_M = 0.9
 BANK_DARK = 0.7
 BED_TEXTURES = os.path.normpath(os.path.join(os.path.dirname(os.path.dirname(GAME_TEXTURES)), "unreal", "textures"))
 # The game's turf colours (linear; scene.js terrain shader): the photo gives only light and shade on
-# the grass, the colour is the turf's own - deep, even greens rather than the photo's lime and grey
-TURF = {"fairway": (0.058, 0.105, 0.028), "green": (0.05, 0.115, 0.03), "rough": (0.045, 0.066, 0.018), "bunker": (0.52, 0.41, 0.25),
+# the grass, the colour is the turf's own - deep, even greens rather than the photo's lime and grey.
+# The mown turf only a little brighter and greener than the rough (it was 60% brighter: lime fairways
+# and greens on a dark rough), set apart by its mowing stripes as a real course's is
+TURF = {"fairway": (0.04, 0.061, 0.016), "green": (0.04, 0.066, 0.017), "rough": (0.045, 0.066, 0.018), "bunker": (0.52, 0.41, 0.25),
         "water": (0.03, 0.03, 0.018),   # (the pond floor under Unreal's water: dark silt, not the photo's pale water)
         "native": (0.085, 0.095, 0.035)}   # (under the tall grass: its own mix of green and straw, so it carries on when the blades end)
 # The photo's light and shade on the turf: its brightness over 0.3, kept within these (a narrower
@@ -94,7 +96,7 @@ PATH_TINT = (0.36, 0.355, 0.33)
 # look along them, and they fade looking across. The fringe round each green: its own deeper green.
 MOW_WIDTH_M = (3.2, 1.2)
 MOW_CONTRAST = (0.11, 0.08)
-FRINGE = (0.04, 0.095, 0.026)   # (the cart paths' concrete, as prop_material's)
+FRINGE = (0.036, 0.057, 0.015)   # (the cart paths' concrete, as prop_material's)
 TURF_AMOUNT = 0.88        # how much of the turf colour over the photo's (the rest the photo's own)
 WET_BANK = (0.4, 0.55)   # the ground darkens towards the water from 0.6 m out (mask 0.4), to this much at the edge
 EDGE_SOFT_M = 0.3         # how wide the blend is at the edge of each surface
@@ -121,7 +123,14 @@ UE_CONIFER_NAMES = ("Tree_", "SM_")
 TURF_GRASS = {
     "rough": {"masks": ["rough"], "height_cm": (5.0, 10.0), "width_mm": (3.0, 5.5), "lean": 0.45, "blades": 300,
               "patch_cm": 30, "density": 2400, "draw_m": (70, 100),
-              "root": (0.02, 0.032, 0.008), "tip": (0.072, 0.105, 0.024), "dry": (0.2, 0.18, 0.08), "dry_share": 0.05, "vary": 0.2},
+              # (kept: one even green, as a looked-after rough is - no straw blades, little variation;
+              # a little lighter than it was, nearer the mown turf beside it)
+              "root": (0.036, 0.058, 0.015), "tip": (0.092, 0.136, 0.032), "dry": (0.092, 0.13, 0.031), "dry_share": 0.0, "vary": 0.08},
+    # tufts through the rough: taller clumps of the same grass, in the rough's own colours (the
+    # Megascans clumps that were here came in their own straw and lime, spots all over the rough)
+    "rough_clump": {"masks": ["rough"], "height_cm": (11.0, 22.0), "width_mm": (3.0, 5.0), "lean": 0.6, "blades": 90,
+                    "patch_cm": 30, "density": 70, "draw_m": (60, 90), "clumps": 1, "clump_cm": 7, "scale": (0.75, 1.3),
+                    "root": (0.034, 0.055, 0.014), "tip": (0.088, 0.13, 0.03), "dry": (0.088, 0.13, 0.03), "dry_share": 0.0, "vary": 0.1},
     # (a fairway is mown short and even: blades all of a height, the patches on a grid with little
     # jitter, close enough to cover the ground, and the photo's blotches mostly left out)
     "fairway": {"masks": ["fairway", "tee"], "height_cm": (1.5, 1.9), "width_mm": (2.0, 2.8), "lean": 0.12, "blades": 480,
@@ -180,6 +189,18 @@ for _k in ("native", "native_short", "fescue_gold", "tussock"):
     _lo, _hi = _c.get("scale", (0.85, 1.2))
     _c["scale"] = (_lo * 1.3, _hi * 1.3)
     TURF_GRASS[_k + "_far"] = _c
+# The rough far off (80 to 220 m: past where its near blades shrink away, it went bare - flat
+# ground colour from 100 m on): a quarter of the blades, twice as wide, in patches twice the size,
+# a twelfth as many - a texture of grass rather than blades, cheap enough to cover the rough out to
+# the second shot's distance (OTGGrass.cpp's "rough_far")
+_c = dict(TURF_GRASS["rough"])
+_c["blades"] = max(40, _c["blades"] // 4)
+_c["width_mm"] = (_c["width_mm"][0] * 2.0, _c["width_mm"][1] * 2.2)
+_c["patch_cm"] = _c["patch_cm"] * 2
+_c["density"] = _c["density"] / 12.0
+_c["draw_m"] = (170.0, 220.0)
+_c["scale"] = (1.1, 1.45)
+TURF_GRASS["rough_far"] = _c
 
 # Beyond the first of its draw_m distances a blade shrinks down into the ground, gone by
 # GRASS_FADE of the way to the second (where Unreal stops drawing it): the grass thins out into the
@@ -2690,6 +2711,92 @@ def set_texture_pool():
         warn("Texture pool not saved to the config: " + traceback.format_exc().splitlines()[-1])
 
 
+def far_land_material():
+    """The land round the course out to 40 km (OTGRuntimeCourse.cpp's BuildRealFarLand): its satellite
+    photos, up to three squares round the course, each sharper over less ground (Photo0 the nearest).
+    The mesh's uvs run over the widest (Photo2); Zoom0 and Zoom1 say how much bigger it is than the
+    other two. Each spot takes the sharpest photo covering it, fading into the next one out over the
+    last tenth of its square, so no seam shows where one ends (as the web version's far land does)."""
+    mat = new_material("M_FarLand")
+    E = lambda cls, x, y: mel.create_material_expression(mat, cls, x, y)
+
+    def scalar(name, v, x, y):
+        p = E(unreal.MaterialExpressionScalarParameter, x, y)
+        p.set_editor_property("parameter_name", name)
+        p.set_editor_property("default_value", v)
+        return p
+
+    def custom(code, out_type, inputs, x, y):
+        c = E(unreal.MaterialExpressionCustom, x, y)
+        c.set_editor_property("code", code)
+        c.set_editor_property("output_type", out_type)
+        ins = []
+        for n in inputs:
+            ci = unreal.CustomInput()
+            ci.set_editor_property("input_name", n)
+            ins.append(ci)
+        c.set_editor_property("inputs", ins)
+        return c
+
+    uv = E(unreal.MaterialExpressionTextureCoordinate, -1400, 0)
+    zooms = [scalar("Zoom0", 1.0, -1400, 200), scalar("Zoom1", 1.0, -1400, 300)]
+    uvs = []
+    for k, z in enumerate(zooms):
+        c = custom("return (UV - 0.5) * Z + 0.5;", unreal.CustomMaterialOutputType.CMOT_FLOAT2, ["UV", "Z"], -1150, 200 + k * 150)
+        mel.connect_material_expressions(uv, "", c, "UV")
+        mel.connect_material_expressions(z, "", c, "Z")
+        uvs.append(c)
+    uvs.append(uv)
+    samples = []
+    for k, u in enumerate(uvs):
+        s = param_sample(mat, "Photo%d" % k, u, -850, k * 300, unreal.MaterialSamplerType.SAMPLERTYPE_COLOR)
+        s.set_editor_property("sampler_source", unreal.SamplerSourceMode.SSM_CLAMP_WORLD_GROUP_SETTINGS)
+        samples.append(s)
+    blend = custom(
+        "float e0 = max(abs(U0.x - 0.5), abs(U0.y - 0.5));\n"
+        "float e1 = max(abs(U1.x - 0.5), abs(U1.y - 0.5));\n"
+        "float3 c = C2;\n"
+        "c = lerp(c, C1, 1 - smoothstep(0.45, 0.5, e1));\n"
+        "c = lerp(c, C0, 1 - smoothstep(0.45, 0.5, e0));\n"
+        "return c;",
+        unreal.CustomMaterialOutputType.CMOT_FLOAT3, ["C0", "C1", "C2", "U0", "U1"], -500, 0)
+    for k, s in enumerate(samples):
+        mel.connect_material_expressions(s, "RGB", blend, "C%d" % k)
+    mel.connect_material_expressions(uvs[0], "", blend, "U0")
+    mel.connect_material_expressions(uvs[1], "", blend, "U1")
+    # the photo toned down (taken from straight above in full sun, it glowed beside the course) and
+    # hazed with distance into the air's colour: a few km off a little, the horizon mostly
+    wp = E(unreal.MaterialExpressionWorldPosition, -700, 500)
+    cam = E(unreal.MaterialExpressionCameraPositionWS, -700, 600)
+    haze_col = E(unreal.MaterialExpressionVectorParameter, -700, 700)
+    haze_col.set_editor_property("parameter_name", "Haze")
+    haze_col.set_editor_property("default_value", unreal.LinearColor(0.32, 0.38, 0.46, 1))
+    mul = custom(
+        "float d = length(WP - CP) / 100.0;\n"
+        "float3 c = C * B;\n"
+        "float g = dot(c, float3(0.3, 0.59, 0.11));\n"
+        "c = lerp(float3(g, g, g), c, S);\n"
+        "return lerp(c, H, smoothstep(1500.0, 36000.0, d) * HM);",
+        unreal.CustomMaterialOutputType.CMOT_FLOAT3, ["C", "B", "S", "WP", "CP", "H", "HM"], -250, 0)
+    mel.connect_material_expressions(blend, "", mul, "C")
+    mel.connect_material_expressions(scalar("Bright", 0.62, -450, 250), "", mul, "B")
+    mel.connect_material_expressions(scalar("Saturation", 0.8, -450, 320), "", mul, "S")
+    mel.connect_material_expressions(wp, "", mul, "WP")
+    mel.connect_material_expressions(cam, "", mul, "CP")
+    mel.connect_material_expressions(haze_col, "", mul, "H")
+    mel.connect_material_expressions(scalar("HazeMax", 0.75, -450, 800), "", mul, "HM")
+    mel.connect_material_property(mul, "", unreal.MaterialProperty.MP_BASE_COLOR)
+    rough = E(unreal.MaterialExpressionConstant, -250, 300)
+    rough.set_editor_property("r", 1.0)
+    mel.connect_material_property(rough, "", unreal.MaterialProperty.MP_ROUGHNESS)
+    spec = E(unreal.MaterialExpressionConstant, -250, 400)
+    spec.set_editor_property("r", 0.2)
+    mel.connect_material_property(spec, "", unreal.MaterialProperty.MP_SPECULAR)
+    mel.recompile_material(mat)
+    unreal.EditorAssetLibrary.save_loaded_asset(mat)
+    return mat
+
+
 def build_runtime_assets():
     """Game-assets mode: everything an exported course is built from at run time."""
     import time
@@ -2707,6 +2814,7 @@ def build_runtime_assets():
     step("Tree stand-ins", trees)
     step("Boulders", boulder_meshes)
     step("Water material", water_material)
+    step("Far land material", far_land_material)
     for kind in ("path", "path_gravel", "building", "car", "bridge"):
         step("Prop material " + kind, lambda kind=kind: prop_material(kind))
     wind_collection()

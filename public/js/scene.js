@@ -345,6 +345,7 @@ export class CourseScene {
     this.hmin = hmin;
     // The land beyond the course (elevation out to 40 km), when the server has it
     this.farField = farland ? farHeights(course, farland) : null;
+    this.farLayers = null;
     this.farData = farland;
     this.s2Gain = null;
 
@@ -1660,6 +1661,7 @@ export class CourseScene {
       tex.anisotropy = 8;
       textures.push({ tex, half: L.half });
     }
+    this.farLayers = textures;   // (Export to Unreal writes them out: export-unreal.js)
     await progress('farland', 'Distant hills', 0, 0, 'Shaping the land');
     // (finer meshes cover the course and its apron: this one tucks 4 m under them)
     const { minX, maxX, minZ, maxZ } = course.bounds;

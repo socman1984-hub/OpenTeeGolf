@@ -13,7 +13,7 @@
 namespace
 {
 	constexpr double CellM = 16.0;
-	TAutoConsoleVariable<int32> CVarFarGrass(TEXT("OTG.Grass.Far"), 1, TEXT("The tall grass far off (150-450 m): 1 on, 0 off"));
+	TAutoConsoleVariable<int32> CVarFarGrass(TEXT("OTG.Grass.Far"), 1, TEXT("The grass far off (the rough 80-220 m, the tall grass 150-450 m): 1 on, 0 off"));
 	double CellFor(const otg::FGrassKind& K) { return K.CellM > 0 ? K.CellM : CellM; }
 	constexpr int32 MaxStartsAFrame = 6, MaxInFlight = 12, MaxAddsAFrame = 4;
 
@@ -50,27 +50,38 @@ const TArray<otg::FGrassKind>& otg::FGrass::Kinds()
 			return Out.Add_GetRef(G);
 		};
 		Add(TEXT("rough"), { TEXT("rough") }, 2400, 70, 100, 1.0f, 0.85f, 1.2f);
+		// the rough far off, 80 to 220 m: fewer, wider blades in bigger patches (build_course.py's
+		// rough_far), so the rough keeps a grass texture past where its near blades go - it ended in a
+		// bare band at 100 m. Off with the other far kinds (OTG.Grass.Far 0)
+		{
+			FGrassKind& G = Add(TEXT("rough_far"), { TEXT("rough") }, 200, 170, 220, 1.0f, 1.1f, 1.45f);
+			G.MinDrawM = 80;
+			G.CellM = 48;
+		}
 		// (no blades on the mown surfaces - fairways, tees, fringes, greens: mown that short, real turf
 		// reads as a smooth surface, and blades on it looked like rough; the ground draws them)
-		// tufts through the rough: Megascans wild grass and grass clumps, small (10 to 25 cm), kept half
-		// a metre inside it so none reaches over a fairway's edge
+		// tufts through the rough: taller clumps of the same grass in the same colours (build_course.py's
+		// rough_clump) - a kept rough is one even green; the Megascans clumps here before came in their
+		// own straw and lime. Kept a little inside it, clear of the fairways
 		{
-			FGrassKind& G = Add(TEXT("rough_tufts"), { TEXT("rough") }, 70, 60, 90, 1.0f, 0.45f, 0.75f);
-			G.Fab = { TEXT("Wild_Grass_vlkhcbxia"), TEXT("Grass_Clumps_qmBr2"), TEXT("Grass_Clumps_rbdoo"), TEXT("Grass_Clumps_rbojr"), TEXT("Grass_Clumps_rbptq") };
-			G.Margin = 0.5f;
+			FGrassKind& G = Add(TEXT("rough_clump"), { TEXT("rough") }, 70, 60, 90, 1.0f, 0.75f, 1.3f);
+			G.Margin = 0.3f;
 		}
-		// the tall grass, Megascans plants in drifts: fescue (tall grass, wheat grass, rough meadow
-		// grass) in its patches, wild and tundra grass in the others, each out to 450 m (their own
-		// billboards far off), and our short meadow grass under them as a base
+		// the tall grass, Megascans plants in drifts, kept low and dense as the heathland rough round a
+		// links or heath course is - knee high, 30 to 60 cm, not the 1 to 2 m of a hay meadow: fescue
+		// (tall grass, its meshes 60-105 cm, at under half size) in its patches, wild and tundra grass
+		// in the others, each out to 450 m (their own billboards far off), and our short meadow grass
+		// under them as a base. (Wheat grass and rough meadow grass, 1.2-1.7 m with seed heads, are
+		// out: too tall however they're scaled.) Their colours: make_game_assets.py's fab_tints
 		Add(TEXT("native_short"), { TEXT("native") }, 520, 110, 160, 1.0f, 0.75f, 1.25f, 16, 0.31f, 0.39f, true);
 		{
-			FGrassKind& G = Add(TEXT("fescue"), { TEXT("native") }, 320, 300, 450, 1.0f, 0.8f, 1.25f, 22, 0.33f, 0.40f, false);
-			G.Fab = { TEXT("Tall_Grass_rbEkI"), TEXT("Tall_Grass_rbEkP"), TEXT("Tall_Grass_rbEla"), TEXT("Wheat_Grass_tdcrdbur"), TEXT("Rough_Meadow_Grass_skFjJ") };
-			G.Margin = 0.8f;
+			FGrassKind& G = Add(TEXT("fescue"), { TEXT("native") }, 560, 300, 450, 1.0f, 0.42f, 0.6f, 22, 0.33f, 0.40f, false);
+			G.Fab = { TEXT("Tall_Grass_rbEkI"), TEXT("Tall_Grass_rbEkP"), TEXT("Tall_Grass_rbEla") };
+			G.Margin = 0.5f;
 			G.CellM = 48;
 		}
 		{
-			FGrassKind& G = Add(TEXT("meadow"), { TEXT("native") }, 300, 250, 400, 1.0f, 0.8f, 1.3f, 22, 0.33f, 0.40f, true);
+			FGrassKind& G = Add(TEXT("meadow"), { TEXT("native") }, 480, 250, 400, 1.0f, 0.5f, 0.72f, 22, 0.33f, 0.40f, true);
 			G.Fab = { TEXT("Wild_Grass_vczndjqja"), TEXT("Tundra_Grass_wk2oaeyqx"), TEXT("Grass_smdrailr"), TEXT("Grass_slBm1") };
 			G.Margin = 0.6f;
 			G.CellM = 48;

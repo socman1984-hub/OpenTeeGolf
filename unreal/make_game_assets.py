@@ -152,9 +152,54 @@ def fab_usage():
         log("Fab material %s: instanced ok%s" % (base.get_name(), " (set)" if changed else ""))
 
 
+# The Megascans plants' colours (OTGGrass.cpp's kinds), multiplied in by their material's own tint
+# ("Tint Base Color" on, "Base Color Tint": 0.5 grey leaves a colour as it is). As they come, each
+# plant is its own colour, so each kind's plants get one tint, pulling them to one colour (the rough's
+# tufts are the game's own grass now, in the rough's colours: build_course.py's rough_clump):
+#   the tall grass: heathland - fescue a muted heather brown with a little mauve, the wild and tundra
+#   grass between its drifts a bronze olive
+FAB_TINTS = {
+    (0.12, 0.085, 0.09): ("Tall_Grass_rbEkI", "Tall_Grass_rbEkP", "Tall_Grass_rbEla"),
+    (0.1, 0.1, 0.06): ("Wild_Grass_vczndjqja", "Tundra_Grass_wk2oaeyqx", "Grass_smdrailr", "Grass_slBm1"),
+}
+
+
+def fab_tints():
+    """Fab's content isn't in git, so the tints are set here each time: on each plant's material and
+    its billboard's (the same colour far off)."""
+    if not eal.does_directory_exist("/Game/Fab"):
+        return
+    mel = unreal.MaterialEditingLibrary
+    for tint, plants in FAB_TINTS.items():
+        for plant in plants:
+            folder = "/Game/Fab/Megascans/Plants/" + plant
+            if not eal.does_directory_exist(folder):
+                unreal.log_warning("[OpenTeeGolf assets] No %s: not tinted" % folder)
+                continue
+            for path in eal.list_assets(folder, recursive=True, include_folder=False):
+                if not path.split(".")[-1].startswith("MI_"):
+                    continue
+                mi = eal.load_asset(path)
+                if not isinstance(mi, unreal.MaterialInstanceConstant):
+                    continue
+                try:
+                    mel.set_material_instance_static_switch_parameter_value(mi, "Tint Base Color", True)
+                    mel.set_material_instance_vector_parameter_value(mi, "Base Color Tint", unreal.LinearColor(tint[0], tint[1], tint[2], 0.0))
+                    # (and the light through the blades, the same way: untinted, a clump lit from
+                    # behind still glowed its own yellow)
+                    mel.set_material_instance_static_switch_parameter_value(mi, "Tint Translucency", True)
+                    mel.set_material_instance_vector_parameter_value(mi, "Translucency Tint", unreal.LinearColor(tint[0], tint[1], tint[2], 0.0))
+                    mel.update_material_instance(mi)
+                    eal.save_loaded_asset(mi)
+                    log("Fab tint %s: %s" % (mi.get_name(), tint))
+                except Exception as e:
+                    unreal.log_warning("[OpenTeeGolf assets] %s not tinted: %s" % (path, e))
+
+
 if not eal.does_directory_exist(FOLDER):
     eal.make_directory(FOLDER)
 fab_usage()
+fab_tints()
 rain()
 course_level()
 scenery_chunks()
