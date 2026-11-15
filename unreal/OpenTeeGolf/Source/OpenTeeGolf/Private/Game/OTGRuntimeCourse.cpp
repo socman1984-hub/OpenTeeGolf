@@ -24,6 +24,7 @@
 #include "Engine/Texture2D.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Materials/MaterialInterface.h"
+#include "Materials/MaterialParameterCollection.h"
 #include "MeshDescription.h"
 #include "StaticMeshAttributes.h"
 #include "StaticMeshResources.h"
@@ -171,8 +172,22 @@ void AOTGRuntimeCourse::BuildInSteps(UOTGCourseData* D, TFunction<void(float, co
 	if (Progress) Progress(0.f, Steps[0].Key);
 }
 
+// The wind's parameter collections, in this level before any grass or tree material that reads them
+// is drawn. A level sets up the collections loaded when it opens; one loaded after (in a packaged
+// game, the first time the round set the wind) has no place in it, and the first material reading
+// it brings the game down ("Failed to find parameter collection buffer" - M_Turf_rough, the tall
+// grass). In the editor they're loaded already, so it never showed there.
+static void EnsureWindCollections(UWorld* W)
+{
+	if (!W) return;
+	for (const TCHAR* Path : { TEXT("/Game/OpenTeeGolf/Game/MPC_Wind.MPC_Wind"), TEXT("/Game/Fab/MaterialParameterCollection/QMPC_GlobalFoliageActor.QMPC_GlobalFoliageActor") })
+		if (UMaterialParameterCollection* C = LoadObject<UMaterialParameterCollection>(nullptr, Path))
+			W->GetParameterCollectionInstance(C);   // (made, and added to the scene, if it isn't there)
+}
+
 void AOTGRuntimeCourse::LoadPictures()
 {
+	EnsureWindCollections(GetWorld());
 	const FString& Dir = Data->ExportDir;
 	if (UTexture2D* T = otg::LoadTexture(FPaths::Combine(Dir, TEXT("photo.jpg")), otg::ETexKind::Photo, PictureMax, this)) Textures.Add(TEXT("Photo"), T);
 	for (const TCHAR* K : MaskKeys)
