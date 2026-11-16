@@ -18,7 +18,7 @@
 
 struct OPENTEEGOLF_API FOTGSpeciesLook
 {
-	FString Model = TEXT("auto");   // auto (the game's choice by height), beech, hornbeam, spruce, pine
+	FString Model = TEXT("auto");   // auto (the game's choice by height), beech, hornbeam, spruce, pine, scotspine, hilltree
 	float Size = 1.f;               // x the tree's own height
 	float Density = 1.f;            // 0 none .. 1 as mapped .. 3 three times as many
 };
@@ -46,6 +46,7 @@ struct FOTGRockEdit
 	double X = 0, Z = 0;
 	bool bAdded = false, bRemoved = false;
 	float Size = 1.f;               // x its size (an added rock: metres across)
+	FString Model;                  // (its look instead: RockModels; empty: as the course's rocks are)
 	static constexpr float SizeLo = 0.3f, SizeHi = 4.f;
 };
 
@@ -55,6 +56,7 @@ struct OPENTEEGOLF_API FOTGTreeDesign
 	float AllSize = 1.f, AllDensity = 1.f;                     // (every species, on top of its own)
 	bool bRocks = true;
 	float RockSize = 1.f, RockDensity = 1.f;
+	FString RockModel;                                         // (the rocks' look: RockModels; empty: the game's stones)
 	TArray<FOTGTreeEdit> Trees;                                // (one at a time: picked, changed, added)
 	TArray<FOTGRockEdit> Rocks;
 
@@ -68,8 +70,10 @@ struct OPENTEEGOLF_API FOTGTreeDesign
 	static const TArray<FString>& AllSpecies();                // (every species SpeciesLabel knows, for adding)
 	static bool IsConifer(const FString& Kind);
 
-	static const TArray<FString>& Models();                    // auto beech hornbeam spruce pine
+	static const TArray<FString>& Models();                    // auto beech hornbeam spruce pine scotspine hilltree
 	static FString ModelLabel(const FString& Model);
+	static const TArray<FString>& RockModels();                // "" (the game's stones) mossy grey river field plains volcanic
+	static FString RockModelLabel(const FString& Model);
 	static FString SpeciesLabel(const FString& Kind);          // (the web version's names: "Red maple")
 
 	static FOTGTreeDesign Load(const FString& Dir);

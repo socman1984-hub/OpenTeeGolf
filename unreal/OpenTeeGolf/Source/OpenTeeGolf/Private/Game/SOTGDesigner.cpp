@@ -170,6 +170,12 @@ TSharedRef<SWidget> SOTGGrassDesigner::KindRow(int32 I)
 	};
 	using G = otg::FGrassKind;
 	// (a Megascans plant's material turns its strength and brightness, not its hue)
+	if (K.IsKite())
+	{
+		// (KiteDemo's materials have no tint to turn)
+		V->AddSlot().AutoHeight().Padding(18, 2, 0, 0)[Text(TEXT("Its colour: a KiteDemo plant keeps its own colours"), 11, Soft)];
+		return V;
+	}
 	if (K.Fab.Num())
 		V->AddSlot().AutoHeight().Padding(18, 2, 0, 0)[Text(TEXT("Its colour: a Megascans plant keeps its own hue"), 11, Soft)];
 	else
@@ -370,6 +376,7 @@ void SOTGTreeDesigner::EditPicked(const FString& Field, const FString& Value)
 	{
 		if (Field == TEXT("out")) { const FOTGRockEdit* E = Edit.RockEditAt(X, Z); if (E && E->bAdded) Edit.ClearRockEdit(X, Z); else Edit.RockEdit(X, Z).bRemoved = true; bPicked = false; }
 		else if (Field == TEXT("reset")) Edit.ClearRockEdit(X, Z);
+		else if (Field == TEXT("model")) Edit.RockEdit(X, Z).Model = FOTGTreeDesign::RockModels().Contains(Value) ? Value : FString();
 		else Edit.RockEdit(X, Z).Size = FMath::Clamp(V, FOTGRockEdit::SizeLo, FOTGRockEdit::SizeHi);
 	}
 	else if (Field == TEXT("out")) { const FOTGTreeEdit* E = Edit.TreeEditAt(X, Z); if (E && E->bAdded) Edit.ClearTreeEdit(X, Z); else Edit.TreeEdit(X, Z).bRemoved = true; bPicked = false; }
@@ -431,6 +438,16 @@ TSharedRef<SWidget> SOTGTreeDesigner::PickPanel()
 				[this, X, Z]() { const FOTGRockEdit* E = Edit.RockEditAt(X, Z); return E ? E->Size : 1.f; },
 				[this, X, Z](float F) { Edit.RockEdit(X, Z).Size = FMath::RoundToFloat(F * 20) / 20; },
 				[this, X, Z]() { const FOTGRockEdit* E = Edit.RockEditAt(X, Z); const float S = E ? E->Size : 1.f; return FMath::IsNearlyEqual(S, 1.f) ? FString(TEXT("as mapped")) : FString::Printf(TEXT("%d%%"), FMath::RoundToInt(S * 100)); });
+		// its look: the next at each click (as the course's rocks first)
+		{
+			const FOTGRockEdit* E0 = Edit.RockEditAt(X, Z);
+			Row(TEXT("Looks like"), Button(E0 && !E0->Model.IsEmpty() ? FOTGTreeDesign::RockModelLabel(E0->Model) : FString(TEXT("As the course's rocks")), [this, X, Z]() {
+				FOTGRockEdit& E = Edit.RockEdit(X, Z);
+				const TArray<FString>& M = FOTGTreeDesign::RockModels();
+				E.Model = M[(M.IndexOfByKey(E.Model) + 1) % M.Num()];
+				Apply(); Reselect(); Rebuild();
+			}, 12));
+		}
 		V->AddSlot().AutoHeight().Padding(130, 6, 0, 0)
 		[
 			SNew(SHorizontalBox)
@@ -441,7 +458,7 @@ TSharedRef<SWidget> SOTGTreeDesigner::PickPanel()
 			}, 11)]
 			+ SHorizontalBox::Slot().AutoWidth()[Button(TEXT("As it was"), [this, X, Z]() {
 				const FOTGRockEdit* E = Edit.RockEditAt(X, Z);
-				if (E && E->bAdded) { Edit.RockEdit(X, Z).Size = AddRock; } else Edit.ClearRockEdit(X, Z);
+				if (E && E->bAdded) { Edit.RockEdit(X, Z).Size = AddRock; Edit.RockEdit(X, Z).Model.Empty(); } else Edit.ClearRockEdit(X, Z);
 				Apply(); Reselect(); Rebuild();
 			}, 11)]
 		];
@@ -655,9 +672,22 @@ void SOTGTreeDesigner::Rebuild()
 		SNew(SHorizontalBox)
 		+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0, 0, 8, 0)[Button(Edit.bRocks ? TEXT("On") : TEXT("Off"), [this]() { Edit.bRocks = !Edit.bRocks; Apply(); Rebuild(); }, 12, Edit.bRocks)]
 		+ SHorizontalBox::Slot().FillWidth(1).VAlign(VAlign_Center)[Text(TEXT("Rocks"), 15, Gold, "Bold")]
+		+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(4, 0, 0, 0)[Button(TEXT("Show me"), [this]() { if (OnShow) OnShow(TEXT("rock")); }, 11)]
 	];
 	if (Edit.bRocks)
 	{
+		// their look: the next at each click
+		List->AddSlot().AutoHeight().Padding(18, 2, 0, 0)
+		[
+			SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)[SNew(SBox).WidthOverride(112)[Text(TEXT("Look like"), 12, Soft)]]
+			+ SHorizontalBox::Slot().AutoWidth()[Button(FOTGTreeDesign::RockModelLabel(Edit.RockModel), [this]() {
+				const TArray<FString>& M = FOTGTreeDesign::RockModels();
+				Edit.RockModel = M[(M.IndexOfByKey(Edit.RockModel) + 1) % M.Num()];
+				Apply();
+				Rebuild();
+			}, 12)]
+		];
 		Slider(List, TEXT("Size"), 0.4f, 2.5f, [](FOTGTreeDesign& D) { return &D.RockSize; }, SizeFmt);
 		Slider(List, TEXT("How many"), 0.f, 1.f, [](FOTGTreeDesign& D) { return &D.RockDensity; }, Times);
 	}

@@ -46,7 +46,8 @@ By hand:
    for Megaplants). Restart.
 3. From **Fab** (free), add to the project: **European Beech** and **European Hornbeam** (whole
    broadleaf trees) and the **Megaplants Norway Spruce** and **Baltic Pine**. (The grass is made
-   by the script: no grass pack needed.)
+   by the script: no grass pack needed.) Optional: Epic's **Open World Demo Collection** (KiteDemo,
+   in `Content/KiteDemo`) for the heather, wildflowers, Scots pine, hill oak and rocks below.
 4. Conifers: open each Megaplant's `PVE_...` graph and **Export** two to four variants as
    **Static Mesh** (Create Nanite Foliage off) named `SM_...`, next to the graph.
    (`unreal/list_assets.py` lists what's in the project, into `exports/ue_assets.txt`.)
@@ -146,7 +147,10 @@ Everything the golf needs runs inside the game, in C++.
   and tussocks from `TURF_GRASS`, off until picked), and each course's `grass.json` (in its folder)
   changes them - which grow and where, density, height and its spread, draw distance, patch size
   and cover - and adds Megascans plants (any folder under `Content/Fab/Megascans/Plants`, all
-  cooked) to the tall grass. `AOTGRuntimeCourse::SetGrassKinds` grows them again at once; the
+  cooked) or KiteDemo plants (heather, bracken, yarrow, buttercups, field scabious, bog myrtle,
+  field grass, fallen leaves: `OTGKiteDemo.h`, a kind's `Fab` entry `kite_<name>`) to the tall grass.
+  Heather is one of the game's own kinds (`heather`, in its own patches through the tall grass);
+  KiteDemo plants keep their own colours (no tint in their materials: the designer says so). `AOTGRuntimeCourse::SetGrassKinds` grows them again at once; the
   far-off copies (`_far`) follow their near kinds (`FGrass::Derive`). The rough stays one even
   colour: only kinds in its colours (`bEven`: rough, rough_clump) may grow on it. Console:
   `OTG.Grass.List`, `OTG.Grass.Set <kind> on|surface|density|height|vary|out|patch|cover|hue|saturation|brightness <v>`,
@@ -206,9 +210,14 @@ Everything the golf needs runs inside the game, in C++.
   (and builds and exports it, with another course's export queued alongside), then quits.
 - The tree designer (R, the "Trees and rocks" tab, `SOTGTreeDesigner`, phase 2): each course's
   `trees_design.json` (`FOTGTreeDesign`): per species the model it's drawn with (the game's choice
-  by height, or beech, hornbeam, Norway spruce, Baltic pine), its size and how many (fewer: taken
-  out by a hash of the position; more: copies round each tree, never on mown grass, sand, paths or
-  water), all trees together, and the rocks (on, size, how many). `trees.json` (drawn) and
+  by height, or beech, hornbeam, Norway spruce, Baltic pine, and KiteDemo's Scots pine and hill
+  oak), its size and how many (fewer: taken out by a hash of the position; more: copies round each
+  tree, never on mown grass, sand, paths or water), all trees together, and the rocks (on, size,
+  how many, and their look: the game's six stones or one of KiteDemo's - mossy, grey, river,
+  field, big weathered, volcanic - `rocks.model`; a picked rock can have its own, `rockEdits[].model`).
+  A KiteDemo model or look loads only when a course uses it; without the pack, a tree drawn as one
+  is drawn as its species and a rock as the game's stones. `make_game_assets.py` (`kite_usage`)
+  marks the pack's materials for instancing (else Unreal draws its grey default). `trees.json` (drawn) and
   `play.json`'s trees (the ball's) are the same trees in the same order, so both go through
   `UOTGCourseData::ForEachDesignedTree`: the ball meets the trees as drawn
   (`AOTGRound::RefreshTrees` after each change). "Show me" flies the free view to the nearest tree
@@ -477,8 +486,9 @@ Everything the golf needs runs inside the game, in C++.
 
 - Updates (`OTGUpdateSubsystem`): the game keeps itself up to date from GitHub releases tagged
   `unreal-v<version>`, downloading only the files that changed. The content is cooked in chunks so
-  every file is under GitHub's 2 GB limit: the game is `pakchunk0`, the tree scenery `pakchunk1`-`3`
-  (labels made by `make_game_assets.py`). `make_release.ps1` writes `manifest.json` (every file's
+  every file is under GitHub's 2 GB limit: the game is `pakchunk0`, the tree scenery `pakchunk1`-`3`,
+  the Megascans plants `pakchunk4` and KiteDemo's pieces `pakchunk5` (only the folders the game
+  uses: `DefaultGame.ini`, `KITE_DIRS`) (labels made by `make_game_assets.py`). `make_release.ps1` writes `manifest.json` (every file's
   size and SHA-1, `release_manifest.py`); `python unreal/publish_release.py` (needs the GitHub CLI,
   signed in; `--dry-run` to see what would go up) uploads only the files no earlier release has,
   named by their SHA-1, plus the file list, the installer (`installer/OpenTeeGolf.iss`, Inno Setup 6:

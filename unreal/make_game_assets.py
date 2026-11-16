@@ -101,7 +101,8 @@ def course_level():
 # chunk 0; each tree folder gets a label putting what's cooked from it in its chunk (cook rule left
 # alone: DefaultGame.ini says what's cooked). The tree folders aren't in git, so the labels are
 # made here, before every release.
-SCENERY_CHUNKS = (("/Game/EuropeanBeech", 1), ("/Game/EuropeanHornbeam", 2), ("/Game/Megaplant_Library", 3), ("/Game/Fab", 4))
+# KiteDemo (the heather, wildflowers, Scots pine, hill oak and rocks: OTGKiteDemo.h) is chunk 5.
+SCENERY_CHUNKS = (("/Game/EuropeanBeech", 1), ("/Game/EuropeanHornbeam", 2), ("/Game/Megaplant_Library", 3), ("/Game/Fab", 4), ("/Game/KiteDemo", 5))
 
 
 def scenery_chunks():
@@ -152,6 +153,46 @@ def fab_usage():
         log("Fab material %s: instanced ok%s" % (base.get_name(), " (set)" if changed else ""))
 
 
+# The KiteDemo pack's folders the game uses (OTGKiteDemo.h; DefaultGame.ini cooks the same ones)
+KITE_DIRS = ("Foliage/Flowers/Heather", "Foliage/Flowers/Yarrow", "Foliage/Flowers/Buttercup", "Foliage/Flowers/FieldScabious",
+             "Foliage/Ferns", "Foliage/BogMyrtle_01", "Foliage/BogMyrtleBush_01", "Foliage/BogMyrtleBush_02", "Foliage/Grass/FieldGrass",
+             "Foliage/Leaves", "Trees/ScotsPine_01", "Trees/ScotsPineTall_01", "Trees/HillTree_02", "Trees/HillTree_Tall_02",
+             "Rocks/Medium_Boulder_001", "Rocks/Medium_Boulder_002", "Rocks/River_Rock_01", "Rocks/Boulder_05a",
+             "Rocks/LargePlainsBoulder002", "Rocks/Large_Volcanic_Rock_001")
+
+
+def kite_usage():
+    """KiteDemo's plants, trees and rocks are drawn as instances too (OTGRuntimeCourse.cpp), and its
+    trees' and rocks' materials don't say they may be (Unreal's grey default instead). Their base
+    materials get the flag. KiteDemo isn't in git: done here each time. (Its meshes, made in an
+    older Unreal, ask to be saved again - they're rebuilt at each load - but saving one while its
+    build is still reading it brings the editor down: left as they are.)"""
+    if not eal.does_directory_exist("/Game/KiteDemo"):
+        return
+    done = set()
+    for d in KITE_DIRS:
+        folder = "/Game/KiteDemo/Environments/" + d
+        if not eal.does_directory_exist(folder):
+            unreal.log_warning("[OpenTeeGolf assets] No %s" % folder)
+            continue
+        for path in eal.list_assets(folder, recursive=True, include_folder=False):
+            if eal.find_asset_data(path).asset_class_path.asset_name not in ("Material", "MaterialInstanceConstant"):
+                continue
+            a = eal.load_asset(path)
+            if not isinstance(a, unreal.MaterialInterface):
+                continue
+            base = a.get_base_material()
+            if not base or base.get_path_name() in done:
+                continue
+            done.add(base.get_path_name())
+            if not base.get_editor_property("used_with_instanced_static_meshes"):
+                base.set_editor_property("used_with_instanced_static_meshes", True)
+                unreal.MaterialEditingLibrary.recompile_material(base)
+                eal.save_loaded_asset(base)
+                log("KiteDemo material %s: instanced (set)" % base.get_name())
+    log("KiteDemo: %d materials checked" % len(done))
+
+
 # The Megascans plants' colours (OTGGrass.cpp's kinds), multiplied in by their material's own tint
 # ("Tint Base Color" on, "Base Color Tint": 0.5 grey leaves a colour as it is). As they come, each
 # plant is its own colour, so each kind's plants get one tint, pulling them to one colour (the rough's
@@ -200,6 +241,7 @@ if not eal.does_directory_exist(FOLDER):
     eal.make_directory(FOLDER)
 fab_usage()
 fab_tints()
+kite_usage()
 rain()
 course_level()
 scenery_chunks()

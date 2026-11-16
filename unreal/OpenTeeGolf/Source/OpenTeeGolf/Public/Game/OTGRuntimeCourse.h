@@ -83,6 +83,7 @@ public:
 	bool SaveTreeDesign(FString* Where = nullptr) const;
 	FOTGTreeDesign SavedTreeDesign() const;
 	TArray<TPair<FString, int32>> TreeSpecies() const;
+	// (the nearest of a species to From, not right under it - or, Kind "rock", the nearest rock)
 	bool NearestTree(const FString& Kind, const FVector& From, FVector& OutBase, double& OutHeightCm) const;
 	int32 TreesDrawn() const { return TreeCount; }
 	int32 RocksDrawn() const { return RockCount; }

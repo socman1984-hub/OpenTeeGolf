@@ -81,8 +81,25 @@ bool FOTGTreeDesign::IsConifer(const FString& Kind)
 
 const TArray<FString>& FOTGTreeDesign::Models()
 {
-	static const TArray<FString> M = { TEXT("auto"), TEXT("beech"), TEXT("hornbeam"), TEXT("spruce"), TEXT("pine") };
+	static const TArray<FString> M = { TEXT("auto"), TEXT("beech"), TEXT("hornbeam"), TEXT("spruce"), TEXT("pine"), TEXT("scotspine"), TEXT("hilltree") };
 	return M;
+}
+
+const TArray<FString>& FOTGTreeDesign::RockModels()
+{
+	static const TArray<FString> M = { FString(), TEXT("mossy"), TEXT("grey"), TEXT("river"), TEXT("field"), TEXT("plains"), TEXT("volcanic") };
+	return M;
+}
+
+FString FOTGTreeDesign::RockModelLabel(const FString& Model)
+{
+	if (Model == TEXT("mossy")) return TEXT("Mossy boulder");
+	if (Model == TEXT("grey")) return TEXT("Grey boulder");
+	if (Model == TEXT("river")) return TEXT("River stone");
+	if (Model == TEXT("field")) return TEXT("Field stone");
+	if (Model == TEXT("plains")) return TEXT("Big weathered boulder");
+	if (Model == TEXT("volcanic")) return TEXT("Dark volcanic rock");
+	return TEXT("The game's stones");
 }
 
 FString FOTGTreeDesign::ModelLabel(const FString& Model)
@@ -91,6 +108,8 @@ FString FOTGTreeDesign::ModelLabel(const FString& Model)
 	if (Model == TEXT("hornbeam")) return TEXT("Hornbeam");
 	if (Model == TEXT("spruce")) return TEXT("Norway spruce");
 	if (Model == TEXT("pine")) return TEXT("Baltic pine");
+	if (Model == TEXT("scotspine")) return TEXT("Scots pine (KiteDemo)");
+	if (Model == TEXT("hilltree")) return TEXT("Hill oak (KiteDemo)");
 	return TEXT("The game's choice");
 }
 
@@ -142,6 +161,7 @@ FOTGTreeDesign FOTGTreeDesign::Load(const FString& Dir)
 		(*R)->TryGetBoolField(TEXT("on"), D.bRocks);
 		Num(*R, TEXT("size"), D.RockSize, 0.3f, 3.f);
 		Num(*R, TEXT("density"), D.RockDensity, 0.f, 1.f);
+		if ((*R)->TryGetStringField(TEXT("model"), D.RockModel) && !RockModels().Contains(D.RockModel)) D.RockModel.Empty();
 	}
 	const TArray<TSharedPtr<FJsonValue>>* List = nullptr;
 	if (J->TryGetArrayField(TEXT("trees"), List))
@@ -174,6 +194,7 @@ FOTGTreeDesign FOTGTreeDesign::Load(const FString& Dir)
 			O->TryGetBoolField(TEXT("added"), E.bAdded);
 			O->TryGetBoolField(TEXT("removed"), E.bRemoved);
 			Num(O, TEXT("size"), E.Size, FOTGRockEdit::SizeLo, FOTGRockEdit::SizeHi);
+			if (O->TryGetStringField(TEXT("model"), E.Model) && !RockModels().Contains(E.Model)) E.Model.Empty();
 			D.Rocks.Add(E);
 		}
 	return D;
@@ -199,6 +220,7 @@ bool FOTGTreeDesign::Save(const FString& Dir) const
 	R->SetBoolField(TEXT("on"), bRocks);
 	R->SetNumberField(TEXT("size"), RockSize);
 	R->SetNumberField(TEXT("density"), RockDensity);
+	if (!RockModel.IsEmpty()) R->SetStringField(TEXT("model"), RockModel);
 	J->SetObjectField(TEXT("rocks"), R);
 	if (Trees.Num())
 	{
@@ -230,6 +252,7 @@ bool FOTGTreeDesign::Save(const FString& Dir) const
 			if (E.bAdded) O->SetBoolField(TEXT("added"), true);
 			if (E.bRemoved) O->SetBoolField(TEXT("removed"), true);
 			O->SetNumberField(TEXT("size"), E.Size);
+			if (!E.Model.IsEmpty()) O->SetStringField(TEXT("model"), E.Model);
 			List.Add(MakeShared<FJsonValueObject>(O));
 		}
 		J->SetArrayField(TEXT("rockEdits"), List);
@@ -241,7 +264,7 @@ bool FOTGTreeDesign::Save(const FString& Dir) const
 
 bool FOTGTreeDesign::IsDefault() const
 {
-	if (AllSize != 1.f || AllDensity != 1.f || !bRocks || RockSize != 1.f || RockDensity != 1.f || Trees.Num() || Rocks.Num()) return false;
+	if (AllSize != 1.f || AllDensity != 1.f || !bRocks || RockSize != 1.f || RockDensity != 1.f || !RockModel.IsEmpty() || Trees.Num() || Rocks.Num()) return false;
 	for (const auto& KV : Species) if (KV.Value.Model != TEXT("auto") || KV.Value.Size != 1.f || KV.Value.Density != 1.f) return false;
 	return true;
 }

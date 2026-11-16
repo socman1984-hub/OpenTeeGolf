@@ -204,7 +204,8 @@ void AOTGRound::ShowTree(const FString& Kind)
 	// (from the side you're on, far enough back to see it whole)
 	const FVector Dir = (Base - From).GetSafeNormal2D();
 	const double Yaw = FMath::RadiansToDegrees(FMath::Atan2(Dir.Y, Dir.X));
-	FreeLookAt(Base + FVector(0, 0, H * 0.5), FMath::Max(2000.0, H * 2.6), H * 0.15, Yaw);
+	if (Kind == TEXT("rock")) FreeLookAt(Base + FVector(0, 0, H * 0.3), FMath::Max(700.0, H * 4.0), FMath::Max(150.0, H * 0.8), Yaw);   // (a rock: closer, a little above it)
+	else FreeLookAt(Base + FVector(0, 0, H * 0.5), FMath::Max(2000.0, H * 2.6), H * 0.15, Yaw);
 }
 
 void AOTGRound::ShowGrass(const FString& Kind)

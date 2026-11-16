@@ -42,7 +42,9 @@ namespace otg
 		float PatchM = 0, PatchLo = 0, PatchHi = 0;
 		bool bInvert = false;
 		float MinDrawM = 0;            // (drawn only beyond this, m: the far kinds)
-		TArray<FString> Fab;           // Megascans plants (their folders under Content/Fab/Megascans/Plants), or none: our own patch
+		TArray<FString> Fab;           // Megascans plants (their folders under Content/Fab/Megascans/Plants), or none: our own patch;
+		                               // or a KiteDemo plant (kite_<name>: OTGKiteDemo.h)
+		bool IsKite() const { return Fab.Num() && Fab[0].StartsWith(TEXT("kite_")); }
 		float Margin = 0;              // (m: kept this far inside its surface, clear of the mown ones - a clump is wide)
 		float CellM = 16;              // (its cells, m a side: bigger for the far-reaching kinds, fewer components)
 		// its colour, as the designer turned it (within believable limits: ClampColour): the hue turned

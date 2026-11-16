@@ -60,13 +60,16 @@ R                              the course designer, changed as you watch. Grass:
                                far out, in what patches, their colour - golder or bluer, stronger
                                or softer, lighter or darker, within what grass can look like (the
                                Megascans plants: stronger or softer, lighter or darker); add
-                               any Megascans plant to the tall grass), "Show me" flies to where it
-                               grows. Trees and rocks: each species' model, size and how many (more
+                               any Megascans plant to the tall grass, or heather, bracken and
+                               wildflowers - these keep their own colours), "Show me" flies to
+                               where it grows. Trees and rocks: each species' model (Scots pine
+                               and hill oak among them), size and how many (more
                                grows others round them; the ball meets the trees as you see them),
                                "Show me" flies to one. And one at a time: click a tree on the course
                                to change its species, model, height or leaf colour (autumn to
                                blue-green; broadleaf trees - the conifers keep theirs), a rock its
-                               size, or take either out; or pick Add a tree
+                               size and look (mossy, grey, river stone, volcanic ... or all the
+                               course's rocks at once), or take either out; or pick Add a tree
                                (any species and height) or Add a rock and click the ground. "Save
                                for this course" keeps it (grass.json, trees_design.json in the
                                course's folder)

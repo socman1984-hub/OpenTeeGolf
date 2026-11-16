@@ -31,6 +31,7 @@
 #include "StaticMeshResources.h"
 #include "Misc/Paths.h"
 #include "EngineUtils.h"
+#include "OTGKiteDemo.h"
 #include "HAL/IConsoleManager.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogOTGRuntimeCourse, Log, All);
@@ -544,6 +545,17 @@ void AOTGRuntimeCourse::BuildTrees()
 	if (!Hornbeams.Num()) Hornbeams = Broad;
 	if (!Broad.Num() && !Cones.Num()) { UE_LOG(LogOTGRuntimeCourse, Warning, TEXT("No tree models in the game")); return; }
 	const FOTGTreeDesign& Design = Data->TreeDesign;
+	// (KiteDemo's models the design uses, where the pack is in the game: else a tree drawn as one is
+	// drawn as its species)
+	TMap<FString, TArray<FTreeModel>> KiteModels;
+	{
+		TSet<FString> Used;
+		for (const auto& KV : Design.Species) Used.Add(KV.Value.Model);
+		for (const FOTGTreeEdit& E : Design.Trees) Used.Add(E.Model);
+		for (const FString& Model : Used)
+			for (const TCHAR* Path : otgkite::TreeMeshes(Model))
+				if (UStaticMesh* M = LoadObject<UStaticMesh>(nullptr, Path)) KiteModels.FindOrAdd(Model).Add({ M, M->GetBoundingBox().GetSize().Z });
+	}
 	struct FGroup { TArray<FTransform> Xfs; TArray<FLinearColor> Tints; bool bTinted = false; };
 	TMap<UStaticMesh*, FGroup> ByMesh;
 	DrawnTrees.Reset();
@@ -551,7 +563,8 @@ void AOTGRuntimeCourse::BuildTrees()
 	auto Place = [&](const FString& InKind, double X, double Y, double Zc, double H, double Scale, const FOTGTreeEdit* E) {
 		const FString Kind = E && !E->Kind.IsEmpty() ? E->Kind : InKind;
 		const FString Model = E && !E->Model.IsEmpty() ? E->Model : Design.For(Kind).Model;
-		const TArray<FTreeModel>& Pool = Model == TEXT("beech") ? Beeches : Model == TEXT("hornbeam") ? Hornbeams : Model == TEXT("spruce") ? Spruces : Model == TEXT("pine") ? PineModels
+		const TArray<FTreeModel>* Kite = KiteModels.Find(Model);
+		const TArray<FTreeModel>& Pool = Kite && Kite->Num() ? *Kite : Model == TEXT("beech") ? Beeches : Model == TEXT("hornbeam") ? Hornbeams : Model == TEXT("spruce") ? Spruces : Model == TEXT("pine") ? PineModels
 			: FOTGTreeDesign::IsConifer(Kind) ? (Pines.Contains(Kind) ? PineModels : Spruces) : Broad;
 		if (!Pool.Num()) return;
 		TArray<FTreeModel> Near = Pool;
@@ -653,13 +666,31 @@ void AOTGRuntimeCourse::BuildBoulders()
 	TArray<UStaticMesh*> Meshes;
 	for (int32 k = 0; k < BoulderKinds; k++) Meshes.Add(Find<UStaticMesh>(FString::Printf(TEXT("SM_Boulder_%d"), k)));
 	const FOTGTreeDesign& Design = Data->TreeDesign;
-	TMap<int32, TArray<FTransform>> ByKind;
+	// (KiteDemo's rocks, where the pack is in the game: a look none of whose meshes are here is the game's stones)
+	TMap<FString, TArray<UStaticMesh*>> KiteRocks;
+	{
+		TSet<FString> Used = { Design.RockModel };
+		for (const FOTGRockEdit& E : Design.Rocks) Used.Add(E.Model);
+		for (const FString& Model : Used)
+			for (const TCHAR* Path : otgkite::RockMeshes(Model))
+				if (UStaticMesh* M = LoadObject<UStaticMesh>(nullptr, Path)) KiteRocks.FindOrAdd(Model).Add(M);
+	}
+	TMap<UStaticMesh*, TArray<FTransform>> ByMesh;
 	DrawnRocks.Reset();
-	auto Put = [&](const FRockRec& R, double Size, bool bAdded) {
+	auto Put = [&](const FRockRec& R, double Size, bool bAdded, const FString& Model) {
 		const double S = R.Size / 100.0 * Size;
 		// (a bigger stone sits a little deeper)
 		const FVector At = Data->LevelOrigin + R.P - FVector(0, 0, (Size - 1) * R.Size * 0.15);
-		ByKind.FindOrAdd(R.Kind).Add(FTransform(FRotator(0, R.Yaw, 0), At, FVector(S, S, S * R.Flat)));
+		const TArray<UStaticMesh*>* Kite = Model.IsEmpty() ? nullptr : KiteRocks.Find(Model);
+		if (Kite && Kite->Num())
+		{
+			// (a KiteDemo rock: scaled to the size across, its own shape - sat on the ground a fifth of its height deep)
+			UStaticMesh* M = (*Kite)[int32(FOTGTreeDesign::Hash01(R.P.X, R.P.Y, 17) * Kite->Num()) % Kite->Num()];
+			const FBox B = M->GetBoundingBox();
+			const double K = R.Size * Size / FMath::Max(1.0, FMath::Max(B.GetSize().X, B.GetSize().Y));
+			ByMesh.FindOrAdd(M).Add(FTransform(FRotator(0, R.Yaw, 0), At - FVector(0, 0, (B.Min.Z + 0.2 * B.GetSize().Z) * K), FVector(K)));
+		}
+		else if (Meshes[R.Kind]) ByMesh.FindOrAdd(Meshes[R.Kind]).Add(FTransform(FRotator(0, R.Yaw, 0), At, FVector(S, S, S * R.Flat)));
 		FDrawn& D = DrawnRocks.AddDefaulted_GetRef();
 		D.Base = At; D.R = FMath::Max(60.0, R.Size * Size * 0.5); D.H = R.Size * Size; D.X = R.P.X / 100.0; D.Z = R.P.Y / 100.0; D.bAdded = bAdded;
 	};
@@ -667,7 +698,7 @@ void AOTGRuntimeCourse::BuildBoulders()
 	{
 		if (!Design.KeepRock(R.P.X / 100.0, R.P.Y / 100.0)) continue;
 		const FOTGRockEdit* E = Design.Rocks.Num() ? Design.RockEditAt(R.P.X / 100.0, R.P.Y / 100.0) : nullptr;
-		Put(R, Design.RockSize * (E ? E->Size : 1.f), false);
+		Put(R, Design.RockSize * (E ? E->Size : 1.f), false, E && !E->Model.IsEmpty() ? E->Model : Design.RockModel);
 	}
 	// (and the rocks added in the designer, on the ground where they were put: a stone of the game's
 	// six picked by where it is, its size across)
@@ -681,9 +712,9 @@ void AOTGRuntimeCourse::BuildBoulders()
 		R.Yaw = FOTGTreeDesign::Hash01(E.X, E.Z, 7) * 360;
 		R.Flat = 0.6 + 0.3 * FOTGTreeDesign::Hash01(E.X, E.Z, 11);
 		R.Kind = int32(FOTGTreeDesign::Hash01(E.X, E.Z, 13) * BoulderKinds) % BoulderKinds;
-		Put(R, E.Size, true);
+		Put(R, E.Size, true, E.Model.IsEmpty() ? Design.RockModel : E.Model);
 	}
-	for (auto& P : ByKind) if (Meshes[P.Key]) { RockComps.Add(Instances(Meshes[P.Key], P.Value, BoulderCull[0], BoulderCull[1])); RockCount += P.Value.Num(); }
+	for (auto& P : ByMesh) { RockComps.Add(Instances(P.Key, P.Value, BoulderCull[0], BoulderCull[1])); RockCount += P.Value.Num(); }
 	UE_LOG(LogOTGRuntimeCourse, Display, TEXT("Boulders: %d"), RockCount);
 }
 
@@ -725,8 +756,18 @@ TArray<TPair<FString, int32>> AOTGRuntimeCourse::TreeSpecies() const
 
 bool AOTGRuntimeCourse::NearestTree(const FString& Kind, const FVector& From, FVector& OutBase, double& OutHeightCm) const
 {
-	if (!Data || TreeRecs.Num() != Data->Trees.Num()) return false;
 	double Best = TNumericLimits<double>::Max();
+	if (Kind == TEXT("rock"))
+	{
+		// (the rocks: the nearest as drawn)
+		for (const FDrawn& D : DrawnRocks)
+		{
+			const double Dist = FVector::DistSquared2D(D.Base, From);
+			if (Dist < Best && Dist > 1000.0 * 1000.0) { Best = Dist; OutBase = D.Base; OutHeightCm = D.H; }
+		}
+		return Best < TNumericLimits<double>::Max();
+	}
+	if (!Data || TreeRecs.Num() != Data->Trees.Num()) return false;
 	Data->ForEachDesignedTree([&](int32 Src, double X, double Z, double Ground, float Scale, const FOTGTreeEdit* E) {
 		const FString& K = E && !E->Kind.IsEmpty() ? E->Kind : Data->Trees[Src].Kind;
 		if (K != Kind) return;
@@ -1246,6 +1287,17 @@ TMap<FString, TArray<TPair<UStaticMesh*, UMaterialInterface*>>> AOTGRuntimeCours
 			// game's - AOTGRound::UpdateFlag)
 			for (const FString& Plant : K.Fab)
 			{
+				// (a KiteDemo plant: its meshes with their own materials - no tint to turn: its colour stays)
+				if (const otgkite::FPlant* KP = otgkite::Plant(Plant))
+				{
+					for (const TCHAR* Path : KP->Meshes)
+						if (UStaticMesh* Mesh = LoadObject<UStaticMesh>(nullptr, Path))
+						{
+							TurfMeshes.Add(Mesh);
+							V.Add(TPair<UStaticMesh*, UMaterialInterface*>(Mesh, nullptr));
+						}
+					continue;
+				}
 				const FString Folder = TEXT("/Game/Fab/Megascans/Plants/") + Plant;
 				for (const FAssetData& A : AssetsUnder(*Folder, UStaticMesh::StaticClass()))
 				{
@@ -1275,7 +1327,7 @@ TMap<FString, TArray<TPair<UStaticMesh*, UMaterialInterface*>>> AOTGRuntimeCours
 					}
 				}
 			}
-			if (!V.Num()) UE_LOG(LogOTGRuntimeCourse, Warning, TEXT("Grass %s: none of its Megascans plants are in the game (Content/Fab)"), *K.Name);
+			if (!V.Num()) UE_LOG(LogOTGRuntimeCourse, Warning, TEXT("Grass %s: none of its plants are in the game (Content/Fab, Content/KiteDemo)"), *K.Name);
 		}
 		else
 		{
@@ -1355,7 +1407,7 @@ namespace
 		else { UE_LOG(LogOTGRuntimeCourse, Warning, TEXT("OTG.Grass.Set: no field %s"), *F); return; }
 		C->SetGrassKinds(K);
 	}));
-	FAutoConsoleCommandWithWorldAndArgs GrassAddCmd(TEXT("OTG.Grass.Add"), TEXT("OTG.Grass.Add <Megascans plant folder>: a plant added to the tall grass"), FGrassCmd::CreateLambda([](const TArray<FString>& A, UWorld* W) {
+	FAutoConsoleCommandWithWorldAndArgs GrassAddCmd(TEXT("OTG.Grass.Add"), TEXT("OTG.Grass.Add <Megascans plant folder, or kite_<name>: OTGKiteDemo.h>: a plant added to the tall grass"), FGrassCmd::CreateLambda([](const TArray<FString>& A, UWorld* W) {
 		AOTGRuntimeCourse* C = CourseIn(W);
 		if (!C || !A.Num()) return;
 		TArray<otg::FGrassKind> K = C->GrassKinds();
@@ -1452,6 +1504,10 @@ TArray<FString> AOTGRuntimeCourse::GrassPlants() const
 	}
 	TArray<FString> Out = Folders.Array();
 	Out.Sort();
+	// (and KiteDemo's, where the pack is in the game)
+	IAssetRegistry& AR = FAssetRegistryModule::GetRegistry();
+	for (const otgkite::FPlant& P : otgkite::Plants())
+		if (AR.GetAssetByObjectPath(FSoftObjectPath(P.Meshes[0])).IsValid()) Out.Add(P.Key);
 	return Out;
 }
 

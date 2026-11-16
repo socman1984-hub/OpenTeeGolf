@@ -3,6 +3,7 @@
 #include "OTGGrass.h"
 
 #include "OTGCourseData.h"
+#include "OTGKiteDemo.h"
 
 #include "Async/Async.h"
 #include "Components/HierarchicalInstancedStaticMeshComponent.h"
@@ -113,6 +114,13 @@ const TArray<otg::FGrassKind>& otg::FGrass::DefaultKinds()
 		Add(TEXT("flowers_yellow"), TEXT("Yellow wildflowers"), { TEXT("native") }, 70, 70, 100, 1.0f, 0.85f, 1.2f, 9, 0.43f, 0.48f, false);
 		Add(TEXT("flowers_white"), TEXT("White wildflowers"), { TEXT("native") }, 70, 70, 100, 1.0f, 0.85f, 1.2f, 11, 0.44f, 0.49f, false);
 		Add(TEXT("flowers_purple"), TEXT("Purple wildflowers"), { TEXT("native") }, 60, 70, 100, 1.0f, 0.85f, 1.2f, 7, 0.44f, 0.5f, false);
+		// heather in its own patches through the tall grass, thinning out at their edges (KiteDemo's: knee
+		// high, its own colour; none where the pack isn't in the game)
+		{
+			FGrassKind& G = Add(TEXT("heather"), TEXT("Heather"), { TEXT("native") }, 180, 105, 150, 1.0f, 0.8f, 1.25f, 18, 0.34f, 0.46f, false);
+			G.Fab = { TEXT("kite_heather") };
+			G.Margin = 0.6f;
+		}
 		// the game's other tall grasses (TURF_GRASS: made, not grown unless the designer picks them)
 		Add(TEXT("native"), TEXT("Tall wild grass"), { TEXT("native") }, 320, 140, 200, 1.0f, 0.7f, 1.3f, 16, 0.31f, 0.39f, false).bOn = false;
 		Far(TEXT("native"));
@@ -129,6 +137,19 @@ otg::FGrassKind otg::FGrass::PlantKind(const FString& Folder)
 {
 	FGrassKind G;
 	G.Name = TEXT("fab_") + Folder;
+	if (const otgkite::FPlant* P = otgkite::Plant(Folder))
+	{
+		// (a KiteDemo plant: its own numbers - they're real sizes, and some are thousands of triangles)
+		G.Label = FString(P->Label) + TEXT(" (KiteDemo)");
+		G.Masks = { TEXT("native") };
+		G.Density = P->Density; G.DrawTo = P->DrawTo; G.DrawFrom = P->DrawTo * 0.7f;
+		G.ScaleLo = P->ScaleLo; G.ScaleHi = P->ScaleHi;
+		G.PatchM = P->PatchM; G.PatchLo = P->PatchLo; G.PatchHi = P->PatchHi;
+		G.Margin = 0.6f;
+		G.Fab = { Folder };
+		G.bAdded = true;
+		return G;
+	}
 	// (Wild_Grass_vlkhcbxia: "Wild grass")
 	FString L = Folder;
 	int32 Us;

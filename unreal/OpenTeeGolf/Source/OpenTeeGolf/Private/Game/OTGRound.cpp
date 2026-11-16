@@ -102,7 +102,7 @@ namespace
 		const FString F = A[1].ToLower();
 		const float V = FCString::Atof(*A[2]);
 		if (A[0] == TEXT("all")) { if (F == TEXT("size")) D.AllSize = V; else if (F == TEXT("density")) D.AllDensity = V; }
-		else if (A[0] == TEXT("rocks")) { if (F == TEXT("size")) D.RockSize = V; else if (F == TEXT("density")) D.RockDensity = V; else if (F == TEXT("on")) D.bRocks = V != 0; }
+		else if (A[0] == TEXT("rocks")) { if (F == TEXT("size")) D.RockSize = V; else if (F == TEXT("density")) D.RockDensity = V; else if (F == TEXT("on")) D.bRocks = V != 0; else if (F == TEXT("model")) D.RockModel = FOTGTreeDesign::RockModels().Contains(A[2]) ? A[2] : FString(); }
 		else
 		{
 			FOTGSpeciesLook& L = D.Species.FindOrAdd(A[0]);
