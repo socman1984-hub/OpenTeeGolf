@@ -18,12 +18,17 @@ of free disk space.
 
 The menu
 --------
-Play            Pick the course, the tees and pins, where to start (hole 1, 10 or any) and 18 or 9
-                holes; who's playing (click players to add them - the order you pick them is the
-                order they tee off - and A/B for teams); the game (stroke play, Stableford, match
-                play, skins, best ball, scramble, alternate shot) and whether handicaps count; and
-                the conditions (live weather at the course, a preset, or a custom wind). Then
-                "Start the round".
+Play            Pick the course from the list on the left: type in the search box to find one by
+                name or place (Enter picks the first match), and sort by A-Z, Recently played or
+                Newest. The course picked shows on the right with its holes, par and length. Then
+                set up the round: the tees and pins, 18 or 9 holes and where to start (hole 1, 10
+                or any); the conditions (live weather at the course, a preset, or a custom wind);
+                who's playing (click players to add them - the order you pick them is the order
+                they tee off - and A/B for teams); the game (stroke play, Stableford, match play,
+                skins, best ball, scramble, alternate shot) and whether handicaps count. The bar
+                at the bottom sums it up: "Start the round".
+Practice        A driving range and a putt-putt course (coming soon).
+New course      Find a real course on the world map and build it (see Courses, below).
 Players         Each player's name, colour, handicap, hand and own tees. Their finished rounds are
                 kept with them.
 Launch monitor  How your shots arrive, its status, and the Mevo+ setup (below).

@@ -294,9 +294,18 @@ Everything the golf needs runs inside the game, in C++.
   `OTG.Round.Club 1|-1`, `OTG.Round.Continue`, `OTG.Round.Drop <yd>` (testing), `OTG.Shot <name>`
   (a screenshot). For checking without anyone at the keyboard, `-roundexec="<s>:<command>|..."` runs
   commands at set times after the round starts, and `-RenderOffscreen` renders without a window.
-- Menus and players (`SOTGMenus`, `OTGPlayers`): the game starts on a menu with three pages.
-  - Play: the course pack, tees, pins, starting hole, 18 or 9 holes, who's playing (in tee-off
-    order, with teams), the game and whether handicaps count.
+- Menus and players (`SOTGMenus`, `OTGPlayers`): the game starts on a menu with these pages.
+  - Play: on the left the courses, with a search (every word typed must be in the name or the
+    place) and three orders: A-Z, recently played (`setup.json`'s `lastPlayed`, set by Start, and
+    the players' saved rounds) and newest (the course folder's creation time). Thumbnails load one
+    a frame as their rows come into view, so a long list opens at once. On the right the course
+    picked (its photo, place, holes, par, length from the tees picked, when it was last played),
+    the round's options in four cards (Round: tees, pins, 18 or 9, start hole; Conditions;
+    Players, in tee-off order with teams; Game: the format and handicaps), and a bar with what's
+    set and Start the round. With no courses it says how to build the first one.
+  - Practice: Driving range and Putt-putt, shown "Coming soon" until something gives them a start:
+    `SOTGMainMenu::SetPracticeMode(TEXT("Driving range"), [] { ... })` (a new name adds an entry).
+  - New course: find and build one (below).
   - Players: name, colour, handicap, hand and own tees.
   - Launch monitor: the connection, its live status, and the Mevo+ setup and arm-on-turn.
 
@@ -307,7 +316,8 @@ Everything the golf needs runs inside the game, in C++.
 
   Esc pauses the round: Resume, Scorecard, Quit to the menu, and the launch monitor panel.
   Profiles and the last setup are kept in `Saved/OpenTeeGolf/players.json` and `setup.json`.
-  Console: `OTG.Menu.Start`, `OTG.Menu.Page play|players|lm`, `OTG.Round.Pause`.
+  Console: `OTG.Menu.Start`, `OTG.Menu.Page play|practice|build|players|lm|settings`, `OTG.Round.Pause`.
+  Testing the Play page: `-menusearch=<words>` types them in the search, `-menusort=name|recent|added`.
 - Turf in the packaged game: the grass maps are built at runtime (`grass.GrassMap.UseRuntimeGeneration`
   in `DefaultEngine.ini`), since the headless pack builder never bakes them. Every material
   `build_course.py` makes declares its Nanite and instanced-mesh use up front (`with_usage`): the
@@ -477,8 +487,9 @@ Everything the golf needs runs inside the game, in C++.
 - Time of day: a slider in the weather panel (L), 5:30 am to 7:30 pm. The sun is placed where it
   is at that hour for the course's latitude on a midsummer day, dimming through dawn and dusk.
   "Sun behind you" goes back to lighting each hole from behind the player.
-- The menu: the chosen course's aerial photo behind it, a course card with its picture, rounded
-  buttons that light under the mouse, and the page shown lit in the tabs.
+- The menu: the chosen course's aerial photo behind it, darkened; rounded glass cards, small
+  capital labels, chips for each choice (the picked one green, tees with their colour), and the
+  page shown underlined in the tabs.
 - Testing commands: `OTG.Round.FreeView`, `OTG.Round.Fly`, `OTG.Round.LookAt <X Y Z | pin>`,
   `OTG.Round.Perf`, `OTG.Round.WeatherPanel`, `OTG.Round.Weather <key | wind | from | cloud | rain | fog> [value]`,
   `OTG.Round.Time <hour | auto>`.
