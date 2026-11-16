@@ -61,6 +61,7 @@ struct FOTGRoundSetup
 	UPROPERTY() FString Weather = TEXT("live");    // live, a preset (OTGWeather.h), or custom
 	UPROPERTY() double WindMph = 8;                // (custom)
 	UPROPERTY() FString WindDir = TEXT("0");       // (custom: from ahead 0, behind 180, right 90, left 270, or rand)
+	UPROPERTY() TMap<FString, FDateTime> LastPlayed;   // course id -> when a round was last started there (UTC; the menu's Recent sort)
 };
 
 struct OPENTEEGOLF_API FOTGPlayers
