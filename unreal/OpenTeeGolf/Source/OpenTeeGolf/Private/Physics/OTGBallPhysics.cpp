@@ -895,6 +895,11 @@ namespace otg
 		const Collider* collider = opts.collider;
 		if (collider) const_cast<Collider*>(collider)->SetPin(hasPin ? &pin : nullptr);
 		V3 prev = vec(0, 0, 0);
+		// (things moving while the ball does: physics.js moverHit)
+		auto moverHit = [&](Hit& out) {
+			for (const auto& m : opts.movers) if (m && m(prev, p, t, out)) return true;
+			return false;
+		};
 		TreeState treeState;
 		auto treeStep = [&]() {
 			if (!trees) return;
@@ -956,6 +961,7 @@ namespace otg
 						}
 					}
 				}
+				if (!opts.movers.empty()) { Hit mh; if (moverHit(mh)) { hitObstacle(mh); push(); continue; } }
 				treeStep();
 				apex = std::max(apex, p.y);
 				double ground = course.HeightAt(p.x, p.z);
@@ -1041,6 +1047,11 @@ namespace otg
 						alongGround();
 						if (hypot3(v.x, v.y, v.z) < 0.1) { v = vec(0, 0, 0); push(); break; }
 					}
+				}
+				if (!opts.movers.empty() && (v.x != 0 || v.z != 0))
+				{
+					Hit mh;
+					if (moverHit(mh)) { hitObstacle(mh); p.y = heightOr(p.x, p.z, p.y); alongGround(); }
 				}
 				t += DT;
 				if (hasPin)

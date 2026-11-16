@@ -149,6 +149,13 @@ private:
 	FString Len(double M) const;       // yards
 	FString Putt(double M) const;      // feet
 
+	// the putt-putt (AOTGMiniGolf): every shot a putt, off the felt is out, six strokes at most
+	bool bMini = false;
+	FString HoleLen(double M) const { return bMini ? Putt(M) : Len(M); }
+	double PuttMps(double Extra) const;   // (a putt's pace for the test shot, m/s: to the pin, Extra beyond it)
+	double FlagTopCm = 228;               // (the flag's top above the cup)
+	int32 AimTurn = -1;                   // (aimed at one of the hole's turns - its aim point - not the cup)
+
 	UPROPERTY() TObjectPtr<UOTGCourseData> Data;
 	UPROPERTY() TObjectPtr<UStaticMeshComponent> BallMesh;
 	UPROPERTY() TObjectPtr<UStaticMeshComponent> AimMesh;      // (where the shot's aimed: holds the spot, not drawn)

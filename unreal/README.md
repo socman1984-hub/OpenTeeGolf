@@ -256,6 +256,29 @@ Everything the golf needs runs inside the game, in C++.
   `OTG.Round.Club 1|-1`, `OTG.Round.Continue`, `OTG.Round.Drop <yd>` (testing), `OTG.Shot <name>`
   (a screenshot). For checking without anyone at the keyboard, `-roundexec="<s>:<command>|..."` runs
   commands at set times after the round starts, and `-RenderOffscreen` renders without a window.
+- The putt-putt (`Game/OTGMiniGolf.*`): nine holes of mini golf the game makes itself, with no
+  course folder. The first six are the web version's (`public/js/practice.js` `puttPutt`): Warm-up,
+  Dogleg, The ramp, The windmill, Tunnel and volcano, Zig-zag. Three are new: Camel humps, The pond
+  (a narrow bridge over water) and The big bend (a banked U-turn). Each is par 2 or 3.
+  - The play data: `AOTGMiniGolf::MakeCourse` fills a `UOTGCourseData` (`Generated` "minigolf") with
+    the holes and their names, a 5 cm heightmap (ramps, humps, the volcano, the pond's dip, the
+    bank) and 2.5 cm surfaces (felt is green, the pond water, the lawn tee). Every board, post and
+    block is a `bumper` solid, and the slope is measured over 12 cm (`NormalSpanM`) because the
+    ramps are short.
+  - The windmill's sails are physics movers: `otg::ShotOptions::movers`, as `physics.js` has them.
+    The parity test doesn't use them.
+  - Drawing it: `AOTGMiniGolf` draws the course in `L_Course` from procedural meshes and the
+    engine's basic shapes. That covers the felt draped over the ground, the boards in each hole's
+    colour with white caps, posts, the windmill (its sails turning by the same clock the ball's
+    movers use), the stone tunnel, the volcano's rocks, the pond's bridge and lily pads, signs,
+    flower beds, a picket fence, trees and far hills.
+  - In the round, `AOTGRound` (`bMini`) makes every shot a putt and aims the first putt at the
+    board to bank off. Anywhere off the felt, or in the pond, costs a stroke and you replay from
+    where you were. A hole ends at 6 strokes. Other differences: calm air, no slope grid, a short
+    flag, no minimap, distances in feet, and cameras sized to the hole. The test shot's putt allows
+    for the turn and for any climb.
+  - Opening it: `-minigolf` (or `-course=minigolf`) on the command line, `OTG.MiniGolf` in the
+    console, or the Play page's Putt-putt button. The button uses the players and game picked there.
 - Menus and players (`SOTGMenus`, `OTGPlayers`): the game starts on a menu with three pages.
   - Play: the course pack, tees, pins, starting hole, 18 or 9 holes, who's playing (in tee-off
     order, with teams), the game and whether handicaps count.

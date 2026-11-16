@@ -3,6 +3,7 @@
 #include "OTGCourseSubsystem.h"
 
 #include "OTGCourseData.h"
+#include "Game/OTGMiniGolf.h"
 
 #include "Engine/AssetManager.h"
 #include "Engine/GameInstance.h"
@@ -73,8 +74,10 @@ void UOTGCourseSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 	UE_LOG(LogOTGCourses, Display, TEXT("%d course(s): exported courses from %s, and installed packs"), Courses.Num(), *CoursesFolder());
 	for (const FOTGCourseInfo& C : Courses) UE_LOG(LogOTGCourses, Display, TEXT("  %s: %s, %d holes"), *C.Id, *C.Name, C.Holes);
 	// (-course=<id>: straight onto it, once the game is up)
+	// (-minigolf: the putt-putt)
 	FString Id;
-	if (FParse::Value(FCommandLine::Get(), TEXT("course="), Id))
+	if (!FParse::Value(FCommandLine::Get(), TEXT("course="), Id) && FParse::Param(FCommandLine::Get(), TEXT("minigolf"))) Id = AOTGMiniGolf::CourseId;
+	if (!Id.IsEmpty())
 	{
 		FTimerDelegate Open = FTimerDelegate::CreateWeakLambda(this, [this, Id]() { PlayCourse(Id); });
 		GetGameInstance()->GetTimerManager().SetTimerForNextTick(Open);
@@ -196,6 +199,12 @@ TArray<FOTGCourseInfo> UOTGCourseSubsystem::ListCourses() const
 
 UOTGCourseData* UOTGCourseSubsystem::LoadCourse(const FString& Id) const
 {
+	// the putt-putt: made by the game itself
+	if (Id == AOTGMiniGolf::CourseId)
+	{
+		if (!MiniGolf) MiniGolf = AOTGMiniGolf::MakeCourse(const_cast<UOTGCourseSubsystem*>(this));
+		return MiniGolf;
+	}
 	// an exported course: its play data read from the folder, built in the template level
 	for (const FOTGCourseInfo& C : ListCourses())
 	{

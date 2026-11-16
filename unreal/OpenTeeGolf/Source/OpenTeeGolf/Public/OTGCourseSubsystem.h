@@ -61,5 +61,7 @@ public:
 	UPROPERTY() FOTGRoundSetup PendingSetup;
 	// (the exported course read last: the menu and the round use it again rather than reading it twice)
 	UPROPERTY() mutable TObjectPtr<UOTGCourseData> LastExport;
+	// (the putt-putt's play data, made the first time it's played: AOTGMiniGolf)
+	UPROPERTY() mutable TObjectPtr<UOTGCourseData> MiniGolf;
 	bool bHasPendingSetup = false;
 };

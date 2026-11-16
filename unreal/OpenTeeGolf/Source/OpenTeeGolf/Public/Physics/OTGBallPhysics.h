@@ -150,6 +150,10 @@ namespace otg
 		const Trees* trees = nullptr;
 		const Collider* collider = nullptr;
 		std::function<double()> random; // [0, 1); Math.random's place (leaves, branches, lip-outs, ricochets)
+		// Things that move while the ball does (the putt-putt windmill's sails; physics.js movers):
+		// each is asked about every step of the ball, from a to b, t seconds after the strike, and
+		// says what it met there (true) or nothing
+		std::vector<std::function<bool(const V3& a, const V3& b, double t, Hit& out)>> movers;
 	};
 
 	struct PathPoint

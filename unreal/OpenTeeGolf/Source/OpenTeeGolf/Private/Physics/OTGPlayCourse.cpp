@@ -21,7 +21,7 @@ namespace otg
 	// (as the game's course.js normalAt: the heights a metre either way)
 	V3 PlayCourse::NormalAt(double x, double z) const
 	{
-		const double e = 1;
+		const double e = normalSpan;
 		const double hl = HeightAt(x - e, z), hr = HeightAt(x + e, z), hd = HeightAt(x, z - e), hu = HeightAt(x, z + e);
 		if (std::isnan(hl) || std::isnan(hr) || std::isnan(hd) || std::isnan(hu)) return V3{ 0, 1, 0 };
 		const double nx = hl - hr, nz = hd - hu, ny = 2 * e;

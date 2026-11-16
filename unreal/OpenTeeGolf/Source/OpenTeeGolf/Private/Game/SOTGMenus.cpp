@@ -423,6 +423,16 @@ TSharedRef<SWidget> SOTGMainMenu::PlayPage()
 			+ SHorizontalBox::Slot().AutoWidth().Padding(8, 0, 0, 0)[Button(TEXT("Open"), [Folder]() { IFileManager::Get().MakeDirectory(*Folder, true); FPlatformProcess::ExploreFolder(*Folder); }, 12)]
 			+ SHorizontalBox::Slot().AutoWidth().Padding(6, 0, 0, 0)[Button(TEXT("Refresh"), [this]() { if (UOTGCourseSubsystem* S = Courses()) CourseList = S->ListCourses(); Rebuild(); }, 12)]
 		];
+		// the putt-putt (AOTGMiniGolf): nine holes of mini golf, with the players chosen here
+		List->AddSlot().AutoHeight().Padding(0, 0, 0, 8)[Button(TEXT("Putt-putt: nine holes of mini golf"), [this]() {
+			UOTGCourseSubsystem* S = Courses();
+			if (!S) return;
+			Remember();
+			S->PendingSetup = Setup;
+			S->PendingSetup.CourseId = TEXT("minigolf");
+			S->bHasPendingSetup = true;
+			S->PlayCourse(TEXT("minigolf"));
+		}, 13)];
 	}
 	for (const FOTGCourseInfo& I : CourseList)
 	{

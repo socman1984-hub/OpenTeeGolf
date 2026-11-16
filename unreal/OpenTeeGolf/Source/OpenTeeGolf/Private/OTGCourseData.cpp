@@ -147,7 +147,7 @@ bool UOTGCourseData::LoadFromExport(const FString& Dir, FString* OutError)
 void UOTGCourseData::FillPlayCourse(otg::PlayCourse& Out) const
 {
 	Out.N = HeightSamples;
-	Out.x0 = HeightX0; Out.z1 = HeightZ1; Out.step = MetresPerSample; Out.base = HeightBase; Out.range = HeightRange;
+	Out.x0 = HeightX0; Out.z1 = HeightZ1; Out.step = MetresPerSample; Out.base = HeightBase; Out.range = HeightRange; Out.normalSpan = NormalSpanM;
 	Out.heights.assign(Heights.GetData(), Heights.GetData() + Heights.Num());
 	Out.w = SurfaceW; Out.h = SurfaceH; Out.sMinX = SurfaceMinX; Out.sMaxZ = SurfaceMaxZ; Out.res = SurfaceRes;
 	Out.surfaces.assign(Surfaces.GetData(), Surfaces.GetData() + Surfaces.Num());

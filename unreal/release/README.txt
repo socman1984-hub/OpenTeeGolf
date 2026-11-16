@@ -91,6 +91,17 @@ sources in Documents\OpenTeeGolf\CourseSources. The first time a course is opene
 it (a loading screen shows how far along it is: under a minute for most courses). Courses exported
 from the web version of OpenTeeGolf (Export to Unreal) still work too.
 
+Putt-putt
+---------
+Nine holes of mini golf that come with the game: "Putt-putt" on the Play page (with the players
+and game picked there), or start the game with -minigolf. Felt lanes edged with boards the ball
+bounces off, posts, a ramp, a windmill whose sails block its tunnel as they turn, a tunnel and a
+volcano, a zig-zag, camel humps, a pond with a narrow bridge and a banked U-turn; par 2 or 3 a
+hole. Every shot is a putt: putt with your launch monitor, or T for the test shot panel's Putt
+(Space for a quick one). On a hole that turns, the first putt is aimed at the board to bank off;
+Left / Right change it. Off the felt or in the pond costs a stroke and you play again from where
+you were; a hole ends at 6 strokes. Tab shows the scorecard.
+
 Settings > Courses folder shows where the game looks, opens it, and can point it somewhere else.
 To share a course, copy its folder into someone else's Courses folder.
 

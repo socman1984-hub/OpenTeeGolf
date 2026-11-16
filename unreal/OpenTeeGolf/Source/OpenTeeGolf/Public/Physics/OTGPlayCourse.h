@@ -21,6 +21,9 @@ namespace otg
 		// at base + v / 65535 * range metres
 		int N = 0;
 		double x0 = 0, z1 = 0, step = 1, base = 0, range = 1;
+		// How far either way the ground's slope is measured (NormalAt: a metre, as the game's; the
+		// putt-putt's short ramps and humps need less)
+		double normalSpan = 1;
 		std::vector<uint16_t> heights;
 		// The surfaces: w x h codes (otg::Surface), cell (i, j) from minX + i * res, maxZ - j * res
 		int w = 0, h = 0;
