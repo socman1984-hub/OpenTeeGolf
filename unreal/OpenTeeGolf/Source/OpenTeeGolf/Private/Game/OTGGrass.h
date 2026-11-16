@@ -45,6 +45,14 @@ namespace otg
 		TArray<FString> Fab;           // Megascans plants (their folders under Content/Fab/Megascans/Plants), or none: our own patch
 		float Margin = 0;              // (m: kept this far inside its surface, clear of the mown ones - a clump is wide)
 		float CellM = 16;              // (its cells, m a side: bigger for the far-reaching kinds, fewer components)
+		// its colour, as the designer turned it (within believable limits: ClampColour): the hue turned
+		// this many degrees (- toward gold, + toward blue-green), its strength and brightness times these
+		float Hue = 0, Sat = 1, Bright = 1;
+		static constexpr float HueMax = 40, SatLo = 0.4f, SatHi = 1.6f, BrightLo = 0.5f, BrightHi = 1.6f;
+		void ClampColour();
+		bool IsOwnColour() const { return Hue == 0 && Sat == 1 && Bright == 1; }
+		// (what to multiply a material's colour by: Ref, the colour it draws, turned as above)
+		FLinearColor TintFor(const FLinearColor& Ref) const;
 	};
 
 	class FGrass
@@ -56,6 +64,13 @@ namespace otg
 			const TArray<FGrassKind>& Kinds, const TMap<FString, TArray<TPair<UStaticMesh*, UMaterialInterface*>>>& Meshes);
 		// Other kinds, grown again at once (every cell dropped; the near ones come back in a moment)
 		void SetKinds(const TArray<FGrassKind>& Kinds, const TMap<FString, TArray<TPair<UStaticMesh*, UMaterialInterface*>>>& Meshes);
+		// (the kinds' colours only, nothing grown again: their materials are tinted by the course)
+		void SetColours(const TArray<FGrassKind>& Kinds);
+		// (a mesh's own material drawn as another: the Megascans plants' tinted copies)
+		void SetSwaps(const TMap<UMaterialInterface*, UMaterialInterface*>& InSwaps) { Swaps = InSwaps; }
+		// Where a kind grows thickly nearest From (the level's cm), not right under it: false if nowhere
+		// within MaxM metres
+		bool FindNear(const FString& Kind, const FVector& From, FVector& Out, double MaxM = 700) const;
 		const TArray<FGrassKind>& Kinds() const { return KindList; }
 		// (a kind's first mesh's height, cm, at scale 1; 0 if it has none)
 		float MeshHeightCm(int32 Kind) const;
@@ -82,6 +97,9 @@ namespace otg
 		using FPlaced = TArray<TArray<FTransform>>;   // (a cell's patches, by variant)
 
 		FPlaced Place(int32 Kind, int32 CX, int32 CY) const;
+		// (how likely a patch of the kind is at X, Y - the level's cm from the origin - before its random keep)
+		float Chance(const FGrassKind& K, double X, double Y) const;
+		TMap<UMaterialInterface*, UMaterialInterface*> Swaps;
 		float Mask(const FString& Name, double X, double Y) const;
 		double GroundZ(double X, double Y, FVector* OutNormal) const;
 

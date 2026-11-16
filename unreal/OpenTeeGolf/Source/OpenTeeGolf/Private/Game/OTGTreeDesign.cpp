@@ -11,6 +11,72 @@
 namespace
 {
 	const TCHAR* File = TEXT("trees_design.json");
+	constexpr double Near = 0.15;   // m: an edit's tree found again where it stands
+	const TCHAR* SpeciesKeys[] = { TEXT("oak"), TEXT("maple"), TEXT("redmaple"), TEXT("tuliptree"), TEXT("beech"), TEXT("elm"), TEXT("dogwood"), TEXT("crapemyrtle"),
+		TEXT("holly"), TEXT("ash"), TEXT("birch"), TEXT("aspen"), TEXT("poplar"), TEXT("willow"), TEXT("pine"), TEXT("loblolly"), TEXT("redcedar"), TEXT("douglasfir"),
+		TEXT("ponderosa"), TEXT("spruce"), TEXT("hemlock"), TEXT("juniper"), TEXT("palm"), TEXT("liveoak"), TEXT("magnolia"), TEXT("sycamore"), TEXT("cypress"),
+		TEXT("baldcypress"), TEXT("olive"), TEXT("mesquite"), TEXT("paloverde"), TEXT("saguaro") };
+}
+
+FLinearColor FOTGTreeEdit::LeafTint() const
+{
+	if (!HasColour()) return FLinearColor(0, 0, 0, 0);
+	// (a leaf green turned in HSV; the multiplier that takes it there, kept within reason)
+	const FLinearColor Ref(0.07f, 0.11f, 0.03f);
+	FLinearColor H = Ref.LinearRGBToHSV();
+	H.R = FMath::Fmod(H.R + FMath::Clamp(Hue, HueLo, HueHi) + 360.f, 360.f);
+	H.B *= FMath::Clamp(Bright, BrightLo, BrightHi);
+	const FLinearColor To = H.HSVToLinearRGB();
+	auto Ch = [](float T, float R) { return FMath::Clamp(T / R, 0.15f, 4.f) - 1.f; };
+	return FLinearColor(Ch(To.R, Ref.R), Ch(To.G, Ref.G), Ch(To.B, Ref.B), 0.f);
+}
+
+const FOTGTreeEdit* FOTGTreeDesign::TreeEditAt(double X, double Z) const
+{
+	return Trees.FindByPredicate([&](const FOTGTreeEdit& E) { return FMath::Abs(E.X - X) < Near && FMath::Abs(E.Z - Z) < Near; });
+}
+
+FOTGTreeEdit& FOTGTreeDesign::TreeEdit(double X, double Z)
+{
+	if (FOTGTreeEdit* E = const_cast<FOTGTreeEdit*>(TreeEditAt(X, Z))) return *E;
+	FOTGTreeEdit& E = Trees.AddDefaulted_GetRef();
+	E.X = X; E.Z = Z;
+	return E;
+}
+
+const FOTGRockEdit* FOTGTreeDesign::RockEditAt(double X, double Z) const
+{
+	return Rocks.FindByPredicate([&](const FOTGRockEdit& E) { return FMath::Abs(E.X - X) < Near && FMath::Abs(E.Z - Z) < Near; });
+}
+
+FOTGRockEdit& FOTGTreeDesign::RockEdit(double X, double Z)
+{
+	if (FOTGRockEdit* E = const_cast<FOTGRockEdit*>(RockEditAt(X, Z))) return *E;
+	FOTGRockEdit& E = Rocks.AddDefaulted_GetRef();
+	E.X = X; E.Z = Z;
+	return E;
+}
+
+void FOTGTreeDesign::ClearTreeEdit(double X, double Z)
+{
+	Trees.RemoveAll([&](const FOTGTreeEdit& E) { return FMath::Abs(E.X - X) < Near && FMath::Abs(E.Z - Z) < Near; });
+}
+
+void FOTGTreeDesign::ClearRockEdit(double X, double Z)
+{
+	Rocks.RemoveAll([&](const FOTGRockEdit& E) { return FMath::Abs(E.X - X) < Near && FMath::Abs(E.Z - Z) < Near; });
+}
+
+const TArray<FString>& FOTGTreeDesign::AllSpecies()
+{
+	static const TArray<FString> A = [] { TArray<FString> Out; for (const TCHAR* K : SpeciesKeys) Out.Add(K); return Out; }();
+	return A;
+}
+
+bool FOTGTreeDesign::IsConifer(const FString& Kind)
+{
+	static const TSet<FString> C = { TEXT("pine"), TEXT("loblolly"), TEXT("redcedar"), TEXT("douglasfir"), TEXT("ponderosa"), TEXT("spruce"), TEXT("cypress"), TEXT("baldcypress"), TEXT("hemlock"), TEXT("juniper"), TEXT("holly") };
+	return C.Contains(Kind);
 }
 
 const TArray<FString>& FOTGTreeDesign::Models()
@@ -77,6 +143,39 @@ FOTGTreeDesign FOTGTreeDesign::Load(const FString& Dir)
 		Num(*R, TEXT("size"), D.RockSize, 0.3f, 3.f);
 		Num(*R, TEXT("density"), D.RockDensity, 0.f, 1.f);
 	}
+	const TArray<TSharedPtr<FJsonValue>>* List = nullptr;
+	if (J->TryGetArrayField(TEXT("trees"), List))
+		for (const TSharedPtr<FJsonValue>& V : *List)
+		{
+			const TSharedPtr<FJsonObject> O = V.IsValid() ? V->AsObject() : nullptr;
+			double X, Z;
+			if (!O.IsValid() || !O->TryGetNumberField(TEXT("x"), X) || !O->TryGetNumberField(TEXT("z"), Z) || !FMath::IsFinite(X) || !FMath::IsFinite(Z)) continue;
+			FOTGTreeEdit E;
+			E.X = X; E.Z = Z;
+			O->TryGetBoolField(TEXT("added"), E.bAdded);
+			O->TryGetBoolField(TEXT("removed"), E.bRemoved);
+			O->TryGetStringField(TEXT("kind"), E.Kind);
+			if (O->TryGetStringField(TEXT("model"), E.Model) && !Models().Contains(E.Model)) E.Model.Empty();
+			Num(O, TEXT("size"), E.Size, FOTGTreeEdit::SizeLo, FOTGTreeEdit::SizeHi);
+			Num(O, TEXT("height"), E.Height, FOTGTreeEdit::HeightLo, FOTGTreeEdit::HeightHi);
+			Num(O, TEXT("hue"), E.Hue, FOTGTreeEdit::HueLo, FOTGTreeEdit::HueHi);
+			Num(O, TEXT("brightness"), E.Bright, FOTGTreeEdit::BrightLo, FOTGTreeEdit::BrightHi);
+			if (E.bAdded && E.Kind.IsEmpty()) continue;
+			D.Trees.Add(E);
+		}
+	if (J->TryGetArrayField(TEXT("rockEdits"), List))
+		for (const TSharedPtr<FJsonValue>& V : *List)
+		{
+			const TSharedPtr<FJsonObject> O = V.IsValid() ? V->AsObject() : nullptr;
+			double X, Z;
+			if (!O.IsValid() || !O->TryGetNumberField(TEXT("x"), X) || !O->TryGetNumberField(TEXT("z"), Z) || !FMath::IsFinite(X) || !FMath::IsFinite(Z)) continue;
+			FOTGRockEdit E;
+			E.X = X; E.Z = Z;
+			O->TryGetBoolField(TEXT("added"), E.bAdded);
+			O->TryGetBoolField(TEXT("removed"), E.bRemoved);
+			Num(O, TEXT("size"), E.Size, FOTGRockEdit::SizeLo, FOTGRockEdit::SizeHi);
+			D.Rocks.Add(E);
+		}
 	return D;
 }
 
@@ -101,6 +200,40 @@ bool FOTGTreeDesign::Save(const FString& Dir) const
 	R->SetNumberField(TEXT("size"), RockSize);
 	R->SetNumberField(TEXT("density"), RockDensity);
 	J->SetObjectField(TEXT("rocks"), R);
+	if (Trees.Num())
+	{
+		TArray<TSharedPtr<FJsonValue>> List;
+		for (const FOTGTreeEdit& E : Trees)
+		{
+			const TSharedRef<FJsonObject> O = MakeShared<FJsonObject>();
+			O->SetNumberField(TEXT("x"), E.X);
+			O->SetNumberField(TEXT("z"), E.Z);
+			if (E.bAdded) O->SetBoolField(TEXT("added"), true);
+			if (E.bRemoved) O->SetBoolField(TEXT("removed"), true);
+			if (!E.Kind.IsEmpty()) O->SetStringField(TEXT("kind"), E.Kind);
+			if (!E.Model.IsEmpty()) O->SetStringField(TEXT("model"), E.Model);
+			O->SetNumberField(TEXT("size"), E.Size);
+			if (E.bAdded) O->SetNumberField(TEXT("height"), E.Height);
+			if (E.HasColour()) { O->SetNumberField(TEXT("hue"), E.Hue); O->SetNumberField(TEXT("brightness"), E.Bright); }
+			List.Add(MakeShared<FJsonValueObject>(O));
+		}
+		J->SetArrayField(TEXT("trees"), List);
+	}
+	if (Rocks.Num())
+	{
+		TArray<TSharedPtr<FJsonValue>> List;
+		for (const FOTGRockEdit& E : Rocks)
+		{
+			const TSharedRef<FJsonObject> O = MakeShared<FJsonObject>();
+			O->SetNumberField(TEXT("x"), E.X);
+			O->SetNumberField(TEXT("z"), E.Z);
+			if (E.bAdded) O->SetBoolField(TEXT("added"), true);
+			if (E.bRemoved) O->SetBoolField(TEXT("removed"), true);
+			O->SetNumberField(TEXT("size"), E.Size);
+			List.Add(MakeShared<FJsonValueObject>(O));
+		}
+		J->SetArrayField(TEXT("rockEdits"), List);
+	}
 	FString Text;
 	FJsonSerializer::Serialize(J, TJsonWriterFactory<>::Create(&Text));
 	return FFileHelper::SaveStringToFile(Text, *FPaths::Combine(Dir, File), FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
@@ -108,7 +241,7 @@ bool FOTGTreeDesign::Save(const FString& Dir) const
 
 bool FOTGTreeDesign::IsDefault() const
 {
-	if (AllSize != 1.f || AllDensity != 1.f || !bRocks || RockSize != 1.f || RockDensity != 1.f) return false;
+	if (AllSize != 1.f || AllDensity != 1.f || !bRocks || RockSize != 1.f || RockDensity != 1.f || Trees.Num() || Rocks.Num()) return false;
 	for (const auto& KV : Species) if (KV.Value.Model != TEXT("auto") || KV.Value.Size != 1.f || KV.Value.Density != 1.f) return false;
 	return true;
 }
@@ -143,5 +276,6 @@ FVector2D FOTGTreeDesign::CopyAt(double X, double Z, int32 I, double R)
 
 bool FOTGTreeDesign::KeepRock(double X, double Z) const
 {
+	if (const FOTGRockEdit* E = RockEditAt(X, Z)) if (E->bRemoved) return false;
 	return bRocks && Hash01(X, Z, 91) < RockDensity;
 }

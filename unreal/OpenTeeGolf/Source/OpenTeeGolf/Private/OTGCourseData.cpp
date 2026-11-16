@@ -159,13 +159,13 @@ void UOTGCourseData::FillTrees(otg::PlayTrees& Out) const
 	Out.all.clear();
 	Out.all.reserve(Trees.Num());
 	// (as the tree designer has them: the drawn trees go the same way - AOTGRuntimeCourse::BuildTrees)
-	ForEachDesignedTree([&](int32 Src, double X, double Z, double Ground, float Scale) {
-		const FOTGTreeShape& S = Trees[Src];
-		const double G0 = GroundAt(S.X, S.Z);
+	ForEachDesignedTree([&](int32 Src, double X, double Z, double Ground, float Scale, const FOTGTreeEdit* E) {
+		const FOTGTreeShape S = Src >= 0 ? Trees[Src] : AddedShape(*E);
+		const double G0 = Src >= 0 ? GroundAt(S.X, S.Z) : 0.0;
 		// (heights above the tree's own ground, scaled, onto the ground where it stands)
 		auto Up = [&](double Y) { return Ground + (Y - G0) * Scale; };
 		otg::Tree T;
-		T.x = X; T.z = Z; T.trunkTop = Up(S.TrunkTop); T.trunkR = S.TrunkR * Scale; T.kind = TCHAR_TO_UTF8(*S.Kind);
+		T.x = X; T.z = Z; T.trunkTop = Up(S.TrunkTop); T.trunkR = S.TrunkR * Scale; T.kind = TCHAR_TO_UTF8(*(E && !E->Kind.IsEmpty() ? E->Kind : S.Kind));
 		T.cone = S.bCone;
 		if (S.bCone) { T.coneBase = Up(S.A); T.coneH = S.B * Scale; T.coneR = S.C * Scale; }
 		else { T.cy = Up(S.A); T.rh = S.B * Scale; T.rv = S.C * Scale; }
@@ -193,7 +193,20 @@ uint8 UOTGCourseData::SurfaceCodeAt(double X, double Z) const
 	return Surfaces[J * SurfaceW + I];
 }
 
-void UOTGCourseData::ForEachDesignedTree(TFunctionRef<void(int32, double, double, double, float)> Fn) const
+FOTGTreeShape UOTGCourseData::AddedShape(const FOTGTreeEdit& E)
+{
+	// (heights above its foot, as the export's shapes are above the tree's own ground: a trunk to a
+	// third of the way up and a crown over it - a cone for a conifer, an ellipsoid for the rest)
+	const float H = FMath::Clamp(E.Height * E.Size, 1.f, 60.f);
+	FOTGTreeShape S;
+	S.X = float(E.X); S.Z = float(E.Z); S.Kind = E.Kind;
+	S.TrunkR = FMath::Clamp(H * 0.018f, 0.08f, 0.5f);
+	if (FOTGTreeDesign::IsConifer(E.Kind)) { S.bCone = true; S.TrunkTop = H * 0.2f; S.A = H * 0.15f; S.B = H * 0.85f; S.C = H * 0.2f; }
+	else { S.bCone = false; S.TrunkTop = H * 0.4f; S.A = H * 0.62f; S.B = H * 0.3f; S.C = H * 0.36f; }
+	return S;
+}
+
+void UOTGCourseData::ForEachDesignedTree(TFunctionRef<void(int32, double, double, double, float, const FOTGTreeEdit*)> Fn) const
 {
 	// (never on water, sand, a path or the mown grass: on the rough, the tall grass, in the woods)
 	auto Free = [this](double X, double Z) {
@@ -206,16 +219,24 @@ void UOTGCourseData::ForEachDesignedTree(TFunctionRef<void(int32, double, double
 		const FOTGTreeShape& S = Trees[i];
 		const int32 N = TreeDesign.Copies(S.Kind, S.X, S.Z);
 		const float Size = TreeDesign.SizeOf(S.Kind);
-		if (N >= 1) Fn(i, S.X, S.Z, GroundAt(S.X, S.Z), Size);
+		// (each one as it was picked and changed, if it was: taken out, or a size of its own)
+		auto One = [&](double X, double Z, float Scale) {
+			const FOTGTreeEdit* E = TreeDesign.Trees.Num() ? TreeDesign.TreeEditAt(X, Z) : nullptr;
+			if (E && E->bRemoved) return;
+			Fn(i, X, Z, GroundAt(X, Z), Scale * (E ? E->Size : 1.f), E);
+		};
+		if (N >= 1) One(S.X, S.Z, Size);
 		// (more: grown round it, off the mown grass, sand, paths and water, a little smaller or larger)
 		const double R = S.bCone ? S.C : S.B;
 		for (int32 k = 1; k < N; k++)
 		{
 			const FVector2D P = FOTGTreeDesign::CopyAt(S.X, S.Z, k, R * Size);
 			if (!Free(P.X, P.Y)) continue;
-			Fn(i, P.X, P.Y, GroundAt(P.X, P.Y), Size * float(0.8 + 0.35 * FOTGTreeDesign::Hash01(P.X, P.Y, 5)));
+			One(P.X, P.Y, Size * float(0.8 + 0.35 * FOTGTreeDesign::Hash01(P.X, P.Y, 5)));
 		}
 	}
+	for (const FOTGTreeEdit& E : TreeDesign.Trees)
+		if (E.bAdded && !E.bRemoved) Fn(-1, E.X, E.Z, GroundAt(E.X, E.Z), 1.f, &E);
 }
 
 FVector UOTGCourseData::CourseToWorld(const FVector& P) const

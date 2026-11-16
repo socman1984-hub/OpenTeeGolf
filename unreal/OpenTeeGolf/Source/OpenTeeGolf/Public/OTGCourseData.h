@@ -131,9 +131,13 @@ public:
 	// The course's trees and rocks as its tree designer left them (trees_design.json; changed live by
 	// the designer), and the trees as they stand with it: each play tree (Trees, the same order as
 	// the export's trees.json) taken out, kept, or with others round it - Src the tree it comes from,
-	// X Z where it stands (course metres), Ground the ground's height there, Scale its size
+	// X Z where it stands (course metres), Ground the ground's height there, Scale its size; Edit
+	// its own changes if it has any (a tree picked in the designer). Trees added in the designer
+	// come last, Src -1 (no tree they come from: Edit says what they are, Scale 1)
 	FOTGTreeDesign TreeDesign;
-	void ForEachDesignedTree(TFunctionRef<void(int32 Src, double X, double Z, double Ground, float Scale)> Fn) const;
+	void ForEachDesignedTree(TFunctionRef<void(int32 Src, double X, double Z, double Ground, float Scale, const FOTGTreeEdit* Edit)> Fn) const;
+	// (an added tree's shape for the ball: from its species and height, standing on Ground)
+	static FOTGTreeShape AddedShape(const FOTGTreeEdit& E);
 	double GroundAt(double X, double Z) const;          // (course metres; the heightmap's)
 	uint8 SurfaceCodeAt(double X, double Z) const;      // (otg::Surface; 0 off the course)
 	// Course metres (x east, z north, y up) to the level's centimetres (X east, Y south, Z up), and back

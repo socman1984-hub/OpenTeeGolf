@@ -178,6 +178,7 @@ void AOTGRound::ToggleGrassDesigner(int32 Tab)
 		TWeakObjectPtr<AOTGRound> Self(this);
 		Hud->Designer()->Trees()->OnChanged = [Self]() { if (Self.IsValid()) Self->RefreshTrees(); };
 		Hud->Designer()->Trees()->OnShow = [Self](const FString& Kind) { if (Self.IsValid()) Self->ShowTree(Kind); };
+		Hud->Designer()->GrassTab()->OnShow = [Self](const FString& Kind) { if (Self.IsValid()) Self->ShowGrass(Kind); };
 		Hud->Designer()->Open(C);
 		if (Tab >= 0) Hud->Designer()->ShowTab(Tab);
 	}
@@ -204,6 +205,51 @@ void AOTGRound::ShowTree(const FString& Kind)
 	const FVector Dir = (Base - From).GetSafeNormal2D();
 	const double Yaw = FMath::RadiansToDegrees(FMath::Atan2(Dir.Y, Dir.X));
 	FreeLookAt(Base + FVector(0, 0, H * 0.5), FMath::Max(2000.0, H * 2.6), H * 0.15, Yaw);
+}
+
+void AOTGRound::ShowGrass(const FString& Kind)
+{
+	AOTGRuntimeCourse* C = nullptr;
+	for (TActorIterator<AOTGRuntimeCourse> It(GetWorld()); It; ++It) { C = *It; break; }
+	APlayerController* PC = GetWorld() ? GetWorld()->GetFirstPlayerController() : nullptr;
+	const FVector From = PC && PC->PlayerCameraManager ? PC->PlayerCameraManager->GetCameraLocation() : FVector::ZeroVector;
+	FVector At;
+	if (!C || !C->FindGrass(Kind, From, At)) { Toast(TEXT("None of it grows near here"), 3.f); return; }
+	// (from the side you're on, low down at a few metres: as you'd see it walking up to it)
+	const FVector Dir = (At - From).GetSafeNormal2D();
+	const double Yaw = Dir.IsNearlyZero() ? FreeRot.Yaw : FMath::RadiansToDegrees(FMath::Atan2(Dir.Y, Dir.X));
+	FreeLookAt(At + FVector(0, 0, 30), 650, 170, Yaw);
+}
+
+bool AOTGRound::DesignClick(const FVector& Origin, const FVector& Dir)
+{
+	if (!Hud || !Hud->IsDesignerShown()) return false;
+	FVector Ground;
+	const bool bGround = GroundAlongRay(Origin, Dir, Ground);
+	return Hud->Designer()->WorldClick(Origin, Dir, bGround, Ground);
+}
+
+void AOTGRound::DesignClickAt(double FX, double FY)
+{
+	APlayerController* PC = GetWorld() ? GetWorld()->GetFirstPlayerController() : nullptr;
+	if (!PC) return;
+	int32 W = 0, H = 0;
+	PC->GetViewportSize(W, H);
+	FVector Origin, Dir;
+	if (!PC->DeprojectScreenPositionToWorld(FX * W, FY * H, Origin, Dir)) return;
+	// (clicked first: a Shipping build leaves out the log, its arguments and all)
+	const bool bUsed = DesignClick(Origin, Dir);
+	UE_LOG(LogTemp, Display, TEXT("Design click at %.2f %.2f: %s"), FX, FY, bUsed ? TEXT("used") : TEXT("not used"));
+}
+
+void AOTGRound::EditPicked(const FString& Field, const FString& Value)
+{
+	if (Hud && Hud->Designer()) Hud->Designer()->Trees()->EditPicked(Field, Value);
+}
+
+void AOTGRound::SetDesignTool(int32 Tool)
+{
+	if (Hud && Hud->Designer()) Hud->Designer()->Trees()->SetTool(Tool);
 }
 
 void AOTGRound::WeatherChanged()

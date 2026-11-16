@@ -149,8 +149,20 @@ Everything the golf needs runs inside the game, in C++.
   cooked) to the tall grass. `AOTGRuntimeCourse::SetGrassKinds` grows them again at once; the
   far-off copies (`_far`) follow their near kinds (`FGrass::Derive`). The rough stays one even
   colour: only kinds in its colours (`bEven`: rough, rough_clump) may grow on it. Console:
-  `OTG.Grass.List`, `OTG.Grass.Set <kind> on|surface|density|height|vary|out|patch|cover <v>`,
-  `OTG.Grass.Add <folder>`, `OTG.Grass.Save`, `OTG.Grass.Reset`.
+  `OTG.Grass.List`, `OTG.Grass.Set <kind> on|surface|density|height|vary|out|patch|cover|hue|saturation|brightness <v>`,
+  `OTG.Grass.Add <folder>`, `OTG.Grass.Save`, `OTG.Grass.Reset`, `OTG.Grass.Show <kind>`.
+  Each kind's colour (`FGrassKind::Hue`, `Sat`, `Bright`: the hue turned up to 40° either way, its
+  strength 40-160%, its brightness 50-160%, saved in `grass.json` as `hue`, `saturation`,
+  `brightness`) changes as you drag, with nothing grown again (`AOTGRuntimeCourse::SetGrassColours`):
+  our turf's materials take a `Tint` multiplier (`build_course.py` `turf_material`: all three), and a
+  Megascans plant's materials are copied (`GrassSwaps`) with their `Base Color Controls` set - x the
+  colour's strength (under 1 it washes out: kept to 0.7-1.24), y its brightness (0.65-1.2); z
+  washes it to white and is left alone. Their `Base Color Tint` hardly turns the hue (even a strong
+  green barely shows), so a Megascans plant keeps its own hue and the designer hides that slider for
+  it. "Show me" on a kind flies the free view to where it grows thickly nearby (`FGrass::FindNear`:
+  rings out from the camera, the same odds the grass is placed with, `FGrass::Chance`). Testing:
+  `OTG.Grass.Tints` logs the tinted materials and what the plants are drawn with,
+  `OTG.Grass.Param <kind> <vector_param> r g b` sets one on a kind's Megascans materials.
 - Quick updates (phase 5, `otg::QuickUpdate`, the editor's "Save and update the game"): the course's
   edits put in its export folder in seconds, without the web game's export - the holes (play.json,
   holes.json, with course.js's path and green radius), the play surfaces and the green/fairway/tee/
@@ -203,6 +215,23 @@ Everything the golf needs runs inside the game, in C++.
   of a species. Console: `OTG.Trees.List`, `OTG.Trees.Set <species|all|rocks>
   model|size|density|on <v>`, `OTG.Trees.Save`, `OTG.Trees.Show <species>`,
   `OTG.Round.GrassDesigner trees` (the designer on that tab).
+  One at a time, by clicking on the course with the trees tab open (in the free view too; the
+  click goes to `AOTGRound::DesignClick` instead of aiming): Pick one (a tree: its species, model,
+  height, leaf colour and brightness; a rock: its size; either taken out or put back as it was),
+  Add a tree (any species, 2-40 m), Add a rock, Take out. Kept in `trees_design.json` as `trees`
+  and `rockEdits` (`FOTGTreeEdit`, `FOTGRockEdit`), each found again by where it stands (trees in
+  course metres, rocks in the level's metres as boulders.json has them, to 15 cm).
+  `ForEachDesignedTree` passes each tree's edit, and the added trees last (`Src` -1, a trunk and a
+  crown for the ball from the species and height: `UOTGCourseData::AddedShape`), so the ball meets
+  them too. A tree's leaf colour is per-instance data (three floats, a multiplier less one) that
+  `M_TreeLeaves` (the stand-in leaves, `tree_parent_material`) multiplies in: trees drawn with their
+  own pack material (the conifers: no stand-in) keep their colour, and the panel says so
+  (`FOTGPicked::bColourable`). Each change draws every tree again (about a second on a course of
+  5000). Picking (`AOTGRuntimeCourse::Pick`) is against
+  each tree's trunk line and crown reach and each rock's size, nearest along the line before the
+  ground. Testing: `OTG.Trees.Click <0..1 across> <0..1 down> [pick|tree|rock|out]` clicks there,
+  `OTG.Trees.Edit size|height|hue|bright|kind|model|out|reset [v]` changes the picked one, and
+  `OTG.Later <s> <command>` runs a command later (the screenshot's `-shotcmd` all run at once).
 - The course helper (making courses from the game, phase 0 of moving the course builder and editor
   into it): `UOTGHelperSubsystem` runs the web version's server hidden (`OTG_HELPER=1`,
   `lib/helper.js`: this computer only, no launch monitor listeners, gone with the game) on a free

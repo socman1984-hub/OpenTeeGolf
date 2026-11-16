@@ -57,11 +57,19 @@ Tab                            the scorecard
 Backspace                      mulligan
 R                              the course designer, changed as you watch. Grass: what the rough and
                                the tall grass are made of (which grasses, how many, how tall, how
-                               far out, in what patches; add any Megascans plant to the tall grass).
-                               Trees and rocks: each species' model, size and how many (more grows
-                               others round them; the ball meets the trees as you see them), "Show
-                               me" flies to one. "Save for this course" keeps it (grass.json,
-                               trees_design.json in the course's folder)
+                               far out, in what patches, their colour - golder or bluer, stronger
+                               or softer, lighter or darker, within what grass can look like (the
+                               Megascans plants: stronger or softer, lighter or darker); add
+                               any Megascans plant to the tall grass), "Show me" flies to where it
+                               grows. Trees and rocks: each species' model, size and how many (more
+                               grows others round them; the ball meets the trees as you see them),
+                               "Show me" flies to one. And one at a time: click a tree on the course
+                               to change its species, model, height or leaf colour (autumn to
+                               blue-green; broadleaf trees - the conifers keep theirs), a rock its
+                               size, or take either out; or pick Add a tree
+                               (any species and height) or Add a rock and click the ground. "Save
+                               for this course" keeps it (grass.json, trees_design.json in the
+                               course's folder)
 Esc                            pause: resume, scorecard, launch monitor, quit to the menu
 
 The map at the top right shows the hole, your aim and the yardages; the box above it the wind

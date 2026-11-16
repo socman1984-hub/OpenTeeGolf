@@ -168,7 +168,38 @@ void otg::FGrass::Derive(TArray<FGrassKind>& Kinds)
 		F.DrawTo = FMath::Max(DF->DrawTo, F.MinDrawM + 60);
 		F.DrawFrom = F.DrawTo - (DF->DrawTo - DF->DrawFrom);
 		F.PatchM = P->PatchM; F.PatchLo = P->PatchLo; F.PatchHi = P->PatchHi; F.bInvert = P->bInvert;
+		F.Hue = P->Hue; F.Sat = P->Sat; F.Bright = P->Bright;
 	}
+}
+
+void otg::FGrassKind::ClampColour()
+{
+	Hue = FMath::IsFinite(Hue) ? FMath::Clamp(Hue, -HueMax, HueMax) : 0.f;
+	Sat = FMath::IsFinite(Sat) ? FMath::Clamp(Sat, SatLo, SatHi) : 1.f;
+	Bright = FMath::IsFinite(Bright) ? FMath::Clamp(Bright, BrightLo, BrightHi) : 1.f;
+}
+
+FLinearColor otg::FGrassKind::TintFor(const FLinearColor& Ref) const
+{
+	if (IsOwnColour()) return FLinearColor::White;
+	// (the reference colour turned in HSV, then what each channel must be multiplied by to get there:
+	// kept within reason, so a channel near nothing isn't blown up)
+	FLinearColor H = Ref.LinearRGBToHSV();
+	H.R = FMath::Fmod(H.R + Hue + 360.f, 360.f);
+	H.G = FMath::Clamp(H.G * Sat, 0.f, 1.f);
+	H.B *= Bright;
+	const FLinearColor To = H.HSVToLinearRGB();
+	auto Ch = [](float T, float R) { return FMath::Clamp(T / FMath::Max(R, 0.002f), 0.15f, 4.f); };
+	return FLinearColor(Ch(To.R, Ref.R), Ch(To.G, Ref.G), Ch(To.B, Ref.B), 1.f);
+}
+
+void otg::FGrass::SetColours(const TArray<FGrassKind>& Kinds)
+{
+	for (FGrassKind& K : KindList)
+		if (const FGrassKind* N = Kinds.FindByPredicate([&](const FGrassKind& X) { return X.Name == K.Name; }))
+		{
+			K.Hue = N->Hue; K.Sat = N->Sat; K.Bright = N->Bright;
+		}
 }
 
 namespace
@@ -188,6 +219,12 @@ namespace
 		O->SetNumberField(TEXT("patchHi"), K.PatchHi);
 		O->SetBoolField(TEXT("invert"), K.bInvert);
 		O->SetNumberField(TEXT("margin"), K.Margin);
+		if (!K.IsOwnColour())
+		{
+			O->SetNumberField(TEXT("hue"), K.Hue);
+			O->SetNumberField(TEXT("saturation"), K.Sat);
+			O->SetNumberField(TEXT("brightness"), K.Bright);
+		}
 		if (K.bAdded)
 		{
 			TArray<TSharedPtr<FJsonValue>> F;
@@ -245,6 +282,9 @@ TArray<otg::FGrassKind> otg::FGrass::LoadKinds(const FString& Dir)
 		Num(TEXT("patchHi"), K->PatchHi, 0, 1);
 		Num(TEXT("margin"), K->Margin, 0, 5);
 		O->TryGetBoolField(TEXT("invert"), K->bInvert);
+		Num(TEXT("hue"), K->Hue, -FGrassKind::HueMax, FGrassKind::HueMax);
+		Num(TEXT("saturation"), K->Sat, FGrassKind::SatLo, FGrassKind::SatHi);
+		Num(TEXT("brightness"), K->Bright, FGrassKind::BrightLo, FGrassKind::BrightHi);
 		if (K->ScaleHi < K->ScaleLo) Swap(K->ScaleLo, K->ScaleHi);
 		if (K->PatchM > 0 && K->PatchHi < K->PatchLo + 0.01f) K->PatchHi = K->PatchLo + 0.01f;
 	}
@@ -335,6 +375,33 @@ double otg::FGrass::GroundZ(double X, double Y, FVector* OutNormal) const
 	return FMath::Lerp(FMath::Lerp(H00, H10, FU), FMath::Lerp(H01, H11, FU), FV);
 }
 
+// (Place's odds of a patch at a spot, before the random keep: the mask past its edge, not in the
+// water or on a path or a mown surface, in its meadow patch)
+float otg::FGrass::Chance(const FGrassKind& K, double X, double Y) const
+{
+	float W = 0;
+	for (const FString& M : K.Masks) W = FMath::Max(W, Mask(M, X, Y));
+	float P = FMath::Clamp((W - 0.33f) * 12.f, 0.f, 1.f);
+	if (P <= 0) return 0.f;
+	P *= FMath::Clamp((0.45f - Mask(TEXT("water"), X, Y)) * 10.f, 0.f, 1.f);
+	P *= FMath::Clamp((0.85f - Mask(TEXT("path"), X, Y)) * 2.f, 0.f, 1.f);
+	// (and never on a mown surface, though the rough's mask reaches into the fringes: tufts
+	// up to a few cm over its outline - the material cuts their blades off exactly on it)
+	const float Mown = FMath::Max(FMath::Max(Mask(TEXT("fairway"), X, Y), Mask(TEXT("tee"), X, Y)), FMath::Max(Mask(TEXT("fringe"), X, Y), Mask(TEXT("green"), X, Y)));
+	// (the masks: 0.5 on the outline, 1/6 a metre in or out - a wide clump kept K.Margin inside)
+	P *= 1.f - FMath::Clamp((Mown - 0.52f + K.Margin / 6.f) * 12.f, 0.f, 1.f);
+	if (K.Margin > 0) P *= FMath::Clamp((W - 0.5f - K.Margin / 6.f) * 12.f + 1.f, 0.f, 1.f);
+	if (K.PatchM > 0)
+	{
+		// (value noise bunches round the middle: spread out to the rock texture's range)
+		const double N = FMath::Clamp(0.5 + (Noise(X / 100.0, Y / 100.0, K.PatchM, K.Name.StartsWith(TEXT("native")) ? 77 : int32(GetTypeHash(K.Name.Replace(TEXT("_far"), TEXT(""))) % 997) + 31) - 0.5) * 1.8, 0.0, 1.0);
+		const double L = 0.27 + 0.19 * N;
+		float F = FMath::SmoothStep(K.PatchLo, K.PatchHi, float(L));
+		P *= K.bInvert ? 1.f - F : F;
+	}
+	return P;
+}
+
 // A cell's patches: a grid as dense as the kind, jittered, each kept as likely as the pack's grass
 // map would have it (the mask past its edge, not in the water or on a path, in its meadow patch)
 otg::FGrass::FPlaced otg::FGrass::Place(int32 KindI, int32 CX, int32 CY) const
@@ -354,26 +421,7 @@ otg::FGrass::FPlaced otg::FGrass::Place(int32 KindI, int32 CX, int32 CY) const
 			const double Y = CY * Cell * 100.0 + (b + 0.5 + (R.FRand() - 0.5) * K.Jitter) * S;
 			const float Keep = R.FRand();
 			if (X < 0 || Y < 0 || X > Land || Y > Land) continue;
-			float W = 0;
-			for (const FString& M : K.Masks) W = FMath::Max(W, Mask(M, X, Y));
-			float P = FMath::Clamp((W - 0.33f) * 12.f, 0.f, 1.f);
-			if (P <= 0) continue;
-			P *= FMath::Clamp((0.45f - Mask(TEXT("water"), X, Y)) * 10.f, 0.f, 1.f);
-			P *= FMath::Clamp((0.85f - Mask(TEXT("path"), X, Y)) * 2.f, 0.f, 1.f);
-			// (and never on a mown surface, though the rough's mask reaches into the fringes: tufts
-			// up to a few cm over its outline - the material cuts their blades off exactly on it)
-			const float Mown = FMath::Max(FMath::Max(Mask(TEXT("fairway"), X, Y), Mask(TEXT("tee"), X, Y)), FMath::Max(Mask(TEXT("fringe"), X, Y), Mask(TEXT("green"), X, Y)));
-			// (the masks: 0.5 on the outline, 1/6 a metre in or out - a wide clump kept K.Margin inside)
-			P *= 1.f - FMath::Clamp((Mown - 0.52f + K.Margin / 6.f) * 12.f, 0.f, 1.f);
-			if (K.Margin > 0) P *= FMath::Clamp((W - 0.5f - K.Margin / 6.f) * 12.f + 1.f, 0.f, 1.f);
-			if (K.PatchM > 0)
-			{
-				// (value noise bunches round the middle: spread out to the rock texture's range)
-				const double N = FMath::Clamp(0.5 + (Noise(X / 100.0, Y / 100.0, K.PatchM, K.Name.StartsWith(TEXT("native")) ? 77 : int32(GetTypeHash(K.Name.Replace(TEXT("_far"), TEXT(""))) % 997) + 31) - 0.5) * 1.8, 0.0, 1.0);
-				const double L = 0.27 + 0.19 * N;
-				float F = FMath::SmoothStep(K.PatchLo, K.PatchHi, float(L));
-				P *= K.bInvert ? 1.f - F : F;
-			}
+			const float P = Chance(K, X, Y);
 			if (Keep >= P) continue;
 			FVector Nrm;
 			const double Z = GroundZ(X, Y, &Nrm);
@@ -413,6 +461,13 @@ void otg::FGrass::Update(const FVector& Camera)
 			UInstancedStaticMeshComponent* ISM = NewObject<UInstancedStaticMeshComponent>(O);
 			ISM->SetStaticMesh(Meshes[Job.Key.Kind][v]);
 			if (Mats[Job.Key.Kind][v]) ISM->SetMaterial(0, Mats[Job.Key.Kind][v]);
+			else if (Swaps.Num())
+			{
+				// (a Megascans plant: its own materials, the tinted copies where the course made them)
+				const TArray<FStaticMaterial>& SM = Meshes[Job.Key.Kind][v]->GetStaticMaterials();
+				for (int32 m = 0; m < SM.Num(); m++)
+					if (UMaterialInterface* const* To = Swaps.Find(SM[m].MaterialInterface)) ISM->SetMaterial(m, *To);
+			}
 			ISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 			ISM->SetCastShadow(false);
 			ISM->bVisibleInRayTracing = false;   // (rebuilt into the ray-tracing scene each frame, for nothing: ~1 ms)
@@ -473,4 +528,34 @@ void otg::FGrass::Update(const FVector& Camera)
 			});
 		}
 	}
+}
+
+bool otg::FGrass::FindNear(const FString& Name, const FVector& From, FVector& Out, double MaxM) const
+{
+	const int32 KI = KindList.IndexOfByPredicate([&](const FGrassKind& X) { return X.Name == Name; });
+	if (KI == INDEX_NONE || !Data || Land <= 0) return false;
+	const FGrassKind& K = KindList[KI];
+	if (!K.Masks.Num()) return false;
+	const FVector C = From - Data->LevelOrigin;
+	// rings out from where you are, 4 m apart: the first spot where it grows thickly, and round it too
+	// (a patch of it, not a stray clump) - not nearer than 8 m, so there's room to see it
+	auto Thick = [&](double X, double Y) {
+		if (X < 0 || Y < 0 || X > Land || Y > Land || Chance(K, X, Y) < 0.75f) return false;
+		for (const FVector2D D : { FVector2D(250, 0), FVector2D(-250, 0), FVector2D(0, 250), FVector2D(0, -250) })
+			if (Chance(K, X + D.X, Y + D.Y) < 0.5f) return false;
+		return true;
+	};
+	for (double R = 800; R <= MaxM * 100; R += 400)
+	{
+		const int32 N = FMath::Max(8, FMath::RoundToInt(2 * PI * R / 400));
+		for (int32 i = 0; i < N; i++)
+		{
+			const double A = 2 * PI * i / N;
+			const double X = C.X + FMath::Cos(A) * R, Y = C.Y + FMath::Sin(A) * R;
+			if (!Thick(X, Y)) continue;
+			Out = FVector(X, Y, GroundZ(X, Y, nullptr)) + Data->LevelOrigin;
+			return true;
+		}
+	}
+	return false;
 }

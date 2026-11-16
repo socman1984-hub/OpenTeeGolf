@@ -23,6 +23,19 @@ class UMaterialInterface;
 class UStaticMesh;
 class UTexture2D;
 
+// A tree or rock picked on the course (AOTGRuntimeCourse::Pick): where it stands, as its edit in
+// the tree design is keyed (FOTGTreeDesign::TreeEdit, RockEdit), and what it is
+struct FOTGPicked
+{
+	bool bRock = false;
+	double X = 0, Z = 0;          // (a tree: course metres; a rock: the level's metres, as boulders.json)
+	FString Kind;                 // (a tree's species as drawn)
+	double HeightM = 0;           // (a tree's height as drawn; a rock's size across)
+	bool bAdded = false;          // (added in the designer)
+	bool bColourable = false;     // (a tree drawn with the game's own leaves, which take a colour; the packs' own don't)
+	FVector Base = FVector::ZeroVector;   // (the level's cm: its foot)
+};
+
 UCLASS()
 class OPENTEEGOLF_API AOTGRuntimeCourse : public AActor
 {
@@ -54,6 +67,12 @@ public:
 	float GrassHeightCm(const FString& Kind) const;
 	int32 GrassInstances() const;
 	TArray<otg::FGrassKind> SavedGrassKinds() const;   // (as saved for the course, or the game's own)
+	// The kinds' colours changed at once (their materials tinted: nothing grown again), and where a
+	// kind grows thickly nearest a point (the level's cm; false: nowhere near)
+	void SetGrassColours(const TArray<otg::FGrassKind>& Kinds);
+	bool FindGrass(const FString& Kind, const FVector& From, FVector& Out) const;
+	void DumpGrassTints() const;   // (testing: OTG.Grass.Tints)
+	void SetGrassParam(const FString& Kind, const FString& Param, const FLinearColor& V);   // (testing: OTG.Grass.Param)
 
 	// The tree designer's view (SOTGTreeDesigner): the trees and rocks drawn again with a design
 	// (the course data's, which the ball's trees follow too: AOTGRound::RefreshTrees), saved for
@@ -67,6 +86,13 @@ public:
 	bool NearestTree(const FString& Kind, const FVector& From, FVector& OutBase, double& OutHeightCm) const;
 	int32 TreesDrawn() const { return TreeCount; }
 	int32 RocksDrawn() const { return RockCount; }
+	// The tree or rock along a line from the camera (the level's cm), before the ground at MaxT cm:
+	// false if none. And one again by where it stands (after the trees are drawn again)
+	bool Pick(const FVector& Origin, const FVector& Dir, double MaxT, FOTGPicked& Out) const;
+	bool Picked(bool bRock, double X, double Z, FOTGPicked& Out) const;
+	// (a point in the level, cm, as course metres x z / as the level's metres a rock is keyed by)
+	FVector2D CourseXZ(const FVector& World) const;
+	FVector2D RockXY(const FVector& World) const;
 
 private:
 	void LoadPictures();
@@ -85,6 +111,9 @@ private:
 	UPROPERTY() TArray<TObjectPtr<class UHierarchicalInstancedStaticMeshComponent>> TreeComps;
 	UPROPERTY() TArray<TObjectPtr<class UHierarchicalInstancedStaticMeshComponent>> RockComps;
 	int32 TreeCount = 0, RockCount = 0;
+	// (each tree and rock as drawn, for picking: foot, height or radius, cm; key; species)
+	struct FDrawn { FVector Base; double H = 0, R = 0; double X = 0, Z = 0; FString Kind; bool bAdded = false; class UStaticMesh* Mesh = nullptr; bool bColourable = false; };
+	TArray<FDrawn> DrawnTrees, DrawnRocks;
 	void BuildWater();
 	void BuildSea();
 	void BuildFarLand();
@@ -93,6 +122,12 @@ private:
 	void BuildGrass();
 	TMap<FString, TArray<TPair<UStaticMesh*, UMaterialInterface*>>> GrassMeshes(const TArray<otg::FGrassKind>& Kinds);
 	TMap<FString, TArray<TPair<UStaticMesh*, UMaterialInterface*>>> GrassMeshCache;
+	// (each kind's materials the designer's colour tints: our turf's Tint, a Megascans plant's own
+	// tints - their copies drawn in place of its materials, GrassSwaps)
+	struct FGrassTint { TWeakObjectPtr<UMaterialInstanceDynamic> M; bool bFab = false; FLinearColor Base, BaseThrough, Controls; };
+	TMap<FString, TArray<FGrassTint>> GrassTints;
+	TMap<UMaterialInterface*, UMaterialInterface*> GrassSwaps;
+	void TintGrass();
 	void SetPictures(UMaterialInstanceDynamic* M) const;
 	class UHierarchicalInstancedStaticMeshComponent* Instances(class UStaticMesh* Mesh, const TArray<FTransform>& Xfs, int32 CullFrom, int32 CullTo);
 

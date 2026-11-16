@@ -157,13 +157,16 @@ void AOTGPlayerController::SetupInputComponent()
 	Bind(EKeys::P, [](AOTGRound* R) { R->TogglePerf(); }, true);
 	Bind(EKeys::L, [](AOTGRound* R) { R->ToggleWeatherPanel(); }, true);
 	Bind(EKeys::R, [](AOTGRound* R) { R->ToggleGrassDesigner(); }, true);
-	// a click on the ground aims there
+	// a click on the ground aims there - or, with the course designer open on its trees, picks or
+	// adds a tree or rock there (in the free view too)
 	Bind(EKeys::LeftMouseButton, [this](AOTGRound* R) {
 		// (along the line under the cursor to where it meets the course's ground: the course's own
 		// heights, so it needs no collision on the ground)
 		FVector Origin, Dir;
-		if (DeprojectMousePositionToWorld(Origin, Dir)) R->AimAlongRay(Origin, Dir);
-	});
+		if (!DeprojectMousePositionToWorld(Origin, Dir)) return;
+		if (R->DesignClick(Origin, Dir)) return;
+		if (!R->IsFreeView()) R->AimAlongRay(Origin, Dir);
+	}, true);
 }
 
 void AOTGPlayerController::PlayerTick(float Dt)

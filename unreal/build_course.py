@@ -1176,6 +1176,12 @@ def turf_material(kind, land_size_cm):
             col = op(unreal.MaterialExpressionMultiply, col, f, -550, 400)
         except Exception:
             warn("Turf fairway: no mowing stripes (%s)" % traceback.format_exc().splitlines()[-1])
+    # the course designer's colour for this kind (AOTGRuntimeCourse::SetGrassColours: a hue, strength
+    # and brightness turned into a multiplier, set at run time; white leaves it as it is)
+    tint = E(unreal.MaterialExpressionVectorParameter, -650, 300)
+    tint.set_editor_property("parameter_name", "Tint")
+    tint.set_editor_property("default_value", unreal.LinearColor(1, 1, 1, 1))
+    col = op(unreal.MaterialExpressionMultiply, col, tint, -500, 380, "", "RGB")
     mel.connect_material_property(col, "", unreal.MaterialProperty.MP_BASE_COLOR)
     mel.connect_material_property(op(unreal.MaterialExpressionMultiply, col, const(0.7, -650, 560), -500, 520), "", unreal.MaterialProperty.MP_SUBSURFACE_COLOR)
     mel.connect_material_property(const(0.62, -500, 700), "", unreal.MaterialProperty.MP_ROUGHNESS)
@@ -1663,6 +1669,18 @@ def tree_parent_material(kind):
         first_ok(mat, ("shading_model",), unreal.MaterialShadingModel.MSM_TWO_SIDED_FOLIAGE)
         mat.set_editor_property("opacity_mask_clip_value", 0.4)
         col = op(unreal.MaterialExpressionMultiply, alb, const3(LEAF_TINT, -900, -150), -600, 0, "RGB", "")
+        # each tree's own leaf colour, the course designer's (AOTGRuntimeCourse::BuildTrees: per-instance
+        # data 0-2, a multiplier less one - so a tree with none, 0 0 0, keeps its colour)
+        try:
+            own = E(unreal.MaterialExpressionPerInstanceCustomData3Vector, -900, -300)
+            own.set_editor_property("data_index", 0)
+            try:
+                own.set_editor_property("const_default_value", unreal.LinearColor(0, 0, 0, 0))
+            except Exception:
+                pass   # (0 0 0 already, as it comes)
+            col = op(unreal.MaterialExpressionMultiply, col, op(unreal.MaterialExpressionAdd, own, const3((1, 1, 1), -900, -220), -750, -260), -500, -50)
+        except Exception:
+            warn("Trees: no leaf colour of their own (%s)" % traceback.format_exc().splitlines()[-1])
         mel.connect_material_property(col, "", unreal.MaterialProperty.MP_BASE_COLOR)
         mel.connect_material_property(msk, "R", unreal.MaterialProperty.MP_OPACITY_MASK)
         rough = E(unreal.MaterialExpressionLinearInterpolate, -500, 350)

@@ -115,7 +115,8 @@ namespace
 	}));
 	FAutoConsoleCommandWithWorldAndArgs TreesSaveCmd(TEXT("OTG.Trees.Save"), TEXT("Save the course's trees and rocks as they are now (trees_design.json)"), FCmd::CreateLambda([](const TArray<FString>&, UWorld* W) {
 		FString Where;
-		if (AOTGRuntimeCourse* C = CourseOf(W)) UE_LOG(LogTemp, Display, TEXT("Trees %s %s"), C->SaveTreeDesign(&Where) ? TEXT("saved to") : TEXT("NOT saved to"), *Where);
+		// (saved first: a Shipping build leaves out the log, its arguments and all)
+		if (AOTGRuntimeCourse* C = CourseOf(W)) { const bool bOk = C->SaveTreeDesign(&Where); UE_LOG(LogTemp, Display, TEXT("Trees %s %s"), bOk ? TEXT("saved to") : TEXT("NOT saved to"), *Where); }
 	}));
 	FAutoConsoleCommandWithWorldAndArgs TreesShowCmd(TEXT("OTG.Trees.Show"), TEXT("OTG.Trees.Show <species>: the free view flown to one"), FCmd::CreateLambda([](const TArray<FString>& A, UWorld* W) {
 		if (AOTGRound* R = RoundIn(W)) if (A.Num()) R->ShowTree(A[0]);
@@ -130,6 +131,30 @@ namespace
 		}
 		UE_LOG(LogTemp, Display, TEXT("Drawn: %d trees, %d rocks"), C->TreesDrawn(), C->RocksDrawn());
 	}));
+	// (testing: a command a while later - the screenshot's commands all run at once, and a click
+	// after "Show me" needs the camera to have got there: OTG.Later 2 OTG.Trees.Click 0.5 0.5)
+	FAutoConsoleCommandWithWorldAndArgs LaterCmd(TEXT("OTG.Later"), TEXT("OTG.Later <seconds> <command ...>: (testing) a console command run that much later"), FCmd::CreateLambda([](const TArray<FString>& A, UWorld* W) {
+		if (!W || A.Num() < 2) return;
+		const FString Cmd = FString::Join(TArrayView<const FString>(A).RightChop(1), TEXT(" "));
+		FTimerHandle H;
+		TWeakObjectPtr<UWorld> WW(W);
+		W->GetTimerManager().SetTimer(H, FTimerDelegate::CreateLambda([WW, Cmd]() {
+			if (APlayerController* PC = WW.IsValid() ? WW->GetFirstPlayerController() : nullptr) PC->ConsoleCommand(Cmd);
+		}), FMath::Max(0.01f, FCString::Atof(*A[0])), false);
+	}));
+	FAutoConsoleCommandWithWorldAndArgs TreesEditCmd(TEXT("OTG.Trees.Edit"), TEXT("OTG.Trees.Edit size|height|hue|bright|kind|model|out|reset [value]: (testing) the picked tree or rock changed"), FCmd::CreateLambda([](const TArray<FString>& A, UWorld* W) {
+		if (AOTGRound* R = RoundIn(W); R && A.Num()) R->EditPicked(A[0], A.Num() > 1 ? A[1] : FString());
+	}));
+	FAutoConsoleCommandWithWorldAndArgs GrassShowCmd(TEXT("OTG.Grass.Show"), TEXT("OTG.Grass.Show <kind>: the free view flown to where it grows"), FCmd::CreateLambda([](const TArray<FString>& A, UWorld* W) {
+		if (AOTGRound* R = RoundIn(W)) if (A.Num()) R->ShowGrass(A[0]);
+	}));
+	FAutoConsoleCommandWithWorldAndArgs DesignClickCmd(TEXT("OTG.Trees.Click"), TEXT("OTG.Trees.Click <0..1 across> <0..1 down> [pick|tree|rock|out]: (testing) a click on the course in the designer's trees tab"),
+		FCmd::CreateLambda([](const TArray<FString>& A, UWorld* W) {
+			AOTGRound* R = RoundIn(W);
+			if (!R || A.Num() < 2) return;
+			if (A.Num() > 2) R->SetDesignTool(A[2] == TEXT("tree") ? 1 : A[2] == TEXT("rock") ? 2 : A[2] == TEXT("out") ? 3 : 0);
+			R->DesignClickAt(FCString::Atod(*A[0]), FCString::Atod(*A[1]));
+		}));
 	FAutoConsoleCommandWithWorldAndArgs GrassCmd(TEXT("OTG.Round.GrassDesigner"), TEXT("The course designer (the R key; OTG.Round.GrassDesigner trees: on its trees tab)"), FCmd::CreateLambda([](const TArray<FString>& A, UWorld* W) { if (AOTGRound* R = RoundIn(W)) R->ToggleGrassDesigner(A.Num() && A[0] == TEXT("trees") ? 1 : -1); }));
 	FAutoConsoleCommandWithWorldAndArgs WxCmd(TEXT("OTG.Round.WeatherPanel"), TEXT("The weather panel (the L key)"), FCmd::CreateLambda([](const TArray<FString>&, UWorld* W) { if (AOTGRound* R = RoundIn(W)) R->ToggleWeatherPanel(); }));
 	FAutoConsoleCommandWithWorldAndArgs TimeCmd(TEXT("OTG.Round.Time"), TEXT("OTG.Round.Time <hour, 5.5-19.5> | auto: (testing) the time of day"), FCmd::CreateLambda([](const TArray<FString>& A, UWorld* W) {
@@ -722,7 +747,13 @@ void AOTGRound::AimAt(double X, double Z)
 // along in 2 m steps against the course's heights, then halved down to 5 cm
 void AOTGRound::AimAlongRay(const FVector& Origin, const FVector& Dir)
 {
-	if (!Data) return;
+	FVector Hit;
+	if (GroundAlongRay(Origin, Dir, Hit)) AimAtWorld(Hit);
+}
+
+bool AOTGRound::GroundAlongRay(const FVector& Origin, const FVector& Dir, FVector& Out) const
+{
+	if (!Data) return false;
 	auto Below = [&](const FVector& W) {
 		const FVector C = Data->WorldToCourse(W);
 		const double G = Course.HeightAt(C.X, C.Z);
@@ -735,13 +766,14 @@ void AOTGRound::AimAlongRay(const FVector& Origin, const FVector& Dir)
 		if (Below(Origin + D * T)) { B = T; break; }
 		A = T;
 	}
-	if (B < 0) return;
+	if (B < 0) return false;
 	for (int32 k = 0; k < 14; k++)
 	{
 		const double M = (A + B) / 2;
 		(Below(Origin + D * M) ? B : A) = M;
 	}
-	AimAtWorld(Origin + D * B);
+	Out = Origin + D * B;
+	return true;
 }
 
 void AOTGRound::AimAtWorld(const FVector& W)

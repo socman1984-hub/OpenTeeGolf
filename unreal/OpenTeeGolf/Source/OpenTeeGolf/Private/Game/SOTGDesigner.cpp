@@ -53,6 +53,14 @@ const otg::FGrassKind* SOTGGrassDesigner::Default(const FString& Name) const
 	return otg::FGrass::DefaultKinds().FindByPredicate([&](const otg::FGrassKind& K) { return K.Name == Name; });
 }
 
+void SOTGGrassDesigner::ApplyColours()
+{
+	if (!Course.IsValid()) return;
+	Course->SetGrassColours(Edit);
+	bUnsaved = true;
+	Status = TEXT("Not saved yet");
+}
+
 void SOTGGrassDesigner::Apply()
 {
 	if (!Course.IsValid()) return;
@@ -81,6 +89,8 @@ TSharedRef<SWidget> SOTGGrassDesigner::KindRow(int32 I)
 		Head->AddSlot().AutoWidth().VAlign(VAlign_Center).Padding(4, 0, 0, 0)
 			[Button(bRough ? TEXT("Move to tall grass") : TEXT("Move to the rough"), [this, I, bRough]() { Edit[I].Masks = { bRough ? TEXT("native") : TEXT("rough") }; Apply(); Rebuild(); }, 11)];
 	}
+	if (K.bOn)
+		Head->AddSlot().AutoWidth().VAlign(VAlign_Center).Padding(4, 0, 0, 0)[Button(TEXT("Show me"), [this, I]() { if (OnShow && Edit.IsValidIndex(I)) OnShow(Edit[I].Name); }, 11)];
 	if (K.bAdded)
 		Head->AddSlot().AutoWidth().VAlign(VAlign_Center).Padding(4, 0, 0, 0)[Button(TEXT("Remove"), [this, I]() { Edit.RemoveAt(I); Apply(); Rebuild(); }, 11)];
 	V->AddSlot().AutoHeight().Padding(0, 6, 0, 2)[Head];
@@ -131,6 +141,47 @@ TSharedRef<SWidget> SOTGGrassDesigner::KindRow(int32 I)
 			[](const otg::FGrassKind& X) { return Cover(X); }, [](otg::FGrassKind& X, float F) { SetCover(X, F); },
 			[](const otg::FGrassKind& X) { return FString::Printf(TEXT("about %d%%"), FMath::RoundToInt(100 * Cover(X))); });
 	}
+
+	// its colour: tinted as you drag (nothing grown again), kept to what grass can look like
+	auto Colour = [this, I, &V](const FString& Label, float Lo, float Hi, float otg::FGrassKind::* Field, TFunction<FString(float)> Fmt) {
+		V->AddSlot().AutoHeight().Padding(18, 2, 0, 0)
+		[
+			SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)[SNew(SBox).WidthOverride(112)[Text(Label, 12, Soft)]]
+			+ SHorizontalBox::Slot().FillWidth(1).VAlign(VAlign_Center)
+			[
+				SNew(SSlider)
+				.Value_Lambda([this, I, Lo, Hi, Field]() { return Edit.IsValidIndex(I) ? FMath::Clamp((Edit[I].*Field - Lo) / (Hi - Lo), 0.f, 1.f) : 0.f; })
+				.OnValueChanged_Lambda([this, I, Lo, Hi, Field](float X) {
+					if (!Edit.IsValidIndex(I)) return;
+					// (a little stickiness at the kind's own colour, so it's easy to go back to)
+					float F = Lo + (Hi - Lo) * X;
+					const float Own = Field == &otg::FGrassKind::Hue ? 0.f : 1.f;
+					if (FMath::Abs(F - Own) < (Hi - Lo) * 0.02f) F = Own;
+					Edit[I].*Field = F;
+					ApplyColours();
+				})
+			]
+			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(8, 0, 0, 0)
+			[
+				SNew(SBox).WidthOverride(140)[SNew(STextBlock).Font(Font(12, "Bold")).ColorAndOpacity(Ink).Text_Lambda([this, I, Field, Fmt]() { return FText::FromString(Edit.IsValidIndex(I) ? Fmt(Edit[I].*Field) : FString()); })]
+			]
+		];
+	};
+	using G = otg::FGrassKind;
+	// (a Megascans plant's material turns its strength and brightness, not its hue)
+	if (K.Fab.Num())
+		V->AddSlot().AutoHeight().Padding(18, 2, 0, 0)[Text(TEXT("Its colour: a Megascans plant keeps its own hue"), 11, Soft)];
+	else
+	Colour(TEXT("Colour"), -G::HueMax, G::HueMax, &G::Hue, [](float F) {
+		const int32 D = FMath::RoundToInt(F);
+		return D == 0 ? FString(TEXT("as it grows")) : D < 0 ? FString::Printf(TEXT("%d° golder"), -D) : FString::Printf(TEXT("%d° bluer"), D);
+	});
+	Colour(TEXT("Colour strength"), G::SatLo, G::SatHi, &G::Sat, [](float F) { return FMath::IsNearlyEqual(F, 1.f) ? FString(TEXT("as it grows")) : FString::Printf(TEXT("%d%%"), FMath::RoundToInt(F * 100)); });
+	Colour(TEXT("Brightness"), G::BrightLo, G::BrightHi, &G::Bright, [](float F) { return FMath::IsNearlyEqual(F, 1.f) ? FString(TEXT("as it grows")) : FString::Printf(TEXT("%d%%"), FMath::RoundToInt(F * 100)); });
+	if (!K.IsOwnColour())
+		V->AddSlot().AutoHeight().Padding(130, 2, 0, 0).HAlign(HAlign_Left)
+			[Button(TEXT("Its own colour"), [this, I]() { if (!Edit.IsValidIndex(I)) return; Edit[I].Hue = 0; Edit[I].Sat = 1; Edit[I].Bright = 1; ApplyColours(); Rebuild(); }, 11)];
 	return V;
 }
 
@@ -240,7 +291,239 @@ void SOTGTreeDesigner::Open(AOTGRuntimeCourse* InCourse)
 	Edit = InCourse ? InCourse->TreeDesign() : FOTGTreeDesign();
 	Species = InCourse ? InCourse->TreeSpecies() : TArray<TPair<FString, int32>>();
 	Status.Empty();
+	bPicked = false;
+	// (the species to add: the course's own first, then the rest the game knows)
+	SpeciesOpts.Reset();
+	for (const TPair<FString, int32>& S : Species) SpeciesOpts.Add(MakeShared<FString>(S.Key));
+	for (const FString& K : FOTGTreeDesign::AllSpecies())
+		if (!Species.ContainsByPredicate([&](const TPair<FString, int32>& S) { return S.Key == K; })) SpeciesOpts.Add(MakeShared<FString>(K));
+	if (!AddKind.IsValid() || !SpeciesOpts.ContainsByPredicate([&](const TSharedPtr<FString>& P) { return *P == *AddKind; })) AddKind = SpeciesOpts.Num() ? SpeciesOpts[0] : nullptr;
 	Rebuild();
+}
+
+void SOTGTreeDesigner::Reselect()
+{
+	if (!bPicked || !Course.IsValid()) return;
+	FOTGPicked P;
+	if (Course->Picked(Picked.bRock, Picked.X, Picked.Z, P)) Picked = P;
+	else bPicked = false;   // (taken out)
+}
+
+bool SOTGTreeDesigner::WorldClick(const FVector& Origin, const FVector& Dir, bool bGround, const FVector& Ground)
+{
+	if (!Course.IsValid()) return false;
+	const double MaxT = bGround ? FVector::Dist(Origin, Ground) : 1e9;
+	if (Tool == 0 || Tool == 3)
+	{
+		FOTGPicked P;
+		if (!Course->Pick(Origin, Dir, MaxT, P))
+		{
+			if (Tool == 0) { bPicked = false; Status = TEXT("Nothing there: click a tree or a rock"); Rebuild(); }
+			return true;
+		}
+		if (Tool == 3)
+		{
+			// taken out (one added here: gone altogether)
+			if (P.bRock) { if (P.bAdded) Edit.ClearRockEdit(P.X, P.Z); else Edit.RockEdit(P.X, P.Z).bRemoved = true; }
+			else { if (P.bAdded) Edit.ClearTreeEdit(P.X, P.Z); else Edit.TreeEdit(P.X, P.Z).bRemoved = true; }
+			if (bPicked && Picked.bRock == P.bRock && FMath::Abs(Picked.X - P.X) < 0.15 && FMath::Abs(Picked.Z - P.Z) < 0.15) bPicked = false;
+			Apply();
+			Status = P.bRock ? TEXT("Rock taken out (not saved yet)") : TEXT("Tree taken out (not saved yet)");
+			Rebuild();
+			return true;
+		}
+		bPicked = true;
+		Picked = P;
+		const FOTGTreeEdit* E = P.bRock ? nullptr : Edit.TreeEditAt(P.X, P.Z);
+		PickedBaseM = E && !E->bAdded ? P.HeightM / FMath::Max(0.1f, E->Size) : P.HeightM;
+		Rebuild();
+		return true;
+	}
+	if (!bGround) return true;
+	if (Tool == 1)
+	{
+		if (!AddKind.IsValid()) return true;
+		const FVector2D At = Course->CourseXZ(Ground);
+		FOTGTreeEdit& E = Edit.TreeEdit(At.X, At.Y);
+		E.bAdded = true; E.bRemoved = false; E.Kind = *AddKind; E.Height = AddHeight; E.Size = 1.f;
+		Apply();
+		Status = FString::Printf(TEXT("%s added (not saved yet)"), *FOTGTreeDesign::SpeciesLabel(*AddKind));
+	}
+	else
+	{
+		const FVector2D At = Course->RockXY(Ground);
+		FOTGRockEdit& E = Edit.RockEdit(At.X, At.Y);
+		E.bAdded = true; E.bRemoved = false; E.Size = AddRock;
+		Apply();
+		Status = TEXT("Rock added (not saved yet)");
+	}
+	Rebuild();
+	return true;
+}
+
+void SOTGTreeDesigner::EditPicked(const FString& Field, const FString& Value)
+{
+	if (!bPicked) { UE_LOG(LogTemp, Warning, TEXT("OTG.Trees.Edit: nothing picked")); return; }
+	const double X = Picked.X, Z = Picked.Z;
+	const float V = FCString::Atof(*Value);
+	if (Picked.bRock)
+	{
+		if (Field == TEXT("out")) { const FOTGRockEdit* E = Edit.RockEditAt(X, Z); if (E && E->bAdded) Edit.ClearRockEdit(X, Z); else Edit.RockEdit(X, Z).bRemoved = true; bPicked = false; }
+		else if (Field == TEXT("reset")) Edit.ClearRockEdit(X, Z);
+		else Edit.RockEdit(X, Z).Size = FMath::Clamp(V, FOTGRockEdit::SizeLo, FOTGRockEdit::SizeHi);
+	}
+	else if (Field == TEXT("out")) { const FOTGTreeEdit* E = Edit.TreeEditAt(X, Z); if (E && E->bAdded) Edit.ClearTreeEdit(X, Z); else Edit.TreeEdit(X, Z).bRemoved = true; bPicked = false; }
+	else if (Field == TEXT("reset")) Edit.ClearTreeEdit(X, Z);
+	else
+	{
+		FOTGTreeEdit& E = Edit.TreeEdit(X, Z);
+		if (Field == TEXT("size")) E.Size = FMath::Clamp(V, FOTGTreeEdit::SizeLo, FOTGTreeEdit::SizeHi);
+		else if (Field == TEXT("height")) E.Height = FMath::Clamp(V, FOTGTreeEdit::HeightLo, FOTGTreeEdit::HeightHi);
+		else if (Field == TEXT("hue")) E.Hue = FMath::Clamp(V, FOTGTreeEdit::HueLo, FOTGTreeEdit::HueHi);
+		else if (Field == TEXT("bright")) E.Bright = FMath::Clamp(V, FOTGTreeEdit::BrightLo, FOTGTreeEdit::BrightHi);
+		else if (Field == TEXT("kind")) E.Kind = Value;
+		else if (Field == TEXT("model") && (Value.IsEmpty() || FOTGTreeDesign::Models().Contains(Value))) E.Model = Value;
+	}
+	Apply();
+	Reselect();
+	Rebuild();
+}
+
+TSharedRef<SWidget> SOTGTreeDesigner::PickPanel()
+{
+	TSharedRef<SVerticalBox> V = SNew(SVerticalBox);
+	const double X = Picked.X, Z = Picked.Z;
+	auto Row = [&](const FString& Label, TSharedRef<SWidget> W) {
+		V->AddSlot().AutoHeight().Padding(18, 2, 0, 0)
+		[
+			SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)[SNew(SBox).WidthOverride(112)[Text(Label, 12, Soft)]]
+			+ SHorizontalBox::Slot().FillWidth(1).VAlign(VAlign_Center)[W]
+		];
+	};
+	// (a slider on a number of the picked one's edit: made when first moved, drawn again when let go)
+	auto Slider = [&](const FString& Label, float Lo, float Hi, TFunction<float()> Get, TFunction<void(float)> Set, TFunction<FString()> Fmt) {
+		Row(Label,
+			SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot().FillWidth(1).VAlign(VAlign_Center)
+			[
+				SNew(SSlider)
+				.Value_Lambda([Lo, Hi, Get]() { return FMath::Clamp((Get() - Lo) / (Hi - Lo), 0.f, 1.f); })
+				.OnValueChanged_Lambda([Lo, Hi, Set](float F) { Set(Lo + (Hi - Lo) * F); })
+				.OnMouseCaptureEnd_Lambda([this]() { Apply(); Reselect(); })
+				.OnControllerCaptureEnd_Lambda([this]() { Apply(); Reselect(); })
+			]
+			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(8, 0, 0, 0)
+			[
+				SNew(SBox).WidthOverride(130)[SNew(STextBlock).Font(Font(12, "Bold")).ColorAndOpacity(Ink).Text_Lambda([Fmt]() { return FText::FromString(Fmt()); })]
+			]);
+	};
+	if (Picked.bRock)
+	{
+		V->AddSlot().AutoHeight().Padding(0, 4, 0, 2)[Text(Picked.bAdded ? TEXT("A rock you added") : TEXT("A rock"), 14, Ink, "Bold")];
+		if (Picked.bAdded)
+			Slider(TEXT("Size"), FOTGRockEdit::SizeLo, FOTGRockEdit::SizeHi,
+				[this, X, Z]() { const FOTGRockEdit* E = Edit.RockEditAt(X, Z); return E ? E->Size : 1.f; },
+				[this, X, Z](float F) { Edit.RockEdit(X, Z).Size = FMath::RoundToFloat(F * 10) / 10; },
+				[this, X, Z]() { const FOTGRockEdit* E = Edit.RockEditAt(X, Z); return FString::Printf(TEXT("%.1f m across"), E ? E->Size : 1.f); });
+		else
+			Slider(TEXT("Size"), FOTGRockEdit::SizeLo, FOTGRockEdit::SizeHi,
+				[this, X, Z]() { const FOTGRockEdit* E = Edit.RockEditAt(X, Z); return E ? E->Size : 1.f; },
+				[this, X, Z](float F) { Edit.RockEdit(X, Z).Size = FMath::RoundToFloat(F * 20) / 20; },
+				[this, X, Z]() { const FOTGRockEdit* E = Edit.RockEditAt(X, Z); const float S = E ? E->Size : 1.f; return FMath::IsNearlyEqual(S, 1.f) ? FString(TEXT("as mapped")) : FString::Printf(TEXT("%d%%"), FMath::RoundToInt(S * 100)); });
+		V->AddSlot().AutoHeight().Padding(130, 6, 0, 0)
+		[
+			SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot().AutoWidth().Padding(0, 0, 6, 0)[Button(TEXT("Take it out"), [this, X, Z]() {
+				const FOTGRockEdit* E = Edit.RockEditAt(X, Z);
+				if (E && E->bAdded) Edit.ClearRockEdit(X, Z); else Edit.RockEdit(X, Z).bRemoved = true;
+				bPicked = false; Apply(); Status = TEXT("Rock taken out (not saved yet)"); Rebuild();
+			}, 11)]
+			+ SHorizontalBox::Slot().AutoWidth()[Button(TEXT("As it was"), [this, X, Z]() {
+				const FOTGRockEdit* E = Edit.RockEditAt(X, Z);
+				if (E && E->bAdded) { Edit.RockEdit(X, Z).Size = AddRock; } else Edit.ClearRockEdit(X, Z);
+				Apply(); Reselect(); Rebuild();
+			}, 11)]
+		];
+		return V;
+	}
+
+	const FOTGTreeEdit* E0 = Edit.TreeEditAt(X, Z);
+	V->AddSlot().AutoHeight().Padding(0, 4, 0, 2)
+	[
+		SNew(SHorizontalBox)
+		+ SHorizontalBox::Slot().AutoWidth()[Text(FOTGTreeDesign::SpeciesLabel(Picked.Kind), 14, Ink, "Bold")]
+		+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Bottom).Padding(6, 0, 0, 1)
+			[Text(FString::Printf(TEXT("%d m tall%s%s"), FMath::RoundToInt(Picked.HeightM), Picked.bAdded ? TEXT("  ·  added") : TEXT(""), E0 && !Picked.bAdded ? TEXT("  ·  changed") : TEXT("")), 11, Soft)]
+	];
+	// its species (the model family it's drawn from follows)
+	Row(TEXT("Species"),
+		SNew(SComboBox<TSharedPtr<FString>>)
+		.OptionsSource(&SpeciesOpts)
+		.OnGenerateWidget_Lambda([](TSharedPtr<FString> P) { return StaticCastSharedRef<SWidget>(Text(FOTGTreeDesign::SpeciesLabel(*P), 12)); })
+		.OnSelectionChanged_Lambda([this, X, Z](TSharedPtr<FString> P, ESelectInfo::Type How) {
+			if (!P.IsValid() || How == ESelectInfo::Direct) return;
+			FOTGTreeEdit& E = Edit.TreeEdit(X, Z);
+			E.Kind = *P;
+			Apply(); Reselect(); Rebuild();
+		})
+		[SNew(STextBlock).Font(Font(12)).Text(FText::FromString(FOTGTreeDesign::SpeciesLabel(Picked.Kind)))]);
+	// its model: the next at each click (its species' first)
+	Row(TEXT("Drawn as"), Button(E0 && !E0->Model.IsEmpty() ? FOTGTreeDesign::ModelLabel(E0->Model) : FString(TEXT("As its species")), [this, X, Z]() {
+		FOTGTreeEdit& E = Edit.TreeEdit(X, Z);
+		TArray<FString> M = FOTGTreeDesign::Models();
+		M.Insert(FString(), 0);
+		E.Model = M[(M.IndexOfByKey(E.Model) + 1) % M.Num()];
+		Apply(); Reselect(); Rebuild();
+	}, 12));
+	if (Picked.bAdded)
+		Slider(TEXT("Height"), FOTGTreeEdit::HeightLo, FOTGTreeEdit::HeightHi,
+			[this, X, Z]() { const FOTGTreeEdit* E = Edit.TreeEditAt(X, Z); return E ? E->Height : 12.f; },
+			[this, X, Z](float F) { Edit.TreeEdit(X, Z).Height = FMath::RoundToFloat(F * 2) / 2; },
+			[this, X, Z]() { const FOTGTreeEdit* E = Edit.TreeEditAt(X, Z); return FString::Printf(TEXT("%.1f m"), E ? E->Height : 12.f); });
+	else
+	{
+		const double Base = PickedBaseM;
+		Slider(TEXT("Height"), FOTGTreeEdit::SizeLo, FOTGTreeEdit::SizeHi,
+			[this, X, Z]() { const FOTGTreeEdit* E = Edit.TreeEditAt(X, Z); return E ? E->Size : 1.f; },
+			[this, X, Z](float F) { Edit.TreeEdit(X, Z).Size = FMath::RoundToFloat(F * 20) / 20; },
+			[this, X, Z, Base]() { const FOTGTreeEdit* E = Edit.TreeEditAt(X, Z); const float S = E ? E->Size : 1.f; return FString::Printf(TEXT("%.1f m (%d%%)"), Base * S, FMath::RoundToInt(S * 100)); });
+	}
+	if (!Picked.bColourable)
+		Row(TEXT("Leaf colour"), Text(TEXT("this model keeps its own colour"), 11, Soft));
+	else
+	{
+		Slider(TEXT("Leaf colour"), FOTGTreeEdit::HueLo, FOTGTreeEdit::HueHi,
+			[this, X, Z]() { const FOTGTreeEdit* E = Edit.TreeEditAt(X, Z); return E ? E->Hue : 0.f; },
+			[this, X, Z](float F) { float H = FMath::RoundToFloat(F); if (FMath::Abs(H) < 2) H = 0; Edit.TreeEdit(X, Z).Hue = H; },
+			[this, X, Z]() {
+				const FOTGTreeEdit* E = Edit.TreeEditAt(X, Z);
+				const int32 H = E ? FMath::RoundToInt(E->Hue) : 0;
+				return H == 0 ? FString(TEXT("as it grows")) : H < -45 ? FString(TEXT("autumn red")) : H < -20 ? FString(TEXT("autumn gold")) : H < 0 ? FString(TEXT("yellower")) : FString(TEXT("bluer"));
+			});
+		Slider(TEXT("Leaf brightness"), FOTGTreeEdit::BrightLo, FOTGTreeEdit::BrightHi,
+			[this, X, Z]() { const FOTGTreeEdit* E = Edit.TreeEditAt(X, Z); return E ? E->Bright : 1.f; },
+			[this, X, Z](float F) { float B = FMath::RoundToFloat(F * 20) / 20; Edit.TreeEdit(X, Z).Bright = B; },
+			[this, X, Z]() { const FOTGTreeEdit* E = Edit.TreeEditAt(X, Z); const float B = E ? E->Bright : 1.f; return FMath::IsNearlyEqual(B, 1.f) ? FString(TEXT("as it grows")) : FString::Printf(TEXT("%d%%"), FMath::RoundToInt(B * 100)); });
+	}
+	V->AddSlot().AutoHeight().Padding(130, 6, 0, 0)
+	[
+		SNew(SHorizontalBox)
+		+ SHorizontalBox::Slot().AutoWidth().Padding(0, 0, 6, 0)[Button(TEXT("Take it out"), [this, X, Z]() {
+			const FOTGTreeEdit* E = Edit.TreeEditAt(X, Z);
+			if (E && E->bAdded) Edit.ClearTreeEdit(X, Z); else Edit.TreeEdit(X, Z).bRemoved = true;
+			bPicked = false; Apply(); Status = TEXT("Tree taken out (not saved yet)"); Rebuild();
+		}, 11)]
+		+ SHorizontalBox::Slot().AutoWidth()[Button(Picked.bAdded ? TEXT("As added") : TEXT("As it was"), [this, X, Z]() {
+			const FOTGTreeEdit* E = Edit.TreeEditAt(X, Z);
+			if (E && E->bAdded) { FOTGTreeEdit& M = Edit.TreeEdit(X, Z); M.Model.Empty(); M.Size = 1; M.Hue = 0; M.Bright = 1; }
+			else Edit.ClearTreeEdit(X, Z);
+			Apply(); Reselect();
+			if (bPicked && !Picked.bRock) PickedBaseM = Picked.HeightM;
+			Rebuild();
+		}, 11)]
+	];
+	return V;
 }
 
 void SOTGTreeDesigner::Apply()
@@ -278,8 +561,8 @@ void SOTGTreeDesigner::Rebuild()
 				SNew(SSlider)
 				.Value_Lambda([this, Lo, Hi, Get]() { return FMath::Clamp((*Get(Edit) - Lo) / (Hi - Lo), 0.f, 1.f); })
 				.OnValueChanged_Lambda([this, Lo, Hi, Get](float X) { *Get(Edit) = FMath::RoundToFloat((Lo + (Hi - Lo) * X) * 20) / 20; })
-				.OnMouseCaptureEnd_Lambda([this]() { Apply(); })
-				.OnControllerCaptureEnd_Lambda([this]() { Apply(); })
+				.OnMouseCaptureEnd_Lambda([this]() { Apply(); Reselect(); })
+				.OnControllerCaptureEnd_Lambda([this]() { Apply(); Reselect(); })
 			]
 			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(8, 0, 0, 0)
 			[
@@ -290,7 +573,43 @@ void SOTGTreeDesigner::Rebuild()
 	auto Times = [](float F) { return F < 0.025f ? FString(TEXT("none")) : FMath::IsNearlyEqual(F, 1.f) ? FString(TEXT("as mapped")) : FString::Printf(TEXT("%d%%"), FMath::RoundToInt(F * 100)); };
 	auto SizeFmt = [](float F) { return FMath::IsNearlyEqual(F, 1.f) ? FString(TEXT("as mapped")) : FString::Printf(TEXT("%d%%"), FMath::RoundToInt(F * 100)); };
 
-	List->AddSlot().AutoHeight().Padding(0, 6, 0, 0)[Text(TEXT("All trees"), 15, Gold, "Bold")];
+	// one at a time: what a click on the course does
+	List->AddSlot().AutoHeight().Padding(0, 6, 0, 0)[Text(TEXT("Click on the course to"), 15, Gold, "Bold")];
+	{
+		TSharedRef<SHorizontalBox> Tools = SNew(SHorizontalBox);
+		const TCHAR* Names[] = { TEXT("Pick one"), TEXT("Add a tree"), TEXT("Add a rock"), TEXT("Take out") };
+		for (int32 t = 0; t < 4; t++)
+			Tools->AddSlot().AutoWidth().Padding(0, 0, 4, 0)[Button(Names[t], [this, t]() { Tool = t; Rebuild(); }, 12, Tool == t)];
+		List->AddSlot().AutoHeight().Padding(0, 4, 0, 0)[Tools];
+	}
+	if (Tool == 1)
+	{
+		List->AddSlot().AutoHeight().Padding(18, 4, 0, 0)
+		[
+			SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)[SNew(SBox).WidthOverride(112)[Text(TEXT("Species"), 12, Soft)]]
+			+ SHorizontalBox::Slot().FillWidth(1).VAlign(VAlign_Center)
+			[
+				SNew(SComboBox<TSharedPtr<FString>>)
+				.OptionsSource(&SpeciesOpts)
+				.InitiallySelectedItem(AddKind)
+				.OnGenerateWidget_Lambda([](TSharedPtr<FString> P) { return StaticCastSharedRef<SWidget>(Text(FOTGTreeDesign::SpeciesLabel(*P), 12)); })
+				.OnSelectionChanged_Lambda([this](TSharedPtr<FString> P, ESelectInfo::Type) { if (P.IsValid()) AddKind = P; })
+				[SNew(STextBlock).Font(Font(12)).Text_Lambda([this]() { return FText::FromString(AddKind.IsValid() ? FOTGTreeDesign::SpeciesLabel(*AddKind) : FString()); })]
+			]
+		];
+		Slider(List, TEXT("Height"), FOTGTreeEdit::HeightLo, FOTGTreeEdit::HeightHi, [this](FOTGTreeDesign&) { return &AddHeight; }, [](float F) { return FString::Printf(TEXT("%.1f m"), F); });
+	}
+	else if (Tool == 2)
+		Slider(List, TEXT("Size"), FOTGRockEdit::SizeLo, FOTGRockEdit::SizeHi, [this](FOTGTreeDesign&) { return &AddRock; }, [](float F) { return FString::Printf(TEXT("%.1f m across"), F); });
+	List->AddSlot().AutoHeight().Padding(18, 2, 0, 0)[SNew(STextBlock).Font(Font(11)).ColorAndOpacity(Soft).WrapTextAt(450).Text(FText::FromString(
+		Tool == 0 ? TEXT("Click a tree or a rock to change it. Fly with F (W A S D, right mouse to look) to get close.")
+		: Tool == 1 ? TEXT("Click the ground where it should stand (anywhere you like). The ball meets it too.")
+		: Tool == 2 ? TEXT("Click the ground where it should lie.")
+		: TEXT("Click a tree or a rock to take it out.")))];
+	if (bPicked) List->AddSlot().AutoHeight().Padding(0, 4, 0, 0)[PickPanel()];
+
+	List->AddSlot().AutoHeight().Padding(0, 12, 0, 0)[Text(TEXT("All trees"), 15, Gold, "Bold")];
 	Slider(List, TEXT("Size"), 0.5f, 1.8f, [](FOTGTreeDesign& D) { return &D.AllSize; }, SizeFmt);
 	Slider(List, TEXT("How many"), 0.f, 2.5f, [](FOTGTreeDesign& D) { return &D.AllDensity; }, Times);
 
@@ -356,12 +675,14 @@ void SOTGTreeDesigner::Rebuild()
 			if (!Course.IsValid()) return;
 			Edit = Course->SavedTreeDesign();
 			Apply();
+			Reselect();
 			Status = TEXT("Back as it was saved");
 			Rebuild();
 		}, 12)]
 		+ SHorizontalBox::Slot().AutoWidth()[Button(TEXT("As mapped"), [this]() {
 			Edit = FOTGTreeDesign();
 			Apply();
+			Reselect();
 			Status = TEXT("As mapped (not saved yet)");
 			Rebuild();
 		}, 12)]

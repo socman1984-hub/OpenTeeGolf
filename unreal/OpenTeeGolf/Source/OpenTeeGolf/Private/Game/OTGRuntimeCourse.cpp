@@ -22,6 +22,7 @@
 #include "Components/StaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/Texture2D.h"
+#include "Materials/Material.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Materials/MaterialInterface.h"
 #include "Materials/MaterialParameterCollection.h"
@@ -93,7 +94,6 @@ namespace
 	// Unreal's own trees (build_course.py's UE_* lists): broadleaf by these names, conifers by these
 	const TCHAR* BroadleafFolders[] = { TEXT("/Game/EuropeanBeech/Geometry/SimpleWind"), TEXT("/Game/EuropeanHornbeam/Geometry/SimpleWind") };
 	const TCHAR* ConiferFolders[] = { TEXT("/Game/OTG_Conifers"), TEXT("/Game/Megaplant_Library/Tree_Norway_Spruce"), TEXT("/Game/Megaplant_Library/Tree_Baltic_Pine") };
-	const TSet<FString> Conifers = { TEXT("pine"), TEXT("loblolly"), TEXT("redcedar"), TEXT("douglasfir"), TEXT("ponderosa"), TEXT("spruce"), TEXT("cypress"), TEXT("baldcypress"), TEXT("hemlock"), TEXT("juniper"), TEXT("holly") };
 	const TSet<FString> Pines = { TEXT("pine"), TEXT("loblolly"), TEXT("redcedar"), TEXT("douglasfir"), TEXT("ponderosa") };
 	constexpr int32 TreeCull[2] = { 90000, 130000 };
 	constexpr int32 BoulderCull[2] = { 35000, 45000 };
@@ -544,11 +544,15 @@ void AOTGRuntimeCourse::BuildTrees()
 	if (!Hornbeams.Num()) Hornbeams = Broad;
 	if (!Broad.Num() && !Cones.Num()) { UE_LOG(LogOTGRuntimeCourse, Warning, TEXT("No tree models in the game")); return; }
 	const FOTGTreeDesign& Design = Data->TreeDesign;
-	TMap<UStaticMesh*, TArray<FTransform>> ByMesh;
-	auto Place = [&](const FString& Kind, double X, double Y, double Zc, double H, double Scale) {
-		const FString Model = Design.For(Kind).Model;
+	struct FGroup { TArray<FTransform> Xfs; TArray<FLinearColor> Tints; bool bTinted = false; };
+	TMap<UStaticMesh*, FGroup> ByMesh;
+	DrawnTrees.Reset();
+	// (E: the tree's own changes from the designer, if it has any - its species, model, leaf colour)
+	auto Place = [&](const FString& InKind, double X, double Y, double Zc, double H, double Scale, const FOTGTreeEdit* E) {
+		const FString Kind = E && !E->Kind.IsEmpty() ? E->Kind : InKind;
+		const FString Model = E && !E->Model.IsEmpty() ? E->Model : Design.For(Kind).Model;
 		const TArray<FTreeModel>& Pool = Model == TEXT("beech") ? Beeches : Model == TEXT("hornbeam") ? Hornbeams : Model == TEXT("spruce") ? Spruces : Model == TEXT("pine") ? PineModels
-			: Conifers.Contains(Kind) ? (Pines.Contains(Kind) ? PineModels : Spruces) : Broad;
+			: FOTGTreeDesign::IsConifer(Kind) ? (Pines.Contains(Kind) ? PineModels : Spruces) : Broad;
 		if (!Pool.Num()) return;
 		TArray<FTreeModel> Near = Pool;
 		Near.Sort([H](const FTreeModel& A, const FTreeModel& B) { return FMath::Abs(A.Height - H) < FMath::Abs(B.Height - H); });
@@ -557,34 +561,70 @@ void AOTGRuntimeCourse::BuildTrees()
 		// (scaled to its height within reason - further when the designer made it bigger or smaller)
 		const double S = FMath::Clamp(H / FMath::Max(1.0, M.Height), 0.7 * FMath::Min(1.0, Scale), 1.4 * FMath::Max(1.0, Scale)) * (0.92 + 0.16 * Hash01(X, Y, 5.3));
 		const double Yaw = Hash01(X, Y, 2.9) * 360;
-		ByMesh.FindOrAdd(M.Mesh).Add(FTransform(FRotator(0, Yaw, 0), Data->LevelOrigin + FVector(X, Y, Zc - 10), FVector(S)));
+		FGroup& G = ByMesh.FindOrAdd(M.Mesh);
+		const FVector Foot = Data->LevelOrigin + FVector(X, Y, Zc - 10);
+		G.Xfs.Add(FTransform(FRotator(0, Yaw, 0), Foot, FVector(S)));
+		const FLinearColor T = E ? E->LeafTint() : FLinearColor(0, 0, 0, 0);
+		G.Tints.Add(T);
+		G.bTinted |= E && E->HasColour();
+		FDrawn& D = DrawnTrees.AddDefaulted_GetRef();
+		D.Base = Foot; D.H = M.Height * S; D.R = FMath::Max(150.0, D.H * 0.22); D.Kind = Kind; D.bAdded = E && E->bAdded; D.Mesh = M.Mesh;
 	};
 	if (TreeRecs.Num() == Data->Trees.Num())
 	{
-		Data->ForEachDesignedTree([&](int32 Src, double X, double Z, double Ground, float Scale) {
-			const FTreeRec& R = TreeRecs[Src];
-			const FOTGTreeShape& S = Data->Trees[Src];
-			const double Zc = R.Z + (Ground - Data->GroundAt(S.X, S.Z)) * 100.0;
-			Place(R.Kind, (X - Data->HeightX0) * 100.0, (Data->HeightZ1 - Z) * 100.0, Zc, R.H * Scale, Scale);
+		Data->ForEachDesignedTree([&](int32 Src, double X, double Z, double Ground, float Scale, const FOTGTreeEdit* E) {
+			const int32 n = DrawnTrees.Num();
+			if (Src < 0)
+			{
+				// (added in the designer: standing on the ground where it was put, its own height)
+				const double H = E->Height * E->Size * 100.0;
+				Place(E->Kind, (X - Data->HeightX0) * 100.0, (Data->HeightZ1 - Z) * 100.0, (Ground - Data->HeightBase) * 100.0, H, FMath::Max(0.3, H / 1500.0), E);
+			}
+			else
+			{
+				const FTreeRec& R = TreeRecs[Src];
+				const FOTGTreeShape& S = Data->Trees[Src];
+				const double Zc = R.Z + (Ground - Data->GroundAt(S.X, S.Z)) * 100.0;
+				Place(R.Kind, (X - Data->HeightX0) * 100.0, (Data->HeightZ1 - Z) * 100.0, Zc, R.H * Scale, Scale, E);
+			}
+			if (DrawnTrees.Num() > n) { DrawnTrees.Last().X = X; DrawnTrees.Last().Z = Z; }
 		});
 	}
 	else
 	{
 		UE_LOG(LogOTGRuntimeCourse, Warning, TEXT("trees.json (%d) and play.json (%d) disagree: the trees drawn as exported"), TreeRecs.Num(), Data->Trees.Num());
-		for (const FTreeRec& R : TreeRecs) Place(R.Kind, R.X, R.Y, R.Z, R.H, 1.0);
+		for (const FTreeRec& R : TreeRecs) Place(R.Kind, R.X, R.Y, R.Z, R.H, 1.0, nullptr);
+		DrawnTrees.Reset();   // (no designing them one at a time: they aren't the ball's trees)
 	}
 	int32 Standins = 0;
+	TSet<UStaticMesh*> Colourable;
 	for (auto& P : ByMesh)
 	{
-		UHierarchicalInstancedStaticMeshComponent* C = Instances(P.Key, P.Value, TreeCull[0], TreeCull[1]);
+		UHierarchicalInstancedStaticMeshComponent* C = Instances(P.Key, P.Value.Xfs, TreeCull[0], TreeCull[1]);
+		// (trees given their own leaf colour: the leaves' material reads it per tree - M_TreeLeaves)
+		if (P.Value.bTinted)
+		{
+			C->SetNumCustomDataFloats(3);
+			for (int32 i = 0; i < P.Value.Tints.Num(); i++)
+				if (!P.Value.Tints[i].Equals(FLinearColor(0, 0, 0, 0)))
+					C->SetCustomData(i, TArray<float>({ P.Value.Tints[i].R, P.Value.Tints[i].G, P.Value.Tints[i].B }), false);
+			C->MarkRenderStateDirty();
+		}
 		TreeComps.Add(C);
 		// (the Fab trees' own materials need a master the game hasn't got: their stand-ins)
 		const TArray<FStaticMaterial>& Mats = P.Key->GetStaticMaterials();
 		for (int32 i = 0; i < Mats.Num(); i++)
 			if (Mats[i].MaterialInterface)
-				if (UMaterialInterface* Sub = Find<UMaterialInterface>(TEXT("MI_Standin_") + Mats[i].MaterialInterface->GetName())) { C->SetMaterial(i, Sub); Standins++; }
-		TreeCount += P.Value.Num();
+				if (UMaterialInterface* Sub = Find<UMaterialInterface>(TEXT("MI_Standin_") + Mats[i].MaterialInterface->GetName()))
+				{
+					C->SetMaterial(i, Sub);
+					Standins++;
+					// (the game's leaves: they take a tree's own colour - M_TreeLeaves)
+					if (Sub->GetBaseMaterial() && Sub->GetBaseMaterial()->GetName() == TEXT("M_TreeLeaves")) Colourable.Add(P.Key);
+				}
+		TreeCount += P.Value.Xfs.Num();
 	}
+	for (FDrawn& D : DrawnTrees) D.bColourable = Colourable.Contains(D.Mesh);
 	UE_LOG(LogOTGRuntimeCourse, Display, TEXT("Trees: %d from %d models (%d stand-in materials)%s"), TreeCount, ByMesh.Num(), Standins, Design.IsDefault() ? TEXT("") : TEXT(", as the course's tree designer has them"));
 }
 
@@ -614,12 +654,34 @@ void AOTGRuntimeCourse::BuildBoulders()
 	for (int32 k = 0; k < BoulderKinds; k++) Meshes.Add(Find<UStaticMesh>(FString::Printf(TEXT("SM_Boulder_%d"), k)));
 	const FOTGTreeDesign& Design = Data->TreeDesign;
 	TMap<int32, TArray<FTransform>> ByKind;
+	DrawnRocks.Reset();
+	auto Put = [&](const FRockRec& R, double Size, bool bAdded) {
+		const double S = R.Size / 100.0 * Size;
+		// (a bigger stone sits a little deeper)
+		const FVector At = Data->LevelOrigin + R.P - FVector(0, 0, (Size - 1) * R.Size * 0.15);
+		ByKind.FindOrAdd(R.Kind).Add(FTransform(FRotator(0, R.Yaw, 0), At, FVector(S, S, S * R.Flat)));
+		FDrawn& D = DrawnRocks.AddDefaulted_GetRef();
+		D.Base = At; D.R = FMath::Max(60.0, R.Size * Size * 0.5); D.H = R.Size * Size; D.X = R.P.X / 100.0; D.Z = R.P.Y / 100.0; D.bAdded = bAdded;
+	};
 	for (const FRockRec& R : RockRecs)
 	{
 		if (!Design.KeepRock(R.P.X / 100.0, R.P.Y / 100.0)) continue;
-		const double S = R.Size / 100.0 * Design.RockSize;
-		// (a bigger stone sits a little deeper)
-		ByKind.FindOrAdd(R.Kind).Add(FTransform(FRotator(0, R.Yaw, 0), Data->LevelOrigin + R.P - FVector(0, 0, (Design.RockSize - 1) * R.Size * 0.15), FVector(S, S, S * R.Flat)));
+		const FOTGRockEdit* E = Design.Rocks.Num() ? Design.RockEditAt(R.P.X / 100.0, R.P.Y / 100.0) : nullptr;
+		Put(R, Design.RockSize * (E ? E->Size : 1.f), false);
+	}
+	// (and the rocks added in the designer, on the ground where they were put: a stone of the game's
+	// six picked by where it is, its size across)
+	for (const FOTGRockEdit& E : Design.Rocks)
+	{
+		if (!E.bAdded || E.bRemoved) continue;
+		FRockRec R;
+		const double CX = Data->HeightX0 + E.X, CZ = Data->HeightZ1 - E.Z;
+		R.P = FVector(E.X * 100.0, E.Z * 100.0, (Data->GroundAt(CX, CZ) - Data->HeightBase) * 100.0);
+		R.Size = 100.0;
+		R.Yaw = FOTGTreeDesign::Hash01(E.X, E.Z, 7) * 360;
+		R.Flat = 0.6 + 0.3 * FOTGTreeDesign::Hash01(E.X, E.Z, 11);
+		R.Kind = int32(FOTGTreeDesign::Hash01(E.X, E.Z, 13) * BoulderKinds) % BoulderKinds;
+		Put(R, E.Size, true);
 	}
 	for (auto& P : ByKind) if (Meshes[P.Key]) { RockComps.Add(Instances(Meshes[P.Key], P.Value, BoulderCull[0], BoulderCull[1])); RockCount += P.Value.Num(); }
 	UE_LOG(LogOTGRuntimeCourse, Display, TEXT("Boulders: %d"), RockCount);
@@ -665,14 +727,74 @@ bool AOTGRuntimeCourse::NearestTree(const FString& Kind, const FVector& From, FV
 {
 	if (!Data || TreeRecs.Num() != Data->Trees.Num()) return false;
 	double Best = TNumericLimits<double>::Max();
-	Data->ForEachDesignedTree([&](int32 Src, double X, double Z, double Ground, float Scale) {
-		if (Data->Trees[Src].Kind != Kind) return;
+	Data->ForEachDesignedTree([&](int32 Src, double X, double Z, double Ground, float Scale, const FOTGTreeEdit* E) {
+		const FString& K = E && !E->Kind.IsEmpty() ? E->Kind : Data->Trees[Src].Kind;
+		if (K != Kind) return;
 		const FVector P = Data->CourseToWorld(FVector(X, Ground, Z));
 		const double D = FVector::DistSquared2D(P, From);
 		// (not right on top of you: one you can see)
-		if (D < Best && D > 2500.0 * 2500.0) { Best = D; OutBase = P; OutHeightCm = TreeRecs[Src].H * Scale; }
+		if (D < Best && D > 2500.0 * 2500.0) { Best = D; OutBase = P; OutHeightCm = Src >= 0 ? TreeRecs[Src].H * Scale : E->Height * E->Size * 100.0; }
 	});
 	return Best < TNumericLimits<double>::Max();
+}
+
+FVector2D AOTGRuntimeCourse::CourseXZ(const FVector& World) const
+{
+	if (!Data) return FVector2D::ZeroVector;
+	const FVector C = Data->WorldToCourse(World);
+	return FVector2D(C.X, C.Z);
+}
+
+FVector2D AOTGRuntimeCourse::RockXY(const FVector& World) const
+{
+	if (!Data) return FVector2D::ZeroVector;
+	const FVector L = World - Data->LevelOrigin;
+	return FVector2D(L.X / 100.0, L.Y / 100.0);
+}
+
+bool AOTGRuntimeCourse::Pick(const FVector& Origin, const FVector& Dir, double MaxT, FOTGPicked& Out) const
+{
+	const FVector D = Dir.GetSafeNormal();
+	double Best = TNumericLimits<double>::Max();
+	const FDrawn* Hit = nullptr;
+	bool bRock = false;
+	// a tree: the line passing within its crown's reach of its trunk's line, foot to top
+	for (const FDrawn& T : DrawnTrees)
+	{
+		const FVector W0 = Origin - T.Base;
+		const double B = D.Z, Dd = FVector::DotProduct(D, W0), E = W0.Z, Den = FMath::Max(1e-6, 1 - B * B);
+		const double S = FMath::Clamp((E - B * Dd) / Den, 0.0, T.H);
+		const FVector Q = T.Base + FVector(0, 0, S);
+		const double At = FVector::DotProduct(Q - Origin, D);
+		if (At <= 0 || At > MaxT + T.R || At >= Best) continue;
+		// (the trunk narrower low down, the crown wide)
+		const double Reach = S < T.H * 0.3 ? FMath::Max(80.0, T.R * 0.4) : T.R;
+		if (FVector::DistSquared(Origin + D * At, Q) > Reach * Reach) continue;
+		Best = At; Hit = &T; bRock = false;
+	}
+	// a rock: within its size of its middle
+	for (const FDrawn& R : DrawnRocks)
+	{
+		const FVector C = R.Base + FVector(0, 0, R.R * 0.4);
+		const double At = FVector::DotProduct(C - Origin, D);
+		if (At <= 0 || At > MaxT + R.R || At >= Best) continue;
+		if (FVector::DistSquared(Origin + D * At, C) > R.R * R.R * 1.2) continue;
+		Best = At; Hit = &R; bRock = true;
+	}
+	if (!Hit) return false;
+	Out.bRock = bRock; Out.X = Hit->X; Out.Z = Hit->Z; Out.Kind = Hit->Kind; Out.HeightM = Hit->H / 100.0; Out.bAdded = Hit->bAdded; Out.Base = Hit->Base; Out.bColourable = Hit->bColourable;
+	return true;
+}
+
+bool AOTGRuntimeCourse::Picked(bool bRock, double X, double Z, FOTGPicked& Out) const
+{
+	for (const FDrawn& T : bRock ? DrawnRocks : DrawnTrees)
+		if (FMath::Abs(T.X - X) < 0.15 && FMath::Abs(T.Z - Z) < 0.15)
+		{
+			Out.bRock = bRock; Out.X = T.X; Out.Z = T.Z; Out.Kind = T.Kind; Out.HeightM = T.H / 100.0; Out.bAdded = T.bAdded; Out.Base = T.Base; Out.bColourable = T.bColourable;
+			return true;
+		}
+	return false;
 }
 
 namespace
@@ -1131,6 +1253,26 @@ TMap<FString, TArray<TPair<UStaticMesh*, UMaterialInterface*>>> AOTGRuntimeCours
 					if (!Mesh || !Mesh->GetStaticMaterials().Num()) continue;
 					TurfMeshes.Add(Mesh);
 					V.Add(TPair<UStaticMesh*, UMaterialInterface*>(Mesh, nullptr));   // (its own)
+					// (each of its materials copied, to be tinted: make_game_assets.py's fab_tints set its
+					// "Base Color Tint" and "Translucency Tint"; the designer's colour multiplies them)
+					for (const FStaticMaterial& SM : Mesh->GetStaticMaterials())
+					{
+						UMaterialInterface* Own = SM.MaterialInterface;
+						FLinearColor Base, Through;
+						if (!Own || GrassSwaps.Contains(Own)) continue;
+						if (!Own->GetVectorParameterValue(FHashedMaterialParameterInfo(TEXT("Base Color Tint")), Base))
+						{
+							UE_LOG(LogOTGRuntimeCourse, Display, TEXT("Grass %s: %s has no Base Color Tint: its colour stays as it is"), *K.Name, *Own->GetName());
+							continue;
+						}
+						if (!Own->GetVectorParameterValue(FHashedMaterialParameterInfo(TEXT("Translucency Tint")), Through)) Through = Base;
+						FLinearColor Controls(1, 1, 1, 0);
+						Own->GetVectorParameterValue(FHashedMaterialParameterInfo(TEXT("Base Color Controls")), Controls);
+						UMaterialInstanceDynamic* M = UMaterialInstanceDynamic::Create(Own, this);
+						TurfMats.Add(M);
+						GrassSwaps.Add(Own, M);
+						GrassTints.FindOrAdd(K.Name).Add(FGrassTint{ M, true, Base, Through, Controls });
+					}
 				}
 			}
 			if (!V.Num()) UE_LOG(LogOTGRuntimeCourse, Warning, TEXT("Grass %s: none of its Megascans plants are in the game (Content/Fab)"), *K.Name);
@@ -1145,6 +1287,7 @@ TMap<FString, TArray<TPair<UStaticMesh*, UMaterialInterface*>>> AOTGRuntimeCours
 				UMaterialInstanceDynamic* M = UMaterialInstanceDynamic::Create(Base, this);
 				SetPictures(M);
 				TurfMats.Add(M);
+				GrassTints.FindOrAdd(K.Name).Add(FGrassTint{ M, false, FLinearColor::White, FLinearColor::White, FLinearColor::White });
 				TurfMeshes.Add(Mesh);
 				V.Add(TPair<UStaticMesh*, UMaterialInterface*>(Mesh, M));
 			}
@@ -1160,6 +1303,8 @@ void AOTGRuntimeCourse::BuildGrass()
 	const TMap<FString, TArray<TPair<UStaticMesh*, UMaterialInterface*>>> Have = GrassMeshes(Kinds);
 	Grass = MakeShared<otg::FGrass>();
 	Grass->Init(this, Data, MaskPixels, LandCm, Kinds, Have);
+	Grass->SetSwaps(GrassSwaps);
+	TintGrass();
 	int32 On = 0;
 	for (const otg::FGrassKind& K : Kinds) On += K.bOn ? 1 : 0;
 	UE_LOG(LogOTGRuntimeCourse, Display, TEXT("Grass: %d kinds (%d growing)%s"), Kinds.Num(), On,
@@ -1167,7 +1312,7 @@ void AOTGRuntimeCourse::BuildGrass()
 }
 
 // The grass designer's changes from the console (testing, screenshots): OTG.Grass.List,
-// OTG.Grass.Set <kind> on|surface|density|height|vary|out|patch|cover <value>, OTG.Grass.Add
+// OTG.Grass.Set <kind> on|surface|density|height|vary|out|patch|cover|hue|saturation|brightness <value>, OTG.Grass.Add
 // <Megascans folder>, OTG.Grass.Save, OTG.Grass.Reset (the game's own)
 namespace
 {
@@ -1183,7 +1328,7 @@ namespace
 				UE_LOG(LogOTGRuntimeCourse, Display, TEXT("%-22s %-3s %-6s density %6.0f scale %.2f-%.2f out to %3.0f m patch %4.1f m %.2f-%.2f%s"), *K.Name, K.bOn ? TEXT("on") : TEXT("off"),
 					K.Masks.Num() ? *K.Masks[0] : TEXT("-"), K.Density, K.ScaleLo, K.ScaleHi, K.DrawTo, K.PatchM, K.PatchLo, K.PatchHi, K.FarOf.IsEmpty() ? TEXT("") : TEXT(" (follows)"));
 	}));
-	FAutoConsoleCommandWithWorldAndArgs GrassSetCmd(TEXT("OTG.Grass.Set"), TEXT("OTG.Grass.Set <kind> on|surface|density|height|vary|out|patch|cover <value>"), FGrassCmd::CreateLambda([](const TArray<FString>& A, UWorld* W) {
+	FAutoConsoleCommandWithWorldAndArgs GrassSetCmd(TEXT("OTG.Grass.Set"), TEXT("OTG.Grass.Set <kind> on|surface|density|height|vary|out|patch|cover|hue|saturation|brightness <value>"), FGrassCmd::CreateLambda([](const TArray<FString>& A, UWorld* W) {
 		AOTGRuntimeCourse* C = CourseIn(W);
 		if (!C || A.Num() < 3) return;
 		TArray<otg::FGrassKind> K = C->GrassKinds();
@@ -1200,6 +1345,13 @@ namespace
 		else if (F == TEXT("out")) { const float R = G->DrawTo > 0 ? G->DrawFrom / G->DrawTo : 0.7f; G->DrawTo = V; G->DrawFrom = V * R; }
 		else if (F == TEXT("patch")) G->PatchM = V;
 		else if (F == TEXT("cover")) { const float Wd = G->PatchHi - G->PatchLo, Cn = 0.27f + 0.19f * (G->bInvert ? V : 1 - V); G->PatchLo = Cn - Wd / 2; G->PatchHi = Cn + Wd / 2; }
+		else if (F == TEXT("hue") || F == TEXT("saturation") || F == TEXT("brightness"))
+		{
+			// (the colour: tinted at once, nothing grown again)
+			(F == TEXT("hue") ? G->Hue : F == TEXT("saturation") ? G->Sat : G->Bright) = V;
+			C->SetGrassColours(K);
+			return;
+		}
 		else { UE_LOG(LogOTGRuntimeCourse, Warning, TEXT("OTG.Grass.Set: no field %s"), *F); return; }
 		C->SetGrassKinds(K);
 	}));
@@ -1212,7 +1364,15 @@ namespace
 	}));
 	FAutoConsoleCommandWithWorldAndArgs GrassSaveCmd(TEXT("OTG.Grass.Save"), TEXT("Save the course's grass as it grows now (grass.json)"), FGrassCmd::CreateLambda([](const TArray<FString>&, UWorld* W) {
 		FString Where;
-		if (AOTGRuntimeCourse* C = CourseIn(W)) UE_LOG(LogOTGRuntimeCourse, Display, TEXT("Grass %s %s"), C->SaveGrassKinds(&Where) ? TEXT("saved to") : TEXT("NOT saved to"), *Where);
+		// (saved first: a Shipping build leaves out the log, its arguments and all)
+		if (AOTGRuntimeCourse* C = CourseIn(W)) { const bool bOk = C->SaveGrassKinds(&Where); UE_LOG(LogOTGRuntimeCourse, Display, TEXT("Grass %s %s"), bOk ? TEXT("saved to") : TEXT("NOT saved to"), *Where); }
+	}));
+	FAutoConsoleCommandWithWorldAndArgs GrassTintsCmd(TEXT("OTG.Grass.Tints"), TEXT("(testing) the grass's tinted materials and what the grass is drawn with"), FGrassCmd::CreateLambda([](const TArray<FString>&, UWorld* W) {
+		if (AOTGRuntimeCourse* C = CourseIn(W)) C->DumpGrassTints();
+	}));
+	FAutoConsoleCommandWithWorldAndArgs GrassParamCmd(TEXT("OTG.Grass.Param"), TEXT("(testing) OTG.Grass.Param <kind> <vector parameter, _ for a space> <r> <g> <b>: on its Megascans materials"), FGrassCmd::CreateLambda([](const TArray<FString>& A, UWorld* W) {
+		if (AOTGRuntimeCourse* C = CourseIn(W); C && A.Num() >= 5)
+			C->SetGrassParam(A[0], A[1].Replace(TEXT("_"), TEXT(" ")), FLinearColor(FCString::Atof(*A[2]), FCString::Atof(*A[3]), FCString::Atof(*A[4]), 0.f));
 	}));
 	FAutoConsoleCommandWithWorldAndArgs GrassResetCmd(TEXT("OTG.Grass.Reset"), TEXT("The game's own grass (not saved)"), FGrassCmd::CreateLambda([](const TArray<FString>&, UWorld* W) {
 		if (AOTGRuntimeCourse* C = CourseIn(W)) C->SetGrassKinds(otg::FGrass::DefaultKinds());
@@ -1231,6 +1391,46 @@ void AOTGRuntimeCourse::SetGrassKinds(const TArray<otg::FGrassKind>& Kinds)
 	TArray<otg::FGrassKind> K = Kinds;
 	otg::FGrass::Derive(K);
 	Grass->SetKinds(K, GrassMeshes(K));
+	Grass->SetSwaps(GrassSwaps);
+	TintGrass();
+}
+
+void AOTGRuntimeCourse::SetGrassColours(const TArray<otg::FGrassKind>& Kinds)
+{
+	if (!Grass.IsValid()) return;
+	TArray<otg::FGrassKind> K = Kinds;
+	for (otg::FGrassKind& G : K) G.ClampColour();
+	otg::FGrass::Derive(K);
+	Grass->SetColours(K);
+	TintGrass();
+}
+
+// Each kind's materials tinted as its colour is: our turf by its Tint (a multiplier on the green it
+// draws: hue, strength, brightness); a Megascans plant by its Base Color Controls (strength and
+// brightness only)
+void AOTGRuntimeCourse::TintGrass()
+{
+	if (!Grass.IsValid()) return;
+	const FLinearColor TurfGreen(0.06f, 0.09f, 0.022f);
+	for (const otg::FGrassKind& K : Grass->Kinds())
+		if (const TArray<FGrassTint>* Ts = GrassTints.Find(K.Name))
+			for (const FGrassTint& T : *Ts)
+			{
+				UMaterialInstanceDynamic* M = T.M.Get();
+				if (!M) continue;
+				if (!T.bFab) { M->SetVectorParameterValue(TEXT("Tint"), K.TintFor(TurfGreen)); continue; }
+				// (Base Color Controls: the first how strong the colour is - under 1 paler, washing out;
+				// the second how bright. Their tints hardly turn the hue, so a plant keeps its own: the
+				// designer says so. Kept within what reads as grass)
+				const float X = K.Sat < 1 ? 1.f - (1.f - K.Sat) * 0.5f : 1.f + (K.Sat - 1.f) * 0.4f;   // (0.7 .. 1.24: past it, neon)
+				const float Y = K.Bright < 1 ? 1.f - (1.f - K.Bright) * 0.7f : 1.f + (K.Bright - 1.f) * 0.33f;   // (0.65 .. 1.2)
+				M->SetVectorParameterValue(TEXT("Base Color Controls"), FLinearColor(T.Controls.R * X, T.Controls.G * Y, T.Controls.B, T.Controls.A));
+			}
+}
+
+bool AOTGRuntimeCourse::FindGrass(const FString& Kind, const FVector& From, FVector& Out) const
+{
+	return Grass.IsValid() && Grass->FindNear(Kind, From, Out);
 }
 
 bool AOTGRuntimeCourse::SaveGrassKinds(FString* Where) const
@@ -1298,4 +1498,31 @@ void AOTGRuntimeCourse::EndPlay(const EEndPlayReason::Type Reason)
 {
 	if (Grass.IsValid()) Grass->Wait();
 	Super::EndPlay(Reason);
+}
+
+void AOTGRuntimeCourse::DumpGrassTints() const
+{
+	for (const auto& KV : GrassTints)
+		for (const FGrassTint& T : KV.Value)
+			if (UMaterialInstanceDynamic* M = T.M.Get())
+			{
+				FLinearColor V(0, 0, 0, 0);
+				M->GetVectorParameterValue(FHashedMaterialParameterInfo(T.bFab ? TEXT("Base Color Tint") : TEXT("Tint")), V);
+				UE_LOG(LogOTGRuntimeCourse, Display, TEXT("Tint %s %s (of %s): %s"), *KV.Key, *M->GetName(), M->Parent ? *M->Parent->GetName() : TEXT("-"), *V.ToString());
+			}
+	TSet<FString> Seen;
+	for (const UActorComponent* AC : GetComponents())
+		if (const UInstancedStaticMeshComponent* I = Cast<UInstancedStaticMeshComponent>(AC))
+			if (I->GetStaticMesh() && I->GetStaticMesh()->GetPathName().Contains(TEXT("/Fab/")) && !Seen.Contains(I->GetStaticMesh()->GetName()))
+			{
+				Seen.Add(I->GetStaticMesh()->GetName());
+				for (int32 m = 0; m < I->GetNumMaterials(); m++)
+					UE_LOG(LogOTGRuntimeCourse, Display, TEXT("Drawn %s slot %d: %s"), *I->GetStaticMesh()->GetName(), m, I->GetMaterial(m) ? *I->GetMaterial(m)->GetName() : TEXT("-"));
+			}
+}
+
+void AOTGRuntimeCourse::SetGrassParam(const FString& Kind, const FString& Param, const FLinearColor& V)
+{
+	if (const TArray<FGrassTint>* Ts = GrassTints.Find(Kind))
+		for (const FGrassTint& T : *Ts) if (UMaterialInstanceDynamic* M = T.M.Get()) M->SetVectorParameterValue(*Param, V);
 }

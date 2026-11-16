@@ -67,6 +67,16 @@ public:
 	void ToggleGrassDesigner(int32 Tab = -1);   // (-1: the tab it was on)
 	void RefreshTrees();
 	void ShowTree(const FString& Kind);
+	void ShowGrass(const FString& Kind);   // (the free view flown to where it grows thickly nearby)
+	// A click on the course (the camera's line through the cursor): the course designer's, when it's
+	// open on its trees tab (true: it used it), else nothing
+	bool DesignClick(const FVector& Origin, const FVector& Dir);
+	// (testing: a click at a point on the screen, 0..1 across and down)
+	void DesignClickAt(double FX, double FY);
+	void SetDesignTool(int32 Tool);
+	void EditPicked(const FString& Field, const FString& Value);   // (testing: OTG.Trees.Edit)   // (testing: the trees tab's click tool, 0 pick .. 3 take out)
+	// Where a line from the camera meets the course's ground (its own heights: no collision needed)
+	bool GroundAlongRay(const FVector& Origin, const FVector& Dir, FVector& Out) const;
 	void SetWeatherKey(const FString& Key);
 	void SetWindMph(double Mph);
 	void SetWindFrom(double RelDeg);
