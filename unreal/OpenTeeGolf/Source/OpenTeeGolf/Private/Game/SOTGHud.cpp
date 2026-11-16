@@ -79,16 +79,20 @@ void SOTGHud::Construct(const FArguments&)
 				+ SVerticalBox::Slot().AutoHeight().HAlign(HAlign_Center).Padding(0, 3, 0, 0)[SAssignNew(Shot2, STextBlock).Font(Font(15)).ColorAndOpacity(Gold)]
 			]
 		]
-		// the launch monitor
-		+ SOverlay::Slot().HAlign(HAlign_Right).VAlign(VAlign_Bottom).Padding(24)
+		// the keys and the launch monitor, one row along the bottom: the keys wrap onto a second line
+		// rather than run under the launch monitor's status when the window is narrower
+		+ SOverlay::Slot().HAlign(HAlign_Fill).VAlign(VAlign_Bottom).Padding(24)
 		[
-			Box(SAssignNew(Status, STextBlock).Font(Font(13)).ColorAndOpacity(Soft), FMargin(10, 5))
-		]
-		// the keys
-		+ SOverlay::Slot().HAlign(HAlign_Left).VAlign(VAlign_Bottom).Padding(24)
-		[
-			SAssignNew(Keys, STextBlock).Font(Font(12)).ColorAndOpacity(FLinearColor(1, 1, 1, 0.7f)).ShadowOffset(FVector2D(1, 1))
-			.Text(FText::FromString(TEXT("Click the ground or the map to aim     Left / Right: fine aim     Up / Down: club     T: test shot panel     Space: quick test shot     Enter: skip / continue     Tab: scorecard     Backspace: mulligan     F: free view     G: slope grid     L: weather     R: designer     P: frame rate     Esc: menu")))
+			SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot().FillWidth(1).VAlign(VAlign_Bottom).Padding(0, 0, 16, 0)
+			[
+				SAssignNew(Keys, STextBlock).Font(Font(12)).ColorAndOpacity(FLinearColor(1, 1, 1, 0.7f)).ShadowOffset(FVector2D(1, 1)).AutoWrapText(true)
+				.Text(FText::FromString(TEXT("Click the ground or the map to aim     Left / Right: fine aim     Up / Down: club     T: test shot panel     Space: quick test shot     Enter: skip / continue     Tab: scorecard     Backspace: mulligan     F: free view     G: slope grid     L: weather     R: designer     P: frame rate     Esc: menu")))
+			]
+			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Bottom)
+			[
+				Box(SAssignNew(Status, STextBlock).Font(Font(13)).ColorAndOpacity(Soft), FMargin(10, 5))
+			]
 		]
 		// banners and toasts
 		+ SOverlay::Slot().HAlign(HAlign_Center).VAlign(VAlign_Top).Padding(0, 140, 0, 0)

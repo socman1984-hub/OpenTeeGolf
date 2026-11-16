@@ -96,7 +96,9 @@ const TArray<otg::FGrassKind>& otg::FGrass::DefaultKinds()
 		// out: too tall however they're scaled.) Their colours: make_game_assets.py's fab_tints
 		Add(TEXT("native_short"), TEXT("Short meadow grass"), { TEXT("native") }, 520, 110, 160, 1.0f, 0.75f, 1.25f, 16, 0.31f, 0.39f, true);
 		{
-			FGrassKind& G = Add(TEXT("fescue"), TEXT("Fescue (Megascans)"), { TEXT("native") }, 560, 300, 450, 1.0f, 0.42f, 0.6f, 22, 0.33f, 0.40f, false);
+			// (out to 60 m: further off its pale tufts ran together into cream-yellow drifts across the
+			// tall grass, looking into the sun most of all; the wild grass carries the drifts on)
+			FGrassKind& G = Add(TEXT("fescue"), TEXT("Fescue (Megascans)"), { TEXT("native") }, 560, 40, 60, 1.0f, 0.42f, 0.6f, 22, 0.33f, 0.40f, false);
 			G.Fab = { TEXT("Tall_Grass_rbEkI"), TEXT("Tall_Grass_rbEkP"), TEXT("Tall_Grass_rbEla") };
 			G.Margin = 0.5f;
 			G.CellM = 48;
@@ -232,7 +234,11 @@ TArray<otg::FGrassKind> otg::FGrass::LoadKinds(const FString& Dir)
 		Num(TEXT("density"), K->Density, 1, 20000);
 		Num(TEXT("scaleLo"), K->ScaleLo, 0.05f, 5);
 		Num(TEXT("scaleHi"), K->ScaleHi, 0.05f, 5);
+		// (a distance saved as an old default - saved with the rest, not chosen - becomes the new one:
+		// the fescue's 450 m drew it as cream-yellow drifts far off)
+		const float DefTo = K->DrawTo;
 		Num(TEXT("drawTo"), K->DrawTo, 10, 800);
+		if (Name == TEXT("fescue") && FMath::IsNearlyEqual(K->DrawTo, 450.f)) K->DrawTo = DefTo;
 		K->DrawFrom = K->DrawTo * From;
 		Num(TEXT("patchM"), K->PatchM, 0, 200);
 		Num(TEXT("patchLo"), K->PatchLo, 0, 1);

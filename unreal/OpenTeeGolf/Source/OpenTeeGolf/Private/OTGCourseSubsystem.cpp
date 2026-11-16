@@ -114,20 +114,29 @@ void UOTGCourseSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 					const FVector Location(FCString::Atod(*P[0]), FCString::Atod(*P[1]), FCString::Atod(*P[2]));
 					if (ACameraActor* Cam = World->SpawnActor<ACameraActor>(Location, Rotation))
 					{
-						Cam->GetCameraComponent()->SetFieldOfView(75);
+						float Fov = 75;
+						FParse::Value(FCommandLine::Get(), TEXT("shotfov="), Fov);   // (narrow: a closer look)
+						Cam->GetCameraComponent()->SetFieldOfView(Fov);
 						PC->SetViewTarget(Cam);
 						UE_LOG(LogOTGCourses, Display, TEXT("Screenshot camera at %s, %s"), *Location.ToString(), *Rotation.ToString());
 					}
 				}
 			}
+			// (-shotwait=<s>: longer before the picture - grass changed by -shotcmd takes a while to grow)
+			float Wait = 5;
+			FParse::Value(FCommandLine::Get(), TEXT("shotwait="), Wait);
 			FTimerHandle Later;
 			GetGameInstance()->GetTimerManager().SetTimer(Later, FTimerDelegate::CreateWeakLambda(this, [this]() {
-				FScreenshotRequest::RequestScreenshot(FPaths::ProjectSavedDir() / TEXT("Screenshots/otg_shot.png"), false, false);
+				if (UWorld* W = GetGameInstance()->GetWorld())
+					if (APlayerController* P2 = W->GetFirstPlayerController())
+						if (P2->PlayerCameraManager)
+							UE_LOG(LogOTGCourses, Display, TEXT("Screenshot from %s looking %s"), *P2->PlayerCameraManager->GetCameraLocation().ToString(), *P2->PlayerCameraManager->GetCameraRotation().ToString());
+				FScreenshotRequest::RequestScreenshot(FPaths::ProjectSavedDir() / TEXT("Screenshots/otg_shot.png"), FParse::Param(FCommandLine::Get(), TEXT("shotui")), false);
 				FTimerHandle Quit;
 				GetGameInstance()->GetTimerManager().SetTimer(Quit, FTimerDelegate::CreateWeakLambda(this, [this]() {
 					if (UWorld* W = GetGameInstance()->GetWorld()) UKismetSystemLibrary::QuitGame(W, nullptr, EQuitPreference::Quit, false);
 				}), 3.0f, false);
-			}), 5.0f, false);
+			}), Wait, false);
 		}), ShotAfter, false);
 	}
 }
