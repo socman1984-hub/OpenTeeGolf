@@ -3,6 +3,7 @@
 #include "OTGCourseSubsystem.h"
 
 #include "OTGCourseData.h"
+#include "Game/OTGRange.h"
 
 #include "Engine/AssetManager.h"
 #include "Engine/GameInstance.h"
@@ -64,6 +65,10 @@ namespace
 		FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World) {
 			if (UOTGCourseSubsystem* S = SubsystemOf(World); S && Args.Num()) S->PlayCourse(Args[0]);
 		}));
+	FAutoConsoleCommandWithWorldAndArgs RangeCommand(TEXT("OTG.Range"), TEXT("Opens the driving range"),
+		FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>&, UWorld* World) {
+			if (UOTGCourseSubsystem* S = SubsystemOf(World)) S->PlayRange();
+		}));
 }
 
 void UOTGCourseSubsystem::Initialize(FSubsystemCollectionBase& Collection)
@@ -79,6 +84,9 @@ void UOTGCourseSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 		FTimerDelegate Open = FTimerDelegate::CreateWeakLambda(this, [this, Id]() { PlayCourse(Id); });
 		GetGameInstance()->GetTimerManager().SetTimerForNextTick(Open);
 	}
+	// (-range: straight onto the driving range)
+	else if (FParse::Param(FCommandLine::Get(), TEXT("range")))
+		GetGameInstance()->GetTimerManager().SetTimerForNextTick(FTimerDelegate::CreateWeakLambda(this, [this]() { PlayRange(); }));
 	// (-shot=<seconds>: a screenshot of the game that long after it starts, then quit - for checking
 	// a build without anyone at the screen; -shotpos=X,Y,Z -shotrot=Pitch,Yaw puts the camera there)
 	float ShotAfter = 0;
@@ -226,6 +234,22 @@ bool UOTGCourseSubsystem::PlayCourse(const FString& Id)
 	}
 	Current = D;
 	UE_LOG(LogOTGCourses, Display, TEXT("Opening %s (%s)"), *D->CourseName, *D->Level.ToSoftObjectPath().ToString());
+	UGameplayStatics::OpenLevelBySoftObjectPtr(GetGameInstance(), D->Level);
+	return true;
+}
+
+bool UOTGCourseSubsystem::PlayRange()
+{
+	FString Dir, Why;
+	if (!otg::range::Ensure(Dir, &Why)) { UE_LOG(LogOTGCourses, Warning, TEXT("No driving range: %s"), *Why); return false; }
+	UOTGCourseData* D = NewObject<UOTGCourseData>(this);
+	if (!D->LoadFromExport(Dir, &Why)) { UE_LOG(LogOTGCourses, Warning, TEXT("The driving range doesn't read: %s"), *Why); return false; }
+	D->ExportDir = Dir;
+	D->Level = TSoftObjectPtr<UWorld>(FSoftObjectPath(TemplateLevel));
+	D->LevelOrigin = FVector::ZeroVector;
+	Current = D;
+	bHasPendingSetup = false;
+	UE_LOG(LogOTGCourses, Display, TEXT("Opening the driving range (%s)"), *Dir);
 	UGameplayStatics::OpenLevelBySoftObjectPtr(GetGameInstance(), D->Level);
 	return true;
 }

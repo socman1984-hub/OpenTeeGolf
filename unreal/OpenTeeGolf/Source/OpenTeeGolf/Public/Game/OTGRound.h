@@ -7,6 +7,12 @@
 // Players take turns as in the web version (FOTGGame, OTGPlayers.h): whoever's away plays next,
 // the others' balls lie where they are, and the game's format scores it.
 //
+// On the driving range (otg::range, OTGRange.h) it plays the range instead: one player, the ball
+// teed on the middle mat, every shot's numbers in the range panel (SOTGRange.h) with the club's
+// recent shots and averages, and a new ball on the mat a few seconds after each one stops (at once
+// with Enter or Backspace). The club stays as picked; the aim starts straight down the range at the
+// club's carry.
+//
 // Spawned by AOTGGameMode in a course's level; AOTGPlayerController sends it the keys.
 
 #pragma once
@@ -16,6 +22,7 @@
 #include "LaunchMonitor/OTGLaunchMonitorTypes.h"
 #include "Game/OTGPlayers.h"
 #include "Game/OTGWeather.h"
+#include "Game/OTGRange.h"
 #include "Physics/OTGPlayCourse.h"
 #include "OTGRound.generated.h"
 
@@ -96,6 +103,10 @@ public:
 
 	// ---- shots
 	void OnShot(const FOTGShot& Shot);
+
+	// ---- the driving range
+	bool IsRange() const { return bRange; }
+	void NewBall();                    // (the range: a new ball on the mat now)
 
 private:
 	enum class EPhase : uint8 { Ready, Flying, Resting, Between, Holed, Done };
@@ -257,4 +268,16 @@ private:
 
 	double RoundTime = 0;
 	TArray<TPair<double, FString>> ExecAt;
+
+	// the driving range
+	bool bRange = false;
+	TArray<FOTGRangeShot> RangeShots;
+	TSharedPtr<class SOTGRangePanel> RangePanel;
+	UPROPERTY() TObjectPtr<class AOTGRangeProps> RangeProps;
+	UPROPERTY() TObjectPtr<class UInstancedStaticMeshComponent> RangeDots;   // (where the club's last shots stopped)
+	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> RangeDotMat;
+	int32 RangeBalls = 0;
+	double ClubCarryM() const;
+	void RangeShotDone();
+	void UpdateRange();
 };
