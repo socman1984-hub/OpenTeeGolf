@@ -13,6 +13,7 @@
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "AssetRegistry/IAssetRegistry.h"
 #include "Components/HierarchicalInstancedStaticMeshComponent.h"
+#include "Components/InstancedStaticMeshComponent.h"
 #include "Dom/JsonObject.h"
 #include "Misc/FileHelper.h"
 #include "ProceduralMeshComponent.h"
@@ -230,6 +231,8 @@ void AOTGRuntimeCourse::PrepareGround()
 	if (!Base) { UE_LOG(LogOTGRuntimeCourse, Error, TEXT("No M_CourseGround_Runtime in the game's content (unreal/make_assets.ps1)")); return; }
 	GroundMat = UMaterialInstanceDynamic::Create(Base, this);
 	SetPictures(GroundMat);
+	// (the fairways' and greens' colour, as the grass designer saved it)
+	for (const auto& P : SavedTurfLooks()) SetTurfLook(P.Key, P.Value);
 	LiftPondBanks();
 	const int32 N = Data->HeightSamples;
 	TileQuads = N > 2049 ? 128 : 64;   // (a tile's samples a side: bigger tiles on a big course)
@@ -823,8 +826,52 @@ bool AOTGRuntimeCourse::Pick(const FVector& Origin, const FVector& Dir, double M
 		Best = At; Hit = &R; bRock = true;
 	}
 	if (!Hit) return false;
-	Out.bRock = bRock; Out.X = Hit->X; Out.Z = Hit->Z; Out.Kind = Hit->Kind; Out.HeightM = Hit->H / 100.0; Out.bAdded = Hit->bAdded; Out.Base = Hit->Base; Out.bColourable = Hit->bColourable;
+	Out.bRock = bRock; Out.X = Hit->X; Out.Z = Hit->Z; Out.Kind = Hit->Kind; Out.HeightM = Hit->H / 100.0; Out.bAdded = Hit->bAdded; Out.Base = Hit->Base; Out.bColourable = Hit->bColourable; Out.RadiusM = Hit->R / 100.0;
 	return true;
+}
+
+void AOTGRuntimeCourse::MarkPicked(const FOTGPicked& P)
+{
+	// (made the first time: a ring of gold beads, and a cone pointing down at it from above)
+	if (!PickRing)
+	{
+		UStaticMesh* Sphere = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Sphere.Sphere"));
+		UStaticMesh* Cone = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Cone.Cone"));
+		UMaterialInterface* Base = LoadObject<UMaterialInterface>(nullptr, TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
+		if (!Sphere || !Cone || !Base) return;
+		UMaterialInstanceDynamic* Gold = UMaterialInstanceDynamic::Create(Base, this);
+		Gold->SetVectorParameterValue(TEXT("Color"), FLinearColor(1.f, 0.72f, 0.08f));
+		PickRing = NewObject<UInstancedStaticMeshComponent>(this);
+		PickRing->SetStaticMesh(Sphere);
+		PickCone = NewObject<UStaticMeshComponent>(this);
+		PickCone->SetStaticMesh(Cone);
+		for (UStaticMeshComponent* C : { static_cast<UStaticMeshComponent*>(PickRing), PickCone.Get() })
+		{
+			C->SetMaterial(0, Gold);
+			C->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+			C->SetCastShadow(false);
+			C->SetMobility(EComponentMobility::Movable);
+			C->SetupAttachment(RootComponent);
+			C->RegisterComponent();
+		}
+	}
+	// (the cone: over its top)
+	const FVector Top = P.Base + FVector(0, 0, (P.bRock ? P.RadiusM * 100.0 : P.HeightM * 100.0) + 250.0);
+	const bool bMoved = PickMarkedAt < 0 || !PickRing->IsVisible() || !PickConeAt.Equals(Top, 1.0);
+	PickMarkedAt = FPlatformTime::Seconds();
+	if (!bMoved) return;
+	PickConeAt = Top;
+	// the ring: round the crown's edge (a rock's), on the ground
+	const double R = FMath::Max(P.bRock ? 120.0 : 220.0, P.RadiusM * 100.0 * (P.bRock ? 1.3 : 0.9));
+	const int32 N = 32;
+	PickRing->ClearInstances();
+	for (int32 i = 0; i < N; i++)
+	{
+		const double A = 2 * PI * i / N;
+		PickRing->AddInstance(FTransform(FRotator::ZeroRotator, P.Base + FVector(FMath::Cos(A) * R, FMath::Sin(A) * R, 25), FVector(0.32)), true);
+	}
+	PickRing->SetVisibility(true);
+	PickCone->SetVisibility(true);
 }
 
 bool AOTGRuntimeCourse::Picked(bool bRock, double X, double Z, FOTGPicked& Out) const
@@ -832,7 +879,7 @@ bool AOTGRuntimeCourse::Picked(bool bRock, double X, double Z, FOTGPicked& Out) 
 	for (const FDrawn& T : bRock ? DrawnRocks : DrawnTrees)
 		if (FMath::Abs(T.X - X) < 0.15 && FMath::Abs(T.Z - Z) < 0.15)
 		{
-			Out.bRock = bRock; Out.X = T.X; Out.Z = T.Z; Out.Kind = T.Kind; Out.HeightM = T.H / 100.0; Out.bAdded = T.bAdded; Out.Base = T.Base; Out.bColourable = T.bColourable;
+			Out.bRock = bRock; Out.X = T.X; Out.Z = T.Z; Out.Kind = T.Kind; Out.HeightM = T.H / 100.0; Out.bAdded = T.bAdded; Out.Base = T.Base; Out.bColourable = T.bColourable; Out.RadiusM = T.R / 100.0;
 			return true;
 		}
 	return false;
@@ -1518,6 +1565,67 @@ float AOTGRuntimeCourse::GrassHeightCm(const FString& Kind) const
 	return I == INDEX_NONE ? 0 : Grass->MeshHeightCm(I);
 }
 
+namespace
+{
+	// (build_course.py TURF: the ground's own fairway and green colours, which a look turns)
+	FLinearColor TurfBase(const FString& Surface)
+	{
+		return Surface == TEXT("green") ? FLinearColor(0.04f, 0.066f, 0.017f) : FLinearColor(0.04f, 0.061f, 0.016f);
+	}
+}
+
+void AOTGRuntimeCourse::SetTurfLook(const FString& Surface, const FOTGTurfLook& Look)
+{
+	TurfLooks.Add(Surface, Look);
+	if (!GroundMat) return;
+	// (the multiplier that turns the colour so: FGrassKind's, kept within reason)
+	otg::FGrassKind K;
+	K.Hue = Look.Hue; K.Sat = Look.Sat; K.Bright = Look.Bright;
+	GroundMat->SetVectorParameterValue(*(TEXT("TurfTint_") + Surface), K.TintFor(TurfBase(Surface)));
+}
+
+TMap<FString, FOTGTurfLook> AOTGRuntimeCourse::SavedTurfLooks() const
+{
+	TMap<FString, FOTGTurfLook> Out;
+	if (!Data) return Out;
+	const TSharedPtr<FJsonValue> V = ReadJson(FPaths::Combine(Data->ExportDir, TEXT("turf.json")));
+	const TSharedPtr<FJsonObject> O = V.IsValid() ? V->AsObject() : nullptr;
+	if (!O.IsValid()) return Out;
+	for (const TCHAR* S : { TEXT("fairway"), TEXT("green") })
+	{
+		const TSharedPtr<FJsonObject>* Lp = nullptr;
+		if (!O->TryGetObjectField(S, Lp) || !Lp || !Lp->IsValid()) continue;
+		const TSharedPtr<FJsonObject> L = *Lp;
+		FOTGTurfLook T;
+		double D;
+		if (L->TryGetNumberField(TEXT("hue"), D)) T.Hue = FMath::Clamp(float(D), -otg::FGrassKind::HueMax, otg::FGrassKind::HueMax);
+		if (L->TryGetNumberField(TEXT("sat"), D)) T.Sat = FMath::Clamp(float(D), otg::FGrassKind::SatLo, otg::FGrassKind::SatHi);
+		if (L->TryGetNumberField(TEXT("bright"), D)) T.Bright = FMath::Clamp(float(D), otg::FGrassKind::BrightLo, otg::FGrassKind::BrightHi);
+		Out.Add(S, T);
+	}
+	return Out;
+}
+
+bool AOTGRuntimeCourse::SaveTurfLooks(FString* Where) const
+{
+	if (!Data) return false;
+	const FString File = FPaths::Combine(Data->ExportDir, TEXT("turf.json"));
+	if (Where) *Where = File;
+	const TSharedRef<FJsonObject> O = MakeShared<FJsonObject>();
+	for (const auto& P : TurfLooks)
+	{
+		if (P.Value.IsOwn()) continue;
+		const TSharedRef<FJsonObject> L = MakeShared<FJsonObject>();
+		L->SetNumberField(TEXT("hue"), P.Value.Hue);
+		L->SetNumberField(TEXT("sat"), P.Value.Sat);
+		L->SetNumberField(TEXT("bright"), P.Value.Bright);
+		O->SetObjectField(P.Key, L);
+	}
+	FString Text;
+	FJsonSerializer::Serialize(O, TJsonWriterFactory<>::Create(&Text));
+	return FFileHelper::SaveStringToFile(Text, *File, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
+}
+
 TArray<otg::FGrassKind> AOTGRuntimeCourse::SavedGrassKinds() const
 {
 	return Data ? otg::FGrass::LoadKinds(Data->ExportDir) : otg::FGrass::DefaultKinds();
@@ -1531,6 +1639,21 @@ int32 AOTGRuntimeCourse::GrassInstances() const
 void AOTGRuntimeCourse::Tick(float Dt)
 {
 	Super::Tick(Dt);
+	// (the picked one's marks: gone once the designer stops calling; the cone bobbing)
+	if (PickRing && PickRing->IsVisible())
+	{
+		if (FPlatformTime::Seconds() - PickMarkedAt > 0.3) { PickRing->SetVisibility(false); PickCone->SetVisibility(false); }
+		else
+		{
+			const double T = FPlatformTime::Seconds();
+			// (bigger the farther the camera: findable from the tee)
+			double S = 1.3;
+			if (const APlayerController* PC = GetWorld() ? GetWorld()->GetFirstPlayerController() : nullptr)
+				if (PC->PlayerCameraManager) S = FMath::Clamp(FVector::Dist(PC->PlayerCameraManager->GetCameraLocation(), PickConeAt) / 2500.0, 1.3, 14.0);
+			PickCone->SetWorldLocationAndRotation(PickConeAt + FVector(0, 0, (60 * FMath::Sin(T * 3.0) + 60 + 40) * S), FRotator(180, T * 90.0, 0));
+			PickCone->SetWorldScale3D(FVector(S, S, S * 1.3));
+		}
+	}
 	// (BuildInSteps: one step a frame)
 	if (Steps.Num())
 	{

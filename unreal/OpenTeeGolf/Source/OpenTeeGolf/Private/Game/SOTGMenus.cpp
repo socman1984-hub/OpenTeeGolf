@@ -13,6 +13,7 @@
 #include "GeneralProjectSettings.h"
 #include "Widgets/Notifications/SProgressBar.h"
 #include "Game/OTGUpdateSubsystem.h"
+#include "Game/OTGHelperSubsystem.h"
 #include "UObject/Package.h"
 #include "UObject/StrongObjectPtr.h"
 #include "HAL/PlatformProcess.h"
@@ -412,6 +413,14 @@ void SOTGMainMenu::Construct(const FArguments&)
 	// (testing, even in a Shipping build, which has no console: -buildertest opens New course)
 	FString BuilderTest;
 	if (FParse::Value(FCommandLine::Get(), TEXT("buildertest="), BuilderTest)) Page = EPage::Build;
+	// (-menuplayers: opens on the Players page)
+	if (FParse::Param(FCommandLine::Get(), TEXT("menuplayers")))
+	{
+		Page = EPage::Players;
+		Draft = Profiles;
+		// (none saved: two to show, not saved)
+		if (!Draft.Num()) { Draft.Add(FOTGPlayers::NewProfile(TEXT("Player 1"), 0)); Draft.Add(FOTGPlayers::NewProfile(TEXT("Player 2"), 1)); Draft[1].bLeftHanded = true; Draft[1].Tee = TEXT("Blue"); }
+	}
 	// (testing: -menusearch=<words> types them in the course search, -menusort=name|recent|added)
 	FParse::Value(FCommandLine::Get(), TEXT("menusearch="), Search);
 	FString SortArg;
@@ -1014,6 +1023,7 @@ TSharedRef<SWidget> SOTGMainMenu::PlayPage()
 			+ SVerticalBox::Slot().AutoHeight()[Caps(TEXT("Selected course"), 10, Gold)]
 			+ SVerticalBox::Slot().AutoHeight().Padding(0, 6, 0, 0)[SNew(STextBlock).Text(FText::FromString(Info ? Info->Name : Setup.CourseId)).Font(Font(30, "Bold")).ColorAndOpacity(Ink).AutoWrapText(true)]
 			+ SVerticalBox::Slot().AutoHeight().Padding(0, 4, 0, 0)[Para(Info ? Info->Location : FString(), 15)]
+			+ SVerticalBox::Slot().AutoHeight().Padding(0, 8, 0, 0).HAlign(HAlign_Left)[EditLink(Info)]
 			+ SVerticalBox::Slot().FillHeight(1)[SNullWidget::NullWidget]
 			+ SVerticalBox::Slot().AutoHeight()[Stats]
 		], FMargin(12));
@@ -1147,49 +1157,80 @@ TSharedRef<SWidget> SOTGMainMenu::PlayersPage()
 	TSharedRef<SVerticalBox> V = SNew(SVerticalBox);
 	V->AddSlot().AutoHeight().Padding(0, 0, 0, 8)[Text(TEXT("Players"), 22, Ink, "Bold")];
 	const TArray<FLinearColor> Colours = FOTGPlayers::Colours();
+	// (each player a card: name, handicap and remove on top; then each choice laid out in full - every
+	// colour, both hands, every tee - the chosen one green, or ringed for a colour)
+	static const FSlateRoundedBoxBrush Ring(FLinearColor::Transparent, 15.f, FLinearColor::White, 2.f);
+	static const FSlateRoundedBoxBrush NoRing(FLinearColor::Transparent, 15.f, FLinearColor(1, 1, 1, 0.f), 2.f);
+	auto Choice = [](const FString& Label, const TSharedRef<SWidget>& W) -> TSharedRef<SWidget> {
+		return SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)[SNew(SBox).WidthOverride(80)[Caps(Label)]]
+			+ SHorizontalBox::Slot().FillWidth(1).VAlign(VAlign_Center)[W];
+	};
 	for (int32 i = 0; i < Draft.Num(); i++)
 	{
 		FOTGPlayerProfile& P = Draft[i];
 		int32 Played = P.Rounds.Num();
-		V->AddSlot().AutoHeight().Padding(0, 3)
-		[
-			SNew(SHorizontalBox)
-			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0, 0, 6, 0)
+		// the colours: a swatch each
+		TSharedRef<SWrapBox> Swatches = SNew(SWrapBox).UseAllottedSize(true).InnerSlotPadding(FVector2D(4, 4));
+		for (int32 k = 0; k < Colours.Num(); k++)
+		{
+			const bool bOn = Colours[k].Equals(P.Colour, 0.01f);
+			const FLinearColor C = Colours[k];
+			Swatches->AddSlot()
 			[
-				SNew(SButton).ButtonColorAndOpacity(P.Colour).ToolTipText(FText::FromString(TEXT("Colour: click for the next one")))
-				.OnClicked_Lambda([this, i, Colours]() {
-					int32 Ci = 0;
-					for (int32 k = 0; k < Colours.Num(); k++) if (Colours[k].Equals(Draft[i].Colour, 0.01f)) Ci = k;
-					Draft[i].Colour = Colours[(Ci + 1) % Colours.Num()];
+				SNew(SButton).ButtonStyle(&TabStyle()).ContentPadding(FMargin(0))
+				.ToolTipText(FText::FromString(bOn ? TEXT("This player's colour") : TEXT("Use this colour")))
+				.OnClicked_Lambda([this, i, C]() { if (Draft.IsValidIndex(i)) { Draft[i].Colour = C; Rebuild(); } return FReply::Handled(); })
+				[
+					SNew(SBorder).BorderImage(bOn ? &Ring : &NoRing).Padding(3)
+					[
+						SNew(SBox).WidthOverride(22).HeightOverride(22)[SNew(SBorder).BorderImage(PillBrush()).BorderBackgroundColor(C).Padding(0)]
+					]
+				]
+			];
+		}
+		// the tees: the round's, or one of these
+		TSharedRef<SWrapBox> Tees = SNew(SWrapBox).UseAllottedSize(true).InnerSlotPadding(FVector2D(6, 6));
+		for (int32 k = 0; k < UE_ARRAY_COUNT(PlayerTees); k++)
+		{
+			const FString T = PlayerTees[k];
+			Tees->AddSlot()[Chip(T.IsEmpty() ? FString(TEXT("Round's tees")) : T, [this, i, T]() { if (Draft.IsValidIndex(i)) { Draft[i].Tee = T; Rebuild(); } }, P.Tee == T, T.IsEmpty() ? FLinearColor::Transparent : TeeColour(T))];
+		}
+		TSharedRef<SVerticalBox> CardBody = SNew(SVerticalBox)
+			+ SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 12)
+			[
+				SNew(SHorizontalBox)
+				+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0, 0, 10, 0)
+				[
+					SNew(SBox).WidthOverride(14).HeightOverride(14)[SNew(SBorder).BorderImage(PillBrush()).BorderBackgroundColor(P.Colour).Padding(0)]
+				]
+				+ SHorizontalBox::Slot().AutoWidth().Padding(0, 0, 14, 0)
+				[
+					SNew(SBox).WidthOverride(240)[SNew(SEditableTextBox).Style(&SearchStyle()).Text(FText::FromString(P.Name)).Font(Font(15))
+						.OnTextChanged_Lambda([this, i](const FText& T) { if (Draft.IsValidIndex(i)) Draft[i].Name = T.ToString(); })]
+				]
+				+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0, 0, 8, 0)[Caps(TEXT("Handicap"))]
+				+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0, 0, 14, 0)
+				[
+					Number(-10, 54, 0.1, [this, i]() { return Draft.IsValidIndex(i) ? Draft[i].Handicap : 0.0; }, [this, i](double X) { if (Draft.IsValidIndex(i)) Draft[i].Handicap = FMath::RoundToDouble(X * 10) / 10; })
+				]
+				+ SHorizontalBox::Slot().FillWidth(1).VAlign(VAlign_Center)[Text(Played ? FString::Printf(TEXT("%d round%s played"), Played, Played == 1 ? TEXT("") : TEXT("s")) : FString(), 12, Soft)]
+				+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)[Button(ConfirmRemove == i ? TEXT("Remove (sure?)") : TEXT("Remove"), [this, i]() {
+					if (ConfirmRemove != i) { ConfirmRemove = i; Rebuild(); return; }
+					Draft.RemoveAt(i);
+					ConfirmRemove = -1;
 					Rebuild();
-					return FReply::Handled();
-				})[SNew(SBox).WidthOverride(18).HeightOverride(18)]
+				}, 13)]
 			]
-			+ SHorizontalBox::Slot().AutoWidth().Padding(0, 0, 8, 0)
+			+ SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 10)[Choice(TEXT("Colour"), Swatches)]
+			+ SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 10)
 			[
-				SNew(SBox).WidthOverride(200)[SNew(SEditableTextBox).Text(FText::FromString(P.Name)).Font(Font(15))
-					.OnTextChanged_Lambda([this, i](const FText& T) { if (Draft.IsValidIndex(i)) Draft[i].Name = T.ToString(); })]
+				Choice(TEXT("Hand"), SNew(SHorizontalBox)
+					+ SHorizontalBox::Slot().AutoWidth().Padding(0, 0, 6, 0)[Chip(TEXT("Right handed"), [this, i]() { if (Draft.IsValidIndex(i)) { Draft[i].bLeftHanded = false; Rebuild(); } }, !P.bLeftHanded)]
+					+ SHorizontalBox::Slot().AutoWidth()[Chip(TEXT("Left handed"), [this, i]() { if (Draft.IsValidIndex(i)) { Draft[i].bLeftHanded = true; Rebuild(); } }, P.bLeftHanded)])
 			]
-			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0, 0, 4, 0)[Text(TEXT("HCP"), 13, Soft)]
-			+ SHorizontalBox::Slot().AutoWidth().Padding(0, 0, 8, 0)
-			[
-				Number(-10, 54, 0.1, [this, i]() { return Draft.IsValidIndex(i) ? Draft[i].Handicap : 0.0; }, [this, i](double X) { if (Draft.IsValidIndex(i)) Draft[i].Handicap = FMath::RoundToDouble(X * 10) / 10; })
-			]
-			+ SHorizontalBox::Slot().AutoWidth().Padding(0, 0, 6, 0)[Button(P.bLeftHanded ? TEXT("Left handed") : TEXT("Right handed"), [this, i]() { Draft[i].bLeftHanded = !Draft[i].bLeftHanded; Rebuild(); }, 13)]
-			+ SHorizontalBox::Slot().AutoWidth().Padding(0, 0, 6, 0)[Button(P.Tee.IsEmpty() ? TEXT("Round's tees") : P.Tee + TEXT(" tees"), [this, i]() {
-				int32 Ti = 0;
-				for (int32 k = 0; k < UE_ARRAY_COUNT(PlayerTees); k++) if (Draft[i].Tee == PlayerTees[k]) Ti = k;
-				Draft[i].Tee = PlayerTees[(Ti + 1) % UE_ARRAY_COUNT(PlayerTees)];
-				Rebuild();
-			}, 13)]
-			+ SHorizontalBox::Slot().AutoWidth().Padding(0, 0, 10, 0)[Button(ConfirmRemove == i ? TEXT("Remove (sure?)") : TEXT("Remove"), [this, i]() {
-				if (ConfirmRemove != i) { ConfirmRemove = i; Rebuild(); return; }
-				Draft.RemoveAt(i);
-				ConfirmRemove = -1;
-				Rebuild();
-			}, 13)]
-			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)[Text(Played ? FString::Printf(TEXT("%d round%s played"), Played, Played == 1 ? TEXT("") : TEXT("s")) : FString(), 12, Soft)]
-		];
+			+ SVerticalBox::Slot().AutoHeight()[Choice(TEXT("Tees"), Tees)];
+		V->AddSlot().AutoHeight().Padding(0, 0, 0, 10)[SNew(SBorder).BorderImage(InsetBrush()).Padding(FMargin(16, 14))[CardBody]];
 	}
 	if (!Draft.Num()) V->AddSlot().AutoHeight()[Text(TEXT("No players yet."), 14, Soft)];
 	V->AddSlot().AutoHeight().Padding(0, 12, 0, 0)
@@ -1207,6 +1248,21 @@ TSharedRef<SWidget> SOTGMainMenu::PlayersPage()
 		}, 15, true)]
 	];
 	return SNew(SScrollBox) + SScrollBox::Slot()[Box(V, FMargin(20, 16), Solid)];
+}
+
+// The picked course's way into the editor: there when the helper has what it was built from
+TSharedRef<SWidget> SOTGMainMenu::EditLink(const FOTGCourseInfo* Info)
+{
+	if (!Info || Info->ExportDir.IsEmpty()) return SNullWidget::NullWidget;
+	UGameInstance* G = GameInstance();
+	UOTGHelperSubsystem* H = G ? G->GetSubsystem<UOTGHelperSubsystem>() : nullptr;
+	if (H && H->HasSource(Info->Id))
+	{
+		const FString Id = Info->Id;
+		return Ghost(TEXT("Edit this course"), [this, Id]() { OpenEditor(Id); }, 13);
+	}
+	return SNew(SBox).ToolTipText(FText::FromString(TEXT("The editor works from what a course was built from (its OpenStreetMap data and photos), kept in Documents\\OpenTeeGolf\\CourseSources. Courses built in the game are there; this one was made elsewhere (the web version).")))
+		[Para(TEXT("Made with the web version: edit it there"), 12, Dim)];
 }
 
 void SOTGMainMenu::OpenEditor(const FString& Id)

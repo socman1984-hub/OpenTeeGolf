@@ -207,6 +207,9 @@ void SOTGWorldMap::Layout(const FGeometry& G) const
 	for (int32 i = 0; i < Courses->Num(); i++)
 	{
 		const FOTGMapCourse& M = (*Courses)[i];
+		// (the key's switches: a course shown if any of what it is is on)
+		const bool bBuilt = !M.BuiltId.IsEmpty();
+		if (!((bBuilt && bShowBuilt) || (M.bFound && bShowFound) || (!bBuilt && !M.bFound && bShowNotBuilt))) continue;
 		const FVector2D P = ScreenOf(G, M.Lat, M.Lon);
 		if (P.X < -Cell || P.Y < -Cell || P.X > Size.X + Cell || P.Y > Size.Y + Cell) continue;
 		if (!M.BuiltId.IsEmpty() || M.bFound || !bCluster) { FDot D; D.P = P; D.Index = i; (M.BuiltId.IsEmpty() && !M.bFound ? Dots : Top).Add(D); continue; }
@@ -295,6 +298,40 @@ FCursorReply SOTGWorldMap::OnCursorQuery(const FGeometry&, const FPointerEvent&)
 
 UOTGHelperSubsystem* SOTGCourseBuilder::Helper() const { return HelperSub(); }
 
+TSharedRef<SWidget> SOTGCourseBuilder::KeySwitch(const FString& Label, const FSlateBrush* Dot, float DotSize, bool SOTGWorldMap::* Flag)
+{
+	static const FButtonStyle Style = FButtonStyle()
+		.SetNormal(FSlateRoundedBoxBrush(FLinearColor(1, 1, 1, 0.06f), 6.f))
+		.SetHovered(FSlateRoundedBoxBrush(FLinearColor(1, 1, 1, 0.14f), 6.f))
+		.SetPressed(FSlateRoundedBoxBrush(FLinearColor(1, 1, 1, 0.10f), 6.f))
+		.SetNormalPadding(FMargin(0)).SetPressedPadding(FMargin(0));
+	static const FSlateRoundedBoxBrush BoxOn(FLinearColor(0.30f, 0.75f, 0.40f, 1.f), 3.f);
+	static const FSlateRoundedBoxBrush BoxOff(FLinearColor::Transparent, 3.f, FLinearColor(1, 1, 1, 0.6f), 1.5f);
+	auto On = [this, Flag]() { return Map.IsValid() && (*Map).*Flag; };
+	return SNew(SButton).ButtonStyle(&Style).ContentPadding(FMargin(7, 4))
+		.ToolTipText(FText::FromString(TEXT("Show or hide these on the map")))
+		.OnClicked_Lambda([this, Flag]() { if (Map.IsValid()) (*Map).*Flag = !((*Map).*Flag); return FReply::Handled(); })
+		[
+			SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0, 0, 7, 0)
+			[
+				SNew(SBox).WidthOverride(14).HeightOverride(14)
+				[
+					SNew(SBorder).BorderImage_Lambda([On]() -> const FSlateBrush* { return On() ? &BoxOn : &BoxOff; }).HAlign(HAlign_Center).VAlign(VAlign_Center).Padding(0)
+					[SNew(STextBlock).Font(Font(10, "Bold")).ColorAndOpacity(FLinearColor::White).Text_Lambda([On]() { return FText::FromString(On() ? TEXT("✓") : TEXT("")); })]
+				]
+			]
+			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
+			[
+				SNew(SBox).WidthOverride(DotSize).HeightOverride(DotSize)[SNew(SBorder).BorderImage(Dot).BorderBackgroundColor_Lambda([On]() { return On() ? FLinearColor::White : FLinearColor(1, 1, 1, 0.35f); })]
+			]
+			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(5, 0, 0, 0)
+			[
+				SNew(STextBlock).Font(Font(12)).Text(FText::FromString(Label)).ColorAndOpacity_Lambda([On]() { return On() ? FSlateColor(Ink) : FSlateColor(FLinearColor(1, 1, 1, 0.45f)); })
+			]
+		];
+}
+
 void SOTGCourseBuilder::Construct(const FArguments&)
 {
 	ChildSlot
@@ -311,12 +348,10 @@ void SOTGCourseBuilder::Construct(const FArguments&)
 					+ SVerticalBox::Slot().AutoHeight()
 					[
 						SNew(SHorizontalBox)
-						+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)[SNew(SBox).WidthOverride(14).HeightOverride(14)[SNew(SBorder).BorderImage(new FSlateRoundedBoxBrush(FLinearColor(0.18f, 0.68f, 0.31f, 1.f), 7.f, FLinearColor(1.f, 0.85f, 0.29f, 1.f), 2.f))]]
-						+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(5, 0, 14, 0)[Text(TEXT("Built"), 12)]
-						+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)[SNew(SBox).WidthOverride(12).HeightOverride(12)[SNew(SBorder).BorderImage(new FSlateRoundedBoxBrush(FLinearColor(0.18f, 0.55f, 0.9f, 1.f), 6.f, FLinearColor::White, 2.f))]]
-						+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(5, 0, 14, 0)[Text(TEXT("Not built yet"), 12)]
-						+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)[SNew(SBox).WidthOverride(12).HeightOverride(12)[SNew(SBorder).BorderImage(new FSlateRoundedBoxBrush(FLinearColor(1.f, 0.62f, 0.18f, 1.f), 6.f, FLinearColor::White, 2.f))]]
-						+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(5, 0, 14, 0)[Text(TEXT("Search results"), 12)]
+						+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0, 0, 8, 0)[Text(TEXT("Show:"), 12, Soft)]
+						+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0, 0, 6, 0)[KeySwitch(TEXT("Built"), new FSlateRoundedBoxBrush(FLinearColor(0.18f, 0.68f, 0.31f, 1.f), 7.f, FLinearColor(1.f, 0.85f, 0.29f, 1.f), 2.f), 14, &SOTGWorldMap::bShowBuilt)]
+						+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0, 0, 6, 0)[KeySwitch(TEXT("Not built yet"), new FSlateRoundedBoxBrush(FLinearColor(0.18f, 0.55f, 0.9f, 1.f), 6.f, FLinearColor::White, 2.f), 12, &SOTGWorldMap::bShowNotBuilt)]
+						+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0, 0, 14, 0)[KeySwitch(TEXT("Search results"), new FSlateRoundedBoxBrush(FLinearColor(1.f, 0.62f, 0.18f, 1.f), 6.f, FLinearColor::White, 2.f), 12, &SOTGWorldMap::bShowFound)]
 						+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)[SNew(SBox).WidthOverride(16).HeightOverride(16)[SNew(SBorder).BorderImage(new FSlateRoundedBoxBrush(FLinearColor(0.23f, 0.56f, 0.85f, 0.9f), 8.f, FLinearColor::White, 2.f))]]
 						+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(5, 0, 0, 0)[Text(TEXT("Several: click to zoom in"), 12)]
 					]
@@ -819,20 +854,23 @@ TSharedRef<SWidget> SOTGCourseBuilder::PickedCard()
 
 TSharedRef<SWidget> SOTGCourseBuilder::BuiltList()
 {
-	if (!Built.Num()) return SNullWidget::NullWidget;
+	// (the game's courses the helper didn't build - made with the web version: listed too, so this
+	// list and the Play page's agree, but there's nothing here to edit them from)
+	TArray<FOTGCourseInfo> Elsewhere;
+	if (UGameInstance* G = GI()) if (UOTGCourseSubsystem* C = G->GetSubsystem<UOTGCourseSubsystem>())
+		for (const FOTGCourseInfo& I : C->ListCourses())
+			if (!I.ExportDir.IsEmpty() && !Built.ContainsByPredicate([&](const FBuilt& B) { return B.Id == I.Id; })) Elsewhere.Add(I);
+	if (!Built.Num() && !Elsewhere.Num()) return SNullWidget::NullWidget;
 	UOTGHelperSubsystem* H = Helper();
 	TSharedRef<SVerticalBox> V = SNew(SVerticalBox);
-	V->AddSlot().AutoHeight().Padding(0, 0, 0, 4)[Text(TEXT("Courses you've built"), 15, Gold, "Bold")];
+	V->AddSlot().AutoHeight().Padding(0, 0, 0, 4)[Text(TEXT("Your courses"), 15, Gold, "Bold")];
 	for (const FBuilt& B : Built)
 	{
 		const FString Id = B.Id;
+		// (its name on a line of its own, whole; under it where it stands, and what can be done)
+		V->AddSlot().AutoHeight().Padding(0, 6, 0, 0)[SNew(STextBlock).Text(FText::FromString(B.Name)).Font(Font(13, "Bold")).ColorAndOpacity(Ink).AutoWrapText(true)];
 		TSharedRef<SHorizontalBox> Row = SNew(SHorizontalBox);
-		Row->AddSlot().FillWidth(1).VAlign(VAlign_Center)
-		[
-			SNew(SVerticalBox)
-			+ SVerticalBox::Slot().AutoHeight()[Text(B.Name, 13, Ink, "Bold")]
-			+ SVerticalBox::Slot().AutoHeight()[Text(B.bInGame ? TEXT("in the game") : TEXT("not in the game yet"), 11, B.bInGame ? Green : Soft)]
-		];
+		Row->AddSlot().FillWidth(1).VAlign(VAlign_Center)[Text(B.bInGame ? TEXT("in the game") : TEXT("not in the game yet"), 11, B.bInGame ? Green : Soft)];
 		if (H && H->ActiveFor(Id)) Row->AddSlot().AutoWidth().VAlign(VAlign_Center).Padding(4, 0, 0, 0)[Text(TEXT("in the queue"), 11, Soft)];
 		else
 		{
@@ -850,10 +888,18 @@ TSharedRef<SWidget> SOTGCourseBuilder::BuiltList()
 				}
 			}, 11, ConfirmDelete == Id)];
 		}
-		V->AddSlot().AutoHeight().Padding(0, 3)[Row];
+		V->AddSlot().AutoHeight().Padding(0, 2, 0, 2)[Row];
 	}
+	Elsewhere.Sort([](const FOTGCourseInfo& A, const FOTGCourseInfo& B) { return A.Name < B.Name; });
+	for (const FOTGCourseInfo& I : Elsewhere)
+		V->AddSlot().AutoHeight().Padding(0, 3)
+		[
+			SNew(SVerticalBox).ToolTipText(FText::FromString(TEXT("In the game, but made with the web version: what it was built from isn't in Documents\\OpenTeeGolf\\CourseSources, so it can't be edited or updated here. Build it again here to edit it in the game.")))
+			+ SVerticalBox::Slot().AutoHeight()[Text(I.Name, 13, Ink, "Bold")]
+			+ SVerticalBox::Slot().AutoHeight()[Text(TEXT("in the game · made with the web version"), 11, Soft)]
+		];
 	V->AddSlot().AutoHeight().Padding(0, 4, 0, 0)[SNew(STextBlock).Font(Font(11)).ColorAndOpacity(Soft).WrapTextAt(400)
-		.Text(FText::FromString(TEXT("Export again after editing a course. Update fetches its map data afresh (your trees, grass and looks are kept). Delete removes what it was built from; the game keeps what it has.")))];
+		.Text(FText::FromString(TEXT("Edit a course here or from the Play page. Export again after editing it. Update fetches its map data afresh (your trees, grass and looks are kept). Delete removes what it was built from; the game keeps what it has.")))];
 	return Box(V, FMargin(12, 10), Solid);
 }
 

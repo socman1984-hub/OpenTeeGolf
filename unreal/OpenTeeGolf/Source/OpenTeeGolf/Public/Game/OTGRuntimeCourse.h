@@ -34,6 +34,16 @@ struct FOTGPicked
 	bool bAdded = false;          // (added in the designer)
 	bool bColourable = false;     // (a tree drawn with the game's own leaves, which take a colour; the packs' own don't)
 	FVector Base = FVector::ZeroVector;   // (the level's cm: its foot)
+	double RadiusM = 0;           // (its crown's reach, or a rock's half size)
+};
+
+// The mown turf's colour - the fairways (and tees), the greens - as the grass designer turns it:
+// its hue (degrees, + bluer), colour strength and brightness (1: as it is). Saved for the course
+// (turf.json)
+struct FOTGTurfLook
+{
+	float Hue = 0, Sat = 1, Bright = 1;
+	bool IsOwn() const { return Hue == 0 && Sat == 1 && Bright == 1; }
 };
 
 UCLASS()
@@ -67,6 +77,12 @@ public:
 	float GrassHeightCm(const FString& Kind) const;
 	int32 GrassInstances() const;
 	TArray<otg::FGrassKind> SavedGrassKinds() const;   // (as saved for the course, or the game's own)
+	// The fairways' and greens' colour ("fairway", "green"): as it is now, changed (seen at once),
+	// saved, as saved
+	FOTGTurfLook TurfLook(const FString& Surface) const { const FOTGTurfLook* L = TurfLooks.Find(Surface); return L ? *L : FOTGTurfLook(); }
+	void SetTurfLook(const FString& Surface, const FOTGTurfLook& Look);
+	bool SaveTurfLooks(FString* Where = nullptr) const;
+	TMap<FString, FOTGTurfLook> SavedTurfLooks() const;
 	// The kinds' colours changed at once (their materials tinted: nothing grown again), and where a
 	// kind grows thickly nearest a point (the level's cm; false: nowhere near)
 	void SetGrassColours(const TArray<otg::FGrassKind>& Kinds);
@@ -91,11 +107,19 @@ public:
 	// false if none. And one again by where it stands (after the trees are drawn again)
 	bool Pick(const FVector& Origin, const FVector& Dir, double MaxT, FOTGPicked& Out) const;
 	bool Picked(bool bRock, double X, double Z, FOTGPicked& Out) const;
+	// The picked one marked on the course (a gold ring round it, a gold marker above): called each
+	// frame while it's picked - not called for a moment, the marks go
+	void MarkPicked(const FOTGPicked& P);
 	// (a point in the level, cm, as course metres x z / as the level's metres a rock is keyed by)
 	FVector2D CourseXZ(const FVector& World) const;
 	FVector2D RockXY(const FVector& World) const;
 
 private:
+	UPROPERTY() TObjectPtr<class UInstancedStaticMeshComponent> PickRing;
+	UPROPERTY() TObjectPtr<UStaticMeshComponent> PickCone;
+	double PickMarkedAt = -1;
+	TMap<FString, FOTGTurfLook> TurfLooks;
+	FVector PickConeAt = FVector::ZeroVector;
 	void LoadPictures();
 	void BuildGround(TFunction<void(float, const FString&)> Progress);
 	void BuildGroundTiles(int32 From, int32 To);

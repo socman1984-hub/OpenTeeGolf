@@ -614,6 +614,20 @@ void UOTGHelperSubsystem::PollJob()
 	});
 }
 
+// Where the helper keeps the courses' sources (as Launch tells it: lib/builder.js BUILT_DIR)
+FString UOTGHelperSubsystem::SourcesDir() const
+{
+	bool bDev = false;
+	const FString Dir = HelperDir(&bDev);
+	if (bDev) return FPaths::Combine(Dir, TEXT("courses"));
+	return FPaths::Combine(FPlatformProcess::UserDir(), TEXT("OpenTeeGolf"), TEXT("CourseSources"));
+}
+
+bool UOTGHelperSubsystem::HasSource(const FString& CourseId) const
+{
+	return !CourseId.IsEmpty() && FPaths::FileExists(FPaths::Combine(SourcesDir(), CourseId, CourseId + TEXT(".course.json")));
+}
+
 // Where the helper keeps its downloads and the queue (as Launch tells it)
 FString UOTGHelperSubsystem::DataDir() const
 {

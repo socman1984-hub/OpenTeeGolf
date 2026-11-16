@@ -94,6 +94,7 @@ private:
 	TSharedPtr<class SOTGCourseBuilder> Builder;   // (made once: it keeps its map and searches)
 	TSharedPtr<class SOTGCourseEditor> Editor;     // (the course being edited)
 	void OpenEditor(const FString& Id);
+	TSharedRef<SWidget> EditLink(const struct FOTGCourseInfo* Info);
 public:
 	void EditCourse(const FString& Id) { OpenEditor(Id); }
 private:

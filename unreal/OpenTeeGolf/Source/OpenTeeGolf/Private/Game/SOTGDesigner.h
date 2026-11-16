@@ -34,6 +34,8 @@ private:
 	void Rebuild();
 	void Apply();                    // (grown again with Edit)
 	void ApplyColours();             // (only the colours: tinted at once)
+	TSharedRef<SWidget> TurfRow(const FString& Surface, const FString& Label);   // (the fairways' or greens' colour)
+	void SetTurf(const TMap<FString, FOTGTurfLook>& Looks);                       // (both, as these: the rest as they are)
 	TSharedRef<SWidget> KindRow(int32 I);
 	const otg::FGrassKind* Default(const FString& Name) const;
 
@@ -42,6 +44,7 @@ private:
 	TArray<TSharedPtr<FString>> Plants;   // (Megascans plants not yet added, for the list)
 	TSharedPtr<FString> PlantPick;
 	TSharedPtr<SBox> Body;
+	TSharedPtr<class SScrollBox> Scroll;   // (kept where it was across a Rebuild)
 	FString Status;
 	bool bUnsaved = false;
 };
@@ -87,6 +90,7 @@ private:
 	float AddHeight = 12.f, AddRock = 1.2f;
 	TArray<TPair<FString, int32>> Species;
 	TSharedPtr<SBox> Body;
+	TSharedPtr<class SScrollBox> Scroll;   // (kept where it was across a Rebuild)
 	FString Status;
 };
 

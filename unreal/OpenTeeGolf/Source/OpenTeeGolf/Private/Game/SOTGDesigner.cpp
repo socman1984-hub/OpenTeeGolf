@@ -15,6 +15,25 @@ using namespace otg::ui;
 
 namespace
 {
+	// A drop-down of choices (Values, shown by Label), the current one shown; Set when one's picked
+	TSharedRef<SWidget> Dropdown(const TArray<FString>& Values, const FString& Current, TFunction<FString(const FString&)> Label, TFunction<void(const FString&)> Set)
+	{
+		// (the options outlive this call: the combo box holds them by pointer, the lambdas keep them)
+		TSharedRef<TArray<TSharedPtr<FString>>> Opts = MakeShared<TArray<TSharedPtr<FString>>>();
+		TSharedPtr<FString> Sel;
+		for (const FString& V : Values)
+		{
+			Opts->Add(MakeShared<FString>(V));
+			if (V == Current) Sel = Opts->Last();
+		}
+		return SNew(SComboBox<TSharedPtr<FString>>)
+			.OptionsSource(&Opts.Get())
+			.InitiallySelectedItem(Sel)
+			.OnGenerateWidget_Lambda([Opts, Label](TSharedPtr<FString> P) { return StaticCastSharedRef<SWidget>(Text(Label(*P), 12)); })
+			.OnSelectionChanged_Lambda([Opts, Set](TSharedPtr<FString> P, ESelectInfo::Type How) { if (P.IsValid() && How != ESelectInfo::Direct) Set(*P); })
+			[SNew(STextBlock).Font(Font(12)).Text(FText::FromString(Label(Current)))];
+	}
+
 	// The tall grass's patches: the noise's lightness runs 0.27..0.46 (OTGGrass.cpp Place); a kind
 	// grows where it is past the middle of its Lo..Hi (or short of it, inverted)
 	constexpr float PatchL0 = 0.27f, PatchL1 = 0.46f;
@@ -46,6 +65,59 @@ void SOTGGrassDesigner::Open(AOTGRuntimeCourse* InCourse)
 	Status.Empty();
 	bUnsaved = false;
 	Rebuild();
+}
+
+void SOTGGrassDesigner::SetTurf(const TMap<FString, FOTGTurfLook>& Looks)
+{
+	if (!Course.IsValid()) return;
+	for (const TCHAR* S : { TEXT("fairway"), TEXT("green") })
+	{
+		const FOTGTurfLook* L = Looks.Find(S);
+		Course->SetTurfLook(S, L ? *L : FOTGTurfLook());
+	}
+}
+
+TSharedRef<SWidget> SOTGGrassDesigner::TurfRow(const FString& Surface, const FString& Label)
+{
+	using G = otg::FGrassKind;
+	TSharedRef<SVerticalBox> V = SNew(SVerticalBox);
+	V->AddSlot().AutoHeight().Padding(0, 8, 0, 2)[Text(Label, 14, Ink, "Bold")];
+	auto Colour = [this, &V, Surface](const FString& Name, float Lo, float Hi, float FOTGTurfLook::* Field, TFunction<FString(float)> Fmt) {
+		V->AddSlot().AutoHeight().Padding(18, 2, 0, 0)
+		[
+			SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)[SNew(SBox).WidthOverride(112)[Text(Name, 12, Soft)]]
+			+ SHorizontalBox::Slot().FillWidth(1).VAlign(VAlign_Center)
+			[
+				SNew(SSlider)
+				.Value_Lambda([this, Surface, Lo, Hi, Field]() { return Course.IsValid() ? FMath::Clamp((Course->TurfLook(Surface).*Field - Lo) / (Hi - Lo), 0.f, 1.f) : 0.f; })
+				.OnValueChanged_Lambda([this, Surface, Lo, Hi, Field](float X) {
+					if (!Course.IsValid()) return;
+					// (a little stickiness at its own colour, so it's easy to go back to)
+					float F = Lo + (Hi - Lo) * X;
+					const float Own = Field == &FOTGTurfLook::Hue ? 0.f : 1.f;
+					if (FMath::Abs(F - Own) < (Hi - Lo) * 0.02f) F = Own;
+					FOTGTurfLook L = Course->TurfLook(Surface);
+					L.*Field = F;
+					Course->SetTurfLook(Surface, L);
+					bUnsaved = true;
+				})
+			]
+			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(8, 0, 0, 0)
+			[
+				SNew(SBox).WidthOverride(140)[SNew(STextBlock).Font(Font(12, "Bold")).ColorAndOpacity(Ink).Text_Lambda([this, Surface, Field, Fmt]() { return FText::FromString(Course.IsValid() ? Fmt(Course->TurfLook(Surface).*Field) : FString()); })]
+			]
+		];
+	};
+	Colour(TEXT("Colour"), -G::HueMax, G::HueMax, &FOTGTurfLook::Hue, [](float F) {
+		const int32 D = FMath::RoundToInt(F);
+		return D == 0 ? FString(TEXT("as mown")) : D < 0 ? FString::Printf(TEXT("%d° golder"), -D) : FString::Printf(TEXT("%d° bluer"), D);
+	});
+	Colour(TEXT("Colour strength"), G::SatLo, G::SatHi, &FOTGTurfLook::Sat, [](float F) { return FMath::IsNearlyEqual(F, 1.f) ? FString(TEXT("as mown")) : FString::Printf(TEXT("%d%%"), FMath::RoundToInt(F * 100)); });
+	Colour(TEXT("Brightness"), G::BrightLo, G::BrightHi, &FOTGTurfLook::Bright, [](float F) { return FMath::IsNearlyEqual(F, 1.f) ? FString(TEXT("as mown")) : FString::Printf(TEXT("%d%%"), FMath::RoundToInt(F * 100)); });
+	V->AddSlot().AutoHeight().Padding(130, 2, 0, 0).HAlign(HAlign_Left)
+		[Button(TEXT("As mown"), [this, Surface]() { if (Course.IsValid()) { Course->SetTurfLook(Surface, FOTGTurfLook()); bUnsaved = true; } }, 11)];
+	return V;
 }
 
 const otg::FGrassKind* SOTGGrassDesigner::Default(const FString& Name) const
@@ -213,6 +285,11 @@ void SOTGGrassDesigner::Rebuild()
 		for (int32 i = 0; i < Edit.Num(); i++)
 			if (Edit[i].FarOf.IsEmpty() && Edit[i].Masks.Contains(Surface)) List->AddSlot().AutoHeight()[KindRow(i)];
 	};
+	// the mown turf: the fairways (and tees) and the greens - their colour, seen at once
+	List->AddSlot().AutoHeight().Padding(0, 4, 0, 0)[Text(TEXT("Fairways and greens"), 15, Gold, "Bold")];
+	List->AddSlot().AutoHeight()[SNew(STextBlock).Text(FText::FromString(TEXT("The mown turf's colour: the fairways (with the tees) and the greens, each its own."))).Font(Font(11)).ColorAndOpacity(Soft).WrapTextAt(470)];
+	List->AddSlot().AutoHeight()[TurfRow(TEXT("fairway"), TEXT("Fairways and tees"))];
+	List->AddSlot().AutoHeight()[TurfRow(TEXT("green"), TEXT("Greens"))];
 	Section(TEXT("Rough"), TEXT("Kept one even green, as a looked-after rough is: only the rough's own grasses grow on it."), TEXT("rough"));
 	Section(TEXT("Tall grass (deep rough, heather)"), TEXT("Out of play and under the trees, where the course lets it grow: mix any of these, each in its own patches."), TEXT("native"));
 
@@ -247,7 +324,10 @@ void SOTGGrassDesigner::Rebuild()
 			]
 		];
 	}
-	V->AddSlot().AutoHeight()[SNew(SBox).MaxDesiredHeight(600)[SNew(SScrollBox) + SScrollBox::Slot()[List]]];
+	// (the list's scroll kept: a change rebuilds it, which would start it at the top again)
+	const float ScrolledTo = Scroll.IsValid() ? Scroll->GetScrollOffset() : 0.f;
+	V->AddSlot().AutoHeight()[SNew(SBox).MaxDesiredHeight(600)[SAssignNew(Scroll, SScrollBox) + SScrollBox::Slot()[List]]];
+	Scroll->SetScrollOffset(ScrolledTo);
 
 	// saving, and starting again
 	V->AddSlot().AutoHeight().Padding(0, 12, 0, 0)
@@ -255,13 +335,14 @@ void SOTGGrassDesigner::Rebuild()
 		SNew(SHorizontalBox)
 		+ SHorizontalBox::Slot().AutoWidth().Padding(0, 0, 6, 0)[Button(TEXT("Save for this course"), [this]() {
 			FString Where;
-			const bool bOk = Course.IsValid() && Course->SaveGrassKinds(&Where);
+			const bool bOk = Course.IsValid() && Course->SaveGrassKinds(&Where) && Course->SaveTurfLooks(&Where);
 			bUnsaved = !bOk;
 			Status = bOk ? FString(TEXT("Saved: the course grows it like this from now on")) : FString(TEXT("Couldn't save ")) + Where;
 		}, 13, true)]
 		+ SHorizontalBox::Slot().AutoWidth().Padding(0, 0, 6, 0)[Button(TEXT("As saved"), [this]() {
 			if (!Course.IsValid()) return;
 			Edit = Course->SavedGrassKinds();
+			SetTurf(Course->SavedTurfLooks());
 			Apply();
 			bUnsaved = false;
 			Status = TEXT("Back as it was saved");
@@ -269,6 +350,7 @@ void SOTGGrassDesigner::Rebuild()
 		}, 12)]
 		+ SHorizontalBox::Slot().AutoWidth()[Button(TEXT("The game's own"), [this]() {
 			Edit = otg::FGrass::DefaultKinds();
+			SetTurf({});
 			Apply();
 			Status = TEXT("The game's own grass (not saved yet)");
 			Rebuild();
@@ -289,6 +371,11 @@ void SOTGGrassDesigner::Rebuild()
 void SOTGTreeDesigner::Construct(const FArguments&)
 {
 	ChildSlot[SAssignNew(Body, SBox).WidthOverride(520).MaxDesiredHeight(760)];
+	// (the picked one marked on the course while this shows: the marks go when it stops asking)
+	RegisterActiveTimer(0.f, FWidgetActiveTimerDelegate::CreateLambda([this](double, float) {
+		if (bPicked && Course.IsValid() && GetVisibility().IsVisible()) Course->MarkPicked(Picked);
+		return EActiveTimerReturnType::Continue;
+	}));
 }
 
 void SOTGTreeDesigner::Open(AOTGRuntimeCourse* InCourse)
@@ -438,15 +525,15 @@ TSharedRef<SWidget> SOTGTreeDesigner::PickPanel()
 				[this, X, Z]() { const FOTGRockEdit* E = Edit.RockEditAt(X, Z); return E ? E->Size : 1.f; },
 				[this, X, Z](float F) { Edit.RockEdit(X, Z).Size = FMath::RoundToFloat(F * 20) / 20; },
 				[this, X, Z]() { const FOTGRockEdit* E = Edit.RockEditAt(X, Z); const float S = E ? E->Size : 1.f; return FMath::IsNearlyEqual(S, 1.f) ? FString(TEXT("as mapped")) : FString::Printf(TEXT("%d%%"), FMath::RoundToInt(S * 100)); });
-		// its look: the next at each click (as the course's rocks first)
+		// its look, from a list (as the course's rocks first)
 		{
 			const FOTGRockEdit* E0 = Edit.RockEditAt(X, Z);
-			Row(TEXT("Looks like"), Button(E0 && !E0->Model.IsEmpty() ? FOTGTreeDesign::RockModelLabel(E0->Model) : FString(TEXT("As the course's rocks")), [this, X, Z]() {
-				FOTGRockEdit& E = Edit.RockEdit(X, Z);
-				const TArray<FString>& M = FOTGTreeDesign::RockModels();
-				E.Model = M[(M.IndexOfByKey(E.Model) + 1) % M.Num()];
-				Apply(); Reselect(); Rebuild();
-			}, 12));
+			TArray<FString> M = FOTGTreeDesign::RockModels();
+			M.Remove(FString());
+			M.Insert(FString(), 0);
+			Row(TEXT("Looks like"), Dropdown(M, E0 ? E0->Model : FString(),
+				[](const FString& K) { return K.IsEmpty() ? FString(TEXT("As the course's rocks")) : FOTGTreeDesign::RockModelLabel(K); },
+				[this, X, Z](const FString& K) { Edit.RockEdit(X, Z).Model = K; Apply(); Reselect(); Rebuild(); }));
 		}
 		V->AddSlot().AutoHeight().Padding(130, 6, 0, 0)
 		[
@@ -485,14 +572,15 @@ TSharedRef<SWidget> SOTGTreeDesigner::PickPanel()
 			Apply(); Reselect(); Rebuild();
 		})
 		[SNew(STextBlock).Font(Font(12)).Text(FText::FromString(FOTGTreeDesign::SpeciesLabel(Picked.Kind)))]);
-	// its model: the next at each click (its species' first)
-	Row(TEXT("Drawn as"), Button(E0 && !E0->Model.IsEmpty() ? FOTGTreeDesign::ModelLabel(E0->Model) : FString(TEXT("As its species")), [this, X, Z]() {
-		FOTGTreeEdit& E = Edit.TreeEdit(X, Z);
+	// its model, from a list (its species' own first)
+	{
 		TArray<FString> M = FOTGTreeDesign::Models();
+		M.Remove(FString());
 		M.Insert(FString(), 0);
-		E.Model = M[(M.IndexOfByKey(E.Model) + 1) % M.Num()];
-		Apply(); Reselect(); Rebuild();
-	}, 12));
+		Row(TEXT("Drawn as"), Dropdown(M, E0 ? E0->Model : FString(),
+			[](const FString& K) { return K.IsEmpty() ? FString(TEXT("As its species")) : FOTGTreeDesign::ModelLabel(K); },
+			[this, X, Z](const FString& K) { Edit.TreeEdit(X, Z).Model = K; Apply(); Reselect(); Rebuild(); }));
+	}
 	if (Picked.bAdded)
 		Slider(TEXT("Height"), FOTGTreeEdit::HeightLo, FOTGTreeEdit::HeightHi,
 			[this, X, Z]() { const FOTGTreeEdit* E = Edit.TreeEditAt(X, Z); return E ? E->Height : 12.f; },
@@ -654,13 +742,9 @@ void SOTGTreeDesigner::Rebuild()
 		[
 			SNew(SHorizontalBox)
 			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)[SNew(SBox).WidthOverride(112)[Text(TEXT("Drawn as"), 12, Soft)]]
-			+ SHorizontalBox::Slot().AutoWidth()[Button(FOTGTreeDesign::ModelLabel(L.Model), [this, Kind]() {
-				FOTGSpeciesLook& X = Edit.Species.FindOrAdd(Kind);
-				const TArray<FString>& M = FOTGTreeDesign::Models();
-				X.Model = M[(M.IndexOfByKey(X.Model) + 1) % M.Num()];
-				Apply();
-				Rebuild();
-			}, 12)]
+			+ SHorizontalBox::Slot().FillWidth(1)[Dropdown(FOTGTreeDesign::Models(), L.Model,
+				[](const FString& K) { return FOTGTreeDesign::ModelLabel(K); },
+				[this, Kind](const FString& K) { Edit.Species.FindOrAdd(Kind).Model = K; Apply(); Rebuild(); })]
 		];
 		Slider(Row, TEXT("Size"), 0.4f, 2.f, [Kind](FOTGTreeDesign& D) { return &D.Species.FindOrAdd(Kind).Size; }, SizeFmt);
 		Slider(Row, TEXT("How many"), 0.f, 3.f, [Kind](FOTGTreeDesign& D) { return &D.Species.FindOrAdd(Kind).Density; }, Times);
@@ -681,17 +765,17 @@ void SOTGTreeDesigner::Rebuild()
 		[
 			SNew(SHorizontalBox)
 			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)[SNew(SBox).WidthOverride(112)[Text(TEXT("Look like"), 12, Soft)]]
-			+ SHorizontalBox::Slot().AutoWidth()[Button(FOTGTreeDesign::RockModelLabel(Edit.RockModel), [this]() {
-				const TArray<FString>& M = FOTGTreeDesign::RockModels();
-				Edit.RockModel = M[(M.IndexOfByKey(Edit.RockModel) + 1) % M.Num()];
-				Apply();
-				Rebuild();
-			}, 12)]
+			+ SHorizontalBox::Slot().FillWidth(1)[Dropdown(FOTGTreeDesign::RockModels(), Edit.RockModel,
+				[](const FString& K) { return FOTGTreeDesign::RockModelLabel(K); },
+				[this](const FString& K) { Edit.RockModel = K; Apply(); Rebuild(); })]
 		];
 		Slider(List, TEXT("Size"), 0.4f, 2.5f, [](FOTGTreeDesign& D) { return &D.RockSize; }, SizeFmt);
 		Slider(List, TEXT("How many"), 0.f, 1.f, [](FOTGTreeDesign& D) { return &D.RockDensity; }, Times);
 	}
-	V->AddSlot().AutoHeight()[SNew(SBox).MaxDesiredHeight(600)[SNew(SScrollBox) + SScrollBox::Slot()[List]]];
+	// (the list's scroll kept: a change rebuilds it, which would start it at the top again)
+	const float ScrolledTo = Scroll.IsValid() ? Scroll->GetScrollOffset() : 0.f;
+	V->AddSlot().AutoHeight()[SNew(SBox).MaxDesiredHeight(600)[SAssignNew(Scroll, SScrollBox) + SScrollBox::Slot()[List]]];
+	Scroll->SetScrollOffset(ScrolledTo);
 
 	V->AddSlot().AutoHeight().Padding(0, 12, 0, 0)
 	[

@@ -631,7 +631,15 @@ def build_ground(land):
     fair_tee = op(unreal.MaterialExpressionAdd, m["fairway"], m["tee"], -1500, -300, "", "")
     turf = None
     for i, (k, w, wout) in enumerate((("fairway", fair_tee, ""), ("green", m["green"], ""), ("rough", m["rough"], ""), ("bunker", m["bunker"], ""), ("water", m["water"], ""))):
-        t = op(unreal.MaterialExpressionMultiply, const3(TURF[k], -1300, -300 + i * 120), w, -1100, -300 + i * 120, "", wout)
+        base = const3(TURF[k], -1300, -300 + i * 120)
+        if k in ("fairway", "green"):
+            # (the grass designer's colour for the fairways (and tees) and greens: a multiplier, white
+            # leaving it as it is - AOTGRuntimeCourse::SetTurfLook)
+            tint = E(unreal.MaterialExpressionVectorParameter, -1500, -300 + i * 120)
+            tint.set_editor_property("parameter_name", "TurfTint_" + k)
+            tint.set_editor_property("default_value", unreal.LinearColor(1, 1, 1, 1))
+            base = op(unreal.MaterialExpressionMultiply, base, tint, -1200, -280 + i * 120, "", "RGB")
+        t = op(unreal.MaterialExpressionMultiply, base, w, -1100, -300 + i * 120, "", wout)
         turf = t if turf is None else op(unreal.MaterialExpressionAdd, turf, t, -900, -300 + i * 120)
     if "native" in m:
         nat = E(unreal.MaterialExpressionLinearInterpolate, -850, -250)

@@ -56,6 +56,8 @@ public:
 	void SetLayer(const FString& L) { Layer_ = L; }
 	FString GetLayer() const { return Layer_; }
 	TFunction<void(int32 Index)> OnPick;   // (a course's dot clicked)
+	// What's shown: the ones built, the rest, a search's results (the key's switches)
+	bool bShowBuilt = true, bShowNotBuilt = true, bShowFound = true;
 
 private:
 	// What's drawn (builder.js's map): the courses not built yet in clusters - a count in a blue disc,
@@ -101,6 +103,8 @@ private:
 	TSharedRef<SWidget> JobCard();
 	TSharedRef<SWidget> BuiltList();
 	void Pick(int32 I, bool bFly);
+	// (one of the map key's switches: its dot and name, ticked when shown; a click turns it off or on)
+	TSharedRef<SWidget> KeySwitch(const FString& Label, const FSlateBrush* Dot, float DotSize, bool SOTGWorldMap::* Flag);
 	void LoadWorld();
 	void LoadBuilt();
 	void Search();

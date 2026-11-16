@@ -120,6 +120,14 @@ namespace
 		// (saved first: a Shipping build leaves out the log, its arguments and all)
 		if (AOTGRuntimeCourse* C = CourseOf(W)) { const bool bOk = C->SaveTreeDesign(&Where); UE_LOG(LogTemp, Display, TEXT("Trees %s %s"), bOk ? TEXT("saved to") : TEXT("NOT saved to"), *Where); }
 	}));
+	FAutoConsoleCommandWithWorldAndArgs TurfSetCmd(TEXT("OTG.Turf.Set"), TEXT("OTG.Turf.Set fairway|green hue|sat|bright <value>: (testing) the mown turf's colour, as the grass designer turns it"), FCmd::CreateLambda([](const TArray<FString>& A, UWorld* W) {
+		AOTGRuntimeCourse* C = CourseOf(W);
+		if (!C || A.Num() < 3) return;
+		FOTGTurfLook L = C->TurfLook(A[0]);
+		const float V = FCString::Atof(*A[2]);
+		if (A[1] == TEXT("hue")) L.Hue = V; else if (A[1] == TEXT("sat")) L.Sat = V; else if (A[1] == TEXT("bright")) L.Bright = V;
+		C->SetTurfLook(A[0], L);
+	}));
 	FAutoConsoleCommandWithWorldAndArgs TreesShowCmd(TEXT("OTG.Trees.Show"), TEXT("OTG.Trees.Show <species>: the free view flown to one"), FCmd::CreateLambda([](const TArray<FString>& A, UWorld* W) {
 		if (AOTGRound* R = RoundIn(W)) if (A.Num()) R->ShowTree(A[0]);
 	}));

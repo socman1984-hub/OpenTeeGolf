@@ -117,6 +117,10 @@ public:
 	void LoadSource(const FString& CourseId, TFunction<void(TSharedPtr<FJsonObject> Course, TSharedPtr<FJsonObject> Real, const FString& Error)> Done);
 	// Save it (the body the web editor's Save sends: FOTGCourseSource::SaveBody)
 	void SaveSource(const FString& CourseId, TSharedRef<FJsonObject> Body, FDone Done);
+	// Where the helper keeps the courses' sources (what the editor edits: Documents/OpenTeeGolf/
+	// CourseSources, or a development copy's courses folder), and whether a course has one there
+	FString SourcesDir() const;
+	bool HasSource(const FString& CourseId) const;
 
 	FString StatusLine() const;
 
