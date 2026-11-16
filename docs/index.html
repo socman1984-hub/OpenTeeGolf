@@ -99,6 +99,10 @@
     .community .card { display: flex; flex-direction: column; gap: 12px; }
     .community .card .btn { align-self: flex-start; }
 
+    .ue-note { margin: 14px 0 0; font-size: 15px; color: var(--muted); }
+    .ue-ctas { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin: 0 0 30px; }
+    .ue-ctas .dl-meta { margin: 0; }
+
     footer { padding: 34px 0 50px; color: var(--muted); font-size: 14px; border-top: 1px solid var(--line); }
     footer p { margin: 0 0 8px; }
   </style>
@@ -113,6 +117,7 @@
       </a>
       <nav>
         <a class="opt" href="#features">Features</a>
+        <a class="opt" href="#unreal">Unreal edition</a>
         <a class="opt" href="#new">What's new</a>
         <a class="opt" href="#start">Get started</a>
         <a class="opt" href="https://github.com/socman1984-hub/OpenTeeGolf">GitHub</a>
@@ -145,6 +150,7 @@
               Source code
             </a>
           </div>
+          <p class="ue-note">New: the <a href="#unreal">Unreal Engine edition</a>, with a driving range, putt-putt and a course designer.</p>
           <div class="dl-meta" id="dl-meta">Windows 10 or 11 (64-bit) · free and open source (GPL-3.0)</div>
         </div>
         <figure>
@@ -195,6 +201,10 @@
         <h2>Recently added</h2>
         <p class="sub">OpenTeeGolf is in alpha and changes every week. The <a href="https://github.com/socman1984-hub/OpenTeeGolf/releases">release notes</a> have the full list.</p>
         <ul class="news">
+          <li><b>Unreal edition 0.17: practice.</b> A driving range with target greens, every shot's numbers and averages per club, and nine holes of putt-putt with a windmill, tunnel, ramps and a pond.</li>
+          <li><b>Unreal edition: a new menu.</b> Search and sort your courses, see the picked course's holes, par and length, and set up the round in one place.</li>
+          <li><b>Unreal edition: the course designer grows.</b> Change the rough and tall grass colours, fly to where a grass grows, add, remove and restyle any tree or rock, and plant heather, wildflowers, Scots pine and hill oak.</li>
+          <li><b>Unreal edition: build courses in the background.</b> Queue several courses from the world map and keep playing; you're told in the round when one is ready, and the queue carries on next time.</li>
           <li><b>The right number of trees.</b> Trees found in the aerial photo are now one per real crown, at its real size, instead of a dozen small ones, and tree shadows are no longer mistaken for trees. Courses re-read their trees the next time you play them.</li>
           <li><b>Rivers as wide as they really are</b> on courses built before rivers were fitted to the photo, white riffles and shady edges included.</li>
           <li><b>Fewer flowering bushes.</b> The woods edges are mostly green shrubs now, with the odd azalea or rhododendron.</li>
@@ -219,7 +229,37 @@
       </div>
     </section>
 
-    <section id="start">
+    <section id="unreal">
+      <div class="wrap">
+        <h2>The Unreal Engine edition</h2>
+        <p class="sub">The same real courses, drawn by Unreal Engine 5: a game you install, with its own course builder, editor and practice areas, and no browser needed to play. It's newer than the browser version and moving fast.</p>
+        <div class="ue-ctas">
+          <a class="btn primary" id="ue-dl" href="https://github.com/socman1984-hub/OpenTeeGolf/releases">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m0 0-5-5m5 5 5-5M4 20h16"/></svg>
+            <span id="ue-dl-text">Download the Unreal edition</span>
+          </a>
+          <div class="dl-meta" id="ue-dl-meta">Windows 10 or 11 (64-bit) · an installer, no admin rights needed · updates itself</div>
+        </div>
+        <div class="grid">
+          <div class="card"><h3><span>🌍</span>Every course on one map</h3><p>All 39,682 golf courses mapped in OpenStreetMap, grouped on a world map until you zoom in. Search, check what's mapped, and build. Queue up as many as you like: they build in the background while you play.</p></div>
+          <div class="card"><h3><span>🏌️</span>Practice: range and putt-putt</h3><p>A driving range with target greens from 50 to 250 yards, every shot's numbers and your averages per club. And nine holes of putt-putt with a windmill, tunnel, ramps and a pond.</p></div>
+          <div class="card"><h3><span>✏️</span>Course editor</h3><p>Holes, tees, pins and par; greens, fairways, bunkers and water; trees, tall grass and buildings, on the course's aerial photo. Most changes reach the game in seconds.</p></div>
+          <div class="card"><h3><span>🎨</span>Course designer</h3><p>Press R in a round and change the course as you watch: what the rough and tall grass are made of and their colours, heather and wildflowers, and any tree or rock, one by one or all of a kind.</p></div>
+          <div class="card"><h3><span>🔎</span>A menu built for many courses</h3><p>Search your courses by name or place, sort by name, last played or newest, and set up the round (tees, pins, weather, players and game) in one place.</p></div>
+          <div class="card"><h3><span>⛅</span>Weather and time of day</h3><p>Live weather at the course or any preset, from calm to storm, and the sun where it really is at any time of day.</p></div>
+        </div>
+        <div class="gallery" style="margin-top: 30px">
+          <figure><img class="shot" src="img/ue-menu.jpg?v=0.17.0" width="1600" height="900" loading="lazy" alt="The Unreal edition's main menu: a searchable list of courses on the left, the picked course with its holes, par and length, and the round's options in cards"><figcaption>The menu: search your courses and set up the round.</figcaption></figure>
+          <figure><img class="shot" src="img/ue-new-course.jpg?v=0.17.0" width="1600" height="900" loading="lazy" alt="A world map with golf courses grouped into numbered circles, and the courses you've built listed beside it"><figcaption>New course: every mapped course in the world, built in the background.</figcaption></figure>
+          <figure><img class="shot" src="img/ue-range.jpg?v=0.17.0" width="1600" height="900" loading="lazy" alt="The driving range from the hitting mat: striped turf, target greens with flags, yardage boards and mountains beyond"><figcaption>The driving range.</figcaption></figure>
+          <figure><img class="shot" src="img/ue-putt-putt.jpg?v=0.17.0" width="1600" height="900" loading="lazy" alt="The first hole of the putt-putt course: a felt lane with posts, a windmill behind, flower beds and a picket fence"><figcaption>Nine holes of putt-putt.</figcaption></figure>
+          <figure><img class="shot" src="img/ue-editor.jpg?v=0.17.0" width="1600" height="900" loading="lazy" alt="The course editor: a hole drawn over its aerial photo, every tree shown as a circle, and a tabbed side panel"><figcaption>The course editor, on the course's aerial photo.</figcaption></figure>
+          <figure><img class="shot" src="img/ue-course.jpg?v=0.17.0" width="1600" height="900" loading="lazy" alt="Looking down the first hole from the tee: striped fairway, rough, tall grass and woods"><figcaption>A course built from OpenStreetMap, in Unreal Engine.</figcaption></figure>
+        </div>
+      </div>
+    </section>
+
+    <section class="alt" id="start">
       <div class="wrap two">
         <div>
           <h2>Get started</h2>
@@ -245,7 +285,7 @@
       </div>
     </section>
 
-    <section class="alt" id="community">
+    <section id="community">
       <div class="wrap">
         <h2>Community</h2>
         <p class="sub">OpenTeeGolf is made in the open. Come say hello, share courses, report problems, or help build it.</p>
@@ -279,6 +319,23 @@
         if (r.published_at) parts.push(`released ${new Date(r.published_at).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })}`);
         parts.push('Windows 10/11, 64-bit');
         document.getElementById('dl-meta').innerHTML = `${parts.join(' · ')} · <a href="${r.html_url}">what's new</a>`;
+      })
+      .catch(() => {});
+    // (and the Unreal edition's button: its newest release, tagged unreal-v*, and its installer)
+    fetch('https://api.github.com/repos/socman1984-hub/OpenTeeGolf/releases?per_page=30')
+      .then((r) => (r.ok ? r.json() : Promise.reject()))
+      .then((list) => {
+        const r = list.find((x) => /^unreal-v/.test(x.tag_name || '') && !x.draft && !x.prerelease);
+        if (!r) return;
+        const v = r.tag_name.replace(/^unreal-v/, '');
+        const exe = (r.assets || []).find((a) => /^OpenTeeGolf-Setup-.*\.exe$/i.test(a.name));
+        document.getElementById('ue-dl').href = exe ? exe.browser_download_url : r.html_url;
+        document.getElementById('ue-dl-text').textContent = `Download the Unreal edition ${v}`;
+        const parts = [];
+        if (exe) parts.push(`${Math.round(exe.size / 1e6)} MB installer`);
+        if (r.published_at) parts.push(`released ${new Date(r.published_at).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })}`);
+        parts.push('Windows 10/11, 64-bit');
+        document.getElementById('ue-dl-meta').innerHTML = `${parts.join(' · ')} · <a href="${r.html_url}">what's new</a>`;
       })
       .catch(() => {});
   </script>
