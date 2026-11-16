@@ -658,6 +658,7 @@ void AOTGRound::AimBy(double Degrees)
 
 void AOTGRound::ChangeClub(int32 Step)
 {
+	if (bRange && Phase == EPhase::Resting) NewBall();   // (the range: a new ball for the new club)
 	if (Phase != EPhase::Ready) return;
 	const int32 I = FMath::Clamp(ClubIndex(Club) - Step, 0, NumClubs - (bRange ? 2 : 1));   // (no putter on the range)
 	bClubPicked = true;
