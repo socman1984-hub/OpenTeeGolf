@@ -4,6 +4,7 @@
 #include "Game/OTGRound.h"
 #include "Game/OTGRuntimeCourse.h"
 #include "Game/OTGHelperSubsystem.h"
+#include "Game/OTGMiniGolf.h"
 
 #include "Camera/CameraActor.h"
 #include "Components/DirectionalLightComponent.h"
@@ -310,6 +311,14 @@ void AOTGRound::Setup(UOTGCourseData* InData, const FOTGRoundSetup& InSetup)
 		Setup_.Format = TEXT("stroke");
 		Club = TEXT("I7");
 	}
+	bMini = Data->Generated == AOTGMiniGolf::CourseId;
+	if (bMini)
+	{
+		// (calm, no slope grid, a short flag)
+		Setup_.Weather = TEXT("calm");
+		bGridOn = false;
+		FlagTopCm = 105;
+	}
 	Data->FillPlayCourse(Course);
 	Data->FillTrees(Trees);
 	std::vector<otg::Solid> Solids;
@@ -423,9 +432,10 @@ void AOTGRound::Setup(UOTGCourseData* InData, const FOTGRoundSetup& InSetup)
 			return Self.IsValid() ? SurfaceDisplay(Self->Course.SurfaceAt(X, Z)) : FString();
 		});
 		Hud->Minimap()->OnAim = [Self](double X, double Z) { if (Self.IsValid()) Self->AimAt(X, Z); };
+		if (bMini) Hud->Minimap()->SetVisibility(EVisibility::Collapsed);   // (no photo of the putt-putt)
 		// the test shot panel (T): hit as if the launch monitor had sent it
 		Hud->ShotPanel()->PuttMph = [Self]() {
-			return Self.IsValid() ? otg::of::PuttSpeed(Self->DistToPin() + 0.4, Self->Data->DefaultStimp) / 0.44704 : 5.0;
+			return Self.IsValid() ? Self->PuttMps(0.4) / 0.44704 : 5.0;
 		};
 		Hud->WeatherPanel()->OnKey = [Self](const FString& K) { if (Self.IsValid()) Self->SetWeatherKey(K); };
 		Hud->WeatherPanel()->OnWind = [Self](double V) { if (Self.IsValid()) Self->SetWindMph(V); };
@@ -560,7 +570,31 @@ otg::V3 AOTGRound::TeeOf(const FOTGHole& H, const FString& TeeWanted) const
 
 double AOTGRound::DistToPin() const { return Dist(Ball, Pin()); }
 double AOTGRound::PinDist(const otg::V3& B) const { return Dist(B, Pin()); }
-int32 AOTGRound::MaxStrokes() const { return Hole().Par + 5; }
+int32 AOTGRound::MaxStrokes() const { return bMini ? 6 : Hole().Par + 5; }   // (putt-putt: 6, as on most mini courses)
+
+double AOTGRound::PuttMps(double Extra) const
+{
+	double D = DistToPin();
+	if (!bMini) return otg::of::PuttSpeed(D + Extra, Data->DefaultStimp);
+	// (the putt-putt: round the turn on the first putt, and enough more to climb a ramp or a volcano)
+	const otg::V3 P = Pin();
+	const FOTGHole& H = Hole();
+	if (H.Aims.IsValidIndex(AimTurn))
+	{
+		// (by the turns from that one on)
+		otg::V3 From = Ball;
+		D = 0;
+		for (int32 i = AimTurn; i < H.Aims.Num(); i++)
+		{
+			const otg::V3 A{ H.Aims[i].X, 0, H.Aims[i].Z };
+			D += Dist(From, A);
+			From = A;
+		}
+		D += Dist(From, P);
+	}
+	const double V = otg::of::PuttSpeed(D + Extra, Data->DefaultStimp);
+	return FMath::Sqrt(V * V + 2 * 9.81 * FMath::Max(0.0, P.y - Ball.y) * 1.15);
+}
 otg::V3 AOTGRound::AimPoint() const { return OnGround(Ball.x + FMath::Sin(Heading) * AimDist, Ball.z + FMath::Cos(Heading) * AimDist); }
 
 FString AOTGRound::Len(double M) const { return FString::Printf(TEXT("%d yd"), FMath::RoundToInt(M * M_TO_YD)); }
@@ -586,8 +620,8 @@ void AOTGRound::StartHole(int32 Index)
 	if (Hud) Hud->SetShotData(FString(), FString());
 	// the flag, and a marker on the tee
 	const otg::V3 P = Pin();
-	PinMesh->SetWorldLocation(World(P) + FVector(0, 0, 115));
-	PinMesh->SetWorldScale3D(FVector(0.02, 0.02, 2.3));
+	PinMesh->SetWorldLocation(World(P) + FVector(0, 0, bMini ? FlagTopCm / 2 : 115));
+	PinMesh->SetWorldScale3D(FVector(0.02, 0.02, bMini ? FlagTopCm / 100 : 2.3));
 	FlagMesh->SetVisibility(false);   // (the cloth flag instead: UpdateFlag)
 	// (the cup: a dark disc 10.8 cm across, just above the green)
 	CupMesh->SetWorldLocation(World(P) + FVector(0, 0, 0.3));
@@ -600,20 +634,27 @@ void AOTGRound::StartHole(int32 Index)
 	TeeHeadMesh->SetWorldLocation(TeeAt + FVector(0, 0, 3.0));
 	TeeHeadMesh->SetWorldRotation(FRotator(180, 0, 0));
 	TeeHeadMesh->SetWorldScale3D(FVector(0.015, 0.015, 0.012));
+	TeeMesh->SetVisibility(!bMini);   // (putt-putt: off a mat on the felt)
+	TeeHeadMesh->SetVisibility(!bMini);
 	ResetAim(false);
 	PlaceBall(Ball);
 	OverviewView();
-	const double LenM = Dist(Ball, P);
+	double LenM = Dist(Ball, P);
+	if (bMini && H.Path.Num() > 1)
+	{
+		LenM = 0;
+		for (int32 i = 1; i < H.Path.Num(); i++) LenM += FVector2D::Distance(FVector2D(H.Path[i - 1].X, H.Path[i - 1].Z), FVector2D(H.Path[i].X, H.Path[i].Z));
+	}
 	if (bRange)
 	{
 		Banner(TEXT("Driving range"), TEXT("Targets at 50, 100, 150, 200 and 250 yards"), 3.f);
 		UpdateRange();
 	}
-	else Banner(FString::Printf(TEXT("Hole %d"), H.Number), FString::Printf(TEXT("Par %d  ·  %s%s"), H.Par, *Len(LenM),
+	else Banner(H.Name.IsEmpty() ? FString::Printf(TEXT("Hole %d"), H.Number) : FString::Printf(TEXT("Hole %d  ·  %s"), H.Number, *H.Name), FString::Printf(TEXT("Par %d  ·  %s%s"), H.Par, *HoleLen(LenM),
 		Game->Single() ? TEXT("") : *FString::Printf(TEXT("  ·  %s to play"), *Game->SideLabel(SideIdx))), 3.f);
 	UpdateHudInfo();
 	TellLaunchMonitor(true);
-	UE_LOG(LogOTGRound, Display, TEXT("Hole %d, par %d, %s"), H.Number, H.Par, *Len(LenM));
+	UE_LOG(LogOTGRound, Display, TEXT("Hole %d, par %d, %s"), H.Number, H.Par, *HoleLen(LenM));
 }
 
 void AOTGRound::ResetAim(bool bToPin)
@@ -631,6 +672,26 @@ void AOTGRound::ResetAim(bool bToPin)
 	double TX = P.x, TZ = P.z;
 	// From the tee on long holes aim down the fairway (the first aim point)
 	if (!bToPin && Strokes == 0 && H.Par >= 4 && H.Aims.Num()) { TX = H.Aims[0].X; TZ = H.Aims[0].Z; }
+	// (the putt-putt: at the turn - the board to bank off, the bridge - from the tee, or while the boards
+	// stand between the ball and the cup and not between it and the turn)
+	AimTurn = -1;
+	if (bMini && H.Aims.Num())
+	{
+		auto Blocked = [this](const otg::V3& From, const otg::V3& To) {
+			otg::Hit Hit;
+			Collider.SetPin(nullptr);
+			return Collider.Cast(otg::V3{ From.x, From.y + 0.02, From.z }, otg::V3{ To.x, To.y + 0.02, To.z }, true, Hit);
+		};
+		// (from the tee the first; later, the furthest turn the ball can see, if it can't see the cup)
+		if (Strokes == 0) AimTurn = 0;
+		else if (Blocked(Ball, P))
+			for (int32 i = H.Aims.Num() - 1; i >= 0 && AimTurn < 0; i--)
+			{
+				const otg::V3 A = OnGround(H.Aims[i].X, H.Aims[i].Z);
+				if (Dist(Ball, A) > 0.5 && !Blocked(Ball, A)) AimTurn = i;
+			}
+		if (AimTurn >= 0) { TX = H.Aims[AimTurn].X; TZ = H.Aims[AimTurn].Z; }
+	}
 	Heading = HeadingTo(Ball, TX, TZ);
 	AimDist = FMath::Max(1.0, FMath::Sqrt((TX - Ball.x) * (TX - Ball.x) + (TZ - Ball.z) * (TZ - Ball.z)));
 	bClubPicked = false;
@@ -641,6 +702,7 @@ void AOTGRound::ResetAim(bool bToPin)
 void AOTGRound::AutoClub()
 {
 	if (bRange) return SetClub(Club);   // (the range: the club as picked)
+	if (bMini) return SetClub(TEXT("PT"));
 	FString C = TEXT("PT");
 	if (!OnGreen())
 	{
@@ -685,6 +747,7 @@ void AOTGRound::ChangeClub(int32 Step)
 {
 	if (bRange && Phase == EPhase::Resting) NewBall();   // (the range: a new ball for the new club)
 	if (Phase != EPhase::Ready) return;
+	if (bMini) { Toast(TEXT("Putt-putt: putter only"), 1.2f); return; }
 	const int32 I = FMath::Clamp(ClubIndex(Club) - Step, 0, NumClubs - (bRange ? 2 : 1));   // (no putter on the range)
 	bClubPicked = true;
 	SetClub(Clubs[I].Code);
@@ -713,7 +776,7 @@ void AOTGRound::TestShot()
 	const double D = bRange ? AimDist : DistToPin();
 	if (Club == TEXT("PT"))
 	{
-		const double Mps = otg::of::PuttSpeed(D, Data->DefaultStimp);
+		const double Mps = PuttMps(0);
 		B.Speed = Mps * 2.23694 * FMath::FRandRange(0.97, 1.05);
 		B.VLA = 1.5;
 		B.HLA = FMath::FRandRange(-1.0, 1.0);
@@ -1042,6 +1105,12 @@ void AOTGRound::OnShot(const FOTGShot& Shot)
 	O.trees = &Trees;
 	O.collider = &Collider;
 	O.random = []() { return double(FMath::FRand()); };
+	if (bMini)
+	{
+		// (a putt rolls: no chipping over the boards; and the windmill's sails turn as it goes)
+		Play.vla = FMath::Min(Play.vla, 4.0);
+		if (AOTGMiniGolf* M = AOTGMiniGolf::In(GetWorld())) M->AddMovers(O);
+	}
 	const double T0 = FPlatformTime::Seconds();
 	Res = otg::SimulateShot(Course, Ball, Play, O);
 	bHasRes = true;
@@ -1074,7 +1143,15 @@ void AOTGRound::FinishShot()
 		PlaceBall(Ball);
 		return HoleOut(false, FString());
 	}
-	if (Res.result == "oob" || Surface == otg::Surface::Oob || Surface == otg::Surface::None)
+	// (putt-putt: anywhere off the felt is out, and the pond's water too: from where it was)
+	if (bMini && (Res.result != "rest" || Surface != otg::Surface::Green))
+	{
+		Strokes++;
+		Ball = PrevBall;
+		Title = Res.result == "water" || Surface == otg::Surface::Water ? TEXT("In the pond") : TEXT("Off the course");
+		Small = TEXT("+1 stroke: play again from where you were");
+	}
+	else if (Res.result == "oob" || Surface == otg::Surface::Oob || Surface == otg::Surface::None)
 	{
 		Strokes++; // stroke and distance
 		Ball = PrevBall;
@@ -1109,7 +1186,8 @@ void AOTGRound::FinishShot()
 		auto Has = [&](const char* K) { for (const std::string& H : Res.treeHits) if (H == K) return true; return false; };
 		const FString Tree = Has("pole") ? TEXT("Off the flagstick! ") : Has("building") ? TEXT("Off the building! ") : Has("trunk") ? TEXT("Off the trunk! ")
 			: Has("branch") ? TEXT("Hit a branch! ") : Has("leaves") ? TEXT("Clipped the leaves. ") : TEXT("");
-		if (!ReliefNote.IsEmpty()) Toast(FString::Printf(TEXT("%s%s: dropped in the %s"), *Tree, *ReliefNote, *SurfaceDisplay(Lie).ToLower()), 4.f);
+		if (bMini) { if (Has("blade")) Toast(TEXT("Blocked by the windmill!"), 2.5f); }
+		else if (!ReliefNote.IsEmpty()) Toast(FString::Printf(TEXT("%s%s: dropped in the %s"), *Tree, *ReliefNote, *SurfaceDisplay(Lie).ToLower()), 4.f);
 		else if (Landed != otg::Surface::None && Landed != Lie) Toast(FString::Printf(TEXT("%sLanded: %s, finished: %s"), *Tree, *SurfaceDisplay(Landed), *SurfaceDisplay(Lie)), 3.5f);
 		else Toast(FString::Printf(TEXT("%sIn the %s"), *Tree, *SurfaceDisplay(Lie).ToLower()), Tree.IsEmpty() ? 2.5f : 3.5f);
 		ReliefNote.Reset();
@@ -1318,7 +1396,15 @@ void AOTGRound::Tick(float Dt)
 		const FVector B = BallMesh->GetComponentLocation();
 		const FVector Flat(B.X - ShotFrom.X, B.Y - ShotFrom.Y, 0);
 		const bool bPutt = LastShot.VLA < 6 && Undo && Undo->Lie == otg::Surface::Green;
-		if (Flat.Size() > 300)
+		if (bMini)
+		{
+			// (the putt-putt: up behind the ball, looking down the hole, following it round)
+			const FVector Pw = World(Pin());
+			const FVector Dh = FVector(Pw.X - ShotFrom.X, Pw.Y - ShotFrom.Y, 0).GetSafeNormal();
+			CamGoal = B - Dh * 330 + FVector(0, 0, 300);
+			CamSpeed = 2.f;
+		}
+		else if (Flat.Size() > 300)
 		{
 			const FVector U = Flat.GetSafeNormal();
 			CamGoal = B - U * (bPutt ? 450 : 1400) + FVector(0, 0, FMath::Max(B.Z, ShotFrom.Z) - B.Z + (bPutt ? 160 : 450));
@@ -1501,6 +1587,22 @@ void AOTGRound::AddressView(bool bSnap)
 
 void AOTGRound::OverviewView()
 {
+	if (bMini)
+	{
+		// (the putt-putt: the whole hole - tee, turn and cup - from above behind the tee)
+		const FOTGHole& H = Hole();
+		FBox Box(ForceInit);
+		for (const FVector& Q : H.Path) Box += World(OnGround(Q.X, Q.Z));
+		Box += World(Ball);
+		const FVector Mid = Box.GetCenter();
+		const double L = FMath::Max(Box.GetSize().X, Box.GetSize().Y);
+		FVector D = FVector(Mid.X - World(Ball).X, Mid.Y - World(Ball).Y, 0).GetSafeNormal();
+		if (D.IsNearlyZero()) D = FVector(FMath::Sin(Heading), -FMath::Cos(Heading), 0);
+		CamPos = CamGoal = Mid - D * (L * 0.55 + 200) + FVector(0, 0, L * 0.7 + 280);
+		CamLookNow = CamLook = Mid;
+		OverviewLeft = 2.8;
+		return;
+	}
 	// The hole from high behind the tee, looking down at where it's aimed, then down to the ball
 	const FVector B = World(Ball);
 	const FVector D(FMath::Sin(Heading), -FMath::Cos(Heading), 0);
@@ -1560,13 +1662,15 @@ void AOTGRound::UpdateHudInfo()
 	}
 	const FOTGHole& H = Hole();
 	const double D = DistToPin();
-	const FString L1 = FString::Printf(TEXT("Hole %d  ·  Par %d  ·  %s"), H.Number, H.Par, *Len(Dist(TeeOf(H, TeeName), Pin())));
+	const FString L1 = bMini ? FString::Printf(TEXT("Hole %d  ·  %s  ·  Par %d"), H.Number, *H.Name, H.Par)
+		: FString::Printf(TEXT("Hole %d  ·  Par %d  ·  %s"), H.Number, H.Par, *Len(Dist(TeeOf(H, TeeName), Pin())));
 	FString L2;
 	const FOTGSide& Sd = Game->Sides[SideIdx];
 	const FString Who = Game->Single() ? FString() : Game->SideLabel(SideIdx) + TEXT("  ·  ");
 	if (Phase == EPhase::Holed || Phase == EPhase::Done) L2 = FString::Printf(TEXT("%d stroke%s"), Sd.Scores[HoleIndex], Sd.Scores[HoleIndex] == 1 ? TEXT("") : TEXT("s"));
 	else if (Phase == EPhase::Between) L2 = FString::Printf(TEXT("%sholed out"), *Who);
 	else if (Phase == EPhase::Flying) L2 = FString::Printf(TEXT("%sStroke %d  ·  on its way"), *Who, Strokes);
+	else if (bMini) L2 = FString::Printf(TEXT("%sStroke %d  ·  %s to the cup"), *Who, Strokes + 1, *Putt(D));
 	else L2 = FString::Printf(TEXT("%sStroke %d  ·  %s to the pin  ·  %s"), *Who, Strokes + 1, OnGreen() ? *Putt(D) : *Len(D), *SurfaceDisplay(Lie));
 	const FClub& C = Clubs[ClubIndex(Club)];
 	FString L3 = OnGreen() || Club == TEXT("PT") ? FString(C.Name) : FString::Printf(TEXT("%s  ·  aim %s"), C.Name, *Len(AimDist));
@@ -1843,7 +1947,7 @@ void AOTGRound::HoleWind(double& Mps, double& FromDeg) const
 {
 	Mps = 0;
 	FromDeg = 0;
-	if (Weather.WindMph < 0.5) return;
+	if (Weather.WindMph < 0.5 || bMini) return;   // (the putt-putt's sheltered)
 	Mps = Weather.WindMph * 0.44704;
 	if (Weather.bRelative)
 	{
@@ -1880,6 +1984,7 @@ void AOTGRound::LoadSide(int32 I)
 	SideIdx = FMath::Max(0, I);
 	const FOTGSide& S = Game->Sides[SideIdx];
 	Ball = S.Ball; PrevBall = S.PrevBall; Lie = S.Lie; Strokes = S.Strokes;
+	if (bMini && Course.SurfaceAt(Ball.x, Ball.z) == otg::Surface::Green) Lie = otg::Surface::Green;   // (the tee's on the felt)
 	Undo.Reset();
 	PlaceBall(Ball);
 	ShowOtherBalls();

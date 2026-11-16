@@ -156,8 +156,8 @@ Everything the golf needs runs inside the game, in C++.
   recent shots with averages and spread; gold marks show where the club's last ten stopped. A new
   ball comes 3.5 s after the last stops (Enter or Backspace: at once; Space on a resting ball tees a
   new one and hits it). Tab hides the panel; L (weather and time of day), T, F and the launch monitor
-  work as on a course; "live" weather is calm there. Open it with the menu's "Practice: driving
-  range" button, `OTG.Range` (console) or `-range` (command line); `OTG.Range.NewBall` for testing.
+  work as on a course; "live" weather is calm there. Open it with Driving range on the menu's
+  Practice tab, `OTG.Range` (console) or `-range` (command line); `OTG.Range.NewBall` for testing.
   Course packs (levels built in the editor under `/Game/Courses`) are retired: the editor tools
   are still there, but packs are never cooked into the game.
 - The grass designer (R in a round, `SOTGGrassDesigner`, phase 1): the grass kinds are no longer a
@@ -312,6 +312,29 @@ Everything the golf needs runs inside the game, in C++.
   `OTG.Round.Club 1|-1`, `OTG.Round.Continue`, `OTG.Round.Drop <yd>` (testing), `OTG.Shot <name>`
   (a screenshot). For checking without anyone at the keyboard, `-roundexec="<s>:<command>|..."` runs
   commands at set times after the round starts, and `-RenderOffscreen` renders without a window.
+- The putt-putt (`Game/OTGMiniGolf.*`): nine holes of mini golf the game makes itself, with no
+  course folder. The first six are the web version's (`public/js/practice.js` `puttPutt`): Warm-up,
+  Dogleg, The ramp, The windmill, Tunnel and volcano, Zig-zag. Three are new: Camel humps, The pond
+  (a narrow bridge over water) and The big bend (a banked U-turn). Each is par 2 or 3.
+  - The play data: `AOTGMiniGolf::MakeCourse` fills a `UOTGCourseData` (`Generated` "minigolf") with
+    the holes and their names, a 5 cm heightmap (ramps, humps, the volcano, the pond's dip, the
+    bank) and 2.5 cm surfaces (felt is green, the pond water, the lawn tee). Every board, post and
+    block is a `bumper` solid, and the slope is measured over 12 cm (`NormalSpanM`) because the
+    ramps are short.
+  - The windmill's sails are physics movers: `otg::ShotOptions::movers`, as `physics.js` has them.
+    The parity test doesn't use them.
+  - Drawing it: `AOTGMiniGolf` draws the course in `L_Course` from procedural meshes and the
+    engine's basic shapes. That covers the felt draped over the ground, the boards in each hole's
+    colour with white caps, posts, the windmill (its sails turning by the same clock the ball's
+    movers use), the stone tunnel, the volcano's rocks, the pond's bridge and lily pads, signs,
+    flower beds, a picket fence, trees and far hills.
+  - In the round, `AOTGRound` (`bMini`) makes every shot a putt and aims the first putt at the
+    board to bank off. Anywhere off the felt, or in the pond, costs a stroke and you replay from
+    where you were. A hole ends at 6 strokes. Other differences: calm air, no slope grid, a short
+    flag, no minimap, distances in feet, and cameras sized to the hole. The test shot's putt allows
+    for the turn and for any climb.
+  - Opening it: `-minigolf` (or `-course=minigolf`) on the command line, `OTG.MiniGolf` in the
+    console, or Putt-putt on the menu's Practice tab, which uses the players and game picked on the Play tab.
 - Menus and players (`SOTGMenus`, `OTGPlayers`): the game starts on a menu with these pages.
   - Play: on the left the courses, with a search (every word typed must be in the name or the
     place) and three orders: A-Z, recently played (`setup.json`'s `lastPlayed`, set by Start, and
@@ -321,8 +344,8 @@ Everything the golf needs runs inside the game, in C++.
     the round's options in four cards (Round: tees, pins, 18 or 9, start hole; Conditions;
     Players, in tee-off order with teams; Game: the format and handicaps), and a bar with what's
     set and Start the round. With no courses it says how to build the first one.
-  - Practice: Driving range and Putt-putt, shown "Coming soon" until something gives them a start:
-    `SOTGMainMenu::SetPracticeMode(TEXT("Driving range"), [] { ... })` (a new name adds an entry).
+  - Practice: Driving range and Putt-putt (`SOTGMainMenu::SetPracticeMode` gives an entry its start;
+    a new name adds one, shown "Coming soon" until it has one).
   - New course: find and build one (below).
   - Players: name, colour, handicap, hand and own tees.
   - Launch monitor: the connection, its live status, and the Mevo+ setup and arm-on-turn.

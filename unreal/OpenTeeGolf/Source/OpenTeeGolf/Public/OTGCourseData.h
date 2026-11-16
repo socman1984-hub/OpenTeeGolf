@@ -34,6 +34,8 @@ struct FOTGHole
 	UPROPERTY(EditAnywhere, BlueprintReadOnly) FVector GreenCenter = FVector::ZeroVector;
 	UPROPERTY(EditAnywhere, BlueprintReadOnly) TArray<FVector> Aims;
 	UPROPERTY(EditAnywhere, BlueprintReadOnly) TArray<FVector> Path;
+	// (a hole with a name of its own: the putt-putt's)
+	UPROPERTY(EditAnywhere, BlueprintReadOnly) FString Name;
 };
 
 // A tree's shape for the ball (otg::Tree): a trunk, and a cone (A base, B height, C radius) or an
@@ -92,6 +94,10 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Course") TSoftObjectPtr<UWorld> Level;
 	// A course loaded from its export folder at run time (not a pack): the folder
 	UPROPERTY() FString ExportDir;
+	// A course the game makes itself rather than reads ("minigolf": the putt-putt, AOTGMiniGolf)
+	UPROPERTY() FString Generated;
+	// How far either way the ground's slope is measured for the ball (otg::PlayCourse::normalSpan)
+	UPROPERTY() double NormalSpanM = 1;
 
 	// Where the course is (course metres): outside, the ball is out
 	UPROPERTY() double MinX = 0;

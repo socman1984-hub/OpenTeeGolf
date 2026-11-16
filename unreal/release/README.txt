@@ -27,7 +27,7 @@ Play            Pick the course from the list on the left: type in the search bo
                 they tee off - and A/B for teams); the game (stroke play, Stableford, match play,
                 skins, best ball, scramble, alternate shot) and whether handicaps count. The bar
                 at the bottom sums it up: "Start the round".
-Practice        A driving range and a putt-putt course (coming soon).
+Practice        A driving range and a putt-putt course.
 New course      Find a real course on the world map and build it (see Courses, below).
 Players         Each player's name, colour, handicap, hand and own tees. Their finished rounds are
                 kept with them.
@@ -82,7 +82,7 @@ Esc                            pause: resume, scorecard, launch monitor, quit to
 
 Driving range
 -------------
-Practice: driving range (at the top of the Play page) opens the range: target greens with flags
+Driving range on the Practice tab opens the range: target greens with flags
 at 50, 100, 150, 200 and 250 yards, distance boards every 50 yards, mountains beyond. Hit from the
 mat with your launch monitor, or T / Space for test shots. After each shot the panel on the right
 shows carry, total, offline, apex, ball speed, launch, direction, spin and spin axis, with your
@@ -118,6 +118,17 @@ OpenStreetMap, or deletes it. Built courses go in Documents\OpenTeeGolf\Courses,
 sources in Documents\OpenTeeGolf\CourseSources. The first time a course is opened the game builds
 it (a loading screen shows how far along it is: under a minute for most courses). Courses exported
 from the web version of OpenTeeGolf (Export to Unreal) still work too.
+
+Putt-putt
+---------
+Nine holes of mini golf that come with the game: Putt-putt on the Practice tab (with the players
+and game picked on the Play tab), or start the game with -minigolf. Felt lanes edged with boards the ball
+bounces off, posts, a ramp, a windmill whose sails block its tunnel as they turn, a tunnel and a
+volcano, a zig-zag, camel humps, a pond with a narrow bridge and a banked U-turn; par 2 or 3 a
+hole. Every shot is a putt: putt with your launch monitor, or T for the test shot panel's Putt
+(Space for a quick one). On a hole that turns, the first putt is aimed at the board to bank off;
+Left / Right change it. Off the felt or in the pond costs a stroke and you play again from where
+you were; a hole ends at 6 strokes. Tab shows the scorecard.
 
 Settings > Courses folder shows where the game looks, opens it, and can point it somewhere else.
 To share a course, copy its folder into someone else's Courses folder.

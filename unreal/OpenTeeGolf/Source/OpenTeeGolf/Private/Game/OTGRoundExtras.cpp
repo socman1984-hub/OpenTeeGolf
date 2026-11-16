@@ -91,8 +91,8 @@ void AOTGRound::UpdateFlag(float Dt)
 	const double Droop = FMath::DegreesToRadians(FMath::Lerp(82.0, 12.0, S));
 	const FVector Along = Down * FMath::Cos(Droop) - FVector::UpVector * FMath::Sin(Droop);
 	const FVector Hang = FVector::CrossProduct(Side, Along).GetSafeNormal(); // (the flag's own "down": along the pole when it flies)
-	const FVector Top = World(Pin()) + FVector(0, 0, 228);
-	const double L = 55, H = 36;   // cm
+	const FVector Top = World(Pin()) + FVector(0, 0, FlagTopCm);
+	const double L = bMini ? 34 : 55, H = bMini ? 22 : 36;   // cm
 	const int32 NU = 12, NV = 6;
 	const double Amp = FMath::Lerp(1.5, 9.0, S), Freq = FMath::Lerp(2.0, 7.5, S);
 	// (the ripples' progress, added up a frame at a time: time x a pace that follows the gusts

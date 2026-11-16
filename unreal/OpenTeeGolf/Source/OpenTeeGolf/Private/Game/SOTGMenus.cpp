@@ -2,6 +2,7 @@
 // page: mevo-page.js.)
 
 #include "SOTGMenus.h"
+#include "Game/OTGMiniGolf.h"
 #include "SOTGBuilder.h"
 #include "SOTGEditor.h"
 
@@ -420,6 +421,17 @@ void SOTGMainMenu::Construct(const FArguments&)
 		{ TEXT("Driving range"), TEXT("Hit any club as often as you like, with the ball's flight and every number from the launch monitor."), nullptr },
 		{ TEXT("Putt-putt"), TEXT("A short course of fun putting holes, for a few minutes or a whole evening."), nullptr },
 	};
+	// (their starts: the range on your own; the putt-putt with the players picked on the Play tab)
+	SetPracticeMode(TEXT("Driving range"), [this]() { if (UOTGCourseSubsystem* C = Courses()) C->PlayRange(); });
+	SetPracticeMode(TEXT("Putt-putt"), [this]() {
+		UOTGCourseSubsystem* C = Courses();
+		if (!C) return;
+		Remember();
+		C->PendingSetup = Setup;
+		C->PendingSetup.CourseId = AOTGMiniGolf::CourseId;
+		C->bHasPendingSetup = true;
+		C->PlayCourse(AOTGMiniGolf::CourseId);
+	});
 	ChildSlot
 	[
 		SNew(SOverlay)

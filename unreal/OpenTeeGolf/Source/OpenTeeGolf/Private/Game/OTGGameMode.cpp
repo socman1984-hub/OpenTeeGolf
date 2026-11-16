@@ -7,6 +7,7 @@
 #include "EngineUtils.h"
 #include "Game/OTGRound.h"
 #include "Game/OTGRuntimeCourse.h"
+#include "Game/OTGMiniGolf.h"
 #include "SOTGLoading.h"
 #include "HAL/IConsoleManager.h"
 #include "Misc/CommandLine.h"
@@ -64,6 +65,8 @@ void AOTGGameMode::StartPlay()
 	FOTGRoundSetup Setup = Courses->bHasPendingSetup && Courses->PendingSetup.CourseId == Course->CourseId ? Courses->PendingSetup : FOTGPlayers::LoadSetup();
 	Courses->bHasPendingSetup = false;
 	Setup.CourseId = Course->CourseId;
+	const bool bMini = Course->Generated == AOTGMiniGolf::CourseId;
+	if (bMini) Setup.StartHole = 1;   // (the putt-putt: from the first, unless -hole says)
 	const TCHAR* Cmd = FCommandLine::Get();
 	FParse::Value(Cmd, TEXT("hole="), Setup.StartHole);
 	FParse::Value(Cmd, TEXT("tee="), Setup.Tee);
@@ -91,6 +94,8 @@ void AOTGGameMode::StartPlay()
 		});
 		return;
 	}
+	// (the putt-putt: drawn here, then the round)
+	if (bMini) GetWorld()->SpawnActor<AOTGMiniGolf>()->Build(Course);
 	AOTGRound* Round = GetWorld()->SpawnActor<AOTGRound>();
 	Round->Setup(Course, Setup);
 }
