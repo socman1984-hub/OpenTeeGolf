@@ -74,7 +74,8 @@ UTexture2D* otg::LoadTexture(const FString& File, ETexKind Kind, int32 MaxSize, 
 	T->CompressionSettings = bGrey ? TC_Grayscale : (Kind == ETexKind::Data ? TC_VectorDisplacementmap : TC_Default);
 	T->Filter = TF_Trilinear;
 	T->AddressX = T->AddressY = TA_Clamp;
-	T->LODGroup = TEXTUREGROUP_World;
+	// (a group of its own: DefaultDeviceProfiles.ini caps World's cooked textures at 2048, not these)
+	T->LODGroup = TEXTUREGROUP_Project01;
 	T->NeverStream = true;
 	// the mips, each half the last, down to 1 x 1
 	FTexturePlatformData* PD = T->GetPlatformData();

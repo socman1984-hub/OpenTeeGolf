@@ -379,7 +379,8 @@ void SOTGCourseBuilder::Construct(const FArguments&)
 	Map->OnPick = [this](int32 I) { Pick(I, false); };
 	if (UOTGHelperSubsystem* H = Helper())
 	{
-		JobHandle = H->OnJobDone.AddLambda([this](const FOTGHelperJob& J) { JobDone(J); });
+		// (bound weakly: the helper outlives this page, and a course can finish after it's closed)
+		JobHandle = H->OnJobDone.AddSP(this, &SOTGCourseBuilder::JobDone);
 		FString Why;
 		if (!H->Available(&Why)) Status = Why;
 	}

@@ -98,11 +98,42 @@ def course_level():
 
 # The scenery in pieces of its own (pakchunk<n> files), so the game's download is several files
 # under GitHub's 2 GB limit and an update fetches only the pieces that changed: the game itself is
-# chunk 0; each tree folder gets a label putting what's cooked from it in its chunk (cook rule left
-# alone: DefaultGame.ini says what's cooked). The tree folders aren't in git, so the labels are
-# made here, before every release.
+# chunk 0; each tree folder gets a label putting what's cooked from it, and all that uses, in its
+# chunk. The tree folders aren't in git, so the labels are made here, before every release.
 # KiteDemo (the heather, wildflowers, Scots pine, hill oak and rocks: OTGKiteDemo.h) is chunk 5.
+# Each label names its assets one by one (not "everything in my folder"): the labels count in the
+# cook (DefaultGame.ini: not editor-only), so a folder-wide one would cook the whole pack. What's
+# named is what DefaultGame.ini's DirectoriesToAlwaysCook has in the pack, and for Megaplant the
+# spruce's and pine's SM_ meshes (the trees the game draws: OTGRuntimeCourse.cpp ConiferFolders) -
+# not its folders, whose skeletal trees and branches and procedural-vegetation sources are only for
+# editing, and were half its download.
 SCENERY_CHUNKS = (("/Game/EuropeanBeech", 1), ("/Game/EuropeanHornbeam", 2), ("/Game/Megaplant_Library", 3), ("/Game/Fab", 4), ("/Game/KiteDemo", 5))
+NAMED_MESHES = {"/Game/Megaplant_Library": ("/Game/Megaplant_Library/Tree_Norway_Spruce", "/Game/Megaplant_Library/Tree_Baltic_Pine")}
+
+
+def always_cooked():
+    ini = os.path.join(unreal.Paths.convert_relative_path_to_full(unreal.Paths.project_config_dir()), "DefaultGame.ini")
+    out = []
+    for line in open(ini, encoding="utf-8-sig"):
+        line = line.strip()
+        if line.startswith("+DirectoriesToAlwaysCook=") and 'Path="' in line:
+            out.append(line.split('Path="')[1].split('"')[0])
+    return out
+
+
+def named_assets(folder):
+    ar = unreal.AssetRegistryHelpers.get_asset_registry()
+    out = []
+    for d in always_cooked():
+        if d == folder or d.startswith(folder + "/"):
+            for a in ar.get_assets_by_path(d, recursive=True):
+                if str(a.asset_class_path.asset_name) != "PrimaryAssetLabel":
+                    out.append(str(a.package_name))
+    for f in NAMED_MESHES.get(folder, ()):
+        for a in ar.get_assets_by_path(f, recursive=True):
+            if str(a.asset_class_path.asset_name) == "StaticMesh" and str(a.asset_name).startswith("SM_"):
+                out.append(str(a.package_name))
+    return [eal.load_asset(p) for p in sorted(set(out))]
 
 
 def scenery_chunks():
@@ -118,12 +149,16 @@ def scenery_chunks():
         label = tools.create_asset(name, folder, unreal.PrimaryAssetLabel, unreal.DataAssetFactory())
         rules = label.get_editor_property("rules")
         rules.set_editor_property("chunk_id", chunk)
-        rules.set_editor_property("cook_rule", unreal.PrimaryAssetCookRule.UNKNOWN)
+        rules.set_editor_property("cook_rule", unreal.PrimaryAssetCookRule.ALWAYS_COOK)
         rules.set_editor_property("apply_recursively", True)
         label.set_editor_property("rules", rules)
-        label.set_editor_property("label_assets_in_my_directory", True)
+        named = named_assets(folder)
+        label.set_editor_property("label_assets_in_my_directory", False)
+        label.set_editor_property("explicit_assets", named)
         eal.save_loaded_asset(label)
-        log("%s: chunk %d" % (folder, chunk))
+        log("%s: chunk %d, %d assets named" % (folder, chunk, len(named)))
+        if not named:
+            unreal.log_warning("[OpenTeeGolf assets] %s: nothing named for its chunk" % folder)
 
 
 def fab_usage():
