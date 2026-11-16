@@ -67,12 +67,14 @@ public:
 	bool IsDesignerShown() const;
 	void ShowPerf(bool bShow);
 	bool IsPerfShown() const;
+	// The driving range: its panel where the minimap is, and its own keys along the bottom
+	void SetPractice(const TSharedRef<SWidget>& Content, const FString& KeysText);
 
 private:
 	TSharedPtr<STextBlock> Info1, Info2, ClubText, Shot1, Shot2, Status, BannerTitle, BannerSmall, ToastText, Keys;
 	TSharedPtr<SBorder> BannerBox, ToastBox, ShotBox, StandBox;
 	TSharedPtr<SVerticalBox> StandList;
-	TSharedPtr<SBox> CardSlot, PauseSlot;
+	TSharedPtr<SBox> CardSlot, PauseSlot, MapBox;
 	float BannerLeft = 0, ToastLeft = 0;
 	TSharedPtr<SOTGMinimap> Map;
 	TSharedPtr<SOTGWind> WindBox;

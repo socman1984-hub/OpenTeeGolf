@@ -64,6 +64,18 @@ R                              the course designer, changed as you watch. Grass:
                                trees_design.json in the course's folder)
 Esc                            pause: resume, scorecard, launch monitor, quit to the menu
 
+Driving range
+-------------
+Practice: driving range (at the top of the Play page) opens the range: target greens with flags
+at 50, 100, 150, 200 and 250 yards, distance boards every 50 yards, mountains beyond. Hit from the
+mat with your launch monitor, or T / Space for test shots. After each shot the panel on the right
+shows carry, total, offline, apex, ball speed, launch, direction, spin and spin axis, with your
+recent shots and averages for the club in hand (gold marks on the range show where they stopped).
+Up / Down change club (the aim moves to its carry), Left / Right or a click aim. A new ball comes
+a few seconds after the last one stops; Enter or Backspace for one at once. Tab hides the
+numbers; L the weather and time of day. The game makes the range itself the first time (in
+%LOCALAPPDATA%\OpenTeeGolf\Saved\Range). Start the game with -range to go straight there.
+
 The map at the top right shows the hole, your aim and the yardages; the box above it the wind
 against your aim (the arrow points the way it blows: up is helping).
 

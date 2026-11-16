@@ -33,6 +33,7 @@
 #include "ProceduralMeshComponent.h"
 #include "Components/InstancedStaticMeshComponent.h"
 #include "SOTGHud.h"
+#include "SOTGRange.h"
 #include "HAL/IConsoleManager.h"
 #include "Misc/CommandLine.h"
 #include "Misc/Parse.h"
@@ -146,6 +147,7 @@ namespace
 		else if (A[0] == TEXT("fog")) R->SetFog(V);
 		else R->SetWeatherKey(A[0]);
 	}));
+	FAutoConsoleCommandWithWorldAndArgs NewBallCmd(TEXT("OTG.Range.NewBall"), TEXT("The driving range: a new ball on the mat now (Enter / Backspace)"), FCmd::CreateLambda([](const TArray<FString>&, UWorld* W) { if (AOTGRound* R = RoundIn(W)) R->NewBall(); }));
 	FAutoConsoleCommandWithWorldAndArgs CardCmd(TEXT("OTG.Round.Scorecard"), TEXT("Show / hide the scorecard (the Tab key)"), FCmd::CreateLambda([](const TArray<FString>&, UWorld* W) { if (AOTGRound* R = RoundIn(W)) R->ToggleScorecard(); }));
 
 	constexpr double M_TO_YD = 1.09361, M_TO_FT = 3.28084;
@@ -275,6 +277,14 @@ void AOTGRound::Setup(UOTGCourseData* InData, const FOTGRoundSetup& InSetup)
 {
 	Data = InData;
 	Setup_ = InSetup;
+	// (the driving range: on your own, a 7 iron to start)
+	bRange = otg::range::IsRange(Data);
+	if (bRange)
+	{
+		Setup_.Picked.Reset();
+		Setup_.Format = TEXT("stroke");
+		Club = TEXT("I7");
+	}
 	Data->FillPlayCourse(Course);
 	Data->FillTrees(Trees);
 	std::vector<otg::Solid> Solids;
@@ -410,6 +420,27 @@ void AOTGRound::Setup(UOTGCourseData* InData, const FOTGRoundSetup& InSetup)
 			if (!Self.IsValid()) return;
 			if (UOTGLaunchMonitorSubsystem* LM = Self->GetGameInstance()->GetSubsystem<UOTGLaunchMonitorSubsystem>()) LM->InjectShot(Mph, Vla, Hla, Spin, Axis);
 		};
+		// (the driving range: its panel where the minimap is, and its keys)
+		if (bRange)
+		{
+			RangePanel = SNew(SOTGRangePanel);
+			Hud->SetPractice(RangePanel.ToSharedRef(), TEXT("Click the ground to aim     Left / Right: aim     Up / Down: club     T: test shot panel     Space: quick test shot     Enter / Backspace: new ball     Tab: hide the numbers     F: free view     L: weather and time of day     P: frame rate     Esc: menu"));
+		}
+	}
+	// the driving range's mats, flags and distance boards, and a mark where each of the club's last
+	// shots stopped
+	if (bRange)
+	{
+		RangeProps = GetWorld()->SpawnActor<AOTGRangeProps>();
+		if (RangeProps) RangeProps->Build(Data);
+		RangeDots = NewObject<UInstancedStaticMeshComponent>(this);
+		RangeDots->SetStaticMesh(CupMesh->GetStaticMesh());
+		RangeDots->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		RangeDots->SetCastShadow(false);
+		RangeDots->SetMobility(EComponentMobility::Movable);
+		RangeDots->SetupAttachment(RootComponent);
+		RangeDots->RegisterComponent();
+		RangeDotMat = Mat(RangeDots, FLinearColor(1.f, 0.7f, 0.1f));
 	}
 	UMaterialInterface* Rain = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/OpenTeeGolf/Game/M_Rain.M_Rain"));
 	if (Rain)
@@ -548,7 +579,12 @@ void AOTGRound::StartHole(int32 Index)
 	PlaceBall(Ball);
 	OverviewView();
 	const double LenM = Dist(Ball, P);
-	Banner(FString::Printf(TEXT("Hole %d"), H.Number), FString::Printf(TEXT("Par %d  ·  %s%s"), H.Par, *Len(LenM),
+	if (bRange)
+	{
+		Banner(TEXT("Driving range"), TEXT("Targets at 50, 100, 150, 200 and 250 yards"), 3.f);
+		UpdateRange();
+	}
+	else Banner(FString::Printf(TEXT("Hole %d"), H.Number), FString::Printf(TEXT("Par %d  ·  %s%s"), H.Par, *Len(LenM),
 		Game->Single() ? TEXT("") : *FString::Printf(TEXT("  ·  %s to play"), *Game->SideLabel(SideIdx))), 3.f);
 	UpdateHudInfo();
 	TellLaunchMonitor(true);
@@ -557,6 +593,14 @@ void AOTGRound::StartHole(int32 Index)
 
 void AOTGRound::ResetAim(bool bToPin)
 {
+	// (the range: the aim stays where the player turned it, at the club's carry)
+	if (bRange)
+	{
+		AimDist = ClubCarryM();
+		SetClub(Club);
+		ShowAim();
+		return;
+	}
 	const FOTGHole& H = Hole();
 	const otg::V3 P = Pin();
 	double TX = P.x, TZ = P.z;
@@ -571,6 +615,7 @@ void AOTGRound::ResetAim(bool bToPin)
 
 void AOTGRound::AutoClub()
 {
+	if (bRange) return SetClub(Club);   // (the range: the club as picked)
 	FString C = TEXT("PT");
 	if (!OnGreen())
 	{
@@ -596,7 +641,7 @@ void AOTGRound::TellLaunchMonitor(bool bTurn)
 	if (UOTGLaunchMonitorSubsystem* LM = GetGameInstance()->GetSubsystem<UOTGLaunchMonitorSubsystem>())
 	{
 		const bool bLeft = Game && Game->Sides.IsValidIndex(SideIdx) ? Game->Players[Game->Hitter(Game->Sides[SideIdx])].bLeftHanded : false;
-		LM->SetPlayer(Club, DistToPin() * M_TO_YD, bLeft);
+		LM->SetPlayer(Club, (bRange ? AimDist : DistToPin()) * M_TO_YD, bLeft);
 		LM->SetTurn(bTurn);
 	}
 }
@@ -614,10 +659,16 @@ void AOTGRound::AimBy(double Degrees)
 void AOTGRound::ChangeClub(int32 Step)
 {
 	if (Phase != EPhase::Ready) return;
-	const int32 I = FMath::Clamp(ClubIndex(Club) - Step, 0, NumClubs - 1);
+	const int32 I = FMath::Clamp(ClubIndex(Club) - Step, 0, NumClubs - (bRange ? 2 : 1));   // (no putter on the range)
 	bClubPicked = true;
 	SetClub(Clubs[I].Code);
 	Toast(Clubs[I].Name, 1.2f);
+	if (bRange)
+	{
+		AimDist = ClubCarryM();
+		ShowAim();
+		UpdateRange();
+	}
 }
 
 void AOTGRound::TestShot()
@@ -625,6 +676,7 @@ void AOTGRound::TestShot()
 	// A strike as a launch monitor would send it: the club's typical one, or for a wedge (or a putt)
 	// one sized to the distance, a little off line (only on the player's turn: it's made for their
 	// club and distance)
+	if (bRange && Phase == EPhase::Resting && !bPaused) NewBall();   // (the range: a new ball, and hit it)
 	if (Phase != EPhase::Ready || bPaused)
 	{
 		Toast(TEXT("Test shot: wait for your turn"), 1.5f);
@@ -632,7 +684,7 @@ void AOTGRound::TestShot()
 	}
 	const FClub& C = Clubs[ClubIndex(Club)];
 	FOTGBallData B;
-	const double D = DistToPin();
+	const double D = bRange ? AimDist : DistToPin();
 	if (Club == TEXT("PT"))
 	{
 		const double Mps = otg::of::PuttSpeed(D, Data->DefaultStimp);
@@ -658,6 +710,7 @@ void AOTGRound::TestShot()
 void AOTGRound::Continue()
 {
 	if (Phase == EPhase::Flying) AnimT = 1e9;
+	else if (bRange && Phase == EPhase::Resting) NewBall();
 	else if (Phase == EPhase::Holed) NextHole();
 	else if (Phase == EPhase::Done) QuitToMenu();
 }
@@ -873,11 +926,18 @@ void AOTGRound::UpdateRain(float Dt)
 
 void AOTGRound::ToggleScorecard()
 {
+	// (the range has no card: Tab hides and shows its numbers)
+	if (bRange && RangePanel)
+	{
+		RangePanel->SetVisibility(RangePanel->GetVisibility() == EVisibility::Collapsed ? EVisibility::SelfHitTestInvisible : EVisibility::Collapsed);
+		return;
+	}
 	ShowScorecard(!bScorecard);
 }
 
 void AOTGRound::Mulligan()
 {
+	if (bRange) return NewBall();
 	if (!Undo || Phase != EPhase::Ready) return;
 	Ball = Undo->Ball; Strokes = Undo->Strokes; Lie = Undo->Lie; Heading = Undo->Heading;
 	Undo.Reset();
@@ -972,6 +1032,7 @@ void AOTGRound::OnShot(const FOTGShot& Shot)
 
 void AOTGRound::FinishShot()
 {
+	if (bRange) return RangeShotDone();
 	const otg::Surface Surface = Course.SurfaceAt(Res.rest.x, Res.rest.z);
 	FString Title, Small;
 	if (Res.result == "holed")
@@ -1237,7 +1298,7 @@ void AOTGRound::Tick(float Dt)
 	else if (Phase == EPhase::Resting)
 	{
 		PhaseTimer -= Dt;
-		if (PhaseTimer <= 0 && !RoundAfterShot()) NextShot();
+		if (PhaseTimer <= 0) { if (bRange) NewBall(); else if (!RoundAfterShot()) NextShot(); }
 	}
 	else if (Phase == EPhase::Between)
 	{
@@ -1270,6 +1331,13 @@ void AOTGRound::Tick(float Dt)
 	}
 	if (!bFreeView) UpdateCamera(Dt);   // (the free view moves it itself: FreeFly)
 	UpdateFlag(Dt);
+	if (RangeProps)
+	{
+		double Mps, FromDeg;
+		HoleWind(Mps, FromDeg);
+		const double F = FMath::DegreesToRadians(FromDeg);
+		RangeProps->SetWind(Mps > 0.05 ? FVector(-FMath::Sin(F), FMath::Cos(F), 0) : FVector(1, 0, 0), Mps / 0.44704 / 16.0);
+	}
 	UpdateMap();
 	UpdateRain(Dt);
 	// the ball a little bigger the further off it is while it flies, so it can be followed against the
@@ -1447,6 +1515,16 @@ void AOTGRound::UpdateCamera(float Dt)
 void AOTGRound::UpdateHudInfo()
 {
 	if (!Hud || !Data) return;
+	if (bRange)
+	{
+		UpdateWindBox();
+		const FClub& RC = Clubs[ClubIndex(Club)];
+		const FString R2 = Phase == EPhase::Flying ? FString::Printf(TEXT("Ball %d  ·  on its way"), RangeBalls + 1)
+			: Phase == EPhase::Resting ? FString::Printf(TEXT("Ball %d  ·  a new ball in a moment (Enter: now)"), RangeBalls)
+			: FString::Printf(TEXT("Ball %d  ·  on the mat"), RangeBalls + 1);
+		Hud->SetInfo(TEXT("Driving range"), R2, FString::Printf(TEXT("%s  ·  aim %s"), RC.Name, *Len(AimDist)));
+		return;
+	}
 	const FOTGHole& H = Hole();
 	const double D = DistToPin();
 	const FString L1 = FString::Printf(TEXT("Hole %d  ·  Par %d  ·  %s"), H.Number, H.Par, *Len(Dist(TeeOf(H, TeeName), Pin())));
@@ -1627,6 +1705,7 @@ void AOTGRound::ApplyLook()
 void AOTGRound::SetupWeather()
 {
 	FString Mode = Setup_.Weather.IsEmpty() ? FString(TEXT("live")) : Setup_.Weather;
+	if (bRange && Mode == TEXT("live")) Mode = TEXT("calm");   // (the range is nowhere: calm, until the weather panel changes it)
 	// (-weather=<key> on the command line: for the round's start only, so the weather panel can change it)
 	if (!bWeatherFromCommandLine)
 	{
@@ -2008,4 +2087,93 @@ void AOTGRound::BuildSlopeGrid()
 				Dots.Add({ X, Z, Sx, Sz, bMoves ? PartPct : 0.0, FMath::FRand() });
 			}
 		}
+}
+
+// ------------------------------------------------------------------ the driving range
+
+double AOTGRound::ClubCarryM() const { return FMath::Max(10.0, Clubs[ClubIndex(Club)].CarryYd / M_TO_YD); }
+
+// A shot on the range has stopped: its numbers kept and shown, where it went said, and a new ball
+// on the mat in a few seconds
+void AOTGRound::RangeShotDone()
+{
+	Ball = Res.rest;
+	PlaceBall(Ball);
+	RangeBalls++;
+	FOTGRangeShot S;
+	S.Club = Club;
+	S.ClubName = Clubs[ClubIndex(Club)].Name;
+	S.CarryYd = Res.carry * M_TO_YD;
+	S.TotalYd = Res.total * M_TO_YD;
+	S.OfflineYd = Res.offline * M_TO_YD;
+	S.ApexFt = Res.apex * M_TO_FT;
+	S.Mph = LastShot.SpeedMph;
+	S.Launch = LastShot.VLA;
+	S.Direction = LastShot.HLA;
+	S.Spin = LastShot.TotalSpin > 0 ? LastShot.TotalSpin : FMath::Sqrt(FMath::Square(LastShot.BackSpin) + FMath::Square(LastShot.SideSpin));
+	S.Axis = LastShot.SpinAxis;
+	S.RestX = Res.rest.x;
+	S.RestZ = Res.rest.z;
+	RangeShots.Add(S);
+	// where it went: on a target green, near one, or off the range
+	const otg::Surface Rest = Course.SurfaceAt(Res.rest.x, Res.rest.z);
+	const otg::range::FTarget* Near = nullptr;
+	double NearM = 1e9;
+	for (const otg::range::FTarget& T : otg::range::Targets())
+	{
+		const double D = FMath::Sqrt(FMath::Square(Res.rest.x - T.X) + FMath::Square(Res.rest.z - T.Z));
+		if (D < NearM) { NearM = D; Near = &T; }
+	}
+	FString Say;
+	if (Res.result == "holed") Say = TEXT("In the hole at the 150!");
+	else if (Res.result == "oob" || Rest == otg::Surface::None || Rest == otg::Surface::Oob) Say = TEXT("Off the range");
+	else if (Near && Rest == otg::Surface::Green && NearM < Near->R * 1.4) Say = FString::Printf(TEXT("On the %d green, %s from the flag"), Near->Yards, *Putt(NearM));
+	else if (Near && NearM < 25) Say = FString::Printf(TEXT("%s from the %d flag"), *Len(NearM), Near->Yards);
+	else Say = FString::Printf(TEXT("In the %s"), *SurfaceDisplay(Rest).ToLower());
+	Toast(Say, 3.f);
+	UE_LOG(LogOTGRound, Display, TEXT("Range ball %d, %s: carry %.0f yd, total %.0f yd, offline %.1f yd, apex %.0f ft (%s)"), RangeBalls, *S.ClubName, S.CarryYd, S.TotalYd, S.OfflineYd, S.ApexFt, *Say);
+	ShowShotData(true);
+	UpdateRange();
+	Phase = EPhase::Resting;
+	PhaseTimer = PendingShot ? 0.0 : 3.5;
+	UpdateHudInfo();
+}
+
+// A new ball on the middle mat: ready for the next shot (the aim and club as they were)
+void AOTGRound::NewBall()
+{
+	if (!bRange || !Data) return;
+	if (Phase == EPhase::Flying) { AnimT = 1e9; return; }   // (the flight skipped first: its numbers kept)
+	Ball = TeeOf(Hole(), TeeName);
+	Lie = otg::Surface::Tee;
+	Strokes = 0;
+	ClearTracer();
+	Phase = EPhase::Ready;
+	PlaceBall(Ball);
+	ShowAim();
+	AddressView(false);
+	UpdateHudInfo();
+	TellLaunchMonitor(true);
+	if (PendingShot)
+	{
+		const FOTGShot Next = *PendingShot;
+		PendingShot.Reset();
+		OnShot(Next);
+	}
+}
+
+// The range panel, and a gold mark where each of the last ten shots with this club stopped
+void AOTGRound::UpdateRange()
+{
+	if (RangePanel) RangePanel->Show(RangeShots, Club, Clubs[ClubIndex(Club)].Name);
+	if (!RangeDots) return;
+	RangeDots->ClearInstances();
+	int32 Shown = 0;
+	for (int32 i = RangeShots.Num() - 1; i >= 0 && Shown < 10; i--)
+	{
+		const FOTGRangeShot& S = RangeShots[i];
+		if (S.Club != Club) continue;
+		Shown++;
+		RangeDots->AddInstance(FTransform(FRotator::ZeroRotator, World(OnGround(S.RestX, S.RestZ)) + FVector(0, 0, 2), FVector(0.7, 0.7, 0.02)), true);
+	}
 }

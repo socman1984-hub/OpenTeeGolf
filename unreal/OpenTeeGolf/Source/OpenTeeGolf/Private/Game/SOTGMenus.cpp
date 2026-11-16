@@ -410,6 +410,8 @@ TSharedRef<SWidget> SOTGMainMenu::PlayPage()
 	// the courses
 	TSharedRef<SVerticalBox> List = SNew(SVerticalBox);
 	List->AddSlot().AutoHeight().Padding(0, 0, 0, 6)[Heading(TEXT("Course"))];
+	// (practice: the driving range, which the game makes itself)
+	List->AddSlot().AutoHeight().Padding(0, 0, 0, 8).HAlign(HAlign_Left)[Button(TEXT("Practice: driving range"), [this]() { if (UOTGCourseSubsystem* C = Courses()) C->PlayRange(); }, 14)];
 	if (!CourseList.Num())
 		List->AddSlot().AutoHeight()[SNew(STextBlock).Text(FText::FromString(TEXT("No courses yet. Make one on the New course page: find a real course on the map and build it."))).Font(Font(14)).ColorAndOpacity(Soft).AutoWrapText(true)];
 	// (where the game looks, and a way to open it)

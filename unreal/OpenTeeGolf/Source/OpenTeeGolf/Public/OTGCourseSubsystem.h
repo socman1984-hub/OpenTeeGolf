@@ -6,8 +6,8 @@
 //    found through the asset manager as primary assets of type OTGCourse.
 // An exported course is used over a pack of the same course (-packs: the pack).
 //
-// Console: OTG.Courses lists them, OTG.Play <id> opens one. Command line: -course=<id> opens one at
-// start.
+// Console: OTG.Courses lists them, OTG.Play <id> opens one, OTG.Range the driving range. Command
+// line: -course=<id> opens one at start, -range the driving range.
 
 #pragma once
 
@@ -53,6 +53,10 @@ public:
 	// Open the course's level; the course is then Current
 	UFUNCTION(BlueprintCallable, Category = "OpenTeeGolf")
 	bool PlayCourse(const FString& Id);
+
+	// Open the driving range (otg::range, OTGRange.h: written by the game the first time, then built
+	// in the template level as an exported course is)
+	bool PlayRange();
 
 	UPROPERTY(BlueprintReadOnly, Category = "OpenTeeGolf")
 	TObjectPtr<UOTGCourseData> Current;

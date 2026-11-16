@@ -139,6 +139,24 @@ Everything the golf needs runs inside the game, in C++.
   (`powershell -File unreal/make_assets.ps1`, which runs `build_course.py` in its `OTG_RUNTIME`
   mode). Console `OTG.Courses`, `OTG.Play <id>`; `-course=<id>` on the command line opens one at
   start. The game project needs the Fab trees in its `Content` folder (not in git).
+- The driving range (`Game/OTGRange.*`, `SOTGRange.*`): a practice ground the game makes itself, no
+  download or export. `otg::range::Ensure` writes it as an export folder in `Saved/Range` (play.json,
+  heightmap, surfaces, photo, masks, mowing, trees, and `farland.json` with made-up mountains: a valley,
+  foothills and snowy peaks 10-30 km off, highest beyond the far end) the first time, and again only
+  when its layout's version changes; `UOTGCourseSubsystem::PlayRange` opens it in `L_Course` like any
+  exported course. Laid out as the web version's (`practice.js` drivingRange): a mown fan from a tee
+  line 64 m wide out to a bank at 330 m, target greens with flags at 50, 100, 150, 200 and 250 yd
+  (the 150's is the round's own flag and cup), two bunkers, woods down both sides. `AOTGRangeProps`
+  adds the hitting mats, the other flags (blown downwind) and a distance board every 50 yd down both
+  sides (figures made of blocks: engine shapes only, so nothing extra to cook). `AOTGRound` plays it
+  in its range mode: one player, the ball teed on the middle mat, the club as picked (7 iron to
+  start, no putter), the aim at the club's carry; after each shot the range panel (where the minimap
+  is) shows carry, total, offline, apex, ball speed, launch, direction, spin and axis, and the club's
+  recent shots with averages and spread; gold marks show where the club's last ten stopped. A new
+  ball comes 3.5 s after the last stops (Enter or Backspace: at once; Space on a resting ball tees a
+  new one and hits it). Tab hides the panel; L (weather and time of day), T, F and the launch monitor
+  work as on a course; "live" weather is calm there. Open it with the menu's "Practice: driving
+  range" button, `OTG.Range` (console) or `-range` (command line); `OTG.Range.NewBall` for testing.
   Course packs (levels built in the editor under `/Game/Courses`) are retired: the editor tools
   are still there, but packs are never cooked into the game.
 - The grass designer (R in a round, `SOTGGrassDesigner`, phase 1): the grass kinds are no longer a

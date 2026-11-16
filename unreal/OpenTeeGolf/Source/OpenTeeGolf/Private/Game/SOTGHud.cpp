@@ -44,7 +44,7 @@ void SOTGHud::Construct(const FArguments&)
 				]
 			]
 			+ SVerticalBox::Slot().AutoHeight().HAlign(HAlign_Right).Padding(0, 0, 0, 8)[SAssignNew(WindBox, SOTGWind)]
-			+ SVerticalBox::Slot().AutoHeight().HAlign(HAlign_Right)[SNew(SBox).WidthOverride(250).HeightOverride(360)[SAssignNew(Map, SOTGMinimap)]]
+			+ SVerticalBox::Slot().AutoHeight().HAlign(HAlign_Right)[SAssignNew(MapBox, SBox).WidthOverride(250).HeightOverride(360)[SAssignNew(Map, SOTGMinimap)]]
 		]
 		// the weather panel (L)
 		+ SOverlay::Slot().HAlign(HAlign_Center).VAlign(VAlign_Center)
@@ -157,6 +157,14 @@ void SOTGHud::Tick(const FGeometry& Geometry, const double Time, const float Dt)
 		const FLinearColor C = GAverageFPS >= 55 ? FLinearColor(0.6f, 1.f, 0.6f) : GAverageFPS >= 30 ? FLinearColor(1.f, 0.85f, 0.4f) : FLinearColor(1.f, 0.5f, 0.45f);
 		PerfText->SetColorAndOpacity(C);
 	}
+}
+
+void SOTGHud::SetPractice(const TSharedRef<SWidget>& Content, const FString& KeysText)
+{
+	MapBox->SetWidthOverride(FOptionalSize());
+	MapBox->SetHeightOverride(FOptionalSize());
+	MapBox->SetContent(Content);
+	Keys->SetText(FText::FromString(KeysText));
 }
 
 void SOTGHud::SetInfo(const FString& Line1, const FString& Line2, const FString& ClubLine)
