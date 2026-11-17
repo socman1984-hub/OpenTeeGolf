@@ -462,6 +462,8 @@ export async function exportForUnreal({ course, scene, id, solids = [], status =
     });
     for (const l of layers) await put(l.file, await (l.channels === 3 ? pngRGB(l.data, l.w, l.h) : png8(l.data, l.w, l.h)), 'image/png');
     if (boulders) await put('boulders.json', JSON.stringify(boulders), 'application/json');
+    const road = roadLayer(course, scene, x0, z1, span);
+    if (road) await put(road.file, await png8(road.data, road.w, road.h), 'image/png');
   }
   const meta = {
     name: course.name, id, lat: course.lat ?? null, lon: course.lon ?? null,
@@ -480,6 +482,42 @@ export async function exportForUnreal({ course, scene, id, solids = [], status =
 }
 
 const tick = () => new Promise((r) => setTimeout(r, 0));
+
+// layer_road.png: the public roads (OpenStreetMap, each as wide as lib/roads.js made it), the paved
+// car parks and their aisles, on the landscape's square (ROAD_SIZE pixels a side, row 0 north), crisp
+// edged as layer_path.png is (0.5 on the edge). The Unreal game paints asphalt there and grows no
+// grass on it; the cart paths stay in layer_path.png. Null when the course has none.
+const ROAD_SIZE = 4096;
+const AISLE_W = 6;
+function roadLayer(course, scene, x0, z1, size) {
+  const roads = course.roads?.roads || [];
+  // (the map's surface, not the photo's: a car park under trees reads green from above)
+  const lots = (course.parking?.lots || []).filter((l) => l.pts?.length > 2 && /asphalt|paved|concrete/.test(l.surface || 'asphalt'));
+  const aisles = course.parking?.aisles || [];
+  if (!roads.length && !lots.length && !aisles.length) return null;
+  const k = ROAD_SIZE / size;
+  const c = document.createElement('canvas');
+  c.width = c.height = ROAD_SIZE;
+  const g = c.getContext('2d', { willReadFrequently: true });
+  g.fillStyle = '#000'; g.fillRect(0, 0, ROAD_SIZE, ROAD_SIZE);
+  const P = ([x, z]) => [(x - x0) * k, (z1 - z) * k];
+  const line = (pts) => { g.beginPath(); pts.forEach((p, i) => (i ? g.lineTo(...P(p)) : g.moveTo(...P(p)))); };
+  g.fillStyle = g.strokeStyle = '#fff';
+  g.lineCap = 'round'; g.lineJoin = 'round';
+  for (const lot of lots) { line(lot.pts); g.closePath(); g.fill(); }
+  for (const a of aisles) if (a.pts?.length > 1) { g.lineWidth = AISLE_W * k; line(a.pts); g.stroke(); }
+  for (const r of roads) if (r.pts?.length > 1) { g.lineWidth = Math.max(2.5, r.width || 6) * k; line(r.pts); g.stroke(); }
+  // (a pixel's blur: the edge a smooth ramp through 0.5, as the path's)
+  const soft = document.createElement('canvas');
+  soft.width = soft.height = ROAD_SIZE;
+  const sg = soft.getContext('2d', { willReadFrequently: true });
+  sg.filter = 'blur(1px)';
+  sg.drawImage(c, 0, 0);
+  const rgba = sg.getImageData(0, 0, ROAD_SIZE, ROAD_SIZE).data;
+  const data = new Uint8Array(ROAD_SIZE * ROAD_SIZE);
+  for (let q = 0; q < data.length; q++) data[q] = rgba[q * 4];
+  return { file: 'layer_road.png', w: ROAD_SIZE, h: ROAD_SIZE, data };
+}
 
 // The play data's surfaces, every PLAY_RES metres, as codes into this list (0: off the course);
 // the same order as the game's C++ (OTGBallPhysics.h, otg::Surface)

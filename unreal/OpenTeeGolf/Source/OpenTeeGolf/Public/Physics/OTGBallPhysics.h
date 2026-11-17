@@ -32,7 +32,7 @@ namespace otg
 		{
 			double kineticFriction = 0, rollingFriction = 0, grassViscosity = 0, criticalAngle = 0, spinbackResponseScale = 0;
 			double spinbackThetaBoostMax = 0, spinbackSpinStartRpm = 0, spinbackSpinEndRpm = 0, spinbackSpeedStartMps = 0, spinbackSpeedEndMps = 0;
-			double rollingSpinScale = 1, restitutionScale = 1, impactRetentionScale = 1, impactPlowRatio = 0;
+			double rollingSpinScale = 1, restitutionScale = 1, impactRetentionScale = 1, landingKeepScale = 1, impactPlowRatio = 0;
 			bool hasBounce = false;
 			double firstImpactMinimumSpeed = 0, laterImpactMinimumSpeed = 0, laterImpactScale = 0, minimumBounceHeight = 0;
 		};

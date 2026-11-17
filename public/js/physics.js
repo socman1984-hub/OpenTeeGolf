@@ -14,23 +14,33 @@ const MPH = 0.44704;
 const RPM = OF.RAD_PER_RPM;
 const DT = OF.DT;
 
-// How each course surface plays (OpenFairway's contact settings: see openfairway.js). Tee, fairway,
-// fringe, rough, green and sand are OpenFairway's own presets; the course's other surfaces are
-// OpenTeeGolf's, built on them: first cut between fairway and rough, deep rough and heather
-// grabbing harder and cushioning the bounce, a cart path that bounces like pavement and runs.
+// How each course surface plays (OpenFairway's contact settings: see openfairway.js). Green and
+// fairway are OpenFairway's own presets; the others are OpenTeeGolf's, set so each plays its own
+// way. Longer grass cushions the landing (restitutionScale), grabs the ball as it lands
+// (impactRetentionScale, landingKeepScale), stops it rolling sooner (rollingFriction,
+// grassViscosity) and lets backspin bite less (spinbackResponseScale). A drive into the rough rolls
+// a few yards; deep rough (and the cover under trees) and heather/fescue hold it within a yard or
+// so; sand all but plugs it; a cart path is hard and lively: it bounces the ball high, the spin
+// barely bites and the ball runs on. Water ends the shot where it lands.
 export const SURFACES = {
   green: OF.PRESETS.green,
-  fringe: OF.PRESETS.fringe,
+  fringe: OF.makeSurface(0.56, 0.085, 0.0028, 0.3, 0.85, { restitutionScale: 0.92, impactRetentionScale: 0.95 }),
   fairway: OF.PRESETS.fairway,
   tee: OF.PRESETS.fairway,
-  firstcut: OF.makeSurface(0.56, 0.072, 0.00245, 0.32, 0.74),
-  rough: OF.PRESETS.rough,
-  deeprough: OF.makeSurface(0.7, 0.18, 0.006, 0.4, 0.6, { restitutionScale: 0.6, impactRetentionScale: 0.6 }),
-  native: OF.makeSurface(0.72, 0.2, 0.0065, 0.42, 0.6, { restitutionScale: 0.55, impactRetentionScale: 0.55 }),
-  path: OF.makeSurface(0.3, 0.02, 0.0003, 0.25, 0.6, { restitutionScale: 2.0 }),
-  sand: OF.PRESETS.sand,
-  oob: OF.PRESETS.rough,
+  firstcut: OF.makeSurface(0.58, 0.12, 0.0038, 0.33, 0.68, { restitutionScale: 0.85, impactRetentionScale: 0.85, landingKeepScale: 0.9 }),
+  rough: OF.makeSurface(0.66, 0.2, 0.007, 0.38, 0.5, { restitutionScale: 0.62, impactRetentionScale: 0.65, landingKeepScale: 0.75 }),
+  deeprough: OF.makeSurface(0.72, 0.55, 0.018, 0.42, 0.35, { restitutionScale: 0.38, impactRetentionScale: 0.4, landingKeepScale: 0.4 }),
+  native: OF.makeSurface(0.74, 0.65, 0.022, 0.44, 0.3, { restitutionScale: 0.33, impactRetentionScale: 0.35, landingKeepScale: 0.35 }),
+  path: OF.makeSurface(0.22, 0.028, 0.0002, 0.25, 0.2, {
+    restitutionScale: 2.8, landingKeepScale: 1.7,
+    bounce: { firstImpactMinimumSpeed: 0.5, laterImpactMinimumSpeed: 1.0, laterImpactScale: 0.85, minimumBounceHeight: 0.02 },
+  }),
+  sand: OF.makeSurface(0.65, 0.45, 0.02, 0.45, 1.0, {
+    restitutionScale: 0.12, impactRetentionScale: 0.15, impactPlowRatio: 3.5,
+    bounce: { firstImpactMinimumSpeed: 0.15, laterImpactMinimumSpeed: 0.15, laterImpactScale: 0.6, minimumBounceHeight: 0.001 },
+  }),
 };
+SURFACES.oob = SURFACES.rough;
 
 // Solid objects (Jolt collision world): restitution e (+ up to eVar at random), share of speed
 // kept after the scrape (keep) and of spin (spin)

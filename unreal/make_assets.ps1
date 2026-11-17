@@ -16,7 +16,7 @@ $Editor = Join-Path $Engine 'Binaries\Win64\UnrealEditor-Cmd.exe'
 # (Unreal cuts a script path at its first space: the scripts run from a copy in a folder without one)
 $scripts = Join-Path ([IO.Path]::GetTempPath()) 'OTGPack'
 New-Item -ItemType Directory -Force $scripts | Out-Null
-Copy-Item (Join-Path $Here 'make_game_assets.py'), (Join-Path $Here 'build_course.py') $scripts -Force
+Copy-Item (Join-Path $Here 'make_game_assets.py'), (Join-Path $Here 'make_sky.py'), (Join-Path $Here 'build_course.py'), (Join-Path $Here 'make_turf.py') $scripts -Force
 $env:OTG_SCRIPT_DIR = $scripts
 Remove-Item (Join-Path $scripts 'assets_done.txt') -ErrorAction SilentlyContinue
 $log = Join-Path $Here 'OpenTeeGolf\Saved\game_assets.log'

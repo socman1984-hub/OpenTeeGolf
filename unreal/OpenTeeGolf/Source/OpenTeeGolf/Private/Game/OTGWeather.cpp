@@ -25,7 +25,7 @@ TArray<TPair<FString, FString>> FOTGWeather::Choices()
 	return {
 		{ TEXT("live"), TEXT("Live (the course's weather now)") }, { TEXT("calm"), TEXT("Calm and sunny") }, { TEXT("breezy"), TEXT("Breezy") },
 		{ TEXT("windy"), TEXT("Windy") }, { TEXT("overcast"), TEXT("Overcast") }, { TEXT("fog"), TEXT("Fog") }, { TEXT("rain"), TEXT("Rain") },
-		{ TEXT("storm"), TEXT("Storm") }, { TEXT("custom"), TEXT("Custom wind") },
+		{ TEXT("storm"), TEXT("Storm") }, { TEXT("changing"), TEXT("Changing (showers come and go)") }, { TEXT("custom"), TEXT("Custom wind") },
 	};
 }
 
@@ -41,8 +41,9 @@ FOTGWeather FOTGWeather::Preset(const FString& Key)
 	else if (Key == TEXT("fog")) Set(TEXT("Fog"), 1, 3, 11, 1, 0, 0.85, 1);
 	else if (Key == TEXT("rain")) Set(TEXT("Rain"), 11, 20, 13, 0.95, 2.5, 1, 0);
 	else if (Key == TEXT("storm")) Set(TEXT("Storm"), 22, 38, 12, 1, 7, 1, 0.3);
+	else if (Key == TEXT("changing")) Set(TEXT("Changing: fair"), 7, 12, 22, 0.5, 0, 0.25, 0);   // (AOTGRound moves it on: UpdateChanging)
 	else Set(TEXT("Breezy"), 9, 15, 21, 0.55, 0, 0.35, 0);
-	W.Key = Key == TEXT("calm") || Key == TEXT("windy") || Key == TEXT("overcast") || Key == TEXT("fog") || Key == TEXT("rain") || Key == TEXT("storm") ? Key : FString(TEXT("breezy"));
+	W.Key = Key == TEXT("calm") || Key == TEXT("windy") || Key == TEXT("overcast") || Key == TEXT("fog") || Key == TEXT("rain") || Key == TEXT("storm") || Key == TEXT("changing") ? Key : FString(TEXT("breezy"));
 	W.WindFromMet = FMath::FRand() * 360;
 	return W;
 }

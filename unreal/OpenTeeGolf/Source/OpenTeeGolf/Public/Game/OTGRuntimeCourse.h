@@ -83,6 +83,7 @@ public:
 	void SetTurfLook(const FString& Surface, const FOTGTurfLook& Look);
 	bool SaveTurfLooks(FString* Where = nullptr) const;
 	TMap<FString, FOTGTurfLook> SavedTurfLooks() const;
+	FLinearColor TurfLookTint(const FString& Kind) const;   // (what a mown kind's blades multiply by: white, or its surface's look)
 	// The kinds' colours changed at once (their materials tinted: nothing grown again), and where a
 	// kind grows thickly nearest a point (the level's cm; false: nowhere near)
 	void SetGrassColours(const TArray<otg::FGrassKind>& Kinds);
@@ -125,6 +126,11 @@ private:
 	void BuildGroundTiles(int32 From, int32 To);
 	void PrepareGround();
 	void LiftPondBanks();
+	void SettleWater();
+	// (water.glb's surface, its levels smoothed, read before the ground: SettleWater)
+	TArray<FVector3f> WaterPos;
+	TArray<int32> WaterIdx;
+	bool bWaterSettled = false;
 	double GroundAt(double X, double Y) const;
 	void BuildTrees();
 	void BuildBoulders();

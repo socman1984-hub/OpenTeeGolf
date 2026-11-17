@@ -278,11 +278,18 @@ fab_usage()
 fab_tints()
 kite_usage()
 rain()
+# the clouds: make_sky.py
+_sky = os.path.join(os.environ.get("OTG_SCRIPT_DIR", os.path.dirname(os.path.abspath(__file__))), "make_sky.py")
+exec(compile(open(_sky, encoding="utf-8").read(), _sky, "exec"), {"__name__": "__main__", "__file__": _sky})
 course_level()
 scenery_chunks()
 # the pieces exported courses are built from at run time: build_course.py in game-assets mode
 os.environ["OTG_RUNTIME"] = "1"
 os.environ["OTG_CONTENT"] = FOLDER + "/Runtime"
 _build = os.path.join(os.environ.get("OTG_SCRIPT_DIR", os.path.dirname(os.path.abspath(__file__))), "build_course.py")
-exec(compile(open(_build, encoding="utf-8").read(), _build, "exec"), {"__name__": "__main__", "__file__": _build})
+_bg = {"__name__": "__main__", "__file__": _build}
+exec(compile(open(_build, encoding="utf-8").read(), _build, "exec"), _bg)
+# the game's own turf, every mowing height (make_turf.py: in build_course.py's namespace, its helpers)
+_turf = os.path.join(os.environ.get("OTG_SCRIPT_DIR", os.path.dirname(os.path.abspath(__file__))), "make_turf.py")
+exec(compile(open(_turf, encoding="utf-8").read(), _turf, "exec"), _bg)
 open(os.path.join(os.environ.get("OTG_SCRIPT_DIR", "."), "assets_done.txt"), "w").write("ok")

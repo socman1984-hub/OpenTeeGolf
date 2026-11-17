@@ -54,6 +54,7 @@ public:
 	void Mulligan();
 	void DropNearPin(double Yards);    // (testing)
 	void CastTest();                   // (testing)
+	void SurfaceTest();                // (testing) carry and roll by landing surface, logged
 	void AimAt(double X, double Z);    // (course metres: the minimap, a click on the ground)
 	void AimAtWorld(const FVector& W);
 	void AimAlongRay(const FVector& Origin, const FVector& Dir);   // (a click: where the line meets the ground)
@@ -188,6 +189,31 @@ private:
 	UPROPERTY() TObjectPtr<UStaticMeshComponent> FlagMesh;
 	UPROPERTY() TObjectPtr<class UMaterialParameterCollection> WindMPC;   // (the wind for the trees and grass)
 	UPROPERTY() TObjectPtr<class UMaterialParameterCollection> FabWindMPC;   // (the Megascans plants' wind)
+	UPROPERTY() TObjectPtr<class UMaterialParameterCollection> WeatherMPC;   // (MPC_Weather: Wet, Rain)
+	// the rain far off: grey curtains of it round the camera (M_RainCurtain), and splashes on the
+	// ground near it
+	UPROPERTY() TObjectPtr<class UProceduralMeshComponent> CurtainMesh;
+	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> CurtainMat;
+	struct FSplash { FVector P; float Age = 0, Size = 1; };
+	TArray<FSplash> Splashes;
+	float SplashCarry = 0;
+	int32 SplashVerts = 0;
+	void UpdateRainFar(float Dt, double Mm);
+	// a storm's lightning, and the weather's sound (UOTGWeatherSound: rain, wind, thunder)
+	UPROPERTY() TObjectPtr<class UOTGWeatherSound> WxSound;
+	UPROPERTY() TObjectPtr<class UAudioComponent> WxAudio;
+	float NextBolt = 5.f, BoltAge = 99.f, BoltNear = 0.f;
+	float SkyNow = -1.f;   // (the sky light as the weather set it: a flash lifts it for a moment)
+	void UpdateStorm(float Dt);
+	// changing weather ("changing": showers come and go; live: fetched again every 15 minutes) -
+	// from one state to the next over a minute and a half, each held a few minutes
+	FOTGWeather WxFrom, WxTo;
+	float WxBlend = 1.f, WxHold = 0.f, WxRefresh = 0.f, WxApplyIn = 0.f;
+	int32 WxStage = 0;
+	void UpdateChanging(float Dt);
+	void BlendTo(const FOTGWeather& Next, const FString& Say);
+	float Wet = -1.f;   // (0 dry .. 1 soaked: rises in rain, dries slowly; -1 until the round's weather is set)
+	void UpdateWet(float Dt);
 	UPROPERTY() TObjectPtr<UStaticMeshComponent> TeeMesh;      // (the tee's peg...)
 	UPROPERTY() TObjectPtr<UStaticMeshComponent> TeeHeadMesh;  // (...and its cup)
 	UPROPERTY() TObjectPtr<UStaticMeshComponent> CupMesh;
@@ -228,7 +254,9 @@ private:
 	FOTGWeather Weather;
 	TArray<double> WindRel;             // (custom wind: its direction relative to each hole)
 	float BaseFogDensity = -1, BaseSun = -1, BaseCoverage = -1, BaseDensity = -1, BaseRayleigh = -1, BaseMie = -1, BaseSkyLight = -1;
+	FLinearColor BaseSkyLum = FLinearColor(-1, -1, -1);   // (the sky's own brightness, greyed under cloud)
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> CloudMat;
+	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> OwnCloudMat;   // (M_Clouds)
 	UPROPERTY() TObjectPtr<class APostProcessVolume> LookVolume;
 	float OrigSun = -1, OrigMie = -1, OrigRayleigh = -1, OrigFog = -1, OrigSky = -1;
 	FRotator OrigSunRot = FRotator::ZeroRotator;

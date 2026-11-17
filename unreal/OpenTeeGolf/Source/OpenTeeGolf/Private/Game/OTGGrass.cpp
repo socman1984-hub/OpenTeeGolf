@@ -68,6 +68,25 @@ const TArray<otg::FGrassKind>& otg::FGrass::DefaultKinds()
 			F.CellM = 64;
 			Out.Add(F);
 		};
+		// the mown cuts, each its own blades at its own height (make_turf.py TURF_CUTS): the greens
+		// (4-5 mm), the collars round them (1 cm), the fairways and tees (1.5 cm), and the first cut
+		// beside them (3 cm, a band 1.5 m wide). Dense and drawn near only: further off the ground,
+		// in the same colours and stripes, carries them on. Each grows on its own surface and a
+		// little past it; its material folds away any blade not in its cut, so the lines between the
+		// cuts are as crisp as the masks
+		auto Mown = [&](const TCHAR* Name, const TCHAR* Label, TArray<FString> Masks, float Density, float From, float To) -> FGrassKind& {
+			FGrassKind& G = Add(Name, Label, MoveTemp(Masks), Density, From, To, 1.0f, 0.92f, 1.08f);
+			G.bMown = true;
+			return G;
+		};
+		// (2500 a 100 m2: one 20 cm square patch to each square of a 20 cm grid - they tile)
+		Mown(TEXT("green"), TEXT("Greens (5 mm)"), { TEXT("green") }, 2500, 14, 24);
+		Mown(TEXT("fringe"), TEXT("Collars (1 cm)"), { TEXT("fringe") }, 2500, 18, 30);
+		Mown(TEXT("fairway"), TEXT("Fairways and tees (1.1 cm)"), { TEXT("fairway"), TEXT("tee") }, 2500, 24, 38);
+		{
+			FGrassKind& G = Add(TEXT("cut1"), TEXT("First cut (3 cm)"), { TEXT("rough") }, 2500, 40, 60, 1.0f, 0.9f, 1.1f);
+			G.BandM = 1.5f;
+		}
 		Add(TEXT("rough"), TEXT("Rough grass"), { TEXT("rough") }, 2400, 70, 100, 1.0f, 0.85f, 1.2f).bEven = true;
 		// the rough far off, 80 to 220 m: fewer, wider blades in bigger patches (build_course.py's
 		// rough_far), so the rough keeps a grass texture past where its near blades go - it ended in a
@@ -79,8 +98,6 @@ const TArray<otg::FGrassKind>& otg::FGrass::DefaultKinds()
 			G.FarOf = TEXT("rough");
 			G.bEven = true;
 		}
-		// (no blades on the mown surfaces - fairways, tees, fringes, greens: mown that short, real turf
-		// reads as a smooth surface, and blades on it looked like rough; the ground draws them)
 		// tufts through the rough: taller clumps of the same grass in the same colours (build_course.py's
 		// rough_clump) - a kept rough is one even green; the Megascans clumps here before came in their
 		// own straw and lime. Kept a little inside it, clear of the fairways
@@ -115,11 +132,13 @@ const TArray<otg::FGrassKind>& otg::FGrass::DefaultKinds()
 		Add(TEXT("flowers_white"), TEXT("White wildflowers"), { TEXT("native") }, 70, 70, 100, 1.0f, 0.85f, 1.2f, 11, 0.44f, 0.49f, false);
 		Add(TEXT("flowers_purple"), TEXT("Purple wildflowers"), { TEXT("native") }, 60, 70, 100, 1.0f, 0.85f, 1.2f, 7, 0.44f, 0.5f, false);
 		// heather in its own patches through the tall grass, thinning out at their edges (KiteDemo's: knee
-		// high, its own colour; none where the pack isn't in the game)
+		// high, its own colour; none where the pack isn't in the game). Off unless the grass designer
+		// turns it on: its pink and purple drifts under the trees looked out of place on most courses
 		{
 			FGrassKind& G = Add(TEXT("heather"), TEXT("Heather"), { TEXT("native") }, 180, 105, 150, 1.0f, 0.8f, 1.25f, 18, 0.34f, 0.46f, false);
 			G.Fab = { TEXT("kite_heather") };
 			G.Margin = 0.6f;
+			G.bOn = false;
 		}
 		// the game's other tall grasses (TURF_GRASS: made, not grown unless the designer picks them)
 		Add(TEXT("native"), TEXT("Tall wild grass"), { TEXT("native") }, 320, 140, 200, 1.0f, 0.7f, 1.3f, 16, 0.31f, 0.39f, false).bOn = false;
@@ -266,6 +285,10 @@ TArray<otg::FGrassKind> otg::FGrass::LoadKinds(const FString& Dir)
 	if (!FFileHelper::LoadFileToString(Text, *FPaths::Combine(Dir, TEXT("grass.json"))) || !FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Text), J)
 		|| !J.IsValid() || !J->TryGetArrayField(TEXT("kinds"), List))
 		return Out;
+	// (version 1 saved every kind's on/off, chosen or not, when heather grew by default: there it stays
+	// off - it grows only where the designer has turned it on since)
+	double Version = 1;
+	J->TryGetNumberField(TEXT("version"), Version);
 	for (const TSharedPtr<FJsonValue>& V : *List)
 	{
 		const TSharedPtr<FJsonObject> O = V.IsValid() ? V->AsObject() : nullptr;
@@ -283,7 +306,7 @@ TArray<otg::FGrassKind> otg::FGrass::LoadKinds(const FString& Dir)
 			K = &Out.Add_GetRef(A);
 		}
 		if (!K->FarOf.IsEmpty()) continue;   // (follows its near kind)
-		O->TryGetBoolField(TEXT("on"), K->bOn);
+		if (Version >= 2 || Name != TEXT("heather")) O->TryGetBoolField(TEXT("on"), K->bOn);
 		FString Surface;
 		// (the rough stays one even colour: only kinds in its colours grow on it)
 		if (O->TryGetStringField(TEXT("surface"), Surface) && (Surface == TEXT("native") || (Surface == TEXT("rough") && K->bEven))) K->Masks = { Surface };
@@ -316,7 +339,7 @@ TArray<otg::FGrassKind> otg::FGrass::LoadKinds(const FString& Dir)
 bool otg::FGrass::SaveKinds(const FString& Dir, const TArray<FGrassKind>& Kinds)
 {
 	const TSharedRef<FJsonObject> J = MakeShared<FJsonObject>();
-	J->SetNumberField(TEXT("version"), 1);
+	J->SetNumberField(TEXT("version"), 2);
 	TArray<TSharedPtr<FJsonValue>> List;
 	for (const FGrassKind& K : Kinds) if (K.FarOf.IsEmpty()) List.Add(MakeShared<FJsonValueObject>(KindJson(K)));
 	J->SetArrayField(TEXT("kinds"), List);
@@ -361,6 +384,15 @@ void otg::FGrass::SetKinds(const TArray<FGrassKind>& InKinds, const TMap<FString
 				if (V.Key) { M.Add(V.Key); Mt.Add(V.Value); }
 		if (M.Num() && KindList[k].bOn && KindList[k].Density > 0) KindIndex.Add(k);
 	}
+	FirstCut = 0;
+	for (int32 k : KindIndex) FirstCut = FMath::Max(FirstCut, KindList[k].BandM);
+}
+
+float otg::FGrass::FirstCutM(const TArray<FGrassKind>& Kinds)
+{
+	float B = 0;
+	for (const FGrassKind& K : Kinds) if (K.bOn && K.Density > 0) B = FMath::Max(B, K.BandM);
+	return B;
 }
 
 float otg::FGrass::MeshHeightCm(int32 Kind) const
@@ -397,7 +429,7 @@ double otg::FGrass::GroundZ(double X, double Y, FVector* OutNormal) const
 }
 
 // (Place's odds of a patch at a spot, before the random keep: the mask past its edge, not in the
-// water or on a path or a mown surface, in its meadow patch)
+// water or on a path, a road or a mown surface, in its meadow patch)
 float otg::FGrass::Chance(const FGrassKind& K, double X, double Y) const
 {
 	float W = 0;
@@ -406,11 +438,23 @@ float otg::FGrass::Chance(const FGrassKind& K, double X, double Y) const
 	if (P <= 0) return 0.f;
 	P *= FMath::Clamp((0.45f - Mask(TEXT("water"), X, Y)) * 10.f, 0.f, 1.f);
 	P *= FMath::Clamp((0.85f - Mask(TEXT("path"), X, Y)) * 2.f, 0.f, 1.f);
+	P *= FMath::Clamp((0.85f - Mask(TEXT("road"), X, Y)) * 2.f, 0.f, 1.f);   // (roads and car parks: layer_road.png)
+	// (a mown cut's own blades: on its surface - the material folds away any past its outline)
+	if (K.bMown) return P;
 	// (and never on a mown surface, though the rough's mask reaches into the fringes: tufts
 	// up to a few cm over its outline - the material cuts their blades off exactly on it)
 	const float Mown = FMath::Max(FMath::Max(Mask(TEXT("fairway"), X, Y), Mask(TEXT("tee"), X, Y)), FMath::Max(Mask(TEXT("fringe"), X, Y), Mask(TEXT("green"), X, Y)));
-	// (the masks: 0.5 on the outline, 1/6 a metre in or out - a wide clump kept K.Margin inside)
-	P *= 1.f - FMath::Clamp((Mown - 0.52f + K.Margin / 6.f) * 12.f, 0.f, 1.f);
+	// (the masks: 0.5 on the outline, 1/6 a metre in or out)
+	if (K.BandM > 0)
+	{
+		// the first cut: a band round the fairways, tees and collars, a little over either edge
+		const float Lo = 0.5f - K.BandM / 6.f;
+		return P * FMath::Clamp((Mown - Lo + 0.05f) * 12.f, 0.f, 1.f) * FMath::Clamp((0.56f - Mown) * 12.f, 0.f, 1.f);
+	}
+	// (the rest kept out of the first cut too, when it grows - but for blades reaching into it - and
+	// a wide clump K.Margin inside)
+	const float Edge = 0.52f - (K.Masks.Contains(TEXT("rough")) ? FMath::Max(0.f, FirstCut - 0.25f) / 6.f : 0.f);
+	P *= 1.f - FMath::Clamp((Mown - Edge + K.Margin / 6.f) * 12.f, 0.f, 1.f);
 	if (K.Margin > 0) P *= FMath::Clamp((W - 0.5f - K.Margin / 6.f) * 12.f + 1.f, 0.f, 1.f);
 	if (K.PatchM > 0)
 	{
@@ -435,11 +479,15 @@ otg::FGrass::FPlaced otg::FGrass::Place(int32 KindI, int32 CX, int32 CY) const
 	const int32 Per = FMath::Max(1, FMath::RoundToInt(Cell * 100.0 / Spacing));
 	const double S = Cell * 100.0 / Per;
 	FRandomStream R(int32(Hash(KindI, CX, CY)));
+	// (the mown cuts' square patches tile: on the grid exactly, turned by quarter turns, only their
+	// height varied)
+	const bool bTiled = K.bMown || K.BandM > 0;
+	const float Jit = bTiled ? 0.f : K.Jitter;
 	for (int32 b = 0; b < Per; b++)
 		for (int32 a = 0; a < Per; a++)
 		{
-			const double X = CX * Cell * 100.0 + (a + 0.5 + (R.FRand() - 0.5) * K.Jitter) * S;
-			const double Y = CY * Cell * 100.0 + (b + 0.5 + (R.FRand() - 0.5) * K.Jitter) * S;
+			const double X = CX * Cell * 100.0 + (a + 0.5 + (R.FRand() - 0.5) * Jit) * S;
+			const double Y = CY * Cell * 100.0 + (b + 0.5 + (R.FRand() - 0.5) * Jit) * S;
 			const float Keep = R.FRand();
 			if (X < 0 || Y < 0 || X > Land || Y > Land) continue;
 			const float P = Chance(K, X, Y);
@@ -447,7 +495,7 @@ otg::FGrass::FPlaced otg::FGrass::Place(int32 KindI, int32 CX, int32 CY) const
 			FVector Nrm;
 			const double Z = GroundZ(X, Y, &Nrm);
 			FQuat Tilt = FQuat::FindBetweenNormals(FVector::UpVector, Nrm);
-			const FQuat Turn(FVector::UpVector, R.FRand() * 2 * PI);
+			const FQuat Turn(FVector::UpVector, bTiled ? R.RandRange(0, 3) * 0.5 * PI : R.FRand() * 2 * PI);
 			float Sc = FMath::Lerp(K.ScaleLo, K.ScaleHi, R.FRand());
 			if (K.Masks.Contains(TEXT("native")))
 			{
@@ -457,7 +505,7 @@ otg::FGrass::FPlaced otg::FGrass::Place(int32 KindI, int32 CX, int32 CY) const
 				const FVector Lean = FVector(R.FRandRange(-1, 1), R.FRandRange(-1, 1), 0).GetSafeNormal();
 				Tilt = FQuat(Lean ^ FVector::UpVector, FMath::DegreesToRadians(R.FRandRange(0.f, 10.f))) * Tilt;
 			}
-			Out[NV > 1 ? R.RandRange(0, NV - 1) : 0].Add(FTransform(Tilt * Turn, FVector(X, Y, Z) + Data->LevelOrigin, FVector(Sc)));
+			Out[NV > 1 ? R.RandRange(0, NV - 1) : 0].Add(FTransform(Tilt * Turn, FVector(X, Y, Z) + Data->LevelOrigin, bTiled ? FVector(S / 20.0, S / 20.0, Sc) : FVector(Sc)));
 		}
 	return Out;
 }

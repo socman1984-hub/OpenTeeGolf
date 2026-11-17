@@ -14,6 +14,7 @@
 #include "RHI.h"
 #include "Widgets/Layout/SBox.h"
 #include "Widgets/Layout/SGridPanel.h"
+#include "Widgets/Layout/SWrapBox.h"
 #include "Widgets/SBoxPanel.h"
 #include "Widgets/SOverlay.h"
 
@@ -71,7 +72,7 @@ void SOTGHud::Construct(const FArguments&)
 			SAssignNew(ShotSettingsSlot, SBox).Visibility(EVisibility::Collapsed)
 		]
 		// on the right: who's winning (players together), the wind, the minimap
-		+ SOverlay::Slot().HAlign(HAlign_Right).VAlign(VAlign_Top).Padding(24)
+		+ SOverlay::Slot().HAlign(HAlign_Right).VAlign(VAlign_Fill).Padding(24)
 		[
 			SNew(SVerticalBox)
 			+ SVerticalBox::Slot().AutoHeight().HAlign(HAlign_Right).Padding(0, 0, 0, 8)
@@ -83,6 +84,9 @@ void SOTGHud::Construct(const FArguments&)
 			]
 			+ SVerticalBox::Slot().AutoHeight().HAlign(HAlign_Right).Padding(0, 0, 0, 8)[SAssignNew(WindBox, SOTGWind)]
 			+ SVerticalBox::Slot().AutoHeight().HAlign(HAlign_Right)[SAssignNew(MapBox, SBox).WidthOverride(250).HeightOverride(360)[SAssignNew(Map, SOTGMinimap)]]
+			// (the shot data's tiles, put on the right: under the minimap, never behind it - a second
+			// column beside the first when they run out of room above the keys)
+			+ SVerticalBox::Slot().FillHeight(1).HAlign(HAlign_Right).Padding(0, 8, 0, 40)[SAssignNew(SideSlot, SBox).Visibility(EVisibility::Collapsed)]
 		]
 		// the weather panel (L)
 		+ SOverlay::Slot().HAlign(HAlign_Center).VAlign(VAlign_Center)
@@ -286,6 +290,19 @@ void SOTGHud::BuildTiles()
 		];
 	};
 	int32 N = 0;
+	if (W == TEXT("right"))
+	{
+		TSharedRef<SWrapBox> V = SNew(SWrapBox).Orientation(Orient_Vertical).UseAllottedSize(true).InnerSlotPadding(FVector2D(4, 4));
+		for (const FShotItem& I : ShotItems())
+			if (ShotShown.Contains(I.Id) && ShotValues.Contains(I.Id)) { V->AddSlot()[SNew(SBox).MinDesiredWidth(130)[Tile(I.Label, ShotValues[I.Id])]]; N++; }
+		SideSlot->SetContent(V);
+		SideSlot->SetVisibility(N ? EVisibility::HitTestInvisible : EVisibility::Collapsed);
+		TileSlot->SetContent(SNullWidget::NullWidget);
+		TileSlot->SetVisibility(EVisibility::Collapsed);
+		return;
+	}
+	SideSlot->SetContent(SNullWidget::NullWidget);
+	SideSlot->SetVisibility(EVisibility::Collapsed);
 	if (bSide)
 	{
 		TSharedRef<SVerticalBox> V = SNew(SVerticalBox);

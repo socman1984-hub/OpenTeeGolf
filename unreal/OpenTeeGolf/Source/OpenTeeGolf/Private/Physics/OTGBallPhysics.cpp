@@ -516,7 +516,7 @@ namespace otg
 				? lerp(B::rolloutLowSpinRetention, B::rolloutHighSpinRetention, std::min((len(spin) * RADIUS) / speed / B::rolloutSpinRatioThreshold, 1.0))
 				: B::rolloutHighSpinRetention;
 			const double normalShare = clamp((incoming * incoming) / std::max(dot(v, v), 1e-12), 0, 1);
-			keep = clamp(keep * lerp(1, surf.impactRetentionScale, normalShare), 0, 1);
+			keep = clamp(keep * surf.landingKeepScale * lerp(1, surf.impactRetentionScale, normalShare), 0, 1);
 			auto keepT = [&n](const V3& a, double k) { return add(scale(n, dot(a, n)), tangent(a, n), k); };
 			nv = keepT(nv, keep);
 			nw = keepT(nw, keep);
@@ -647,21 +647,38 @@ namespace otg
 			return { 0.45, 0.1, 0.75, 0.5 }; // building
 		}
 
+		// (physics.js SURFACES: longer grass cushions, grabs and stops the ball sooner; sand all but plugs
+		// it; a cart path bounces it high and lets it run)
 		of::SurfaceParams SurfaceFor(Surface s)
 		{
+			auto with = [](of::SurfaceParams p, double restitution, double impactRetention, double landingKeep) {
+				p.restitutionScale = restitution; p.impactRetentionScale = impactRetention; p.landingKeepScale = landingKeep; return p;
+			};
 			switch (s)
 			{
 			case Surface::Green: return of::Preset("green");
-			case Surface::Fringe: return of::Preset("fringe");
+			case Surface::Fringe: return with(of::MakeSurface(0.56, 0.085, 0.0028, 0.3, 0.85), 0.92, 0.95, 1);
 			case Surface::Fairway: case Surface::Tee: return of::Preset("fairway");
-			case Surface::FirstCut: return of::MakeSurface(0.56, 0.072, 0.00245, 0.32, 0.74);
-			case Surface::DeepRough: { of::SurfaceParams p = of::MakeSurface(0.7, 0.18, 0.006, 0.4, 0.6); p.restitutionScale = 0.6; p.impactRetentionScale = 0.6; return p; }
-			case Surface::Native: { of::SurfaceParams p = of::MakeSurface(0.72, 0.2, 0.0065, 0.42, 0.6); p.restitutionScale = 0.55; p.impactRetentionScale = 0.55; return p; }
-			case Surface::Path: { of::SurfaceParams p = of::MakeSurface(0.3, 0.02, 0.0003, 0.25, 0.6); p.restitutionScale = 2.0; return p; }
-			case Surface::Sand: return of::Preset("sand");
-			default: return of::Preset("rough"); // rough, oob, anything else
+			case Surface::FirstCut: return with(of::MakeSurface(0.58, 0.12, 0.0038, 0.33, 0.68), 0.85, 0.85, 0.9);
+			case Surface::DeepRough: return with(of::MakeSurface(0.72, 0.55, 0.018, 0.42, 0.35), 0.38, 0.4, 0.4);
+			case Surface::Native: return with(of::MakeSurface(0.74, 0.65, 0.022, 0.44, 0.3), 0.33, 0.35, 0.35);
+			case Surface::Path:
+			{
+				of::SurfaceParams p = with(of::MakeSurface(0.22, 0.028, 0.0002, 0.25, 0.2), 2.8, 1, 1.7);
+				p.hasBounce = true; p.firstImpactMinimumSpeed = 0.5; p.laterImpactMinimumSpeed = 1.0; p.laterImpactScale = 0.85; p.minimumBounceHeight = 0.02;
+				return p;
+			}
+			case Surface::Sand:
+			{
+				of::SurfaceParams p = with(of::MakeSurface(0.65, 0.45, 0.02, 0.45, 1.0), 0.12, 0.15, 1);
+				p.impactPlowRatio = 3.5;
+				p.hasBounce = true; p.firstImpactMinimumSpeed = 0.15; p.laterImpactMinimumSpeed = 0.15; p.laterImpactScale = 0.6; p.minimumBounceHeight = 0.001;
+				return p;
+			}
+			default: return with(of::MakeSurface(0.66, 0.2, 0.007, 0.38, 0.5), 0.62, 0.65, 0.75); // rough, oob, anything else
 			}
 		}
+
 
 		// (a palm's head is open fronds and desert trees are airy; moss and cypress are thick)
 		double SparseFor(const std::string& kind)

@@ -4,6 +4,20 @@ The newest version first. The game shows this on its What's new page. make_relea
 OpenTeeGolf.exe, and publish_release.py puts each version's part on its GitHub release.
 A version's heading is "## <version> - <date>", and its changes are "- " lines under it.
 
+## 0.18.0 - 17 November 2026
+- A new sky: real clouds that drift with the wind - a few fair-weather clouds, big heaped cumulus, a grey overcast layer, dark storm clouds - and their shadows move across the course.
+- Rain looks like rain: a grey sky, thinner drops, splashes on the ground, rings on the ponds, and grey curtains of rain over the far end of the hole.
+- The course gets wet in the rain: the grass, paths and roofs darken and shine, and dry slowly once it stops.
+- Storms: lightning lights up the clouds and the course, and the thunder follows.
+- Sound: rain, wind that rises and falls with the gusts, and thunder.
+- "Changing" weather: showers come and go during the round (now and then a storm). Live weather is fetched again every 15 minutes.
+- New grass: fine, dense turf cut to its height - greens, collars, fairways and tees, a first cut, then the rough - with crisp mowing lines between them and the stripes in the blades themselves.
+- Every surface plays differently: the ball stops quickly in the rough, plugs in sand, and bounces and runs on cart paths.
+- Roads and car parks are drawn from the map (export the course again to get them). The heather is off unless you turn it on.
+- Water: no more lines across streams or brown patches in ponds.
+- The shot data tiles placed on the right sit under the minimap, not behind it.
+- Overcast and rain skies are grey, not blue with sunshine.
+
 ## 0.17.3 - 16 November 2026
 - Shot data: ball speed, club speed, smash, launch, direction, spin and more as tiles after each shot. Press D to pick which show and where on the screen.
 - The course's name, and the ball's lie (fairway, rough, bunker...) on its own line in the corner.

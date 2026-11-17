@@ -11,5 +11,7 @@ public class OpenTeeGolf : ModuleRules
 		PrivateDependencyModuleNames.AddRange(new string[] { "Sockets", "Networking", "Json", "WebSockets", "ImageWrapper", "MeshDescription", "StaticMeshDescription" });
 		// (the round: the tracer, the HUD)
 		PrivateDependencyModuleNames.AddRange(new string[] { "ProceduralMeshComponent", "Slate", "SlateCore", "JsonUtilities", "HTTP", "EngineSettings", "RenderCore", "RHI" });
+		// (the weather's sound, made as it plays: OTGWeatherSound)
+		PrivateDependencyModuleNames.AddRange(new string[] { "AudioExtensions" });
 	}
 }

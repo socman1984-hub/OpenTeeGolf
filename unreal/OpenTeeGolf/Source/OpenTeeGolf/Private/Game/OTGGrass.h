@@ -46,6 +46,8 @@ namespace otg
 		                               // or a KiteDemo plant (kite_<name>: OTGKiteDemo.h)
 		bool IsKite() const { return Fab.Num() && Fab[0].StartsWith(TEXT("kite_")); }
 		float Margin = 0;              // (m: kept this far inside its surface, clear of the mown ones - a clump is wide)
+		bool bMown = false;            // a mown cut's own blades (make_turf.py: green, collar, fairway): on its own surface, not kept off it
+		float BandM = 0;               // (the first cut: grows only this many metres out from a fairway's, tee's or collar's outline)
 		float CellM = 16;              // (its cells, m a side: bigger for the far-reaching kinds, fewer components)
 		// its colour, as the designer turned it (within believable limits: ClampColour): the hue turned
 		// this many degrees (- toward gold, + toward blue-green), its strength and brightness times these
@@ -76,6 +78,8 @@ namespace otg
 		const TArray<FGrassKind>& Kinds() const { return KindList; }
 		// (a kind's first mesh's height, cm, at scale 1; 0 if it has none)
 		float MeshHeightCm(int32 Kind) const;
+		// How wide the first cut is (m: its BandM), or 0 when it's off - the rough grows to the fairway then
+		static float FirstCutM(const TArray<FGrassKind>& Kinds);
 		// Each frame: cells added round the camera, far ones dropped (a few at a time)
 		void Update(const FVector& Camera);
 		int32 Instances() const { return Count; }
@@ -115,6 +119,7 @@ namespace otg
 		TArray<TArray<UStaticMesh*>> Meshes;                   // (by kind, its variants)
 		TArray<TArray<UMaterialInterface*>> Mats;
 		TMap<FCellKey, FCell> Cells;
+		float FirstCut = 0;                                    // (FirstCutM of the kinds growing)
 		TSharedPtr<TQueue<TPair<FCellKey, FPlaced>, EQueueMode::Mpsc>> Done;
 		TSharedPtr<FThreadSafeCounter> InFlight;
 		int32 Count = 0;

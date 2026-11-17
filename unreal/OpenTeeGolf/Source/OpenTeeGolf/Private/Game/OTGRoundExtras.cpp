@@ -15,6 +15,154 @@
 #include "Camera/PlayerCameraManager.h"
 #include "Game/OTGRuntimeCourse.h"
 #include "EngineUtils.h"
+#include "OTGWeatherSound.h"
+#include "Components/AudioComponent.h"
+#include "Components/SkyLightComponent.h"
+#include "Engine/SkyLight.h"
+#include "Kismet/GameplayStatics.h"
+
+// ------------------------------------------------------------------ storms and the weather's sound
+
+// The rain's and wind's sound every frame; in a storm, lightning now and then: the sky light and the
+// clouds (M_Clouds' Flash) leap in two or three flickers, and the thunder follows - a second for
+// every 343 m to the strike, louder the nearer it was
+void AOTGRound::UpdateStorm(float Dt)
+{
+	if (!WxSound)
+	{
+		WxSound = NewObject<UOTGWeatherSound>(this);
+		WxAudio = UGameplayStatics::CreateSound2D(this, WxSound, 0.8f, 1.f, 0.f, nullptr, true, false);
+		if (WxAudio) WxAudio->Play();
+	}
+	const double Mm = Weather.RainMm;
+	const float Rain = Mm > 0.05 ? float(FMath::Clamp(0.2 + Mm / 7.0, 0.0, 1.0)) : 0.f;
+	const float Wind = bMini ? 0.f : float(FMath::Clamp((Weather.WindMph + 0.3 * FMath::Max(0.0, Weather.GustMph - Weather.WindMph)) / 35.0, 0.0, 1.0));
+	WxSound->SetLevels(Rain, Wind);
+	// lightning: a storm's (heavy rain), every 6 to 22 s
+	const bool bStorm = Mm >= 5.0;
+	BoltAge += Dt;
+	if (bStorm && (NextBolt -= Dt) <= 0.f)
+	{
+		NextBolt = FMath::FRandRange(6.f, 22.f);
+		BoltAge = 0.f;
+		const float Km = FMath::FRandRange(0.6f, 9.f);
+		BoltNear = FMath::Clamp(1.6f / Km, 0.15f, 1.f);
+		WxSound->Thunder(Km * 1000.f / 343.f, BoltNear);
+	}
+	float F = 0.f;
+	if (BoltAge < 1.2f)
+		for (const float At : { 0.f, 0.13f, 0.34f })
+			if (BoltAge >= At) F += FMath::Exp(-(BoltAge - At) / 0.07f) * (At > 0.2f ? 0.6f : 1.f);
+	F *= BoltNear;
+	if (BoltAge < 1.5f)
+	{
+		for (TActorIterator<ASkyLight> It(GetWorld()); It; ++It)
+			if (USkyLightComponent* SL = It->GetLightComponent())
+			{
+				if (SkyNow < 0) SkyNow = SL->Intensity;
+				SL->SetIntensity(SkyNow * (1.f + F * 7.f));
+				break;
+			}
+		if (OwnCloudMat) OwnCloudMat->SetScalarParameterValue(TEXT("Flash"), F);
+	}
+}
+
+// ------------------------------------------------------------------ changing weather
+
+namespace
+{
+	FOTGWeather LerpWeather(const FOTGWeather& A, const FOTGWeather& B, double T)
+	{
+		FOTGWeather W = B;
+		const double S = FMath::SmoothStep(0.0, 1.0, T);
+		W.WindMph = FMath::Lerp(A.WindMph, B.WindMph, S);
+		W.GustMph = FMath::Lerp(A.GustMph, B.GustMph, S);
+		W.Cloud = FMath::Lerp(A.Cloud, B.Cloud, S);
+		W.Fog = FMath::Lerp(A.Fog, B.Fog, S);
+		W.TempC = FMath::Lerp(A.TempC, B.TempC, S);
+		W.Humidity = FMath::Lerp(A.Humidity, B.Humidity, S);
+		// (the rain comes once the clouds are in, and stops before they go)
+		W.RainMm = B.RainMm > A.RainMm ? FMath::Lerp(A.RainMm, B.RainMm, FMath::SmoothStep(0.45, 1.0, T)) : FMath::Lerp(A.RainMm, B.RainMm, FMath::SmoothStep(0.0, 0.55, T));
+		// (the wind swings round the short way)
+		const double D = FMath::Fmod(B.WindFromMet - A.WindFromMet + 540.0, 360.0) - 180.0;
+		W.WindFromMet = FMath::Fmod(A.WindFromMet + D * S + 360.0, 360.0);
+		W.Label = T < 1.0 ? A.Label : B.Label;
+		return W;
+	}
+
+	// "changing": fair, clouding over, showers (now and then a storm), clearing, fair again
+	FOTGWeather Stage(int32 K, const FOTGWeather& Was)
+	{
+		FOTGWeather W = Was;
+		auto Set = [&](const TCHAR* L, double Wind, double Gust, double T, double H, double Rain, double Cl) {
+			W.Label = L; W.WindMph = Wind; W.GustMph = Gust; W.TempC = T; W.Humidity = H; W.RainMm = Rain; W.Cloud = Cl; W.Fog = 0;
+		};
+		switch (K)
+		{
+		case 0: Set(TEXT("Changing: fair"), 7, 12, 22, 0.5, 0, 0.25); break;
+		case 1: Set(TEXT("Changing: clouding over"), 12, 19, 19, 0.65, 0, 0.62); break;
+		case 2: Set(TEXT("Changing: showers"), 14, 24, 16, 0.9, 2.5, 0.96); break;
+		case 3: Set(TEXT("Changing: storm"), 22, 36, 14, 1, 7, 1); break;
+		default: Set(TEXT("Changing: clearing"), 10, 16, 18, 0.7, 0, 0.45); break;
+		}
+		W.WindFromMet = FMath::Fmod(Was.WindFromMet + FMath::FRandRange(-35.0, 35.0) + 360.0, 360.0);
+		W.Key = TEXT("changing");
+		return W;
+	}
+}
+
+void AOTGRound::BlendTo(const FOTGWeather& Next, const FString& Say)
+{
+	WxFrom = Weather;
+	WxTo = Next;
+	WxBlend = 0.f;
+	if (!Say.IsEmpty()) Toast(Say, 4.f);
+}
+
+// Weather that changes as the round goes on: the "changing" choice moves through its stages - each
+// held 3 to 6 minutes, a minute and a half from one to the next - and live weather is fetched again
+// every 15 minutes and blended in. The scene, the wind box and the HUD follow as it goes; the
+// physics plays the weather as it is at each shot.
+static TAutoConsoleVariable<float> CVarWxChangeSpeed(TEXT("OTG.Weather.ChangeSpeed"), 1.f, TEXT("How fast changing weather moves on (a test: 20 for twenty times as fast)"));
+
+void AOTGRound::UpdateChanging(float Dt)
+{
+	Dt *= FMath::Max(0.01f, CVarWxChangeSpeed.GetValueOnGameThread());
+	const bool bChanging = Weather.Key == TEXT("changing");
+	if (!bChanging && !Weather.bLive) return;
+	if (WxBlend < 1.f)
+	{
+		WxBlend = FMath::Min(1.f, WxBlend + Dt / 90.f);
+		Weather = LerpWeather(WxFrom, WxTo, WxBlend);
+		if ((WxApplyIn -= Dt) <= 0.f || WxBlend >= 1.f)
+		{
+			WxApplyIn = 0.5f;
+			ApplyWeatherToScene();
+			UpdateHudInfo();
+			UpdateWindBox();
+		}
+		return;
+	}
+	if (bChanging)
+	{
+		if (WxHold <= 0.f) WxHold = FMath::FRandRange(180.f, 360.f);
+		if ((WxHold -= Dt) > 0.f) return;
+		WxHold = FMath::FRandRange(180.f, 360.f);
+		// (after the showers: a storm one time in three, otherwise clearing)
+		WxStage = WxStage == 2 ? (FMath::FRand() < 0.33f ? 3 : 4) : WxStage >= 3 ? 4 : (WxStage + 1) % 5;
+		if (WxStage == 4 && Weather.RainMm < 0.05 && Weather.Cloud < 0.5) WxStage = 0;
+		static const TCHAR* Says[] = { TEXT("The sky's clearing"), TEXT("Clouds coming in"), TEXT("Rain on the way"), TEXT("A storm's coming"), TEXT("The rain's easing off") };
+		BlendTo(Stage(WxStage, Weather), Says[WxStage]);
+		return;
+	}
+	// live: fetched again every 15 minutes
+	if ((WxRefresh += Dt) < 900.f || !Data || (Data->Latitude == 0 && Data->Longitude == 0)) return;
+	WxRefresh = 0.f;
+	TWeakObjectPtr<AOTGRound> Self(this);
+	FOTGWeather::FetchLive(Data->Latitude, Data->Longitude, [Self](bool bOk, const FOTGWeather& W, const FString&) {
+		if (bOk && Self.IsValid()) Self->BlendTo(W, FString());
+	});
+}
 
 // ------------------------------------------------------------------ the free view
 
@@ -55,6 +203,119 @@ void AOTGRound::FreeFly(float Dt, const FVector& Move, const FVector2D& Look, bo
 		if (FreePos.Z < MinZ) FreePos.Z = MinZ;
 	}
 	if (Cam) Cam->SetActorLocationAndRotation(FreePos, FreeRot);
+}
+
+// ------------------------------------------------------------------ wet ground
+
+// How wet the course is (MPC_Weather's Wet: the ground's material darker and glossier): in rain it
+// soaks in over a minute or so - more in heavier rain - and once it stops dries over several. A
+// round that starts in rain starts wet.
+void AOTGRound::UpdateWet(float Dt)
+{
+	const float Target = float(FMath::Clamp(Weather.RainMm / 3.0, 0.0, 1.0)) * (Weather.RainMm > 0.05 ? 1.f : 0.f);
+	if (Wet < 0) Wet = Target;
+	else if (Target > Wet) Wet = FMath::Min(Target, Wet + Dt / 60.f);
+	else Wet = FMath::Max(Target, Wet - Dt / 300.f);
+	if (!WeatherMPC) WeatherMPC = LoadObject<UMaterialParameterCollection>(nullptr, TEXT("/Game/OpenTeeGolf/Game/MPC_Weather.MPC_Weather"));
+	if (WeatherMPC)
+	{
+		UKismetMaterialLibrary::SetScalarParameterValue(this, WeatherMPC, TEXT("Wet"), Wet);
+		UKismetMaterialLibrary::SetScalarParameterValue(this, WeatherMPC, TEXT("Rain"), Weather.RainMm > 0.05 ? float(FMath::Clamp(0.25 + Weather.RainMm / 6.0, 0.0, 1.0)) : 0.f);
+	}
+}
+
+// The rain away from the camera: curtains of it - rings of grey streaked sheets round the camera,
+// 250 and 500 m out, so the far end of a hole greys over in a downpour (M_RainCurtain: make_sky.py)
+// - and splashes where the drops hit the ground in front of it (little crowns, a fifth of a second
+// each: three streaks fanning up and out, with the rain's own material)
+void AOTGRound::UpdateRainFar(float Dt, double Mm)
+{
+	const bool bOn = Mm > 0.05 && Cam && Data && RainMat;
+	if (!bOn)
+	{
+		if (CurtainMesh->GetNumSections()) CurtainMesh->ClearAllMeshSections();
+		if (SplashVerts) { RainMesh->ClearMeshSection(1); SplashVerts = 0; }
+		Splashes.Reset();
+		return;
+	}
+	// ---- the curtains
+	if (!CurtainMesh->GetNumSections())
+		if (UMaterialInterface* M = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/OpenTeeGolf/Game/M_RainCurtain.M_RainCurtain")))
+		{
+			CurtainMat = UMaterialInstanceDynamic::Create(M, this);
+			TArray<FVector> V;
+			TArray<int32> T;
+			TArray<FVector2D> UV;
+			constexpr int32 Seg = 48;
+			for (const double R : { 25000.0, 50000.0 })
+				for (int32 s = 0; s <= Seg; s++)
+				{
+					const double A = 2.0 * PI * s / Seg;
+					const FVector P(FMath::Cos(A) * R, FMath::Sin(A) * R, 0);
+					const int32 B = V.Num();
+					V.Add(P + FVector(0, 0, R * 0.6));
+					V.Add(P - FVector(0, 0, 4000));
+					// (U: the streaks' columns, about the same width apart on every ring)
+					const float U = float(s) / Seg * float(R / 3000.0);
+					UV.Add(FVector2D(U, 0));
+					UV.Add(FVector2D(U, 1));
+					if (s) T.Append({ B - 2, B - 1, B, B, B - 1, B + 1 });
+				}
+			CurtainMesh->CreateMeshSection_LinearColor(0, V, T, TArray<FVector>(), UV, TArray<FLinearColor>(), TArray<FProcMeshTangent>(), false);
+			CurtainMesh->SetMaterial(0, CurtainMat);
+		}
+	CurtainMesh->SetWorldLocation(CamPos);
+	if (CurtainMat)
+	{
+		CurtainMat->SetScalarParameterValue(TEXT("Opacity"), float(FMath::Clamp(0.25 + Mm * 0.08, 0.25, 0.8)));
+		// (grey as the day is: darker in a storm, never brighter than the sky behind)
+		const float G = float(FMath::Lerp(0.16, 0.07, FMath::Clamp((Mm - 0.05) / 7.0, 0.0, 1.0)));
+		CurtainMat->SetVectorParameterValue(TEXT("Tint"), FLinearColor(G, G * 1.04f, G * 1.12f));
+		CurtainMat->SetScalarParameterValue(TEXT("Speed"), float(1.2 + FMath::Min(Mm, 10.0) * 0.08));
+	}
+	// ---- splashes: as many as the rain is heavy, on the ground ahead (in a fan 3 to 18 m out)
+	const FVector Fwd = Cam->GetActorForwardVector().GetSafeNormal2D();
+	SplashCarry += float(FMath::Min(Mm, 10.0) * 70.0 * Dt);
+	while (SplashCarry >= 1.f)
+	{
+		SplashCarry -= 1.f;
+		if (Splashes.Num() >= 500) continue;
+		const double D = 300.0 + FMath::Sqrt(FMath::FRand()) * 1500.0;
+		FVector P = CamPos + Fwd.RotateAngleAxis(FMath::FRandRange(-65.f, 65.f), FVector::UpVector) * D;
+		const FVector C = Data->WorldToCourse(P);
+		P.Z = World(otg::V3{ C.X, Course.HeightAt(C.X, C.Z), C.Z }).Z + 0.5;
+		Splashes.Add({ P, 0.f, FMath::FRandRange(0.7f, 1.4f) });
+	}
+	TArray<FVector> V;
+	TArray<int32> T;
+	TArray<FVector2D> UV;
+	V.Reserve(Splashes.Num() * 12);
+	for (int32 i = Splashes.Num() - 1; i >= 0; i--)
+	{
+		FSplash& S = Splashes[i];
+		S.Age += Dt;
+		if (S.Age > 0.2f) { Splashes.RemoveAtSwap(i); continue; }
+		const float K = S.Age / 0.2f;
+		const double Up = 6.0 * S.Size * FMath::Sin(PI * FMath::Min(1.f, K * 1.4f)), Out = 4.0 * S.Size * K;
+		const FVector ToCam = (CamPos - S.P).GetSafeNormal();
+		for (int32 k = 0; k < 3; k++)
+		{
+			const FVector Dir = FVector(FMath::Cos(k * 2.1 + i), FMath::Sin(k * 2.1 + i), 0);
+			const FVector A = S.P, Bp = S.P + Dir * Out + FVector(0, 0, Up);
+			const FVector Side = FVector::CrossProduct((Bp - A).GetSafeNormal(), ToCam).GetSafeNormal() * 0.3;
+			const int32 B = V.Num();
+			V.Append({ Bp - Side, Bp + Side, A - Side, A + Side });
+			UV.Append({ FVector2D(0, 0.3), FVector2D(1, 0.3), FVector2D(0, 1), FVector2D(1, 1) });
+			T.Append({ B, B + 2, B + 1, B + 1, B + 2, B + 3 });
+		}
+	}
+	if (V.Num())
+	{
+		RainMesh->CreateMeshSection_LinearColor(1, V, T, TArray<FVector>(), UV, TArray<FLinearColor>(), TArray<FProcMeshTangent>(), false);
+		RainMesh->SetMaterial(1, RainMat);
+	}
+	else if (SplashVerts) RainMesh->ClearMeshSection(1);
+	SplashVerts = V.Num();
 }
 
 // ------------------------------------------------------------------ the flag
@@ -255,6 +516,7 @@ void AOTGRound::SetDesignTool(int32 Tool)
 
 void AOTGRound::WeatherChanged()
 {
+	WxBlend = 1.f;   // (the player's change: any change under way stops)
 	ApplyWeatherToScene();
 	UpdateHudInfo();
 	UpdateWindBox();

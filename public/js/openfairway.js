@@ -162,7 +162,7 @@ export const PROFILE = {
 const surface = (kineticFriction, rollingFriction, grassViscosity, criticalAngle, spinbackResponseScale, extra = {}) => ({
   kineticFriction, rollingFriction, grassViscosity, criticalAngle, spinbackResponseScale,
   spinbackThetaBoostMax: 0, spinbackSpinStartRpm: 0, spinbackSpinEndRpm: 0, spinbackSpeedStartMps: 0, spinbackSpeedEndMps: 0,
-  rollingSpinScale: 1, restitutionScale: 1, impactRetentionScale: 1, impactPlowRatio: 0, bounce: null,
+  rollingSpinScale: 1, restitutionScale: 1, impactRetentionScale: 1, landingKeepScale: 1, impactPlowRatio: 0, bounce: null,
   ...extra,
 });
 
@@ -539,7 +539,8 @@ export function resolveImpact(v, spin, nIn, surf, firstImpact = true, response =
       : B.rolloutHighSpinRetention;
   // (a grazing contact spends little energy pushing into the surface)
   const normalShare = clamp((incoming * incoming) / Math.max(dot(v, v), 1e-12), 0, 1);
-  keep = clamp(keep * lerp(1, surf.impactRetentionScale, normalShare), 0, 1);
+  // (and each surface keeps its own share: concrete lets the ball skid on, long grass grabs it)
+  keep = clamp(keep * (surf.landingKeepScale ?? 1) * lerp(1, surf.impactRetentionScale, normalShare), 0, 1);
   const keepT = (a, k) => add(scale(n, dot(a, n)), tangent(a, n), k);
   nv = keepT(nv, keep);
   nw = keepT(nw, keep);

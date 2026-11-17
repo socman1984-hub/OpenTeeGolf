@@ -107,7 +107,7 @@ private:
 	TSharedPtr<SBorder> LieDot;
 	TSharedPtr<SBox> LieRow, PinTag;
 	// the shot data's tiles and their settings
-	TSharedPtr<SBox> TileSlot, ShotSettingsSlot;
+	TSharedPtr<SBox> TileSlot, ShotSettingsSlot, SideSlot;
 	SOverlay::FOverlaySlot* TilePlace = nullptr;
 	TMap<FString, FString> ShotValues;
 	TSet<FString> ShotShown;

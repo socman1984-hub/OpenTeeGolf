@@ -40,7 +40,7 @@ DEFINE_LOG_CATEGORY_STATIC(LogOTGRuntimeCourse, Log, All);
 namespace
 {
 	const TCHAR* Runtime = TEXT("/Game/OpenTeeGolf/Game/Runtime");
-	const TCHAR* MaskKeys[] = { TEXT("fairway"), TEXT("green"), TEXT("tee"), TEXT("bunker"), TEXT("water"), TEXT("rough"), TEXT("native"), TEXT("stream"), TEXT("path"), TEXT("fringe") };
+	const TCHAR* MaskKeys[] = { TEXT("fairway"), TEXT("green"), TEXT("tee"), TEXT("bunker"), TEXT("water"), TEXT("rough"), TEXT("native"), TEXT("stream"), TEXT("path"), TEXT("fringe"), TEXT("road") };
 	// The pictures' sizes in the game (the masks are smooth distance fields: 4096 keeps their edges;
 	// the mowing directions change only between holes)
 	constexpr int32 PictureMax = 4096, MowMax = 2048;
@@ -234,6 +234,7 @@ void AOTGRuntimeCourse::PrepareGround()
 	// (the fairways' and greens' colour, as the grass designer saved it)
 	for (const auto& P : SavedTurfLooks()) SetTurfLook(P.Key, P.Value);
 	LiftPondBanks();
+	SettleWater();
 	const int32 N = Data->HeightSamples;
 	TileQuads = N > 2049 ? 128 : 64;   // (a tile's samples a side: bigger tiles on a big course)
 	TileCount = FMath::DivideAndRoundUp(N - 1, TileQuads);
@@ -389,6 +390,101 @@ void AOTGRuntimeCourse::LiftPondBanks()
 			}
 	}
 	UE_LOG(LogOTGRuntimeCourse, Display, TEXT("Pond banks: %d samples lifted clear of the water"), Lifted);
+}
+
+// The water's surface (water.glb: a point on each of the ground's samples, at its water's level),
+// before the ground is drawn. A stream's level comes in steps along it - a line across it at each,
+// the water a few cm higher on one side - so the levels are smoothed into an even slope (the edges
+// never raised: they're tucked under the banks). And the ground under the water is kept below it:
+// where the ground rose through it, brown patches showed in the middle of a pond or stream.
+void AOTGRuntimeCourse::SettleWater()
+{
+	bWaterSettled = true;
+	WaterPos.Reset();
+	WaterIdx.Reset();
+	otg::FGlbMesh G;
+	if (!otg::ReadGlb(FPaths::Combine(Data->ExportDir, TEXT("water.glb")), G) || !G.Positions.Num()) return;
+	WaterPos = MoveTemp(G.Positions);
+	WaterIdx = MoveTemp(G.Indices);
+	const int32 N = Data->HeightSamples;
+	const double Mps = Data->MetresPerSample;
+	if (GroundHeights.Num() != N * N || Mps <= 0) return;
+	// each point's sample (the surface is on the ground's grid; one off it is left alone)
+	TArray<int32> At;
+	At.Init(INDEX_NONE, N * N);
+	TArray<int32> Cell;
+	Cell.Init(INDEX_NONE, WaterPos.Num());
+	for (int32 v = 0; v < WaterPos.Num(); v++)
+	{
+		const double fi = WaterPos[v].X / Mps, fj = WaterPos[v].Z / Mps;
+		const int32 i = FMath::RoundToInt(fi), j = FMath::RoundToInt(fj);
+		if (i < 0 || j < 0 || i >= N || j >= N || FMath::Abs(fi - i) > 0.05 || FMath::Abs(fj - j) > 0.05 || At[j * N + i] != INDEX_NONE) continue;
+		At[j * N + i] = v;
+		Cell[v] = j * N + i;
+	}
+	// an edge point: one without water on all four sides
+	auto Nb = [&](int32 k, int32 d) -> int32 {
+		const int32 i = k % N, j = k / N;
+		const int32 u = i + (d == 0 ? 1 : d == 1 ? -1 : 0), w = j + (d == 2 ? 1 : d == 3 ? -1 : 0);
+		return u < 0 || w < 0 || u >= N || w >= N ? INDEX_NONE : At[w * N + u];
+	};
+	TArray<bool> Edge;
+	Edge.Init(true, WaterPos.Num());
+	for (int32 v = 0; v < WaterPos.Num(); v++)
+		if (Cell[v] != INDEX_NONE) Edge[v] = Nb(Cell[v], 0) == INDEX_NONE || Nb(Cell[v], 1) == INDEX_NONE || Nb(Cell[v], 2) == INDEX_NONE || Nb(Cell[v], 3) == INDEX_NONE;
+	// the levels smoothed: a few passes of each point to its neighbours' average (a step of 20 cm
+	// spreads over 10 m or so; a still pond stays flat)
+	TArray<float> L, Next;
+	L.SetNum(WaterPos.Num());
+	for (int32 v = 0; v < WaterPos.Num(); v++) L[v] = WaterPos[v].Y;
+	const TArray<float> L0 = L;
+	for (int32 Pass = 0; Pass < 24; Pass++)
+	{
+		Next = L;
+		for (int32 v = 0; v < WaterPos.Num(); v++)
+		{
+			if (Cell[v] == INDEX_NONE) continue;
+			double Sum = L[v] * 2.0, W = 2.0;
+			for (int32 d = 0; d < 4; d++)
+				if (const int32 u = Nb(Cell[v], d); u != INDEX_NONE) { Sum += L[u]; W += 1.0; }
+			Next[v] = float(Sum / W);
+		}
+		Swap(L, Next);
+	}
+	// how far each point is from the water's edge (samples): the bed shelves down from the banks - the
+	// water's see-through where it's shallow, and a ridge of bed left between two pieces of a stream,
+	// or a high spot, showed through it as a light band or a brown patch
+	TArray<int32> FromEdge;
+	FromEdge.Init(MAX_int32, WaterPos.Num());
+	{
+		TArray<int32> Front;
+		for (int32 v = 0; v < WaterPos.Num(); v++) if (Cell[v] != INDEX_NONE && Edge[v]) { FromEdge[v] = 0; Front.Add(v); }
+		for (int32 r = 1; Front.Num() && r < 64; r++)
+		{
+			TArray<int32> Out;
+			for (const int32 v : Front)
+				for (int32 d = 0; d < 4; d++)
+					if (const int32 u = Nb(Cell[v], d); u != INDEX_NONE && FromEdge[u] == MAX_int32) { FromEdge[u] = r; Out.Add(u); }
+			Front = MoveTemp(Out);
+		}
+	}
+	int32 Moved = 0, Lowered = 0;
+	const double ZScale = Data->HeightRange * 100.0 / 65535.0;   // (cm per height step)
+	for (int32 v = 0; v < WaterPos.Num(); v++)
+	{
+		if (Cell[v] == INDEX_NONE) continue;
+		const float Lv = Edge[v] ? FMath::Min(L[v], L0[v]) : L[v];
+		if (FMath::Abs(Lv - L0[v]) > 0.01f) Moved++;
+		WaterPos[v].Y = Lv;
+		if (Edge[v]) continue;
+		// (the water is drawn WaterLiftCm up; the heights are cm over the export's base, as its levels)
+		uint16& Hv = GroundHeights[Cell[v]];
+		// (30 cm down a sample in from the edge, then 35 cm more a metre, to 1.6 m)
+		const double DepthCm = FMath::Min(160.0, 30.0 + 35.0 * (FMath::Min(FromEdge[v], 64) - 1) * Mps);
+		const double Want = Lv * 100.0 - DepthCm;
+		if (Hv * ZScale > Want) { Hv = uint16(FMath::Clamp(FMath::FloorToDouble(Want / ZScale), 0.0, 65535.0)); Lowered++; }
+	}
+	UE_LOG(LogOTGRuntimeCourse, Display, TEXT("Water: %d points' levels smoothed, the ground lowered under it at %d"), Moved, Lowered);
 }
 
 // Tiles From..To-1 of the ground (row by row)
@@ -1176,8 +1272,11 @@ void AOTGRuntimeCourse::BuildFarLand()
 // The ponds and streams (water.glb): one surface, the game's water on it
 void AOTGRuntimeCourse::BuildWater()
 {
+	if (!bWaterSettled) SettleWater();
+	if (!WaterPos.Num()) return;
 	otg::FGlbMesh G;
-	if (!otg::ReadGlb(FPaths::Combine(Data->ExportDir, TEXT("water.glb")), G)) return;
+	G.Positions = WaterPos;   // (flat enough: straight up everywhere - no normals)
+	G.Indices = WaterIdx;
 	UStaticMeshComponent* C = MeshFromGlb(this, G, Data->LevelOrigin, WaterLiftCm, false, Load<UMaterialInterface>(TEXT("M_Water")));
 	C->SetCastShadow(false);
 	// (see-through: it mustn't hide what's under it from the renderer - the ground tiles under a
@@ -1511,13 +1610,22 @@ void AOTGRuntimeCourse::TintGrass()
 {
 	if (!Grass.IsValid()) return;
 	const FLinearColor TurfGreen(0.06f, 0.09f, 0.022f);
+	// (the first cut's width, which the rough leaves to it - 0 when it's off: the rough to the fairway)
+	const float FirstCut = otg::FGrass::FirstCutM(Grass->Kinds());
 	for (const otg::FGrassKind& K : Grass->Kinds())
 		if (const TArray<FGrassTint>* Ts = GrassTints.Find(K.Name))
 			for (const FGrassTint& T : *Ts)
 			{
 				UMaterialInstanceDynamic* M = T.M.Get();
 				if (!M) continue;
-				if (!T.bFab) { M->SetVectorParameterValue(TEXT("Tint"), K.TintFor(TurfGreen)); continue; }
+				if (!T.bFab)
+				{
+					M->SetVectorParameterValue(TEXT("Tint"), K.TintFor(TurfGreen));
+					M->SetScalarParameterValue(TEXT("FirstCutM"), FirstCut);
+					// (the fairways' and greens' blades take the look their ground does: SetTurfLook)
+					M->SetVectorParameterValue(TEXT("TurfTint"), TurfLookTint(K.Name));
+					continue;
+				}
 				// (Base Color Controls: the first how strong the colour is - under 1 paler, washing out;
 				// the second how bright. Their tints hardly turn the hue, so a plant keeps its own: the
 				// designer says so. Kept within what reads as grass)
@@ -1582,6 +1690,17 @@ void AOTGRuntimeCourse::SetTurfLook(const FString& Surface, const FOTGTurfLook& 
 	otg::FGrassKind K;
 	K.Hue = Look.Hue; K.Sat = Look.Sat; K.Bright = Look.Bright;
 	GroundMat->SetVectorParameterValue(*(TEXT("TurfTint_") + Surface), K.TintFor(TurfBase(Surface)));
+	TintGrass();   // (and the blades mown on it)
+}
+
+FLinearColor AOTGRuntimeCourse::TurfLookTint(const FString& Kind) const
+{
+	// (a grass kind named for a mown surface - make_turf.py's fairway and green - takes its look)
+	const FOTGTurfLook* L = TurfLooks.Find(Kind);
+	if (!L || (Kind != TEXT("fairway") && Kind != TEXT("green"))) return FLinearColor::White;
+	otg::FGrassKind K;
+	K.Hue = L->Hue; K.Sat = L->Sat; K.Bright = L->Bright;
+	return K.TintFor(TurfBase(Kind));
 }
 
 TMap<FString, FOTGTurfLook> AOTGRuntimeCourse::SavedTurfLooks() const

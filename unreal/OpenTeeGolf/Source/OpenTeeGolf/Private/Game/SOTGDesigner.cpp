@@ -290,6 +290,9 @@ void SOTGGrassDesigner::Rebuild()
 	List->AddSlot().AutoHeight()[SNew(STextBlock).Text(FText::FromString(TEXT("The mown turf's colour: the fairways (with the tees) and the greens, each its own."))).Font(Font(11)).ColorAndOpacity(Soft).WrapTextAt(470)];
 	List->AddSlot().AutoHeight()[TurfRow(TEXT("fairway"), TEXT("Fairways and tees"))];
 	List->AddSlot().AutoHeight()[TurfRow(TEXT("green"), TEXT("Greens"))];
+	// (their blades, each cut at its own height: off, the ground alone draws them - quicker)
+	for (int32 i = 0; i < Edit.Num(); i++)
+		if (Edit[i].bMown && Edit[i].FarOf.IsEmpty()) List->AddSlot().AutoHeight()[KindRow(i)];
 	Section(TEXT("Rough"), TEXT("Kept one even green, as a looked-after rough is: only the rough's own grasses grow on it."), TEXT("rough"));
 	Section(TEXT("Tall grass (deep rough, heather)"), TEXT("Out of play and under the trees, where the course lets it grow: mix any of these, each in its own patches."), TEXT("native"));
 

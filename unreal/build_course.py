@@ -90,6 +90,8 @@ TURF_SHADE = (0.8, 1.2)
 # to 0.12, so it's weighted up to about 0.27..0.46 (median 0.35), the range the thresholds use
 PATCH_LUM_W = (1.17, 1.56, 1.17)
 PATH_TINT = (0.36, 0.355, 0.33)
+# The public roads and paved car parks (layer_road.png): dark asphalt, as the web version paints them
+ROAD_TINT = (0.062, 0.061, 0.058)
 # Mowing stripes on the fairways, tees and greens: bands along each hole's line of play
 # (layer_mow.png, from the web version's derive-layers.js), MOW_WIDTH_M wide (fairway, green), lighter and darker by
 # MOW_CONTRAST (fairway, green) - and, as real stripes, which band is light depends on which way you
@@ -227,7 +229,7 @@ def exists(name):
 # LandSizeM / LandSizeCm the course's size), the turf, boulder and tree stand-in assets, the water and
 # path / building materials.
 RUNTIME = bool(os.environ.get("OTG_RUNTIME"))
-MASK_KEYS = ("fairway", "green", "tee", "bunker", "water", "rough", "native", "stream", "path", "fringe")
+MASK_KEYS = ("fairway", "green", "tee", "bunker", "water", "rough", "native", "stream", "path", "fringe", "road")
 meta = {"id": "runtime", "name": "runtime", "samples": 2017, "metresPerSample": 1, "sizeMetres": 2016,
         "landscape": {"locationZ": 0}} if RUNTIME else load("course.json")
 CONTENT = os.environ.get("OTG_CONTENT") or ("/Game/OpenTeeGolf/Game/Runtime" if RUNTIME else "/Game/OpenTeeGolf/" + meta["id"])
@@ -615,6 +617,18 @@ def build_ground(land):
     # (water: no detail, flat)
     detail = op(unreal.MaterialExpressionAdd, detail, m["water"], -900, 2700, "", "")
     normal = op(unreal.MaterialExpressionAdd, normal, op(unreal.MaterialExpressionMultiply, const3((0, 0, 1), -1200, 3000), m["water"], -1100, 3000, "", ""), -900, 2950)
+    # (roads: none of the rough's grain or relief under the asphalt - its own grain is in its colour)
+    if "road" in m:
+        rd = E(unreal.MaterialExpressionLinearInterpolate, -800, 2700)
+        mel.connect_material_expressions(detail, "", rd, "A")
+        mel.connect_material_expressions(const(1.0, -900, 2750), "", rd, "B")
+        mel.connect_material_expressions(m["road"], "", rd, "Alpha")
+        detail = rd
+        rn = E(unreal.MaterialExpressionLinearInterpolate, -800, 2950)
+        mel.connect_material_expressions(normal, "", rn, "A")
+        mel.connect_material_expressions(const3((0, 0, 1), -900, 3000), "", rn, "B")
+        mel.connect_material_expressions(m["road"], "", rn, "Alpha")
+        normal = rn
     mix = E(unreal.MaterialExpressionLinearInterpolate, -700, 1000)
     mel.connect_material_expressions(const(1.0, -900, 950), "", mix, "A")
     mel.connect_material_expressions(detail, "", mix, "B")
@@ -687,7 +701,28 @@ def build_ground(land):
             turf = paved
         except Exception:
             warn("Paths not painted in the ground:\n" + traceback.format_exc())
+    # the public roads and paved car parks (OpenStreetMap), over the paths where they cross: asphalt,
+    # the same grain as the paths' a little larger, dark
+    if "road" in m:
+        try:
+            asphalt = import_texture(os.path.join(GAME_TEXTURES, "asphalt_color.jpg"), "T_asphalt_color")
+            ra = sample(asphalt, coords(4.0 / meta["metresPerSample"], 6700), -1300, 6700, S.SAMPLERTYPE_COLOR)
+            rc = op(unreal.MaterialExpressionMultiply, ra, const3(tuple(c / 0.208 for c in ROAD_TINT), -1300, 6800), -1150, 6700, "RGB", "")
+            road = E(unreal.MaterialExpressionLinearInterpolate, -650, -500)
+            mel.connect_material_expressions(turf, "", road, "A")
+            mel.connect_material_expressions(rc, "", road, "B")
+            mel.connect_material_expressions(m["road"], "", road, "Alpha")
+            turf = road
+        except Exception:
+            warn("Roads not painted in the ground:\n" + traceback.format_exc())
     amount = const(TURF_AMOUNT, -800, -100)
+    if "road" in m:
+        # (on a road, the asphalt alone: none of the photo's own green under it)
+        ra_ = E(unreal.MaterialExpressionLinearInterpolate, -700, -100)
+        mel.connect_material_expressions(amount, "", ra_, "A")
+        mel.connect_material_expressions(const(1.0, -800, -50), "", ra_, "B")
+        mel.connect_material_expressions(m["road"], "", ra_, "Alpha")
+        amount = ra_
     graded = E(unreal.MaterialExpressionLinearInterpolate, -600, -300)
     mel.connect_material_expressions(ph, "RGB", graded, "A")
     mel.connect_material_expressions(turf, "", graded, "B")
@@ -830,6 +865,18 @@ def build_ground(land):
         normal = bed_nrm
     except Exception:
         warn("Stream bed skipped:\n" + traceback.format_exc())
+    # wet: in rain the ground darkens (water in the soil and on the blades) - drying after
+    wet = None
+    try:
+        wet = weather_param(mat, "Wet", -900, -300)
+        dark = E(unreal.MaterialExpressionLinearInterpolate, -300, -300)
+        mel.connect_material_expressions(const(1.0, -450, -350), "", dark, "A")
+        mel.connect_material_expressions(const(0.6, -450, -300), "", dark, "B")
+        mel.connect_material_expressions(wet, "", dark, "Alpha")
+        base = op(unreal.MaterialExpressionMultiply, base, dark, -200, -200)
+    except Exception:
+        wet = None
+        warn("Wet ground skipped:\n" + traceback.format_exc())
     mel.connect_material_property(base, "", unreal.MaterialProperty.MP_BASE_COLOR)
     mel.connect_material_property(normal, "", unreal.MaterialProperty.MP_NORMAL)
     # roughness: dull ground, the mown turf a little less so where its blades lie flat (the grass's own map)
@@ -850,6 +897,16 @@ def build_ground(land):
             rough_out = ro
         except Exception:
             warn("Turf roughness skipped:\n" + traceback.format_exc())
+    # (wet: glossier - a sheen on the grass, a shine on bare ground)
+    if wet is not None:
+        try:
+            glossy = E(unreal.MaterialExpressionLinearInterpolate, -300, 450)
+            mel.connect_material_expressions(rough_out, "", glossy, "A")
+            mel.connect_material_expressions(const(0.42, -450, 500), "", glossy, "B")
+            mel.connect_material_expressions(wet, "", glossy, "Alpha")
+            rough_out = glossy
+        except Exception:
+            warn("Wet sheen skipped:\n" + traceback.format_exc())
     mel.connect_material_property(rough_out, "", unreal.MaterialProperty.MP_ROUGHNESS)
 
     # Turf on the rough and the fairways (and tees): grown a metre past each edge (Unreal places
@@ -907,11 +964,12 @@ def build_ground(land):
                     mel.connect_material_expressions(pk, "", pk2, "")
                     pk = pk2
                 dry = op(unreal.MaterialExpressionMultiply, dry, pk, -580, 1050)
-            # (never on a cart path)
-            if "path" in raw:
-                off = E(unreal.MaterialExpressionSaturate, -650, 1150)
-                mel.connect_material_expressions(op(unreal.MaterialExpressionMultiply, op(unreal.MaterialExpressionSubtract, const(0.85, -800, 1150), raw["path"], -720, 1150, "", "R"), const(2.0, -800, 1200), -700, 1150), "", off, "")
-                dry = op(unreal.MaterialExpressionMultiply, dry, off, -580, 1100)
+            # (never on a cart path or a road)
+            for pk_, y_ in (("path", 1150), ("road", 1250)):
+                if pk_ in raw:
+                    off = E(unreal.MaterialExpressionSaturate, -650, y_)
+                    mel.connect_material_expressions(op(unreal.MaterialExpressionMultiply, op(unreal.MaterialExpressionSubtract, const(0.85, -800, y_), raw[pk_], -720, y_, "", "R"), const(2.0, -800, y_ + 50), -700, y_), "", off, "")
+                    dry = op(unreal.MaterialExpressionMultiply, dry, off, -580, y_ - 50)
             mel.connect_material_expressions(op(unreal.MaterialExpressionMultiply, sat, dry, -550, 900), "", go, kind.capitalize())
         log("Turf: on %s" % ", ".join(TURF_GRASS))
     except StopIteration:
@@ -1105,11 +1163,13 @@ def turf_material(kind, land_size_cm):
     mval = mask
     for i, nm in enumerate(names[1:]):
         mval = op(unreal.MaterialExpressionMax, mval, tex("T_Mask_" + nm, uv, -1500, 200 + i * 200), -1300, 100 + i * 200, "R" if mval is mask else "", "R")
-    if RUNTIME or unreal.EditorAssetLibrary.does_asset_exist(CONTENT + "/Textures/T_Mask_path"):
-        pth = tex("T_Mask_path", uv, -1500, 400)
-        keep = E(unreal.MaterialExpressionOneMinus, -1300, 400)
-        mel.connect_material_expressions(pth, "R", keep, "")
-        mval = op(unreal.MaterialExpressionMultiply, mval, keep, -1150, 300, "R" if mval is mask else "", "")
+    # (none on a cart path or a road)
+    for i, nm in enumerate(("path", "road")):
+        if RUNTIME or unreal.EditorAssetLibrary.does_asset_exist(CONTENT + "/Textures/T_Mask_" + nm):
+            pth = tex("T_Mask_" + nm, uv, -1500, 400 + i * 120)
+            keep = E(unreal.MaterialExpressionOneMinus, -1300, 400 + i * 120)
+            mel.connect_material_expressions(pth, "R", keep, "")
+            mval = op(unreal.MaterialExpressionMultiply, mval, keep, -1150, 300 + i * 120, "R" if mval is mask else "", "")
     # ... and never past the outline of a mown surface (fairway, tee, green, fringe): blades on the
     # rough cut off exactly where the ground's own edge between them is drawn - a smooth curve, not
     # the ragged line of whole tufts. (The rough's outline and a tee's are separate shapes: they
@@ -1507,6 +1567,87 @@ def wind_collection():
     unreal.EditorAssetLibrary.save_loaded_asset(mpc)
     log("Wind: made %s" % WIND_MPC)
     return mpc
+
+
+# What the weather tells the materials (AOTGRound sets them): Wet, 0 dry .. 1 soaked - rising in
+# rain, drying slowly after (the ground, paths and buildings darker and glossier); Rain, 0 none .. 1
+# a downpour, as it falls (rings spreading on the water).
+WEATHER_MPC = "/Game/OpenTeeGolf/Game/MPC_Weather"
+WEATHER_PARAMS = ("Wet", "Rain")
+
+
+def weather_collection():
+    if unreal.EditorAssetLibrary.does_asset_exist(WEATHER_MPC):
+        mpc = unreal.load_asset(WEATHER_MPC)
+    else:
+        folder, name = WEATHER_MPC.rsplit("/", 1)
+        mpc = assets.create_asset(name, folder, unreal.MaterialParameterCollection, unreal.MaterialParameterCollectionFactoryNew())
+        log("Weather: made %s" % WEATHER_MPC)
+    have = [p for p in mpc.get_editor_property("scalar_parameters")]
+    names = [str(p.get_editor_property("parameter_name")) for p in have]
+    if any(n not in names for n in WEATHER_PARAMS):
+        for n in WEATHER_PARAMS:
+            if n not in names:
+                p = unreal.CollectionScalarParameter()
+                p.set_editor_property("parameter_name", n)
+                p.set_editor_property("default_value", 0.0)
+                have.append(p)
+        mpc.set_editor_property("scalar_parameters", have)
+        unreal.EditorAssetLibrary.save_loaded_asset(mpc)
+    return mpc
+
+
+def weather_param(mat, name, x, y):
+    """A node: one of MPC_Weather's values."""
+    n = mel.create_material_expression(mat, unreal.MaterialExpressionCollectionParameter, x, y)
+    n.set_editor_property("collection", weather_collection())
+    n.set_editor_property("parameter_name", name)
+    return n
+
+
+def wet_surface(mat, colour, colour_out, rough, dark, glossy):
+    """Colour and roughness nodes made wet by MPC_Weather's Wet: the colour times 1 .. dark, the
+    roughness towards glossy. Returns (colour, roughness)."""
+    E = lambda cls, x, y: mel.create_material_expression(mat, cls, x, y)
+
+    def k(v, y):
+        c = E(unreal.MaterialExpressionConstant, -700, y)
+        c.set_editor_property("r", v)
+        return c
+    wet = weather_param(mat, "Wet", -800, -500)
+    d = E(unreal.MaterialExpressionLinearInterpolate, -550, -500)
+    mel.connect_material_expressions(k(1.0, -560), "", d, "A")
+    mel.connect_material_expressions(k(dark, -520), "", d, "B")
+    mel.connect_material_expressions(wet, "", d, "Alpha")
+    col = E(unreal.MaterialExpressionMultiply, -300, -400)
+    mel.connect_material_expressions(colour, colour_out, col, "A")
+    mel.connect_material_expressions(d, "", col, "B")
+    r = E(unreal.MaterialExpressionLinearInterpolate, -300, -300)
+    mel.connect_material_expressions(rough, "", r, "A")
+    mel.connect_material_expressions(k(glossy, -280), "", r, "B")
+    mel.connect_material_expressions(wet, "", r, "Alpha")
+    return col, r
+
+
+# Rings spreading on the water where drops land: cells (Cell cm) each with a ring growing from a
+# random point, over and over at its own time; out: the surface's tilt there (x, y), 0 between
+RIPPLE_HLSL = r"""
+float2 p = P.xy / Cell;
+float2 tilt = 0;
+for (int j = -1; j <= 1; j++)
+for (int i = -1; i <= 1; i++)
+{
+    float2 c = floor(p) + float2(i, j);
+    float2 h = frac(sin(float2(dot(c, float2(127.1, 311.7)), dot(c, float2(269.5, 183.3)))) * 43758.5453);
+    float age = frac(T * 0.9 + h.x * 7.0);
+    float2 d = p - (c + 0.2 + 0.6 * h);
+    float r = length(d);
+    float ring = r - age * 0.9;
+    float wave = sin(ring * 40.0) * exp(-ring * ring * 160.0) * (1.0 - age);
+    tilt += (r > 1e-3 ? d / r : 0) * wave;
+}
+return float3(tilt * 0.6, 0);
+"""
 
 
 def world_height(mat):
@@ -2237,6 +2378,30 @@ def water_material():
             final["normal"] = nrm
     except Exception:
         warn("Water ripples skipped:\n" + traceback.format_exc())
+    # rain on the water: rings spreading where the drops land, as heavy as the rain (MPC_Weather)
+    if final["normal"] is not None:
+        try:
+            rc = E(unreal.MaterialExpressionCustom, -700, 4000)
+            rc.set_editor_property("code", RIPPLE_HLSL)
+            rc.set_editor_property("output_type", unreal.CustomMaterialOutputType.CMOT_FLOAT3)
+            rc.set_editor_property("description", "Rain rings")
+            ins = []
+            for n in ("P", "T", "Cell"):
+                ci = unreal.CustomInput()
+                ci.set_editor_property("input_name", n)
+                ins.append(ci)
+            rc.set_editor_property("inputs", ins)
+            mel.connect_material_expressions(E(unreal.MaterialExpressionWorldPosition, -900, 4000), "", rc, "P")
+            mel.connect_material_expressions(E(unreal.MaterialExpressionTime, -900, 4100), "", rc, "T")
+            mel.connect_material_expressions(const(70.0, -900, 4200), "", rc, "Cell")
+            rain = weather_param(mat, "Rain", -700, 4300)
+            rings = op(unreal.MaterialExpressionMultiply, rc, rain, -500, 4000)
+            n2 = E(unreal.MaterialExpressionNormalize, -300, 4000)
+            mel.connect_material_expressions(op(unreal.MaterialExpressionAdd, final["normal"], rings, -400, 4000), "", n2, "")
+            mel.connect_material_property(n2, "", unreal.MaterialProperty.MP_NORMAL)
+            final["normal"] = n2
+        except Exception:
+            warn("Rain rings skipped:\n" + traceback.format_exc())
     # With Substrate (this project) a material made by script keeps the conversion Unreal made when
     # it was new - Default Lit, black, a mirror - so the water output above goes unused and the
     # water is opaque. The water is wired to Substrate's own Single Layer Water instead: its colour
@@ -2504,7 +2669,7 @@ def prop_material(kind):
         mul = E(unreal.MaterialExpressionMultiply, -400, 0)
         mel.connect_material_expressions(t, "RGB", mul, "A")
         mel.connect_material_expressions(c, "", mul, "B")
-        mel.connect_material_property(mul, "", unreal.MaterialProperty.MP_BASE_COLOR)
+        col_node, col_out = mul, ""
         rough = 0.85
     else:
         # (the vertex colours, from the UVs colours_in_uvs put them in)
@@ -2517,9 +2682,18 @@ def prop_material(kind):
         vc = E(unreal.MaterialExpressionAppendVector, -400, 0)
         mel.connect_material_expressions(rg, "", vc, "A")
         mel.connect_material_expressions(bm, "", vc, "B")
-        mel.connect_material_property(vc, "", unreal.MaterialProperty.MP_BASE_COLOR)
+        col_node, col_out = vc, ""
         rough = 0.35 if kind == "car" else 0.85
-    mel.connect_material_property(const(rough, -400, 300), "", unreal.MaterialProperty.MP_ROUGHNESS)
+    # (wet in rain: paths darker and shining - asphalt glistens - roofs and walls darker)
+    try:
+        col_node, rough_node = wet_surface(mat, col_node, col_out, const(rough, -400, 300), 0.55 if kind.startswith("path") else 0.75,
+                                           0.12 if kind.startswith("path") else min(rough, 0.3))
+        col_out = ""
+    except Exception:
+        warn("Wet %s skipped:\n%s" % (kind, traceback.format_exc()))
+        rough_node = const(rough, -400, 300)
+    mel.connect_material_property(col_node, col_out, unreal.MaterialProperty.MP_BASE_COLOR)
+    mel.connect_material_property(rough_node, "", unreal.MaterialProperty.MP_ROUGHNESS)
     if kind == "car":
         mel.connect_material_property(const(0.3, -400, 400), "", unreal.MaterialProperty.MP_METALLIC)
     mel.recompile_material(mat)
