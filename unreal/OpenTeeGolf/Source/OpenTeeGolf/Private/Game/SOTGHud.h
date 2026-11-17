@@ -8,6 +8,7 @@
 #include "CoreMinimal.h"
 #include "Game/OTGPlayers.h"
 #include "Widgets/SCompoundWidget.h"
+#include "Widgets/SOverlay.h"
 
 class STextBlock;
 class SOTGMinimap;
@@ -45,7 +46,23 @@ public:
 	virtual void Tick(const FGeometry& Geometry, const double Time, const float Dt) override;
 
 	void SetInfo(const FString& Line1, const FString& Line2, const FString& ClubLine);
+	void SetCourseName(const FString& Name);
+	// What the ball lies on, its colour's dot beside it (empty: hidden)
+	void SetLie(const FString& Lie, const FLinearColor& Colour);
+	// The pin's yardage and how far above or below it is, over the flag: Screen in the HUD's own units
+	// (bShow false: hidden - the flag off screen or behind the camera)
+	void SetPinTag(bool bShow, const FVector2D& Screen, const FString& Yards, const FString& Elevation, const FLinearColor& ElevColour);
 	void SetShotData(const FString& Line1, const FString& Line2);
+
+	// The shot data, as tiles (a launch monitor's numbers: ball speed, club speed, launch, spin...):
+	// which show and where on the screen are the player's (D: ShowShotSettings), kept in the
+	// game's settings. Values: by id (ShotItems), "" for one not measured; empty: hidden
+	struct FShotItem { const TCHAR* Id; const TCHAR* Label; bool bDefault; };
+	static const TArray<FShotItem>& ShotItems();
+	static const TArray<FString>& ShotPlaces();   // bottom top left right bottomleft bottomright
+	void SetShotValues(const TMap<FString, FString>& Values);
+	void ShowShotSettings(bool bShow);
+	bool IsShotSettingsShown() const;
 	void SetStatus(const FString& Text, bool bReady);
 	void SetStandings(const FString& Title, const TArray<FOTGStanding>& Rows, const FString& Summary);
 	void Banner(const FString& Title, const FString& Small, float Seconds);
@@ -85,4 +102,19 @@ private:
 	TSharedPtr<STextBlock> PerfText;
 	double PerfShown = 0;
 	FString StandKey;
+	// the course's name, the lie, the pin's tag
+	TSharedPtr<STextBlock> CourseText, LieText, PinYards, PinElev;
+	TSharedPtr<SBorder> LieDot;
+	TSharedPtr<SBox> LieRow, PinTag;
+	// the shot data's tiles and their settings
+	TSharedPtr<SBox> TileSlot, ShotSettingsSlot;
+	SOverlay::FOverlaySlot* TilePlace = nullptr;
+	TMap<FString, FString> ShotValues;
+	TSet<FString> ShotShown;
+	FString ShotWhere = TEXT("bottom");
+	bool bSample = false;   // (the settings' sample numbers, until a shot)
+	void LoadShotSettings();
+	void SaveShotSettings() const;
+	void BuildTiles();
+	void BuildShotSettings();
 };

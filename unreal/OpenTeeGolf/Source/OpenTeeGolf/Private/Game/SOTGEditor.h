@@ -16,6 +16,7 @@
 #include "Widgets/SCompoundWidget.h"
 #include "Widgets/SLeafWidget.h"
 #include "Game/OTGCourseSource.h"
+#include "Game/OTGTreeDesign.h"
 
 class SBox;
 class UTexture2D;
@@ -108,8 +109,13 @@ public:
 	double AreaHMin = 10, AreaHMax = 18, CutR = 6, BrushR = 4;
 	bool bShowPhoto = true, bShowTrees = true, bShowGrass = true, bShowBuildings = true, bColourSpecies = false;
 	// the trees the game found (the course's play data, when it's in the game), the buildings
-	struct FFound { FVector2D P; float R = 3, H = 10; FString Kind; };
+	// (Design: what the game's tree designer - R in a round - did to it: 0 nothing, 1 took it out,
+	// 2 took it out with its species' "how many", 3 added it)
+	struct FFound { FVector2D P; float R = 3, H = 10; FString Kind; uint8 Design = 0; };
 	TArray<FFound> Found;
+	FOTGTreeDesign Design;           // (the course's trees_design.json, in the game's folder)
+	FString GameDir;
+	void DesignUndo(int32 FoundI);   // (the designer's change to this tree taken back, and saved)
 	struct FBuilding { TArray<FVector2D> Pts; FString Name, Kind, Key; double Area = 0; };
 	TArray<FBuilding> Buildings;
 	// the map's picture: the aerial photo over [X0, X0 + SizeM] x [Z1 - SizeM, Z1], or the ground's shading

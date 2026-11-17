@@ -58,6 +58,7 @@ public:
 	void AimAtWorld(const FVector& W);
 	void AimAlongRay(const FVector& Origin, const FVector& Dir);   // (a click: where the line meets the ground)
 	void ToggleShotPanel();
+	void ToggleShotSettings();        // (D: which shot numbers show, and where)
 	// the free view (F): fly round the course
 	void ToggleFreeView();
 	// The slope grid on the green (the G key): on unless turned off
@@ -162,6 +163,7 @@ private:
 	void OverviewView();
 	void UpdateCamera(float Dt);
 	void UpdateHudInfo();
+	void UpdatePinTag();               // (the pin's yardage and height over the flag, each frame)
 	void ShowShotData(bool bWithResult);
 	void Banner(const FString& Title, const FString& Small, float Seconds = 3.f);
 	void Toast(const FString& Text, float Seconds = 2.5f);

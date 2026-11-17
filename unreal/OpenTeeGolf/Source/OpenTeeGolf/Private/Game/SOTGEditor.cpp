@@ -201,15 +201,34 @@ void SOTGCourseEditor::LoadExtras()
 				}
 			}
 		}
+		// (and what the game's tree designer did to them: taken out ones crossed, added ones there too)
+		GameDir = Dir;
+		Design = FOTGTreeDesign::Load(Dir);
 		if (UOTGCourseData* D = C->LoadCourse(Id))
+		{
 			for (const FOTGTreeShape& T : D->Trees)
 			{
 				FFound F;
 				F.P = FVector2D(T.X, T.Z);
 				F.R = T.bCone ? T.C : T.B;
 				F.Kind = T.Kind;
+				const FOTGTreeEdit* E = Design.TreeEditAt(T.X, T.Z);
+				if (E && !E->Kind.IsEmpty()) F.Kind = E->Kind;
+				F.Design = E && E->bRemoved ? 1 : Design.Copies(T.Kind, T.X, T.Z) == 0 ? 2 : 0;
 				Found.Add(F);
 			}
+			for (const FOTGTreeEdit& E : Design.Trees)
+			{
+				if (!E.bAdded || E.bRemoved) continue;
+				const FOTGTreeShape S = UOTGCourseData::AddedShape(E);
+				FFound F;
+				F.P = FVector2D(E.X, E.Z);
+				F.R = S.bCone ? S.C : S.B;
+				F.Kind = E.Kind;
+				F.Design = 3;
+				Found.Add(F);
+			}
+		}
 	}
 	// the tall grass the game found in the aerial photo ({ minX, maxZ, res, w, h, runs: [start, length, ...] }), amber
 	if (UOTGHelperSubsystem* H = Helper())
@@ -376,7 +395,7 @@ int32 SOTGCourseEditor::CutTrees(const FVector2D& P)
 	// any tree under the brush: your own taken away, found ones marked removed
 	int32 N = Src.UserTrees.RemoveAll([&](const FOTGSourceTree& T) { return FVector2D::Distance(T.P, P) <= CutR; });
 	for (const FFound& F : Found)
-		if (FVector2D::Distance(F.P, P) <= CutR && !Src.RemovedTrees.ContainsByPredicate([&](const FVector2D& R) { return FVector2D::Distance(R, F.P) < 0.5; }))
+		if (F.Design != 3 && FVector2D::Distance(F.P, P) <= CutR && !Src.RemovedTrees.ContainsByPredicate([&](const FVector2D& R) { return FVector2D::Distance(R, F.P) < 0.5; }))
 		{
 			Src.RemovedTrees.Add(F.P);
 			N++;
@@ -406,7 +425,7 @@ void SOTGCourseEditor::RemoveMany()
 {
 	if (!SelMany.Num()) return;
 	Change();
-	for (int32 i : SelMany) if (Found.IsValidIndex(i)) Src.RemovedTrees.Add(Found[i].P);
+	for (int32 i : SelMany) if (Found.IsValidIndex(i) && Found[i].Design != 3) Src.RemovedTrees.Add(Found[i].P);
 	Status = FString::Printf(TEXT("%d trees removed"), SelMany.Num());
 	ClearPick();
 	Changed();
@@ -417,6 +436,32 @@ void SOTGCourseEditor::RestoreRemoved()
 	if (!Src.RemovedTrees.IsValidIndex(SelRemoved)) return;
 	Change();
 	Src.RemovedTrees.RemoveAt(SelRemoved);
+	ClearPick();
+	Changed();
+}
+
+void SOTGCourseEditor::DesignUndo(int32 FoundI)
+{
+	if (!Found.IsValidIndex(FoundI) || GameDir.IsEmpty()) return;
+	const FFound F = Found[FoundI];
+	if (F.Design == 2)
+	{
+		// (thinned by its species' "how many": all of the species back to as many as mapped)
+		const FString Kind = F.Kind;
+		if (FOTGSpeciesLook* L = Design.Species.Find(Kind)) L->Density = FMath::Max(L->Density, 1.f);
+		Design.AllDensity = FMath::Max(Design.AllDensity, 1.f);
+		for (FFound& G : Found) if (G.Design == 2 && Design.Copies(G.Kind, G.P.X, G.P.Y) > 0) G.Design = 0;
+	}
+	else
+	{
+		Design.ClearTreeEdit(F.P.X, F.P.Y);
+		if (F.Design == 3) Found.RemoveAt(FoundI);
+		else Found[FoundI].Design = Design.Copies(F.Kind, F.P.X, F.P.Y) == 0 ? 2 : 0;
+	}
+	if (!Design.Save(GameDir)) { Status = TEXT("Couldn't save the tree designer's changes"); Changed(); return; }
+	// (the game reads the course afresh next time it's played)
+	if (UGameInstance* G = GI()) if (UOTGCourseSubsystem* C = G->GetSubsystem<UOTGCourseSubsystem>()) C->LastExport = nullptr;
+	Status = F.Design == 3 ? TEXT("Taken out of the game") : TEXT("Back in the game");
 	ClearPick();
 	Changed();
 }
@@ -473,7 +518,7 @@ void SOTGCourseEditor::StartReview()
 	Review.Reset();
 	for (int32 i = 0; i < Found.Num(); i++)
 	{
-		if (Src.RemovedTrees.ContainsByPredicate([&](const FVector2D& R) { return FVector2D::Distance(R, Found[i].P) < 0.5; })) continue;
+		if (Found[i].Design != 0 || Src.RemovedTrees.ContainsByPredicate([&](const FVector2D& R) { return FVector2D::Distance(R, Found[i].P) < 0.5; })) continue;
 		for (const FOTGSourceHole& H : Src.Holes)
 		{
 			const TArray<FVector2D> L = HoleLine(H);
@@ -593,6 +638,12 @@ EActiveTimerReturnType SOTGCourseEditor::Pulse(double Time, float Dt)
 		int32 WantTab = -1;
 		if (TestStep == 1 && FParse::Value(FCommandLine::Get(), TEXT("editortesttab="), WantTab) && Tab != WantTab) { Tab = WantTab; Changed(); TestAt = FPlatformTime::Seconds() + 1; }
 		else if (double Z = 0; TestStep == 1 && FParse::Value(FCommandLine::Get(), TEXT("editortestzoom="), Z) && Z > 0 && FMath::Abs(Canvas->Scale - Z) > 1e-3) { Canvas->Scale = Z; Changed(); TestAt = FPlatformTime::Seconds() + 1; }
+		// (-editortestat=X,Z: the map centred there, course metres)
+		else if (FString At; TestStep == 1 && FParse::Value(FCommandLine::Get(), TEXT("editortestat="), At, false) && At.Contains(TEXT(","))
+			&& FVector2D(Canvas->Cx, Canvas->Cz) != FVector2D(FCString::Atod(*At.Left(At.Find(TEXT(",")))), FCString::Atod(*At.Mid(At.Find(TEXT(",")) + 1))))
+		{
+			Canvas->Cx = FCString::Atod(*At.Left(At.Find(TEXT(",")))); Canvas->Cz = FCString::Atod(*At.Mid(At.Find(TEXT(",")) + 1)); Changed(); TestAt = FPlatformTime::Seconds() + 1;
+		}
 		else if (TestStep == 1 && FParse::Param(FCommandLine::Get(), TEXT("editortestlook")) && !bColourSpecies) { bColourSpecies = true; Canvas->Scale = 2.5; Changed(); TestAt = FPlatformTime::Seconds() + 2; }
 		else if (TestStep == 1) { Shot(TEXT("editor_open")); TestStep = 2; TestAt = FPlatformTime::Seconds() + 2; }
 		else if (TestStep == 2)
@@ -914,6 +965,23 @@ TSharedRef<SWidget> SOTGCourseEditor::SelectionPanel()
 	if (Found.IsValidIndex(SelFound))
 	{
 		const FFound& F = Found[SelFound];
+		const FString Sp = FOTGTreeDesign::SpeciesLabel(F.Kind).ToLower();
+		if (F.Design == 1 || F.Design == 3)
+		{
+			V->AddSlot().AutoHeight()[Note(F.Design == 1
+				? FString::Printf(TEXT("A %s taken out in the game's tree designer (R in a round)."), *Sp)
+				: FString::Printf(TEXT("A %s added in the game's tree designer (R in a round), about %d m across."), *Sp, FMath::RoundToInt(F.R * 2)))];
+			const int32 I = SelFound;
+			V->AddSlot().AutoHeight().Padding(0, 4)[Button(F.Design == 1 ? TEXT("Put it back") : TEXT("Take it out"), [this, I]() { DesignUndo(I); }, 12)];
+			return Section(F.Design == 1 ? TEXT("Taken out in the game") : TEXT("Added in the game"), V);
+		}
+		if (F.Design == 2)
+		{
+			V->AddSlot().AutoHeight()[Note(FString::Printf(TEXT("A %s taken out by the game's tree designer: fewer of its species (How many, under R in a round)."), *Sp))];
+			const int32 I = SelFound;
+			V->AddSlot().AutoHeight().Padding(0, 4)[Button(TEXT("All of this species back"), [this, I]() { DesignUndo(I); }, 12)];
+			return Section(TEXT("Taken out in the game"), V);
+		}
 		V->AddSlot().AutoHeight()[Note(FString::Printf(TEXT("A %s the game planted (from the tree-height map, OpenStreetMap or the aerial photo), about %d m across."), *FOTGTreeDesign::SpeciesLabel(F.Kind).ToLower(), FMath::RoundToInt(F.R * 2)))];
 		V->AddSlot().AutoHeight().Padding(0, 4)[SNew(SHorizontalBox)
 			+ SHorizontalBox::Slot().AutoWidth().Padding(0, 0, 6, 0)[Button(TEXT("Remove tree"), [this]() { RemoveFound(false); }, 12)]

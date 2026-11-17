@@ -39,7 +39,8 @@ $stage = Join-Path $dist $name
 if (Test-Path $stage) { Remove-Item -Recurse -Force $stage }
 New-Item -ItemType Directory -Force $stage | Out-Null
 Copy-Item -Recurse (Join-Path $out 'Windows\*') $stage
-Copy-Item (Join-Path $Here 'release\README.txt'), (Join-Path $Here 'release\NOTICE.md') $stage
+# (and the release notes, which the game's What's new page reads from next to OpenTeeGolf.exe)
+Copy-Item (Join-Path $Here 'release\README.txt'), (Join-Path $Here 'release\NOTICE.md'), (Join-Path $Here 'release\WHATS_NEW.md') $stage
 Copy-Item (Join-Path $Root 'LICENSE') (Join-Path $stage 'LICENSE-OpenTeeGolf.txt')
 
 # The Garmin R10 and Square Golf bridges, next to the game (it looks for them in bridges\ there):

@@ -223,6 +223,56 @@ otg::FQuickResult otg::QuickUpdate(const FString& Dir, const FOTGCourseSource& B
 		return bAny;
 	};
 	for (const TCHAR* K : { TEXT("green"), TEXT("fairway"), TEXT("tee"), TEXT("bunker") }) Diff(K, true);
+	// ...and what the game's folder has that the source no longer does, or lacks that it has: a change
+	// saved that never reached the game (saved only, or the editor closed first) - found by looking at
+	// the surfaces, not by what changed since the editor opened
+	int32 Healed = 0;
+	{
+		const FKind Gr0 = Kinds(After, TEXT("green")), Bu0 = Kinds(After, TEXT("bunker")), Te0 = Kinds(After, TEXT("tee"));
+		const double Tol = SRes * 1.5 + 0.3, TileM = 24;
+		TSet<FIntPoint> Tiles;
+		// (sand, green or tee where the source has none)
+		for (int32 j = 0; j < SH; j += 2)
+			for (int32 i = 0; i < SW; i += 2)
+			{
+				const uint8 C = Codes[int64(j) * SW + i];
+				const FKind* K = C == Sand ? &Bu0 : C == Green ? &Gr0 : C == Tee ? &Te0 : nullptr;
+				if (!K) continue;
+				const double X = SMinX + (i + 0.5) * SRes, Z = SMaxZ - (j + 0.5) * SRes;
+				if (K->Inside(X, Z) || K->OutsideDist(X, Z, Tol) < Tol) continue;
+				Tiles.Add(FIntPoint(FMath::FloorToInt32((X - SMinX) / TileM), FMath::FloorToInt32((SMaxZ - Z) / TileM)));
+			}
+		for (const FIntPoint& T : Tiles)
+			Changed.Add(FBox2D(FVector2D(SMinX + T.X * TileM, SMaxZ - (T.Y + 1) * TileM), FVector2D(SMinX + (T.X + 1) * TileM, SMaxZ - T.Y * TileM)));
+		Healed += Tiles.Num();
+		// (a source bunker, green or tee not drawn so yet: a quarter of its inside, or more, something else)
+		for (const FOTGSourceShape& S : After.Shapes)
+		{
+			const bool bBunker = S.Kind == TEXT("bunker"), bGreen = S.Kind == TEXT("green"), bTee = S.Kind == TEXT("tee");
+			if (S.bInner || !(bBunker || bGreen || bTee) || S.Pts.Num() < 3) continue;
+			const FBox2D B = BoxOf(S.Pts);
+			const int32 I0 = FMath::Max(0, FMath::FloorToInt32((B.Min.X - SMinX) / SRes)), I1 = FMath::Min(SW - 1, FMath::CeilToInt32((B.Max.X - SMinX) / SRes));
+			const int32 J0 = FMath::Max(0, FMath::FloorToInt32((SMaxZ - B.Max.Y) / SRes)), J1 = FMath::Min(SH - 1, FMath::CeilToInt32((SMaxZ - B.Min.Y) / SRes));
+			int32 Seen = 0, Miss = 0;
+			for (int32 j = J0; j <= J1; j += 2)
+				for (int32 i = I0; i <= I1; i += 2)
+				{
+					const double X = SMinX + (i + 0.5) * SRes, Z = SMaxZ - (j + 0.5) * SRes;
+					if (!InPoly(S.Pts, X, Z) || EdgeDist(S.Pts, X, Z) < Tol) continue;
+					const uint8 C = Codes[int64(j) * SW + i];
+					if (C == None || C == Oob || C == Water || C == Path) continue;
+					Seen++;
+					const bool bOk = bBunker ? C == Sand : bGreen ? (C == Green || C == Sand) : (C == Tee || C == Sand || C == Green || C == Fringe);
+					if (!bOk) Miss++;
+				}
+			if (Miss >= 3 && Miss * 4 >= Seen)
+			{
+				Changed.Add(B);
+				if (bBunker) NewBunkers.AddUnique(&S);
+				Healed++;
+			}
+		}
+	}
 	if (Diff(TEXT("water"), false)) Full.Add(TEXT("water"));
 	if (Diff(TEXT("oob"), false)) Full.Add(TEXT("the boundary"));
 	if (Diff(TEXT("penalty"), false)) Full.Add(TEXT("penalty areas"));
@@ -367,14 +417,24 @@ otg::FQuickResult otg::QuickUpdate(const FString& Dir, const FOTGCourseSource& B
 	const bool bTreesPaired = DrawTrees.Num() == PlayTrees.Num();
 	int32 TreesOut = 0, TreesIn = 0;
 	{
-		TArray<FVector2D> Gone;   // (where trees go: found ones removed since, your own moved or taken away)
-		for (const FVector2D& P : After.RemovedTrees) if (!Before.RemovedTrees.ContainsByPredicate([&](const FVector2D& Q) { return FVector2D::Distance(P, Q) < 0.2; })) Gone.Add(P);
+		// (a tree in the game's lists within D metres of P)
+		auto InGame = [&](const FVector2D& P, double D) {
+			for (const TSharedPtr<FJsonValue>& V : PlayTrees)
+			{
+				const TArray<TSharedPtr<FJsonValue>>& A = V->AsArray();
+				if (A.Num() >= 2 && FVector2D::DistSquared(P, FVector2D(A[0]->AsNumber(), A[1]->AsNumber())) < D * D) return true;
+			}
+			return false;
+		};
+		TArray<FVector2D> Gone;   // (where trees go: removed ones the game still has, your own moved or taken away)
+		for (const FVector2D& P : After.RemovedTrees) if (InGame(P, 0.5)) Gone.Add(P);
 		for (const FVector2D& P : Before.RemovedTrees) if (!After.RemovedTrees.ContainsByPredicate([&](const FVector2D& Q) { return FVector2D::Distance(P, Q) < 0.2; })) Full.Add(TEXT("trees put back"));
 		TArray<FOTGSourceTree> Added;
 		for (const FOTGSourceTree& T : Before.UserTrees)
 			if (!After.UserTrees.ContainsByPredicate([&](const FOTGSourceTree& U) { return U.P == T.P && U.Size == T.Size && U.Kind == T.Kind; })) Gone.Add(T.P);
+		// (your own: new or changed since, or not in the game yet)
 		for (const FOTGSourceTree& T : After.UserTrees)
-			if (!Before.UserTrees.ContainsByPredicate([&](const FOTGSourceTree& U) { return U.P == T.P && U.Size == T.Size && U.Kind == T.Kind; })) Added.Add(T);
+			if (!Before.UserTrees.ContainsByPredicate([&](const FOTGSourceTree& U) { return U.P == T.P && U.Size == T.Size && U.Kind == T.Kind; }) || !InGame(T.P, 1.0)) Added.Add(T);
 		// (new tree areas: planted on a grid as dense as the area, jittered, kept off the mown grass)
 		for (const FOTGSourceShape& S : After.Shapes)
 		{
@@ -597,7 +657,7 @@ otg::FQuickResult otg::QuickUpdate(const FString& Dir, const FOTGCourseSource& B
 	R.bOk = true;
 	R.NeedsFull = Full.Array();
 	R.Seconds = FPlatformTime::Seconds() - T0;
-	R.Message = FString::Printf(TEXT("%d holes, %d surface cells, %d shapes' masks, %d trees out, %d in, %d bunker hollows"), Holes.Num(), Cells, Changed.Num(), TreesOut, TreesIn, NewBunkers.Num());
+	R.Message = FString::Printf(TEXT("%d holes, %d surface cells, %d shapes' masks (%d not in the game before), %d trees out, %d in, %d bunker hollows"), Holes.Num(), Cells, Changed.Num(), Healed, TreesOut, TreesIn, NewBunkers.Num());
 	UE_LOG(LogOTGQuick, Display, TEXT("Quick update %s: %s in %.1f s%s%s"), *Dir, *R.Message, R.Seconds, R.NeedsFull.Num() ? TEXT("; needs the full export for: ") : TEXT(""), *FString::Join(R.NeedsFull, TEXT(", ")));
 	return R;
 }

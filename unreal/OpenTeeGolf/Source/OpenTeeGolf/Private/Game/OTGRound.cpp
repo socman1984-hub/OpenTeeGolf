@@ -76,6 +76,7 @@ namespace
 	FAutoConsoleCommandWithWorldAndArgs PauseCmd(TEXT("OTG.Round.Pause"), TEXT("The pause menu (the Esc key)"), FCmd::CreateLambda([](const TArray<FString>&, UWorld* W) { if (AOTGRound* R = RoundIn(W)) R->TogglePause(); }));
 	FAutoConsoleCommandWithWorldAndArgs CastCmd(TEXT("OTG.Round.CastTest"), TEXT("(testing) what a ball meets flying at the flagstick and at the nearest trunk"), FCmd::CreateLambda([](const TArray<FString>&, UWorld* W) { if (AOTGRound* R = RoundIn(W)) R->CastTest(); }));
 	FAutoConsoleCommandWithWorldAndArgs PanelCmd(TEXT("OTG.Round.ShotPanel"), TEXT("The test shot panel (the T key)"), FCmd::CreateLambda([](const TArray<FString>&, UWorld* W) { if (AOTGRound* R = RoundIn(W)) R->ToggleShotPanel(); }));
+	FAutoConsoleCommandWithWorldAndArgs ShotDataCmd(TEXT("OTG.Round.ShotData"), TEXT("Which shot numbers show, and where (the D key)"), FCmd::CreateLambda([](const TArray<FString>&, UWorld* W) { if (AOTGRound* R = RoundIn(W)) R->ToggleShotSettings(); }));
 	FAutoConsoleCommandWithWorldAndArgs FreeCmd(TEXT("OTG.Round.FreeView"), TEXT("The free view (the F key)"), FCmd::CreateLambda([](const TArray<FString>&, UWorld* W) { if (AOTGRound* R = RoundIn(W)) R->ToggleFreeView(); }));
 	FAutoConsoleCommandWithWorldAndArgs FlyCmd(TEXT("OTG.Round.Fly"), TEXT("OTG.Round.Fly <forward m> <right m> <up m> [yaw] [pitch]: (testing) move the free view"), FCmd::CreateLambda([](const TArray<FString>& A, UWorld* W) {
 		AOTGRound* R = RoundIn(W);
@@ -225,6 +226,22 @@ namespace
 		case otg::Surface::Water: return TEXT("Water");
 		case otg::Surface::Oob: return TEXT("Out of bounds");
 		default: return TEXT("Off the course");
+		}
+	}
+	// (the lie's dot: the surface's colour)
+	FLinearColor LieColour(otg::Surface S)
+	{
+		switch (S)
+		{
+		case otg::Surface::Tee: case otg::Surface::Fairway: return FLinearColor(0.35f, 0.8f, 0.3f);
+		case otg::Surface::FirstCut: case otg::Surface::Fringe: return FLinearColor(0.45f, 0.72f, 0.3f);
+		case otg::Surface::Green: return FLinearColor(0.5f, 0.95f, 0.45f);
+		case otg::Surface::Rough: return FLinearColor(0.22f, 0.5f, 0.18f);
+		case otg::Surface::DeepRough: case otg::Surface::Native: return FLinearColor(0.62f, 0.55f, 0.25f);
+		case otg::Surface::Path: return FLinearColor(0.7f, 0.7f, 0.68f);
+		case otg::Surface::Sand: return FLinearColor(0.93f, 0.82f, 0.55f);
+		case otg::Surface::Water: return FLinearColor(0.3f, 0.55f, 0.95f);
+		default: return FLinearColor(0.9f, 0.3f, 0.3f);
 		}
 	}
 	FString ScoreName(int32 Strokes, int32 Par)
@@ -467,8 +484,10 @@ void AOTGRound::Setup(UOTGCourseData* InData, const FOTGRoundSetup& InSetup)
 		if (bRange)
 		{
 			RangePanel = SNew(SOTGRangePanel);
-			Hud->SetPractice(RangePanel.ToSharedRef(), TEXT("Click the ground to aim     Left / Right: aim     Up / Down: club     T: test shot panel     Space: quick test shot     Enter / Backspace: new ball     Tab: hide the numbers     F: free view     L: weather and time of day     P: frame rate     Esc: menu"));
+			Hud->SetPractice(RangePanel.ToSharedRef(), TEXT("Click the ground to aim     Left / Right: aim     Up / Down: club     T: test shot panel     Space: quick test shot     Enter / Backspace: new ball     Tab: hide the numbers     D: shot data     F: free view     L: weather and time of day     P: frame rate     Esc: menu"));
 		}
+		// (the course's name over the hole's)
+		else Hud->SetCourseName(bMini ? FString(TEXT("Putt-putt")) : !Data->CourseName.IsEmpty() ? Data->CourseName : Data->CourseId.Replace(TEXT("_"), TEXT(" ")));
 	}
 	// the driving range's mats, flags and distance boards, and a mark where each of the club's last
 	// shots stopped
@@ -931,6 +950,35 @@ void AOTGRound::ToggleShotPanel()
 	if (Hud) Hud->ShowShotPanel(!Hud->IsShotPanelShown());
 }
 
+void AOTGRound::UpdatePinTag()
+{
+	if (!Hud) return;
+	const bool bWant = !bRange && !bMini && (Phase == EPhase::Ready || Phase == EPhase::Resting) && !bPaused;
+	APlayerController* PC = bWant ? GetWorld()->GetFirstPlayerController() : nullptr;
+	FVector2D Px;
+	const otg::V3 P = Pin();
+	// (over the flag, about its top: 2.5 m up)
+	if (!PC || !PC->ProjectWorldLocationToScreen(World(otg::V3{ P.x, P.y + 2.5, P.z }), Px, true)) { Hud->SetPinTag(false, FVector2D::ZeroVector, FString(), FString(), FLinearColor::White); return; }
+	// (the viewport's pixels to the HUD's own units)
+	FVector2D Vp(1, 1);
+	if (GEngine && GEngine->GameViewport) GEngine->GameViewport->GetViewportSize(Vp);
+	const FVector2D Local = Hud->GetCachedGeometry().GetLocalSize();
+	const double K = Local.X > 1 && Vp.X > 1 ? Local.X / Vp.X : 1.0;
+	const FVector2D At = Px * K;
+	if (At.X < 0 || At.Y < 0 || At.X > Local.X || At.Y > Local.Y) { Hud->SetPinTag(false, FVector2D::ZeroVector, FString(), FString(), FLinearColor::White); return; }
+	const double D = DistToPin();
+	const double Up = (P.y - Ball.y) * M_TO_FT;   // (the hole above the ball +, below -)
+	const int32 Ft = FMath::RoundToInt(Up);
+	const FString Elev = Ft == 0 ? FString(TEXT("level")) : FString::Printf(TEXT("%d ft %s"), FMath::Abs(Ft), Ft > 0 ? TEXT("uphill") : TEXT("downhill"));
+	const FLinearColor C = Ft >= 1 ? FLinearColor(1.f, 0.62f, 0.45f) : Ft <= -1 ? FLinearColor(0.55f, 0.8f, 1.f) : FLinearColor(0.8f, 0.85f, 0.8f);
+	Hud->SetPinTag(true, At, OnGreen() ? Putt(D) : Len(D), Elev, C);
+}
+
+void AOTGRound::ToggleShotSettings()
+{
+	if (Hud) Hud->ShowShotSettings(!Hud->IsShotSettingsShown());
+}
+
 void AOTGRound::UpdateMap()
 {
 	if (!Hud || !Hud->Minimap()) return;
@@ -1369,6 +1417,7 @@ void AOTGRound::Tick(float Dt)
 	Super::Tick(Dt);
 	if (!Data) return;
 	RoundTime += Dt;
+	UpdatePinTag();
 	for (int32 i = 0; i < ExecAt.Num();)
 	{
 		if (RoundTime < ExecAt[i].Key) { i++; continue; }
@@ -1679,7 +1728,12 @@ void AOTGRound::UpdateHudInfo()
 	else if (Phase == EPhase::Between) L2 = FString::Printf(TEXT("%sholed out"), *Who);
 	else if (Phase == EPhase::Flying) L2 = FString::Printf(TEXT("%sStroke %d  ·  on its way"), *Who, Strokes);
 	else if (bMini) L2 = FString::Printf(TEXT("%sStroke %d  ·  %s to the cup"), *Who, Strokes + 1, *Putt(D));
-	else L2 = FString::Printf(TEXT("%sStroke %d  ·  %s to the pin  ·  %s"), *Who, Strokes + 1, OnGreen() ? *Putt(D) : *Len(D), *SurfaceDisplay(Lie));
+	else L2 = FString::Printf(TEXT("%sStroke %d  ·  %s to the pin"), *Who, Strokes + 1, OnGreen() ? *Putt(D) : *Len(D));
+	// (the lie, on its own line in its colour - not in the air, nor after the hole)
+	{
+		const bool bLie = !bMini && (Phase == EPhase::Ready || Phase == EPhase::Resting);
+		Hud->SetLie(bLie ? SurfaceDisplay(Lie) : FString(), LieColour(Lie));
+	}
 	const FClub& C = Clubs[ClubIndex(Club)];
 	FString L3 = OnGreen() || Club == TEXT("PT") ? FString(C.Name) : FString::Printf(TEXT("%s  ·  aim %s"), C.Name, *Len(AimDist));
 	UpdateWindBox();
@@ -1710,7 +1764,47 @@ void AOTGRound::ShowShotData(bool bWithResult)
 			L2 += FString::Printf(TEXT("  ·  apex %d ft"), FMath::RoundToInt(Res.apex * M_TO_FT));
 		}
 	}
-	Hud->SetShotData(L1, L2);
+	Hud->SetShotData(FString(), FString());
+	// the tiles (SOTGHud: which show and where are the player's)
+	TMap<FString, FString> V;
+	auto Num = [](double X, int32 Places, const TCHAR* Unit) { return FMath::IsFinite(X) ? FString::SanitizeFloat(FMath::RoundToDouble(X * FMath::Pow(10.0, Places)) / FMath::Pow(10.0, Places), Places) + Unit : FString(); };
+	auto Rpm = [](double X) { return FText::AsNumber(FMath::RoundToInt(FMath::Abs(X))).ToString() + TEXT(" rpm"); };
+	const FOTGClubData& Cl = S.Club;
+	V.Add(TEXT("ballspeed"), FString::Printf(TEXT("%.1f mph"), S.SpeedMph));
+	V.Add(TEXT("clubspeed"), Cl.bValid ? Num(Cl.SpeedMph, 1, TEXT(" mph")) : FString());
+	{
+		double Smash = Cl.bValid ? Cl.SmashFactor : NAN;
+		if (!FMath::IsFinite(Smash) && Cl.bValid && FMath::IsFinite(Cl.SpeedMph) && Cl.SpeedMph > 1) Smash = S.SpeedMph / Cl.SpeedMph;
+		V.Add(TEXT("smash"), Num(Smash, 2, TEXT("")));
+	}
+	V.Add(TEXT("launch"), FString::Printf(TEXT("%.1f%s"), S.VLA, DEG));
+	V.Add(TEXT("direction"), Side(S.HLA));
+	V.Add(TEXT("spin"), Rpm(S.TotalSpin));
+	V.Add(TEXT("backspin"), Rpm(S.BackSpin));
+	V.Add(TEXT("sidespin"), FMath::Abs(S.SideSpin) < 1 ? FString(TEXT("0 rpm")) : Rpm(S.SideSpin) + (S.SideSpin > 0 ? TEXT(" R") : TEXT(" L")));
+	V.Add(TEXT("axis"), Side(S.SpinAxis));
+	V.Add(TEXT("aoa"), Cl.bValid && FMath::IsFinite(Cl.AngleOfAttack) ? FString::Printf(TEXT("%.1f%s %s"), FMath::Abs(Cl.AngleOfAttack), DEG, Cl.AngleOfAttack >= 0 ? TEXT("up") : TEXT("down")) : FString());
+	V.Add(TEXT("path"), Cl.bValid && FMath::IsFinite(Cl.Path) ? Side(Cl.Path) : FString());
+	V.Add(TEXT("face"), Cl.bValid && FMath::IsFinite(Cl.FaceToTarget) ? Side(Cl.FaceToTarget) : FString());
+	V.Add(TEXT("loft"), Cl.bValid ? Num(Cl.Loft, 1, DEG) : FString());
+	if (bHasRes && (bCarryShown || bWithResult))
+	{
+		const bool bPutt = Undo && Undo->Lie == otg::Surface::Green;
+		if (bPutt) V.Add(TEXT("total"), Putt(Res.total));
+		else
+		{
+			V.Add(TEXT("carry"), Len(Res.carry));
+			if (bWithResult)
+			{
+				V.Add(TEXT("total"), Len(Res.total));
+				const int32 Off = FMath::RoundToInt(FMath::Abs(Res.offline) * M_TO_YD);
+				V.Add(TEXT("offline"), Off == 0 ? FString(TEXT("0 yd")) : FString::Printf(TEXT("%d yd %s"), Off, Res.offline > 0 ? TEXT("R") : TEXT("L")));
+				V.Add(TEXT("apex"), FString::Printf(TEXT("%d ft"), FMath::RoundToInt(Res.apex * M_TO_FT)));
+			}
+		}
+	}
+	(void)L1; (void)L2;
+	Hud->SetShotValues(V);
 }
 
 void AOTGRound::Banner(const FString& Title, const FString& Small, float Seconds)

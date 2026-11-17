@@ -160,6 +160,7 @@ void AOTGPlayerController::SetupInputComponent()
 	Bind(EKeys::F, [](AOTGRound* R) { R->ToggleFreeView(); }, true);
 	Bind(EKeys::G, [](AOTGRound* R) { R->ToggleSlopeGrid(); }, true);
 	Bind(EKeys::P, [](AOTGRound* R) { R->TogglePerf(); }, true);
+	Bind(EKeys::D, [](AOTGRound* R) { R->ToggleShotSettings(); });
 	Bind(EKeys::L, [](AOTGRound* R) { R->ToggleWeatherPanel(); }, true);
 	Bind(EKeys::R, [](AOTGRound* R) { R->ToggleGrassDesigner(); }, true);
 	// a click on the ground aims there - or, with the course designer open on its trees, picks or

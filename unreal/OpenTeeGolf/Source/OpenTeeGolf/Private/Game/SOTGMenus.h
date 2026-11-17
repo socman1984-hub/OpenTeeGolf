@@ -3,8 +3,8 @@
 //  - SOTGMainMenu (the start level): Play (the courses - searched by name or place, sorted by name,
 //    recently played or newest - and for the one picked the tees, pins, where to start, 18 or 9
 //    holes, the weather, who's playing and the game), Practice (driving range, putt-putt), New course (find a real course on the map and build it:
-//    SOTGCourseBuilder), Players (the profiles: name, colour, handicap, hand, tees), Launch monitor
-//    and Settings
+//    SOTGCourseBuilder), Players (the profiles: name, colour, handicap, hand, tees), Launch monitor,
+//    Settings and What's new (each version's changes); and a button to join the Discord
 //  - SOTGLaunchMonitorPanel: how shots arrive, the device's status, and the Mevo+ setup (also in the
 //    round's pause menu)
 
@@ -53,7 +53,7 @@ public:
 	void Construct(const FArguments& Args);
 	void Start();      // the round as set up
 	virtual bool SupportsKeyboardFocus() const override { return true; }
-	void ShowPage(const FString& Name);   // play, practice, build, players, lm, settings
+	void ShowPage(const FString& Name);   // play, practice, build, players, lm, settings, news
 	virtual void Tick(const FGeometry& Geometry, const double Time, const float Dt) override;
 
 	// The Practice tab's entries (Driving range, Putt-putt): each shows "Coming soon" until it's given
@@ -62,8 +62,10 @@ public:
 	void SetPracticeMode(const FString& Name, TFunction<void()> Open);
 
 private:
-	enum class EPage : uint8 { Play, Practice, Build, Edit, Players, LaunchMonitor, Settings };
+	enum class EPage : uint8 { Play, Practice, Build, Edit, Players, LaunchMonitor, Settings, WhatsNew };
 	void Rebuild();
+	// What's new: each version's changes (WHATS_NEW.md, next to OpenTeeGolf.exe: unreal/release in the repo)
+	TSharedRef<SWidget> WhatsNewPage();
 	TSharedRef<SWidget> PlayPage();
 	TSharedRef<SWidget> PracticePage();
 	TArray<FPracticeMode> PracticeModes;

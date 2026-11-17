@@ -18,6 +18,8 @@
 #include "UObject/StrongObjectPtr.h"
 #include "HAL/PlatformProcess.h"
 #include "HAL/FileManager.h"
+#include "Misc/FileHelper.h"
+#include "Misc/Paths.h"
 #include "OTGTextures.h"
 #include "Kismet/KismetSystemLibrary.h"
 #include "OTGCourseData.h"
@@ -161,6 +163,23 @@ namespace
 		return SNew(SButton).ButtonStyle(&TabStyle()).ContentPadding(FMargin(10, 5))
 			.OnClicked_Lambda([OnClick]() { if (OnClick) OnClick(); return FReply::Handled(); })
 			[SNew(STextBlock).Text(FText::FromString(Label)).Font(Font(Size, "Bold")).ColorAndOpacity(Accent)];
+	}
+	// where players talk, and every release's notes (opened in the browser)
+	const TCHAR* DiscordUrl = TEXT("https://discord.gg/YNsyWkCayd");
+	const TCHAR* ReleasesUrl = TEXT("https://github.com/socman1984-hub/OpenTeeGolf/releases");
+	void OpenUrl(const TCHAR* Url) { FPlatformProcess::LaunchURL(Url, nullptr, nullptr); }
+	// the Discord button: its own blurple
+	TSharedRef<SWidget> DiscordButton(int32 Size = 14)
+	{
+		static const FButtonStyle S = FButtonStyle()
+			.SetNormal(FSlateRoundedBoxBrush(FLinearColor(0.10f, 0.12f, 0.80f, 0.95f), 7.f, FLinearColor(1, 1, 1, 0.15f), 1.f))
+			.SetHovered(FSlateRoundedBoxBrush(FLinearColor(0.14f, 0.17f, 0.92f, 1.f), 7.f, FLinearColor(1, 1, 1, 0.35f), 1.f))
+			.SetPressed(FSlateRoundedBoxBrush(FLinearColor(0.08f, 0.09f, 0.62f, 1.f), 7.f, FLinearColor(1, 1, 1, 0.35f), 1.f))
+			.SetNormalPadding(FMargin(0)).SetPressedPadding(FMargin(0, 1, 0, 0));
+		return SNew(SButton).ButtonStyle(&S).ContentPadding(FMargin(12, 6))
+			.ToolTipText(FText::FromString(TEXT("Questions, problems, course requests and what's coming next: opens discord.gg/YNsyWkCayd in your browser")))
+			.OnClicked_Lambda([]() { OpenUrl(DiscordUrl); return FReply::Handled(); })
+			[SNew(STextBlock).Text(FText::FromString(TEXT("Join the Discord"))).Font(Font(Size, "Bold")).ColorAndOpacity(Ink)];
 	}
 	const FEditableTextBoxStyle& SearchStyle()
 	{
@@ -473,6 +492,8 @@ void SOTGMainMenu::Construct(const FArguments&)
 				]
 				+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Bottom)[SAssignNew(TabBar, SBox)]
 				+ SHorizontalBox::Slot().FillWidth(1)[SNullWidget::NullWidget]
+				// the Discord: questions, problems, what's coming (in the browser)
+				+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0, 0, 10, 0)[DiscordButton()]
 				+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)[Button(TEXT("Quit"), []() {
 					if (UGameInstance* GI = GameInstance()) UKismetSystemLibrary::QuitGame(GI->GetWorld(), nullptr, EQuitPreference::Quit, false);
 				}, 14)]
@@ -558,7 +579,7 @@ void SOTGMainMenu::Rebuild()
 {
 	// the tabs, the page shown lit
 	TSharedRef<SHorizontalBox> Tabs = SNew(SHorizontalBox);
-	const TPair<FString, EPage> Pages[] = { { TEXT("Play"), EPage::Play }, { TEXT("Practice"), EPage::Practice }, { TEXT("New course"), EPage::Build }, { TEXT("Players"), EPage::Players }, { TEXT("Launch monitor"), EPage::LaunchMonitor }, { TEXT("Settings"), EPage::Settings } };
+	const TPair<FString, EPage> Pages[] = { { TEXT("Play"), EPage::Play }, { TEXT("Practice"), EPage::Practice }, { TEXT("New course"), EPage::Build }, { TEXT("Players"), EPage::Players }, { TEXT("Launch monitor"), EPage::LaunchMonitor }, { TEXT("Settings"), EPage::Settings }, { TEXT("What's new"), EPage::WhatsNew } };
 	for (const auto& T : Pages)
 	{
 		const EPage P = T.Value;
@@ -590,6 +611,7 @@ void SOTGMainMenu::Rebuild()
 	else if (Page == EPage::Practice) Body->SetContent(PracticePage());
 	else if (Page == EPage::Players) Body->SetContent(PlayersPage());
 	else if (Page == EPage::Settings) Body->SetContent(SettingsPage());
+	else if (Page == EPage::WhatsNew) Body->SetContent(WhatsNewPage());
 	else if (Page == EPage::Build)
 	{
 		if (!Builder.IsValid())
@@ -1281,9 +1303,75 @@ void SOTGMainMenu::OpenEditor(const FString& Id)
 
 void SOTGMainMenu::ShowPage(const FString& Name)
 {
-	Page = Name == TEXT("players") ? EPage::Players : Name == TEXT("lm") ? EPage::LaunchMonitor : Name == TEXT("settings") ? EPage::Settings : Name == TEXT("build") ? EPage::Build : Name == TEXT("practice") ? EPage::Practice : EPage::Play;
+	Page = Name == TEXT("players") ? EPage::Players : Name == TEXT("lm") ? EPage::LaunchMonitor : Name == TEXT("settings") ? EPage::Settings : Name == TEXT("build") ? EPage::Build : Name == TEXT("practice") ? EPage::Practice : Name == TEXT("news") ? EPage::WhatsNew : EPage::Play;
 	if (Page == EPage::Players) { Draft = Profiles; ConfirmRemove = -1; }
 	Rebuild();
+}
+
+// What's new: WHATS_NEW.md's versions, newest first, each a card ("## <version> - <date>", then its
+// "- " lines); this version marked. (Next to OpenTeeGolf.exe in a release; in the repo, unreal/release.)
+TSharedRef<SWidget> SOTGMainMenu::WhatsNewPage()
+{
+	struct FVersionNotes { FString Version, Date; TArray<FString> Lines; };
+	TArray<FVersionNotes> Versions;
+	{
+		const FString Candidates[] = {
+			FPaths::RootDir() / TEXT("WHATS_NEW.md"),
+			FPaths::ProjectDir() / TEXT("../release/WHATS_NEW.md"),
+		};
+		TArray<FString> Lines;
+		for (const FString& Path : Candidates)
+			if (FFileHelper::LoadFileToStringArray(Lines, *FPaths::ConvertRelativePathToFull(Path))) break;
+		for (const FString& L : Lines)
+		{
+			if (L.StartsWith(TEXT("## ")))
+			{
+				FVersionNotes& V = Versions.AddDefaulted_GetRef();
+				if (!L.Mid(3).Split(TEXT(" - "), &V.Version, &V.Date)) V.Version = L.Mid(3);
+				V.Version.TrimStartAndEndInline();
+				V.Date.TrimStartAndEndInline();
+			}
+			else if (Versions.Num() && L.StartsWith(TEXT("- "))) Versions.Last().Lines.Add(L.Mid(2).TrimStartAndEnd());
+		}
+	}
+	const FString Mine = GetDefault<UGeneralProjectSettings>()->ProjectVersion;
+
+	TSharedRef<SVerticalBox> List = SNew(SVerticalBox);
+	if (Versions.IsEmpty())
+		List->AddSlot().AutoHeight()[Card(Para(TEXT("The release notes aren't with this copy of the game. Every version's are on GitHub: \"All release notes\" above.")))];
+	for (const FVersionNotes& V : Versions)
+	{
+		TSharedRef<SVerticalBox> C = SNew(SVerticalBox);
+		TSharedRef<SHorizontalBox> Head = SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0, 0, 12, 0)[Text(TEXT("Version ") + V.Version, 18, Ink, "Bold")]
+			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0, 0, 12, 0)[Text(V.Date, 13, Dim)];
+		if (V.Version == Mine)
+			Head->AddSlot().AutoWidth().VAlign(VAlign_Center)[Pill(TEXT("You have this"), FLinearColor(0.20f, 0.52f, 0.26f, 0.95f))];
+		C->AddSlot().AutoHeight().Padding(0, 0, 0, 8)[Head];
+		for (const FString& L : V.Lines)
+			C->AddSlot().AutoHeight().Padding(0, 2)
+			[
+				SNew(SHorizontalBox)
+				+ SHorizontalBox::Slot().AutoWidth().Padding(4, 0, 10, 0)[Text(TEXT("•"), 14, Accent, "Bold")]
+				+ SHorizontalBox::Slot().FillWidth(1)[Para(L)]
+			];
+		List->AddSlot().AutoHeight().Padding(0, 0, 0, 12)[Card(C)];
+	}
+
+	return SNew(SVerticalBox)
+		+ SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 12)
+		[
+			SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot().FillWidth(1).VAlign(VAlign_Center)
+			[
+				SNew(SVerticalBox)
+				+ SVerticalBox::Slot().AutoHeight()[Text(TEXT("What's new"), 22, Ink, "Bold")]
+				+ SVerticalBox::Slot().AutoHeight().Padding(0, 2, 0, 0)[Para(FString::Printf(TEXT("You have version %s. The game updates itself: it checks when it starts."), *Mine), 13, Dim)]
+			]
+			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0, 0, 10, 0)[Button(TEXT("All release notes"), []() { OpenUrl(ReleasesUrl); }, 14)]
+			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)[DiscordButton()]
+		]
+		+ SVerticalBox::Slot().FillHeight(1)[SNew(SScrollBox) + SScrollBox::Slot()[List]];
 }
 
 // Display and graphics, applied and saved at once (GameUserSettings.ini)

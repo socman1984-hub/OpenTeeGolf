@@ -264,8 +264,18 @@ int32 SOTGEditCanvas::OnPaint(const FPaintArgs&, const FGeometry& G, const FSlat
 			if (Ed->bColourSpecies) { C = FLinearColor::MakeFromHSV8(uint8(GetTypeHash(F.Kind) * 37 % 255), 190, 230); C.A = 0.9f; }
 			if (bSel) C = FLinearColor(1, 0.85f, 0.2f, 1);
 			else if (bOff) C = FLinearColor(0.45f, 0.45f, 0.45f, 0.6f);
-			if (R >= 2.f && !bSel) Dot(Out, L, G, P, R + 1.f, FLinearColor(0.59f, 0.86f, 0.51f, 0.55f));
+			// (taken out in the game's tree designer: faded, a red cross through it; added there: a blue edge)
+			const bool bOut = F.Design == 1 || F.Design == 2;
+			if (bOut && !bSel) C.A *= 0.45f;
+			if (R >= 2.f && !bSel) Dot(Out, L, G, P, R + 1.f, F.Design == 3 ? FLinearColor(0.45f, 0.8f, 1.f, 0.9f) : FLinearColor(0.59f, 0.86f, 0.51f, 0.55f));
 			Dot(Out, L + 1, G, P, R, C, bSel);
+			if (bOut)
+			{
+				const double X = FMath::Clamp(double(R) * 0.75, 4.0, 14.0);
+				const FLinearColor Xc = bSel ? FLinearColor::Yellow : FLinearColor(1, 0.3f, 0.25f, 0.9f);
+				FSlateDrawElement::MakeLines(Out, L + 2, G.ToPaintGeometry(), TArray<FVector2f>{ FVector2f(P + FVector2D(-X, -X)), FVector2f(P + FVector2D(X, X)) }, ESlateDrawEffect::None, Xc, true, 2);
+				FSlateDrawElement::MakeLines(Out, L + 2, G.ToPaintGeometry(), TArray<FVector2f>{ FVector2f(P + FVector2D(-X, X)), FVector2f(P + FVector2D(X, -X)) }, ESlateDrawEffect::None, Xc, true, 2);
+			}
 		}
 		for (int32 i = 0; i < S.RemovedTrees.Num(); i++)
 		{

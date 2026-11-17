@@ -57,6 +57,18 @@ def scenery(path):
     return name.startswith("pakchunk") and not name.startswith("pakchunk0")
 
 
+def whats_new(version):
+    # (this version's changes from release/WHATS_NEW.md: the "- " lines under "## <version> - <date>")
+    lines, inside = [], False
+    with open(os.path.join(ROOT, "unreal", "release", "WHATS_NEW.md"), encoding="utf-8") as fh:
+        for line in fh:
+            if line.startswith("## "):
+                inside = line[3:].split(" - ")[0].strip() == version
+            elif inside and line.startswith("- "):
+                lines.append(line.rstrip())
+    return "\n".join(lines)
+
+
 def main():
     dry = "--dry-run" in sys.argv
     version = json.load(open(os.path.join(ROOT, "package.json"), encoding="utf-8"))["version"]
@@ -151,6 +163,11 @@ def main():
              "Windows may say it protected your PC: More info, Run anyway). Or download %s.zip, unzip it anywhere and run "
              "OpenTeeGolf.exe. On its first start the game downloads its scenery (about 3 GB) and restarts.\n\n"
              "Already have it: the game updates itself (it checks when it starts)." % (version, version, name))
+    changes = whats_new(version)
+    if changes:
+        notes = "What's new:\n" + changes + "\n\n" + notes
+    else:
+        print("(release/WHATS_NEW.md has no part for %s: the release says only how to install it)" % version)
     def upload(t, folder, names):
         # (in batches: Windows' command line holds about 32,000 characters)
         for i in range(0, len(names), 100):
