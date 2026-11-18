@@ -4,6 +4,13 @@ The newest version first. The game shows this on its What's new page. make_relea
 OpenTeeGolf.exe, and publish_release.py puts each version's part on its GitHub release.
 A version's heading is "## <version> - <date>", and its changes are "- " lines under it.
 
+## 0.19.0 - 17 November 2026
+- A new sky (Meridian Sky): the sun sits where it really is over each course at the time of day you pick, so every course gets its own light, and evening rounds end in a golden sunset.
+- New clouds, from a few fair-weather puffs to a grey overcast deck and dark storm clouds, drifting with the wind and casting their shadows across the course.
+- Storms: you can now see the lightning bolts, and the thunder follows.
+- New rough (Greensward): denser, even-coloured grass that meets the first cut, the collars and the bunkers with a natural ragged edge.
+- Runs as fast as before, and on some courses a little faster.
+
 ## 0.18.0 - 17 November 2026
 - A new sky: real clouds that drift with the wind - a few fair-weather clouds, big heaped cumulus, a grey overcast layer, dark storm clouds - and their shadows move across the course.
 - Rain looks like rain: a grey sky, thinner drops, splashes on the ground, rings on the ponds, and grey curtains of rain over the far end of the hole.
