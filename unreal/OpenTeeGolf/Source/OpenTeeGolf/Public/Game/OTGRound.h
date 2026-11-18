@@ -190,6 +190,7 @@ private:
 	UPROPERTY() TObjectPtr<class UMaterialParameterCollection> WindMPC;   // (the wind for the trees and grass)
 	UPROPERTY() TObjectPtr<class UMaterialParameterCollection> FabWindMPC;   // (the Megascans plants' wind)
 	UPROPERTY() TObjectPtr<class UMaterialParameterCollection> WeatherMPC;   // (MPC_Weather: Wet, Rain)
+	UPROPERTY() TObjectPtr<class UMaterialParameterCollection> GsMPC;        // (MPC_Greensward: its grass's wetness)
 	// the rain far off: grey curtains of it round the camera (M_RainCurtain), and splashes on the
 	// ground near it
 	UPROPERTY() TObjectPtr<class UProceduralMeshComponent> CurtainMesh;
@@ -205,6 +206,15 @@ private:
 	float NextBolt = 5.f, BoltAge = 99.f, BoltNear = 0.f;
 	float SkyNow = -1.f;   // (the sky light as the weather set it: a flash lifts it for a moment)
 	void UpdateStorm(float Dt);
+	// the sky, the time of day and the weather's look: one Meridian Sky actor (the plugin) in place of
+	// the level's sun, sky, sky light, fog and clouds, driven from the round's weather and SunHour
+	// (OTGSky.cpp). -oldsky on the command line: the level's own sky, as before
+	UPROPERTY() TObjectPtr<class AMeridianSkyActor> Sky;
+	bool bSkyTried = false;
+	bool EnsureSky();                   // (true: the Meridian sky's in charge - spawned the first time)
+	void ApplySky();                    // (the look and the weather on it: from ApplyLook and ApplyWeatherToScene)
+	UFUNCTION() void OnSkyBolt(FVector Location, float DistanceMeters);   // (its lightning: our thunder)
+	TWeakObjectPtr<class UExponentialHeightFogComponent> LevelFog;   // (kept: the level's haze, not Meridian's)
 	// changing weather ("changing": showers come and go; live: fetched again every 15 minutes) -
 	// from one state to the next over a minute and a half, each held a few minutes
 	FOTGWeather WxFrom, WxTo;

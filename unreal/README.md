@@ -396,6 +396,17 @@ Everything the golf needs runs inside the game, in C++.
 
   `-weather=<key>` overrides it for a run; `OTG.Round.CastTest` (testing) logs what a ball flying
   at the flagstick, the nearest trunk and the ground meets.
+- The sky and the rough come from two project plugins in `OpenTeeGolf/Plugins`:
+  - **Meridian Sky** (`OTGSky.cpp`): one actor draws the sun, sky, sky light, clouds and lightning,
+    in place of `L_Course`'s template ones. The round still owns the weather and the time of day and
+    drives the sky from them. The sun sits where it really is for the course's latitude and
+    longitude on midsummer's day; "sun behind you" turns the sky so the sun shines down each hole.
+    The rain streaks, the height fog, the thunder and the colour grade stay the game's own.
+  - **Greensward** (`OTGGrass.cpp`): the rough and the far-off rough are its 50 cm Nanite grass
+    mats, tiled in the game's own streamed grass cells, in the rough's colours, with no wind. Edge
+    tiles are split down to 12.5 cm and kept clear of bunkers and the mown cuts.
+  - For comparing looks and frame times, `-oldsky` gives the level's own sky and `-oldgrass` gives
+    the game's own rough blades. `OTG.Sky.CloudBoost` sets the sky light under full cloud.
 - Settings (the menu's last page): full screen or a window, the resolution, the graphics quality
   (Unreal's scalability levels, or "Pick for this PC"), vertical sync - saved in
   `GameUserSettings.ini`. The menu's footer gives the version and where the course data comes from.

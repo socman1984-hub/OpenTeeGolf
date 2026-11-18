@@ -1475,6 +1475,29 @@ TMap<FString, TArray<TPair<UStaticMesh*, UMaterialInterface*>>> AOTGRuntimeCours
 			}
 			if (!V.Num()) UE_LOG(LogOTGRuntimeCourse, Warning, TEXT("Grass %s: none of its plants are in the game (Content/Fab, Content/KiteDemo)"), *K.Name);
 		}
+		else if (K.IsGreensward())
+		{
+			// Greensward's mats (the plugin): its static grass material (no wind), one even colour - the
+			// rough's root and tip (make_turf.py TURF_CUTS) a little darker, as dark as our rough's blades
+			// look (lit as a surface, its mats read lighter), no broad variation across the ground
+			UMaterialInterface* GsBase = LoadObject<UMaterialInterface>(nullptr, TEXT("/Greensward/Materials/MI_Greensward_Grass_Static.MI_Greensward_Grass_Static"));
+			for (const FString& Mat : K.GsMats)
+			{
+				UStaticMesh* Mesh = LoadObject<UStaticMesh>(nullptr, *FString::Printf(TEXT("/Greensward/Mats/SM_GS_%s.SM_GS_%s"), *Mat, *Mat));
+				if (!Mesh) { UE_LOG(LogOTGRuntimeCourse, Warning, TEXT("Grass %s: Greensward's %s not in the game"), *K.Name, *Mat); continue; }
+				UMaterialInstanceDynamic* M = GsBase ? UMaterialInstanceDynamic::Create(GsBase, this) : nullptr;
+				if (M)
+				{
+					M->SetScalarParameterValue(TEXT("MacroVariation"), 0.f);
+					M->SetScalarParameterValue(TEXT("MicroVariation"), 0.3f);
+					TurfMats.Add(M);
+					GrassTints.FindOrAdd(K.Name).Add(FGrassTint{ M, false, FLinearColor(0.029f, 0.047f, 0.012f), FLinearColor(0.074f, 0.109f, 0.026f), FLinearColor::White, true });
+				}
+				TurfMeshes.Add(Mesh);
+				V.Add(TPair<UStaticMesh*, UMaterialInterface*>(Mesh, M));
+			}
+			UE_LOG(LogOTGRuntimeCourse, Display, TEXT("Grass %s: %d of Greensward's mats (%d material slots)"), *K.Name, V.Num(), V.Num() ? V[0].Key->GetStaticMaterials().Num() : 0);
+		}
 		else
 		{
 			UStaticMesh* Mesh = Find<UStaticMesh>(TEXT("SM_Turf_") + K.Name);
@@ -1618,6 +1641,14 @@ void AOTGRuntimeCourse::TintGrass()
 			{
 				UMaterialInstanceDynamic* M = T.M.Get();
 				if (!M) continue;
+				if (T.bGs)
+				{
+					// (Greensward's: its root and tip turned as the designer turned the kind)
+					const FLinearColor Tn = K.TintFor(TurfGreen);
+					M->SetVectorParameterValue(TEXT("RootColour"), T.Base * Tn);
+					M->SetVectorParameterValue(TEXT("TipColour"), T.BaseThrough * Tn);
+					continue;
+				}
 				if (!T.bFab)
 				{
 					M->SetVectorParameterValue(TEXT("Tint"), K.TintFor(TurfGreen));

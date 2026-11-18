@@ -1,0 +1,23 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "0.1.0",
+	"FriendlyName": "Greensward - Lawns, Pitches and Meadows",
+	"Description": "Procedural Nanite grass mats, spline-bounded lawns with mowing stripes, wind, seasons, snow and wetness.",
+	"Category": "Environment",
+	"CreatedBy": "__PUBLISHER__",
+	"CreatedByURL": "",
+	"DocsURL": "",
+	"MarketplaceURL": "",
+	"SupportURL": "",
+	"CanContainContent": true,
+	"IsBetaVersion": true,
+	"Installed": false,
+	"Plugins": [
+		{ "Name": "PCG", "Enabled": true }
+	],
+	"Modules": [
+		{ "Name": "Greensward", "Type": "Runtime", "LoadingPhase": "Default", "PlatformAllowList": [ "Win64" ] },
+		{ "Name": "GreenswardEditor", "Type": "Editor", "LoadingPhase": "Default", "PlatformAllowList": [ "Win64" ] }
+	]
+}

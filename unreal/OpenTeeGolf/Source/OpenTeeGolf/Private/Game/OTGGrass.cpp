@@ -10,7 +10,9 @@
 #include "Engine/StaticMesh.h"
 #include "GameFramework/Actor.h"
 #include "Materials/MaterialInterface.h"
+#include "Misc/CommandLine.h"
 #include "Misc/FileHelper.h"
+#include "Misc/Parse.h"
 #include "Misc/Paths.h"
 #include "Dom/JsonObject.h"
 #include "Serialization/JsonReader.h"
@@ -88,6 +90,17 @@ const TArray<otg::FGrassKind>& otg::FGrass::DefaultKinds()
 			G.BandM = 1.5f;
 		}
 		Add(TEXT("rough"), TEXT("Rough grass"), { TEXT("rough") }, 2400, 70, 100, 1.0f, 0.85f, 1.2f).bEven = true;
+		// (Greensward's: the rough of its 50 cm Nanite mats, tiled - 400 to 100 m2 - two heights of its
+		// lawn mixed so they don't repeat, in the rough's own colours, still: no wind, no smearing)
+		const bool bGs = !FParse::Param(FCommandLine::Get(), TEXT("oldgrass"));
+		if (bGs)
+		{
+			FGrassKind& G = Out.Last();
+			G.GsMats = { TEXT("Lawn_07cm_Dense_Dry00"), TEXT("Lawn_07cm_Medium_Dry00"), TEXT("Lawn_10cm_Medium_Dry00") };
+			G.TileCm = 50;
+			G.Density = 400;
+			G.ScaleLo = 0.9f; G.ScaleHi = 1.15f;
+		}
 		// the rough far off, 80 to 220 m: fewer, wider blades in bigger patches (build_course.py's
 		// rough_far), so the rough keeps a grass texture past where its near blades go - it ended in a
 		// bare band at 100 m. Off with the other far kinds (OTG.Grass.Far 0)
@@ -97,6 +110,14 @@ const TArray<otg::FGrassKind>& otg::FGrass::DefaultKinds()
 			G.CellM = 48;
 			G.FarOf = TEXT("rough");
 			G.bEven = true;
+			if (bGs)
+			{
+				// (Greensward's tallest lawn, a mat to every 70 cm: the tiles stretched to meet)
+				G.GsMats = { TEXT("Lawn_10cm_Medium_Dry00") };
+				G.TileCm = 50;
+				G.Density = 200;
+				G.ScaleLo = 1.0f; G.ScaleHi = 1.3f;
+			}
 		}
 		// tufts through the rough: taller clumps of the same grass in the same colours (build_course.py's
 		// rough_clump) - a kept rough is one even green; the Megascans clumps here before came in their
@@ -312,7 +333,9 @@ TArray<otg::FGrassKind> otg::FGrass::LoadKinds(const FString& Dir)
 		if (O->TryGetStringField(TEXT("surface"), Surface) && (Surface == TEXT("native") || (Surface == TEXT("rough") && K->bEven))) K->Masks = { Surface };
 		auto Num = [&](const TCHAR* F, float& Val, float Lo, float Hi) { double D; if (O->TryGetNumberField(F, D) && FMath::IsFinite(D)) Val = FMath::Clamp(float(D), Lo, Hi); };
 		const float From = K->DrawTo > 0 ? K->DrawFrom / K->DrawTo : 0.7f;
-		Num(TEXT("density"), K->Density, 1, 20000);
+		// (a tiled Greensward kind covers its ground: how many there are is the tile's, not saved - an
+		// older grass.json's 2400 for the rough meant our 30 cm patches)
+		if (!K->IsGreensward()) Num(TEXT("density"), K->Density, 1, 20000);
 		Num(TEXT("scaleLo"), K->ScaleLo, 0.05f, 5);
 		Num(TEXT("scaleHi"), K->ScaleHi, 0.05f, 5);
 		// (a distance saved as an old default - saved with the rest, not chosen - becomes the new one:
@@ -441,6 +464,11 @@ float otg::FGrass::Chance(const FGrassKind& K, double X, double Y) const
 	P *= FMath::Clamp((0.85f - Mask(TEXT("road"), X, Y)) * 2.f, 0.f, 1.f);   // (roads and car parks: layer_road.png)
 	// (a mown cut's own blades: on its surface - the material folds away any past its outline)
 	if (K.bMown) return P;
+	// (Greensward's mats aren't cut off by the masks as our blades are, by their material: they're kept
+	// clear of the bunkers and streams themselves, 15 cm off)
+	if (K.IsGreensward())
+		for (const TCHAR* Off : { TEXT("bunker"), TEXT("stream") })
+			if (Mask(Off, X, Y) > 0.5f - 0.15f / 6.f) return 0.f;
 	// (and never on a mown surface, though the rough's mask reaches into the fringes: tufts
 	// up to a few cm over its outline - the material cuts their blades off exactly on it)
 	const float Mown = FMath::Max(FMath::Max(Mask(TEXT("fairway"), X, Y), Mask(TEXT("tee"), X, Y)), FMath::Max(Mask(TEXT("fringe"), X, Y), Mask(TEXT("green"), X, Y)));
@@ -481,8 +509,51 @@ otg::FGrass::FPlaced otg::FGrass::Place(int32 KindI, int32 CX, int32 CY) const
 	FRandomStream R(int32(Hash(KindI, CX, CY)));
 	// (the mown cuts' square patches tile: on the grid exactly, turned by quarter turns, only their
 	// height varied)
-	const bool bTiled = K.bMown || K.BandM > 0;
+	const bool bTiled = K.bMown || K.BandM > 0 || K.TileCm > 0;
+	const double Tile = K.TileCm > 0 ? K.TileCm : 20.0;
 	const float Jit = bTiled ? 0.f : K.Jitter;
+	// Greensward's mats: a whole tile where all of it's in; one on an edge split in quarters, and
+	// those again (to 12.5 cm), the last ones kept as likely as their spot is, turned off the grid,
+	// nudged, a little oversized so they overlap and cut shorter - its lawns' ragged edge, so the rough
+	// meets the first cut, the bunkers and the collars without a staircase of 50 cm squares
+	if (K.IsGreensward())
+	{
+		auto Add = [&](double X, double Y, double Size, double Yaw, float ZScale)
+		{
+			FVector Nrm;
+			const double Z = GroundZ(X, Y, &Nrm);
+			const FQuat Tilt = FQuat::FindBetweenNormals(FVector::UpVector, Nrm);
+			const double XY = Size / Tile;
+			Out[NV > 1 ? R.RandRange(0, NV - 1) : 0].Add(FTransform(Tilt * FQuat(FVector::UpVector, Yaw), FVector(X, Y, Z) + Data->LevelOrigin, FVector(XY, XY, ZScale)));
+		};
+		TFunction<void(double, double, double, int32)> Fill = [&](double X, double Y, double Size, int32 Level)
+		{
+			const double C = Size * 0.48;
+			const float Ps[5] = { Chance(K, X, Y), Chance(K, X - C, Y - C), Chance(K, X + C, Y - C), Chance(K, X + C, Y + C), Chance(K, X - C, Y + C) };
+			float Lo = 1, Hi = 0;
+			for (const float P : Ps) { Lo = FMath::Min(Lo, P); Hi = FMath::Max(Hi, P); }
+			const float Sc = FMath::Lerp(K.ScaleLo, K.ScaleHi, R.FRand());
+			if (Lo >= 0.999f) { Add(X, Y, Size, R.RandRange(0, 3) * 0.5 * PI, Sc); return; }
+			if (Hi <= 0.001f) return;
+			if (Level < 2)
+			{
+				const double Q = Size * 0.25;
+				for (const FVector2D& O : { FVector2D(-Q, -Q), FVector2D(Q, -Q), FVector2D(Q, Q), FVector2D(-Q, Q) }) Fill(X + O.X, Y + O.Y, Size * 0.5, Level + 1);
+				return;
+			}
+			if (R.FRand() >= Ps[0]) return;
+			const FVector2D Nudge(R.FRandRange(-0.35f, 0.35f) * Size, R.FRandRange(-0.35f, 0.35f) * Size);
+			Add(X + Nudge.X, Y + Nudge.Y, Size * 1.6, R.FRand() * 2 * PI, Sc * R.FRandRange(0.55f, 1.f));
+		};
+		for (int32 b = 0; b < Per; b++)
+			for (int32 a = 0; a < Per; a++)
+			{
+				const double X = CX * Cell * 100.0 + (a + 0.5) * S, Y = CY * Cell * 100.0 + (b + 0.5) * S;
+				if (X < 0 || Y < 0 || X > Land || Y > Land) continue;
+				Fill(X, Y, S, 0);
+			}
+		return Out;
+	}
 	for (int32 b = 0; b < Per; b++)
 		for (int32 a = 0; a < Per; a++)
 		{
@@ -505,7 +576,7 @@ otg::FGrass::FPlaced otg::FGrass::Place(int32 KindI, int32 CX, int32 CY) const
 				const FVector Lean = FVector(R.FRandRange(-1, 1), R.FRandRange(-1, 1), 0).GetSafeNormal();
 				Tilt = FQuat(Lean ^ FVector::UpVector, FMath::DegreesToRadians(R.FRandRange(0.f, 10.f))) * Tilt;
 			}
-			Out[NV > 1 ? R.RandRange(0, NV - 1) : 0].Add(FTransform(Tilt * Turn, FVector(X, Y, Z) + Data->LevelOrigin, bTiled ? FVector(S / 20.0, S / 20.0, Sc) : FVector(Sc)));
+			Out[NV > 1 ? R.RandRange(0, NV - 1) : 0].Add(FTransform(Tilt * Turn, FVector(X, Y, Z) + Data->LevelOrigin, bTiled ? FVector(S / Tile, S / Tile, Sc) : FVector(Sc)));
 		}
 	return Out;
 }
@@ -529,7 +600,12 @@ void otg::FGrass::Update(const FVector& Camera)
 			// (the Megascans plants hierarchically: each clump to its billboard as it goes off)
 			UInstancedStaticMeshComponent* ISM = NewObject<UInstancedStaticMeshComponent>(O);
 			ISM->SetStaticMesh(Meshes[Job.Key.Kind][v]);
-			if (Mats[Job.Key.Kind][v]) ISM->SetMaterial(0, Mats[Job.Key.Kind][v]);
+			if (UMaterialInterface* Mat = Mats[Job.Key.Kind][v])
+			{
+				// (every slot: a Greensward mat's blades and its turf base)
+				const int32 Slots = FMath::Max(1, Meshes[Job.Key.Kind][v]->GetStaticMaterials().Num());
+				for (int32 m = 0; m < Slots; m++) ISM->SetMaterial(m, Mat);
+			}
 			else if (Swaps.Num())
 			{
 				// (a Megascans plant: its own materials, the tinted copies where the course made them)

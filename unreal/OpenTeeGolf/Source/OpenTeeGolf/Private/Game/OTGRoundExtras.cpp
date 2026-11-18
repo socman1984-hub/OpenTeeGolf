@@ -38,6 +38,8 @@ void AOTGRound::UpdateStorm(float Dt)
 	const float Rain = Mm > 0.05 ? float(FMath::Clamp(0.2 + Mm / 7.0, 0.0, 1.0)) : 0.f;
 	const float Wind = bMini ? 0.f : float(FMath::Clamp((Weather.WindMph + 0.3 * FMath::Max(0.0, Weather.GustMph - Weather.WindMph)) / 35.0, 0.0, 1.0));
 	WxSound->SetLevels(Rain, Wind);
+	// (under the Meridian sky the lightning's its: OnSkyBolt brings the thunder)
+	if (Sky) return;
 	// lightning: a storm's (heavy rain), every 6 to 22 s
 	const bool bStorm = Mm >= 5.0;
 	BoltAge += Dt;
@@ -220,6 +222,9 @@ void AOTGRound::UpdateWet(float Dt)
 	if (WeatherMPC)
 	{
 		UKismetMaterialLibrary::SetScalarParameterValue(this, WeatherMPC, TEXT("Wet"), Wet);
+		// (Greensward's grass, the rough: as wet - season, dryness and snow as it grows)
+		if (!GsMPC) GsMPC = LoadObject<UMaterialParameterCollection>(nullptr, TEXT("/Greensward/Materials/MPC_Greensward.MPC_Greensward"));
+		if (GsMPC) UKismetMaterialLibrary::SetVectorParameterValue(this, GsMPC, TEXT("Environment"), FLinearColor(0.f, 0.f, 0.f, Wet));
 		UKismetMaterialLibrary::SetScalarParameterValue(this, WeatherMPC, TEXT("Rain"), Weather.RainMm > 0.05 ? float(FMath::Clamp(0.25 + Weather.RainMm / 6.0, 0.0, 1.0)) : 0.f);
 	}
 }

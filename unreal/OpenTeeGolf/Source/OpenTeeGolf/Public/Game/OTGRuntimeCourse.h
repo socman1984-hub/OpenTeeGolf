@@ -155,7 +155,8 @@ private:
 	TMap<FString, TArray<TPair<UStaticMesh*, UMaterialInterface*>>> GrassMeshCache;
 	// (each kind's materials the designer's colour tints: our turf's Tint, a Megascans plant's own
 	// tints - their copies drawn in place of its materials, GrassSwaps)
-	struct FGrassTint { TWeakObjectPtr<UMaterialInstanceDynamic> M; bool bFab = false; FLinearColor Base, BaseThrough, Controls; };
+	// (bGs: a Greensward mat's material - Base and BaseThrough its root and tip colours)
+	struct FGrassTint { TWeakObjectPtr<UMaterialInstanceDynamic> M; bool bFab = false; FLinearColor Base, BaseThrough, Controls; bool bGs = false; };
 	TMap<FString, TArray<FGrassTint>> GrassTints;
 	TMap<UMaterialInterface*, UMaterialInterface*> GrassSwaps;
 	void TintGrass();

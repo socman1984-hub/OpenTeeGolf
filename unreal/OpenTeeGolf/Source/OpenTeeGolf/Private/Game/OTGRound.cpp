@@ -1943,6 +1943,12 @@ void AOTGRound::ApplyLook()
 	const float Sh = CVarLookShadows.GetValueOnGameThread();
 	P.bOverride_ColorGainShadows = true;
 	P.ColorGainShadows = FVector4(Sh, Sh, Sh, 1);
+	// (the Meridian sky: the sun, sky, fog and clouds are its - OTGSky.cpp)
+	if (EnsureSky())
+	{
+		ApplySky();
+		return;
+	}
 	for (TActorIterator<ADirectionalLight> It(GetWorld()); It; ++It)
 	{
 		UDirectionalLightComponent* L = Cast<UDirectionalLightComponent>(It->GetLightComponent());
@@ -2054,6 +2060,11 @@ void AOTGRound::SetupWeather()
 // a storm darkens the clouds
 void AOTGRound::ApplyWeatherToScene()
 {
+	if (EnsureSky())
+	{
+		ApplySky();
+		return;
+	}
 	for (TActorIterator<AVolumetricCloud> It(GetWorld()); It; ++It)
 	{
 		UVolumetricCloudComponent* VC = It->FindComponentByClass<UVolumetricCloudComponent>();

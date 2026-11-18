@@ -49,6 +49,12 @@ namespace otg
 		bool bMown = false;            // a mown cut's own blades (make_turf.py: green, collar, fairway): on its own surface, not kept off it
 		float BandM = 0;               // (the first cut: grows only this many metres out from a fairway's, tee's or collar's outline)
 		float CellM = 16;              // (its cells, m a side: bigger for the far-reaching kinds, fewer components)
+		// Greensward's grass mats (the plugin's /Greensward/Mats/SM_GS_<name>: 50 cm square Nanite turf),
+		// tiled on a grid TileCm a side, drawn with its static grass material in this kind's colours
+		// (OTGRuntimeCourse GrassMeshes); none: our own patch. -oldgrass: none anywhere
+		TArray<FString> GsMats;
+		float TileCm = 0;              // (a tiled patch's size, cm: the mown cuts' are 20)
+		bool IsGreensward() const { return GsMats.Num() > 0; }
 		// its colour, as the designer turned it (within believable limits: ClampColour): the hue turned
 		// this many degrees (- toward gold, + toward blue-green), its strength and brightness times these
 		float Hue = 0, Sat = 1, Bright = 1;

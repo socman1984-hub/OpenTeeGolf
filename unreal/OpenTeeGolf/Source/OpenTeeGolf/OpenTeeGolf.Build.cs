@@ -13,5 +13,8 @@ public class OpenTeeGolf : ModuleRules
 		PrivateDependencyModuleNames.AddRange(new string[] { "ProceduralMeshComponent", "Slate", "SlateCore", "JsonUtilities", "HTTP", "EngineSettings", "RenderCore", "RHI" });
 		// (the weather's sound, made as it plays: OTGWeatherSound)
 		PrivateDependencyModuleNames.AddRange(new string[] { "AudioExtensions" });
+		// (the sky, the time of day and the weather's look: the Meridian Sky plugin - OTGSky.cpp. The
+		// Greensward plugin's grass mats need no code: OTGGrass loads them by path)
+		PrivateDependencyModuleNames.AddRange(new string[] { "MeridianSky" });
 	}
 }
