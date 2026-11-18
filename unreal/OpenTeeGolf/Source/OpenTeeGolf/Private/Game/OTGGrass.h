@@ -81,6 +81,9 @@ namespace otg
 		// Where a kind grows thickly nearest From (the level's cm), not right under it: false if nowhere
 		// within MaxM metres
 		bool FindNear(const FString& Kind, const FVector& From, FVector& Out, double MaxM = 700) const;
+		// A spot well inside a surface (its mask: fairway, green, rough ...) nearest From, InsideM metres
+		// in from every edge and on no other surface - for photographing its colour (OTG.Look.Swatch)
+		bool FindSurface(const FString& Mask, const FVector& From, FVector& Out, double InsideM = 3, double MaxM = 600) const;
 		const TArray<FGrassKind>& Kinds() const { return KindList; }
 		// (a kind's first mesh's height, cm, at scale 1; 0 if it has none)
 		float MeshHeightCm(int32 Kind) const;

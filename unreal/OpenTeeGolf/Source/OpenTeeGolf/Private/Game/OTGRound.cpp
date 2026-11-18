@@ -26,6 +26,7 @@
 #include "Engine/StaticMesh.h"
 #include "EngineUtils.h"
 #include "GameFramework/PlayerController.h"
+#include "Camera/PlayerCameraManager.h"
 #include "Kismet/GameplayStatics.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Materials/MaterialInterface.h"
@@ -141,6 +142,25 @@ namespace
 		const float V = FCString::Atof(*A[2]);
 		if (A[1] == TEXT("hue")) L.Hue = V; else if (A[1] == TEXT("sat")) L.Sat = V; else if (A[1] == TEXT("bright")) L.Bright = V;
 		C->SetTurfLook(A[0], L);
+	}));
+	// (the turf's colour checked: unreal/tests/turf_colours.ps1 photographs each cut so - the free view
+	// 5 m from a spot well inside the surface, 2.5 m up, looking at it the way the camera already faced)
+	FAutoConsoleCommandWithWorldAndArgs SwatchCmd(TEXT("OTG.Look.Swatch"), TEXT("OTG.Look.Swatch <fairway|green|fringe|rough|native|tee> [distance cm] [height cm] [metres in]: (testing) the free view on a patch of that surface"), FCmd::CreateLambda([](const TArray<FString>& A, UWorld* W) {
+		AOTGRuntimeCourse* C = CourseOf(W);
+		AOTGRound* R = RoundIn(W);
+		APlayerController* PC = W ? W->GetFirstPlayerController() : nullptr;
+		if (!C || !R || !A.Num() || !PC || !PC->PlayerCameraManager) return;
+		const FVector From = PC->PlayerCameraManager->GetCameraLocation();
+		FVector At;
+		auto Arg = [&](int32 i, double D) { return A.IsValidIndex(i) ? FCString::Atod(*A[i]) : D; };
+		// (as far in as it goes: a collar is only a metre or so wide)
+		bool bFound = false;
+		for (const double In : { Arg(3, 3), 1.5, 0.6, 0.3, 0.05 })
+			if ((bFound = C->FindSurface(A[0], From, At, In))) break;
+		if (!bFound) { UE_LOG(LogTemp, Warning, TEXT("Swatch %s: none near here"), *A[0]); return; }
+		const double Yaw = (At - From).Rotation().Yaw;
+		R->FreeLookAt(At, Arg(1, 500), Arg(2, 250), Yaw);
+		UE_LOG(LogTemp, Display, TEXT("Swatch %s at %s"), *A[0], *At.ToString());
 	}));
 	FAutoConsoleCommandWithWorldAndArgs TreesShowCmd(TEXT("OTG.Trees.Show"), TEXT("OTG.Trees.Show <species>: the free view flown to one"), FCmd::CreateLambda([](const TArray<FString>& A, UWorld* W) {
 		if (AOTGRound* R = RoundIn(W)) if (A.Num()) R->ShowTree(A[0]);

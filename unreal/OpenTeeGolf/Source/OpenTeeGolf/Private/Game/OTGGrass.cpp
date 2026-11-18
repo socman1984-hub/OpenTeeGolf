@@ -90,17 +90,11 @@ const TArray<otg::FGrassKind>& otg::FGrass::DefaultKinds()
 			G.BandM = 1.5f;
 		}
 		Add(TEXT("rough"), TEXT("Rough grass"), { TEXT("rough") }, 2400, 70, 100, 1.0f, 0.85f, 1.2f).bEven = true;
-		// (Greensward's: the rough of its 50 cm Nanite mats, tiled - 400 to 100 m2 - two heights of its
-		// lawn mixed so they don't repeat, in the rough's own colours, still: no wind, no smearing)
+		// (Greensward's mats grow only in the deep rough: the rough is our own blades, whose material
+		// folds them away exactly on its outline - Greensward's 50 cm mats, cut down to 12.5 cm pieces
+		// at an edge, left a staircase round the tees and bunkers, and read darker or lighter than the
+		// mown cuts beside them by the angle they were seen from)
 		const bool bGs = !FParse::Param(FCommandLine::Get(), TEXT("oldgrass"));
-		if (bGs)
-		{
-			FGrassKind& G = Out.Last();
-			G.GsMats = { TEXT("Lawn_07cm_Dense_Dry00"), TEXT("Lawn_07cm_Medium_Dry00"), TEXT("Lawn_10cm_Medium_Dry00") };
-			G.TileCm = 50;
-			G.Density = 400;
-			G.ScaleLo = 0.9f; G.ScaleHi = 1.15f;
-		}
 		// the rough far off, 80 to 220 m: fewer, wider blades in bigger patches (build_course.py's
 		// rough_far), so the rough keeps a grass texture past where its near blades go - it ended in a
 		// bare band at 100 m. Off with the other far kinds (OTG.Grass.Far 0)
@@ -110,14 +104,6 @@ const TArray<otg::FGrassKind>& otg::FGrass::DefaultKinds()
 			G.CellM = 48;
 			G.FarOf = TEXT("rough");
 			G.bEven = true;
-			if (bGs)
-			{
-				// (Greensward's tallest lawn, a mat to every 70 cm: the tiles stretched to meet)
-				G.GsMats = { TEXT("Lawn_10cm_Medium_Dry00") };
-				G.TileCm = 50;
-				G.Density = 200;
-				G.ScaleLo = 1.0f; G.ScaleHi = 1.3f;
-			}
 		}
 		// tufts through the rough: taller clumps of the same grass in the same colours (build_course.py's
 		// rough_clump) - a kept rough is one even green; the Megascans clumps here before came in their
@@ -133,7 +119,20 @@ const TArray<otg::FGrassKind>& otg::FGrass::DefaultKinds()
 		// in the others, each out to 450 m (their own billboards far off), and our short meadow grass
 		// under them as a base. (Wheat grass and rough meadow grass, 1.2-1.7 m with seed heads, are
 		// out: too tall however they're scaled.) Their colours: make_game_assets.py's fab_tints
-		Add(TEXT("native_short"), TEXT("Short meadow grass"), { TEXT("native") }, 520, 110, 160, 1.0f, 0.75f, 1.25f, 16, 0.31f, 0.39f, true);
+		Add(TEXT("native_short"), TEXT("Short meadow grass"), { TEXT("native") }, 520, 110, 160, 1.0f, 0.75f, 1.25f, 16, 0.31f, 0.39f, true).bOn = !bGs;
+		// the deep rough (Greensward's, as DZ Grasses' showcase has it): its rough mats over all the
+		// tall grass's ground, 15 to 30 cm, so the rough meets it in a clear step up in height - the
+		// plants above grow through it. Its own greyer green with paler tips, varying across the
+		// ground (variety belongs in the deep rough); in place of our short meadow grass
+		if (bGs)
+		{
+			FGrassKind& G = Add(TEXT("deep_rough"), TEXT("Deep rough (Greensward)"), { TEXT("native") }, 400, 65, 90, 1.0f, 0.9f, 1.15f);
+			// (out to 90 m: as far as its step up from the rough shows; the ground and the tall plants
+			// carry it on - 140 m cost a millisecond on a course with a lot of it)
+			G.GsMats = { TEXT("Rough_20cm_Dense_Dry10"), TEXT("Rough_20cm_Medium_Dry00"), TEXT("Rough_30cm_Medium_Dry10"), TEXT("Rough_15cm_Dense_Dry10") };
+			G.TileCm = 50;
+			G.CellM = 32;
+		}
 		{
 			// (out to 60 m: further off its pale tufts ran together into cream-yellow drifts across the
 			// tall grass, looking into the sun most of all; the wild grass carries the drifts on)
@@ -457,7 +456,9 @@ float otg::FGrass::Chance(const FGrassKind& K, double X, double Y) const
 {
 	float W = 0;
 	for (const FString& M : K.Masks) W = FMath::Max(W, Mask(M, X, Y));
-	float P = FMath::Clamp((W - 0.33f) * 12.f, 0.f, 1.f);
+	// (Greensward's mats: on the outline itself, 25 cm either way - our blades reach past it and their
+	// material folds them away there)
+	float P = K.IsGreensward() ? FMath::Clamp((W - 0.5f) * 24.f + 0.5f, 0.f, 1.f) : FMath::Clamp((W - 0.33f) * 12.f, 0.f, 1.f);
 	if (P <= 0) return 0.f;
 	P *= FMath::Clamp((0.45f - Mask(TEXT("water"), X, Y)) * 10.f, 0.f, 1.f);
 	P *= FMath::Clamp((0.85f - Mask(TEXT("path"), X, Y)) * 2.f, 0.f, 1.f);
@@ -513,9 +514,8 @@ otg::FGrass::FPlaced otg::FGrass::Place(int32 KindI, int32 CX, int32 CY) const
 	const double Tile = K.TileCm > 0 ? K.TileCm : 20.0;
 	const float Jit = bTiled ? 0.f : K.Jitter;
 	// Greensward's mats: a whole tile where all of it's in; one on an edge split in quarters, and
-	// those again (to 12.5 cm), the last ones kept as likely as their spot is, turned off the grid,
-	// nudged, a little oversized so they overlap and cut shorter - its lawns' ragged edge, so the rough
-	// meets the first cut, the bunkers and the collars without a staircase of 50 cm squares
+	// those again (to 12.5 cm), the last kept where their middle is in, a little oversized so they
+	// overlap and cut a little shorter - the deep rough meets the rough without 50 cm steps
 	if (K.IsGreensward())
 	{
 		auto Add = [&](double X, double Y, double Size, double Yaw, float ZScale)
@@ -541,9 +541,10 @@ otg::FGrass::FPlaced otg::FGrass::Place(int32 KindI, int32 CX, int32 CY) const
 				for (const FVector2D& O : { FVector2D(-Q, -Q), FVector2D(Q, -Q), FVector2D(Q, Q), FVector2D(-Q, Q) }) Fill(X + O.X, Y + O.Y, Size * 0.5, Level + 1);
 				return;
 			}
-			if (R.FRand() >= Ps[0]) return;
-			const FVector2D Nudge(R.FRandRange(-0.35f, 0.35f) * Size, R.FRandRange(-0.35f, 0.35f) * Size);
-			Add(X + Nudge.X, Y + Nudge.Y, Size * 1.6, R.FRand() * 2 * PI, Sc * R.FRandRange(0.55f, 1.f));
+			// (kept only where its middle is in, a little shorter: a fine, even edge, not a torn one)
+			if (Ps[0] < 0.5f) return;
+			const FVector2D Nudge(R.FRandRange(-0.1f, 0.1f) * Size, R.FRandRange(-0.1f, 0.1f) * Size);
+			Add(X + Nudge.X, Y + Nudge.Y, Size * 1.25, R.RandRange(0, 3) * 0.5 * PI, Sc * R.FRandRange(0.8f, 1.f));
 		};
 		for (int32 b = 0; b < Per; b++)
 			for (int32 a = 0; a < Per; a++)
@@ -673,6 +674,34 @@ void otg::FGrass::Update(const FVector& Camera)
 			});
 		}
 	}
+}
+
+bool otg::FGrass::FindSurface(const FString& Name, const FVector& From, FVector& Out, double InsideM, double MaxM) const
+{
+	if (!Data || Land <= 0 || !Pics.Contains(Name)) return false;
+	const FVector C = From - Data->LevelOrigin;
+	static const TCHAR* Others[] = { TEXT("fairway"), TEXT("tee"), TEXT("green"), TEXT("fringe"), TEXT("bunker"), TEXT("water"), TEXT("stream"), TEXT("native"), TEXT("path"), TEXT("road") };
+	auto In = [&](double X, double Y) {
+		if (X < 0 || Y < 0 || X > Land || Y > Land || Mask(Name, X, Y) < 0.5f + float(InsideM) / 6.f) return false;
+		for (const TCHAR* O : Others)
+			if (Name != O && !(Name == TEXT("fairway") && FCString::Strcmp(O, TEXT("tee")) == 0) && Pics.Contains(O) && Mask(O, X, Y) > 0.45f) return false;
+		return true;
+	};
+	// (a step as fine as the surface is thin: a collar's a metre wide)
+	const double Step = InsideM < 1 ? 70 : 300;
+	for (double R = 1000; R <= MaxM * 100; R += Step)
+	{
+		const int32 N = FMath::Max(8, FMath::RoundToInt(2 * PI * R / Step));
+		for (int32 i = 0; i < N; i++)
+		{
+			const double A = 2 * PI * i / N;
+			const double X = C.X + FMath::Cos(A) * R, Y = C.Y + FMath::Sin(A) * R;
+			if (!In(X, Y)) continue;
+			Out = FVector(X, Y, GroundZ(X, Y, nullptr)) + Data->LevelOrigin;
+			return true;
+		}
+	}
+	return false;
 }
 
 bool otg::FGrass::FindNear(const FString& Name, const FVector& From, FVector& Out, double MaxM) const

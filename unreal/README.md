@@ -402,11 +402,17 @@ Everything the golf needs runs inside the game, in C++.
     drives the sky from them. The sun sits where it really is for the course's latitude and
     longitude on midsummer's day; "sun behind you" turns the sky so the sun shines down each hole.
     The rain streaks, the height fog, the thunder and the colour grade stay the game's own.
-  - **Greensward** (`OTGGrass.cpp`): the rough and the far-off rough are its 50 cm Nanite grass
-    mats, tiled in the game's own streamed grass cells, in the rough's colours, with no wind. Edge
-    tiles are split down to 12.5 cm and kept clear of bunkers and the mown cuts.
+  - **Greensward** (`OTGGrass.cpp`): the deep rough (under the tall grass) is its 15 to 30 cm
+    Nanite rough mats, tiled in the game's own streamed grass cells, with no wind, so the rough
+    meets it in a clear step up in height. The rough itself stays our own blades: their material
+    folds them away exactly on each outline, so the lines round tees, collars and bunkers are smooth.
+- The turf's colours come from one palette (`OTGPalette.h`, `OTG.Palette.*`): one hue for every cut,
+  the green lightest, then the fairways and tees, the collars, the rough. It feeds the ground's
+  material (`TurfTint_<surface>`), our blades and Greensward's mats; the grass designer's colours turn
+  it as before. `python unreal/tests/turf_colours.py --course <id> --hole <n>` photographs each cut
+  from straight above (`OTG.Look.Swatch`) and checks that they're one hue and step down in lightness.
   - For comparing looks and frame times, `-oldsky` gives the level's own sky and `-oldgrass` gives
-    the game's own rough blades. `OTG.Sky.CloudBoost` sets the sky light under full cloud.
+    the game's own short meadow grass in the deep rough. `OTG.Sky.CloudBoost` sets the sky light under full cloud.
 - Settings (the menu's last page): full screen or a window, the resolution, the graphics quality
   (Unreal's scalability levels, or "Pick for this PC"), vertical sync - saved in
   `GameUserSettings.ini`. The menu's footer gives the version and where the course data comes from.

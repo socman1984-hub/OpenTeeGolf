@@ -33,6 +33,7 @@
 #include "Misc/Paths.h"
 #include "EngineUtils.h"
 #include "OTGKiteDemo.h"
+#include "OTGPalette.h"
 #include "HAL/IConsoleManager.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogOTGRuntimeCourse, Log, All);
@@ -1477,9 +1478,12 @@ TMap<FString, TArray<TPair<UStaticMesh*, UMaterialInterface*>>> AOTGRuntimeCours
 		}
 		else if (K.IsGreensward())
 		{
-			// Greensward's mats (the plugin): its static grass material (no wind), one even colour - the
-			// rough's root and tip (make_turf.py TURF_CUTS) a little darker, as dark as our rough's blades
-			// look (lit as a surface, its mats read lighter), no broad variation across the ground
+			// Greensward's mats (the plugin): its static grass material (no wind). The rough one even
+			// colour - make_turf.py TURF_CUTS' root and tip - with no broad variation across the ground;
+			// the deep rough a greyer green with paler tips, varying (TintGrass puts them in the palette)
+			const bool bDeep = K.Name.StartsWith(TEXT("deep_rough"));
+			const FLinearColor Root = bDeep ? FLinearColor(0.03f, 0.042f, 0.015f) : FLinearColor(0.034f, 0.055f, 0.014f);
+			const FLinearColor Tip = bDeep ? FLinearColor(0.105f, 0.115f, 0.05f) : FLinearColor(0.092f, 0.136f, 0.032f);
 			UMaterialInterface* GsBase = LoadObject<UMaterialInterface>(nullptr, TEXT("/Greensward/Materials/MI_Greensward_Grass_Static.MI_Greensward_Grass_Static"));
 			for (const FString& Mat : K.GsMats)
 			{
@@ -1488,10 +1492,10 @@ TMap<FString, TArray<TPair<UStaticMesh*, UMaterialInterface*>>> AOTGRuntimeCours
 				UMaterialInstanceDynamic* M = GsBase ? UMaterialInstanceDynamic::Create(GsBase, this) : nullptr;
 				if (M)
 				{
-					M->SetScalarParameterValue(TEXT("MacroVariation"), 0.f);
-					M->SetScalarParameterValue(TEXT("MicroVariation"), 0.3f);
+					M->SetScalarParameterValue(TEXT("MacroVariation"), bDeep ? 0.35f : 0.f);
+					M->SetScalarParameterValue(TEXT("MicroVariation"), bDeep ? 0.5f : 0.3f);
 					TurfMats.Add(M);
-					GrassTints.FindOrAdd(K.Name).Add(FGrassTint{ M, false, FLinearColor(0.029f, 0.047f, 0.012f), FLinearColor(0.074f, 0.109f, 0.026f), FLinearColor::White, true });
+					GrassTints.FindOrAdd(K.Name).Add(FGrassTint{ M, false, Root, Tip, FLinearColor::White, true });
 				}
 				TurfMeshes.Add(Mesh);
 				V.Add(TPair<UStaticMesh*, UMaterialInterface*>(Mesh, M));
@@ -1626,11 +1630,44 @@ void AOTGRuntimeCourse::SetGrassColours(const TArray<otg::FGrassKind>& Kinds)
 	TintGrass();
 }
 
+// The turf's palette (OTGPalette.h), tunable live
+static TAutoConsoleVariable<float> CVarPalRed(TEXT("OTG.Palette.Red"), 0.55f, TEXT("The turf's hue: red as a share of its green (lower: fresher, bluer; 0.66 was the old olive)"));
+static TAutoConsoleVariable<float> CVarPalBlue(TEXT("OTG.Palette.Blue"), 0.25f, TEXT("The turf's hue: blue as a share of its green"));
+static TAutoConsoleVariable<float> CVarPalGreen(TEXT("OTG.Palette.Green"), 0.05f, TEXT("The greens' lightness (their linear green; their short blades, lit from above, read about 40% lighter than this)"));
+static TAutoConsoleVariable<float> CVarPalFairway(TEXT("OTG.Palette.Fairway"), 0.07f, TEXT("The fairways' and tees' lightness"));
+static TAutoConsoleVariable<float> CVarPalFringe(TEXT("OTG.Palette.Fringe"), 0.065f, TEXT("The collars' lightness"));
+static TAutoConsoleVariable<float> CVarPalRough(TEXT("OTG.Palette.Rough"), 0.054f, TEXT("The rough's (and first cut's) lightness"));
+static TAutoConsoleVariable<float> CVarPalRoughRed(TEXT("OTG.Palette.RoughRed"), 0.88f, TEXT("The rough's blades' red against the palette's (their tips are yellower than the ground they were made for)"));
+static TAutoConsoleVariable<float> CVarPalNative(TEXT("OTG.Palette.Native"), 0.9f, TEXT("The deep rough's ground: x its own straw-green"));
+static TAutoConsoleVariable<float> CVarPalMat(TEXT("OTG.Palette.MatLight"), 1.15f, TEXT("Greensward's mats (the deep rough) against our blades in the same colour (their dense blades shade each other: darker)"));
+static TAutoConsoleVariable<float> CVarPalCut1(TEXT("OTG.Palette.FirstCut"), 1.04f, TEXT("The first cut's blades against the rough's colour (a touch lighter: shorter)"));
+
+// The ground's colour on every surface: the palette's, turned by the grass designer's colours - the
+// fairways' and greens' looks, and the rough's kind (the ground under its blades the same as they are)
+void AOTGRuntimeCourse::TintGround()
+{
+	if (!GroundMat) return;
+	const FLinearColor TurfGreen(0.06f, 0.09f, 0.022f);
+	for (const TCHAR* S : { TEXT("fairway"), TEXT("green") })
+	{
+		otg::FGrassKind K;
+		if (const FOTGTurfLook* L = TurfLooks.Find(S)) { K.Hue = L->Hue; K.Sat = L->Sat; K.Bright = L->Bright; }
+		GroundMat->SetVectorParameterValue(*(FString(TEXT("TurfTint_")) + S), otg::Palette::Factor(S) * K.TintFor(otg::Palette::Of(S)));
+	}
+	FLinearColor RoughLook = FLinearColor::White;
+	if (Grass.IsValid())
+		if (const otg::FGrassKind* R = Grass->Kinds().FindByPredicate([](const otg::FGrassKind& X) { return X.Name == TEXT("rough"); })) RoughLook = R->TintFor(TurfGreen);
+	GroundMat->SetVectorParameterValue(TEXT("TurfTint_rough"), otg::Palette::Factor(TEXT("rough")) * RoughLook);
+	GroundMat->SetVectorParameterValue(TEXT("TurfTint_fringe"), otg::Palette::Factor(TEXT("fringe")));
+	GroundMat->SetVectorParameterValue(TEXT("TurfTint_native"), otg::Palette::Factor(TEXT("native")));
+}
+
 // Each kind's materials tinted as its colour is: our turf by its Tint (a multiplier on the green it
-// draws: hue, strength, brightness); a Megascans plant by its Base Color Controls (strength and
-// brightness only)
+// draws: the palette's colour for its cut, then the designer's hue, strength, brightness); a
+// Megascans plant by its Base Color Controls (strength and brightness only)
 void AOTGRuntimeCourse::TintGrass()
 {
+	TintGround();
 	if (!Grass.IsValid()) return;
 	const FLinearColor TurfGreen(0.06f, 0.09f, 0.022f);
 	// (the first cut's width, which the rough leaves to it - 0 when it's off: the rough to the fairway)
@@ -1643,15 +1680,21 @@ void AOTGRuntimeCourse::TintGrass()
 				if (!M) continue;
 				if (T.bGs)
 				{
-					// (Greensward's: its root and tip turned as the designer turned the kind)
-					const FLinearColor Tn = K.TintFor(TurfGreen);
+					// (Greensward's: its root and tip in the palette's colour for its cut, lifted to read as
+					// light as our blades would - its dense blades shade each other - turned as the designer
+					// turned the kind)
+					const FString S = otg::Palette::SurfaceOf(K.Name);
+					const FLinearColor Tn = K.TintFor(TurfGreen) * (S.IsEmpty() ? FLinearColor::White : otg::Palette::Factor(S) * CVarPalMat.GetValueOnGameThread());
 					M->SetVectorParameterValue(TEXT("RootColour"), T.Base * Tn);
 					M->SetVectorParameterValue(TEXT("TipColour"), T.BaseThrough * Tn);
 					continue;
 				}
 				if (!T.bFab)
 				{
-					M->SetVectorParameterValue(TEXT("Tint"), K.TintFor(TurfGreen));
+					const FString S = otg::Palette::SurfaceOf(K.Name);
+					const float Cut1 = K.Name == TEXT("cut1") ? CVarPalCut1.GetValueOnGameThread() : 1.f;
+					const FLinearColor Trim = S == TEXT("rough") ? FLinearColor(CVarPalRoughRed.GetValueOnGameThread(), 1.f, 1.f) : FLinearColor::White;
+					M->SetVectorParameterValue(TEXT("Tint"), K.TintFor(TurfGreen) * (S.IsEmpty() ? FLinearColor::White : otg::Palette::Factor(S) * Cut1 * Trim));
 					M->SetScalarParameterValue(TEXT("FirstCutM"), FirstCut);
 					// (the fairways' and greens' blades take the look their ground does: SetTurfLook)
 					M->SetVectorParameterValue(TEXT("TurfTint"), TurfLookTint(K.Name));
@@ -1664,6 +1707,11 @@ void AOTGRuntimeCourse::TintGrass()
 				const float Y = K.Bright < 1 ? 1.f - (1.f - K.Bright) * 0.7f : 1.f + (K.Bright - 1.f) * 0.33f;   // (0.65 .. 1.2)
 				M->SetVectorParameterValue(TEXT("Base Color Controls"), FLinearColor(T.Controls.R * X, T.Controls.G * Y, T.Controls.B, T.Controls.A));
 			}
+}
+
+bool AOTGRuntimeCourse::FindSurface(const FString& Mask, const FVector& From, FVector& Out, double InsideM) const
+{
+	return Grass.IsValid() && Grass->FindSurface(Mask, From, Out, InsideM);
 }
 
 bool AOTGRuntimeCourse::FindGrass(const FString& Kind, const FVector& From, FVector& Out) const
@@ -1704,24 +1752,11 @@ float AOTGRuntimeCourse::GrassHeightCm(const FString& Kind) const
 	return I == INDEX_NONE ? 0 : Grass->MeshHeightCm(I);
 }
 
-namespace
-{
-	// (build_course.py TURF: the ground's own fairway and green colours, which a look turns)
-	FLinearColor TurfBase(const FString& Surface)
-	{
-		return Surface == TEXT("green") ? FLinearColor(0.04f, 0.066f, 0.017f) : FLinearColor(0.04f, 0.061f, 0.016f);
-	}
-}
-
 void AOTGRuntimeCourse::SetTurfLook(const FString& Surface, const FOTGTurfLook& Look)
 {
 	TurfLooks.Add(Surface, Look);
 	if (!GroundMat) return;
-	// (the multiplier that turns the colour so: FGrassKind's, kept within reason)
-	otg::FGrassKind K;
-	K.Hue = Look.Hue; K.Sat = Look.Sat; K.Bright = Look.Bright;
-	GroundMat->SetVectorParameterValue(*(TEXT("TurfTint_") + Surface), K.TintFor(TurfBase(Surface)));
-	TintGrass();   // (and the blades mown on it)
+	TintGrass();   // (the ground, and the blades mown on it)
 }
 
 FLinearColor AOTGRuntimeCourse::TurfLookTint(const FString& Kind) const
@@ -1731,7 +1766,7 @@ FLinearColor AOTGRuntimeCourse::TurfLookTint(const FString& Kind) const
 	if (!L || (Kind != TEXT("fairway") && Kind != TEXT("green"))) return FLinearColor::White;
 	otg::FGrassKind K;
 	K.Hue = L->Hue; K.Sat = L->Sat; K.Bright = L->Bright;
-	return K.TintFor(TurfBase(Kind));
+	return K.TintFor(otg::Palette::Of(Kind));
 }
 
 TMap<FString, FOTGTurfLook> AOTGRuntimeCourse::SavedTurfLooks() const

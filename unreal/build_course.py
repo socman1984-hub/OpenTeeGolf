@@ -83,8 +83,9 @@ TURF = {"fairway": (0.04, 0.061, 0.016), "green": (0.04, 0.066, 0.017), "rough":
         "water": (0.03, 0.03, 0.018),   # (the pond floor under Unreal's water: dark silt, not the photo's pale water)
         "native": (0.085, 0.095, 0.035)}   # (under the tall grass: its own mix of green and straw, so it carries on when the blades end)
 # The photo's light and shade on the turf: its brightness over 0.3, kept within these (a narrower
-# range: an evener fairway, less of the photo's blotches)
-TURF_SHADE = (0.8, 1.2)
+# range: an evener fairway, less of the photo's blotches - and each cut nearer its palette colour
+# whatever the photo: OTGPalette.h, unreal/tests/turf_colours.py)
+TURF_SHADE = (0.9, 1.1)
 # Patches (the stream bed's stones and silt, the bank's width, the meadow's grasses and flowers)
 # are read from the rock texture's lightness seen much larger: its linear lightness is about 0.07
 # to 0.12, so it's weighted up to about 0.27..0.46 (median 0.35), the range the thresholds use
@@ -643,12 +644,19 @@ def build_ground(land):
                op(unreal.MaterialExpressionMax, op(unreal.MaterialExpressionDivide, lum, const(0.3, -1500, -450), -1300, -600), const(TURF_SHADE[0], -1300, -450), -1200, -600),
                const(TURF_SHADE[1], -1200, -450), -1100, -600)
     fair_tee = op(unreal.MaterialExpressionAdd, m["fairway"], m["tee"], -1500, -300, "", "")
+
+    def tinted(colour, k, x, y):
+        """A surface's colour times its TurfTint_<k> (the turf's palette at run time; white: as made)"""
+        tint = E(unreal.MaterialExpressionVectorParameter, x - 200, y + 40)
+        tint.set_editor_property("parameter_name", "TurfTint_" + k)
+        tint.set_editor_property("default_value", unreal.LinearColor(1, 1, 1, 1))
+        return op(unreal.MaterialExpressionMultiply, const3(colour, x - 150, y), tint, x, y, "", "RGB")
     turf = None
     for i, (k, w, wout) in enumerate((("fairway", fair_tee, ""), ("green", m["green"], ""), ("rough", m["rough"], ""), ("bunker", m["bunker"], ""), ("water", m["water"], ""))):
         base = const3(TURF[k], -1300, -300 + i * 120)
-        if k in ("fairway", "green"):
-            # (the grass designer's colour for the fairways (and tees) and greens: a multiplier, white
-            # leaving it as it is - AOTGRuntimeCourse::SetTurfLook)
+        if k in ("fairway", "green", "rough"):
+            # (the turf's palette and the grass designer's colour for the fairways (and tees), greens
+            # and rough: a multiplier, white leaving it as it is - AOTGRuntimeCourse::TintGround)
             tint = E(unreal.MaterialExpressionVectorParameter, -1500, -300 + i * 120)
             tint.set_editor_property("parameter_name", "TurfTint_" + k)
             tint.set_editor_property("default_value", unreal.LinearColor(1, 1, 1, 1))
@@ -658,14 +666,14 @@ def build_ground(land):
     if "native" in m:
         nat = E(unreal.MaterialExpressionLinearInterpolate, -850, -250)
         mel.connect_material_expressions(turf, "", nat, "A")
-        mel.connect_material_expressions(const3(TURF["native"], -1000, -200), "", nat, "B")
+        mel.connect_material_expressions(tinted(TURF["native"], "native", -1000, -200), "", nat, "B")
         mel.connect_material_expressions(op(unreal.MaterialExpressionMultiply, m["native"], const(0.85, -1000, -150), -950, -150), "", nat, "Alpha")
         turf = nat
     # the fringe round the greens: its own deeper green
     if "fringe" in m:
         fr = E(unreal.MaterialExpressionLinearInterpolate, -850, -350)
         mel.connect_material_expressions(turf, "", fr, "A")
-        mel.connect_material_expressions(const3(FRINGE, -1000, -350), "", fr, "B")
+        mel.connect_material_expressions(tinted(FRINGE, "fringe", -1000, -350), "", fr, "B")
         mel.connect_material_expressions(m["fringe"], "", fr, "Alpha")
         turf = fr
     # mowing stripes on the fairways, tees and greens (not the fringe)

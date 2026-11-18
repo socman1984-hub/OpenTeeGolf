@@ -88,6 +88,7 @@ public:
 	// kind grows thickly nearest a point (the level's cm; false: nowhere near)
 	void SetGrassColours(const TArray<otg::FGrassKind>& Kinds);
 	bool FindGrass(const FString& Kind, const FVector& From, FVector& Out) const;
+	bool FindSurface(const FString& Mask, const FVector& From, FVector& Out, double InsideM = 3) const;   // (well inside it: OTG.Look.Swatch)
 	void DumpGrassTints() const;   // (testing: OTG.Grass.Tints)
 	void SetGrassParam(const FString& Kind, const FString& Param, const FLinearColor& V);   // (testing: OTG.Grass.Param)
 
@@ -160,6 +161,7 @@ private:
 	TMap<FString, TArray<FGrassTint>> GrassTints;
 	TMap<UMaterialInterface*, UMaterialInterface*> GrassSwaps;
 	void TintGrass();
+	void TintGround();   // (the ground's colour on each surface: the turf's palette, OTGPalette.h)
 	void SetPictures(UMaterialInstanceDynamic* M) const;
 	class UHierarchicalInstancedStaticMeshComponent* Instances(class UStaticMesh* Mesh, const TArray<FTransform>& Xfs, int32 CullFrom, int32 CullTo);
 
