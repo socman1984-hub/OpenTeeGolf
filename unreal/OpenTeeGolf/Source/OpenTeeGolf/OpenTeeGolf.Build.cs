@@ -16,5 +16,7 @@ public class OpenTeeGolf : ModuleRules
 		// (the sky, the time of day and the weather's look: the Meridian Sky plugin - OTGSky.cpp. The
 		// Greensward plugin's grass mats need no code: OTGGrass loads them by path)
 		PrivateDependencyModuleNames.AddRange(new string[] { "MeridianSky" });
+		// (the ponds, lakes, rivers and sea: the Tidewright Water plugin - OTGWater.cpp)
+		PrivateDependencyModuleNames.AddRange(new string[] { "Tidewright", "ProceduralMeshComponent" });
 	}
 }

@@ -17,6 +17,7 @@
 #include "OTGRuntimeCourse.generated.h"
 
 class UOTGCourseData;
+namespace otg { struct FGlbMesh; }
 class UStaticMeshComponent;
 class UMaterialInstanceDynamic;
 class UMaterialInterface;
@@ -132,6 +133,10 @@ private:
 	TArray<FVector3f> WaterPos;
 	TArray<int32> WaterIdx;
 	bool bWaterSettled = false;
+	UPROPERTY() TArray<TObjectPtr<class ATidewrightWater>> Lakes;
+	UPROPERTY() TArray<TObjectPtr<class ATidewrightRiver>> Rivers;
+	UPROPERTY() TObjectPtr<class ATidewrightWater> Sea;
+	double TidewrightCheckAt = 0;
 	double GroundAt(double X, double Y) const;
 	void BuildTrees();
 	void BuildBoulders();
@@ -147,6 +152,12 @@ private:
 	struct FDrawn { FVector Base; double H = 0, R = 0; double X = 0, Z = 0; FString Kind; bool bAdded = false; class UStaticMesh* Mesh = nullptr; bool bColourable = false; };
 	TArray<FDrawn> DrawnTrees, DrawnRocks;
 	void BuildWater();
+	// (the ponds and rivers as Tidewright water - OTGWater.cpp; OutGone: the game's own water's points under them)
+	bool BuildTidewright(TArray<bool>& OutGone);
+	bool BuildStillPond(const TArray<FVector>& Poly, double Level);
+	void UpdateTidewright();
+	// (the sea as a Tidewright ocean, with a shoreline for the surf: false - none, the game's own)
+	bool BuildTidewrightSea(const otg::FGlbMesh& Mesh, const FBox& Box, const FVector2D& Swell, double LevelM);
 	void BuildSea();
 	void BuildFarLand();
 	bool BuildRealFarLand();   // (the export's farland.json: real heights and photos; false if it hasn't one)

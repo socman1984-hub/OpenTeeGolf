@@ -17,6 +17,12 @@ project's licence). This game is built with Unreal Engine and includes the follo
 | [ironsight](https://github.com/divotmaker/ironsight) (Copyright 2026 Eric Thill): the Mevo+ protocol | MIT OR Apache-2.0 (used under MIT) |
 | [Flight Relay Protocol](https://github.com/flightrelay/spec) 0.1: the shot format the game reads from FRP launch monitors and bridges | CC0 1.0 |
 
+## Plugins
+
+| Plugin | Licence |
+| --- | --- |
+| Tidewright Water 0.6.0: the ponds, lakes, rivers and sea, included in compiled form | No licence stated in the plugin |
+
 ## Programs included
 
 | Program | Licence |

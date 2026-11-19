@@ -1278,6 +1278,11 @@ void AOTGRuntimeCourse::BuildWater()
 	otg::FGlbMesh G;
 	G.Positions = WaterPos;   // (flat enough: straight up everywhere - no normals)
 	G.Indices = WaterIdx;
+	// (the ponds and rivers Tidewright draws - OTGWater.cpp: the game's own water under them gone)
+	// (every pond, lake and river is Tidewright water now - OTGWater.cpp - and none of the game's own
+	// is drawn; -oldwater draws it as before, for comparison)
+	TArray<bool> Gone;
+	if (BuildTidewright(Gone)) return;
 	UStaticMeshComponent* C = MeshFromGlb(this, G, Data->LevelOrigin, WaterLiftCm, false, Load<UMaterialInterface>(TEXT("M_Water")));
 	C->SetCastShadow(false);
 	// (see-through: it mustn't hide what's under it from the renderer - the ground tiles under a
@@ -1308,6 +1313,7 @@ void AOTGRuntimeCourse::BuildSea()
 	for (const FVector3f& P : G.Positions) Box += FVector(P);
 	bSea = true;
 	SeaLevelM = G.Positions[0].Y;
+	FVector2D Swell = FVector2D::ZeroVector;
 	const TSharedPtr<FJsonValue> J = ReadJson(FPaths::Combine(Data->ExportDir, TEXT("sea.json")));
 	const TSharedPtr<FJsonObject>* Obj = nullptr;
 	if (J.IsValid() && J->TryGetObject(Obj))
@@ -1316,8 +1322,13 @@ void AOTGRuntimeCourse::BuildSea()
 		if ((*Obj)->TryGetNumberField(TEXT("levelMetres"), L)) SeaLevelM = L;
 		const TSharedPtr<FJsonObject>* Sw = nullptr;
 		if ((*Obj)->TryGetObjectField(TEXT("swell"), Sw))
-			M->SetVectorParameterValue(TEXT("SwellDir"), FLinearColor((*Sw)->GetNumberField(TEXT("x")), (*Sw)->GetNumberField(TEXT("y")), 0, 0));
+		{
+			Swell = FVector2D((*Sw)->GetNumberField(TEXT("x")), (*Sw)->GetNumberField(TEXT("y")));
+			M->SetVectorParameterValue(TEXT("SwellDir"), FLinearColor(Swell.X, Swell.Y, 0, 0));
+		}
 	}
+	// (Tidewright's ocean: OTGWater.cpp. -oldwater: the game's own sea, as before)
+	if (BuildTidewrightSea(G, Box, Swell, SeaLevelM)) return;
 	auto Add = [&](const otg::FGlbMesh& Mesh)
 	{
 		UStaticMeshComponent* C = MeshFromGlb(this, Mesh, Data->LevelOrigin, WaterLiftCm, true, M);
@@ -1824,6 +1835,7 @@ int32 AOTGRuntimeCourse::GrassInstances() const
 void AOTGRuntimeCourse::Tick(float Dt)
 {
 	Super::Tick(Dt);
+	if ((Lakes.Num() || Rivers.Num() || Sea) && FPlatformTime::Seconds() > TidewrightCheckAt) { TidewrightCheckAt = FPlatformTime::Seconds() + 0.5; UpdateTidewright(); }
 	// (the picked one's marks: gone once the designer stops calling; the cone bobbing)
 	if (PickRing && PickRing->IsVisible())
 	{

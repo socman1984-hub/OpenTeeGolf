@@ -18,6 +18,9 @@
 #include "UObject/Package.h"
 #include "UObject/SavePackage.h"
 #include "AssetRegistry/AssetRegistryModule.h"
+#include "Materials/Material.h"
+#include "Materials/MaterialExpressionCustom.h"
+#include "Internationalization/Regex.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogOTGPack, Log, All);
 
@@ -75,4 +78,54 @@ UOTGCourseData* UOTGPackTools::CreateCourseData(const FString& ExportDir, const 
 	if (!UPackage::SavePackage(Package, D, *File, Args)) { UE_LOG(LogOTGPack, Error, TEXT("Couldn't save %s"), *File); return nullptr; }
 	UE_LOG(LogOTGPack, Display, TEXT("Course data: %s, %d holes, %d trees, heights %d^2, surfaces %dx%d"), *D->CourseName, D->Holes.Num(), D->Trees.Num(), D->HeightSamples, D->SurfaceW, D->SurfaceH);
 	return D;
+}
+
+int32 UOTGPackTools::GuardRayTracingLod(const FString& Folder)
+{
+	IAssetRegistry& AR = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry").Get();
+	AR.ScanPathsSynchronous({ Folder }, true);
+	TArray<FAssetData> Assets;
+	AR.GetAssetsByPath(FName(*Folder), Assets, true);
+	int32 Changed = 0;
+	for (const FAssetData& A : Assets)
+	{
+		if (!A.IsInstanceOf(UMaterial::StaticClass())) continue;
+		UMaterial* M = Cast<UMaterial>(A.GetAsset());
+		if (!M) continue;
+		bool bMat = false;
+		for (UMaterialExpression* E : M->GetExpressions())
+		{
+			UMaterialExpressionCustom* C = Cast<UMaterialExpressionCustom>(E);
+			if (!C || !C->Code.Contains(TEXT("CalculateLevelOfDetail")) || C->Code.Contains(TEXT("RAYHITGROUPSHADER"))) continue;
+			// each "float x = T.CalculateLevelOfDetail(...);" line: level 0 in ray-tracing shaders
+			TArray<FString> Lines;
+			C->Code.ParseIntoArrayLines(Lines, false);
+			for (FString& L : Lines)
+				if (L.Contains(TEXT("CalculateLevelOfDetail")))
+				{
+					const FString Trim = L.TrimStart();
+					const FString Indent = L.Left(L.Len() - Trim.Len());
+					int32 Eq = INDEX_NONE;
+					if (!Trim.FindChar(TEXT('='), Eq)) continue;
+					FString Decl = Trim.Left(Eq).TrimEnd();
+					L = FString::Printf(TEXT("#if RAYHITGROUPSHADER\n%s%s = 0;\n#else\n%s%s\n#endif"), *Indent, *Decl, *Indent, *Trim);
+				}
+			C->Modify();
+			C->Code = FString::Join(Lines, TEXT("\n"));
+			bMat = true;
+			Changed++;
+		}
+		if (bMat)
+		{
+			M->PreEditChange(nullptr);
+			M->PostEditChange();
+			M->MarkPackageDirty();
+			UPackage* Pkg = M->GetOutermost();
+			FSavePackageArgs Args;
+			Args.TopLevelFlags = RF_Public | RF_Standalone;
+			UPackage::SavePackage(Pkg, M, *FPackageName::LongPackageNameToFilename(Pkg->GetName(), FPackageName::GetAssetPackageExtension()), Args);
+			UE_LOG(LogTemp, Display, TEXT("Ray-tracing guard: %s"), *M->GetPathName());
+		}
+	}
+	return Changed;
 }

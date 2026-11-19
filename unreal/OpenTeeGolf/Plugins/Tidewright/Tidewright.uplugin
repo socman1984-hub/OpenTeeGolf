@@ -1,0 +1,28 @@
+{
+	"FileVersion": 3,
+	"Version": 6,
+	"VersionName": "0.6.0",
+	"FriendlyName": "Tidewright Water",
+	"Description": "Ocean, lake and river water: FFT waves, foam, surf, underwater view, mist and buoyancy.",
+	"Category": "Rendering",
+	"CreatedBy": "__PUBLISHER__",
+	"CreatedByURL": "",
+	"DocsURL": "",
+	"MarketplaceURL": "",
+	"SupportURL": "",
+	"CanContainContent": true,
+	"IsBetaVersion": true,
+	"Installed": false,
+	"Modules": [
+		{
+			"Name": "Tidewright",
+			"Type": "Runtime",
+			"LoadingPhase": "Default",
+			"PlatformAllowList": [ "Win64", "Mac", "Linux" ]
+		}
+	],
+	"Plugins": [
+		{ "Name": "ProceduralMeshComponent", "Enabled": true },
+		{ "Name": "Niagara", "Enabled": true }
+	]
+}

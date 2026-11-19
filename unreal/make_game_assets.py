@@ -275,6 +275,13 @@ def fab_tints():
 if not eal.does_directory_exist(FOLDER):
     eal.make_directory(FOLDER)
 fab_usage()
+# (the Tidewright water's material uses CalculateLevelOfDetail in Custom HLSL, which ray-tracing
+# hit shaders can't: with the game's ray tracing on, the whole material failed and the water drew as
+# nothing. Guarded to level 0 there - OTGPackTools::GuardRayTracingLod; already done, it does nothing)
+try:
+    log("Tidewright ray-tracing guard: %d nodes" % unreal.OTGPackTools.guard_ray_tracing_lod("/Tidewright"))
+except Exception as e:
+    unreal.log_warning("[OpenTeeGolf assets] Tidewright ray-tracing guard: %s" % e)
 fab_tints()
 kite_usage()
 rain()

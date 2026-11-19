@@ -18,6 +18,7 @@ OpenTeeGolf is free software under the GNU General Public License v3 (see `LICEN
 | [allsquare](https://github.com/divotmaker/allsquare) 0.2 (Copyright 2026 Eric Thill): `allsquare-frp`, the Square Golf bridge, run by `lib/bridges.js` and bundled in `bridges/` in the Windows release zip | MIT OR Apache-2.0 (used under MIT, see `bridges/allsquare-LICENSE-MIT.txt`) |
 | [Flight Relay Protocol](https://github.com/flightrelay/spec) 0.1 (the shot format `lib/frp.js` reads) | CC0 1.0 |
 | [Node.js](https://nodejs.org) (bundled in the Windows release zip) | MIT and others, see `node/LICENSE` in the zip |
+| Tidewright Water 0.6.0, an Unreal Engine plugin (`unreal/OpenTeeGolf/Plugins/Tidewright`): the ponds, lakes, rivers and sea in the Unreal game (`OTGWater.cpp`) | No licence stated in the plugin |
 
 ## Textures (in `public/textures/`)
 

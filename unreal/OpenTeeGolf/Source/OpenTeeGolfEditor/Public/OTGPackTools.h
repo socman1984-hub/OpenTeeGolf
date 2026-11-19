@@ -24,6 +24,12 @@ public:
 	// The course's play data (an export's play.json, heightmap.png and surfaces.png) as a
 	// UOTGCourseData asset at PackagePath/AssetName, for the level at LevelPath, whose export origin
 	// is at LevelOrigin; saved
+	// Custom HLSL in the materials under Folder that calls Texture.CalculateLevelOfDetail (not allowed
+	// in ray-tracing hit shaders: the whole material then fails and draws as the default) wrapped so
+	// ray-tracing shaders use level 0. Already wrapped code is left alone. Returns the nodes changed.
+	UFUNCTION(BlueprintCallable, Category = "OpenTeeGolf")
+	static int32 GuardRayTracingLod(const FString& Folder);
+
 	UFUNCTION(BlueprintCallable, Category = "OpenTeeGolf")
 	static UOTGCourseData* CreateCourseData(const FString& ExportDir, const FString& PackagePath, const FString& AssetName, const FString& LevelPath, FVector LevelOrigin);
 };
