@@ -4,6 +4,11 @@ The newest version first. The game shows this on its What's new page. make_relea
 OpenTeeGolf.exe, and publish_release.py puts each version's part on its GitHub release.
 A version's heading is "## <version> - <date>", and its changes are "- " lines under it.
 
+## 0.20.0 - 19 November 2026
+- New water everywhere (Tidewright): ponds and lakes ripple in the breeze and mirror the trees, rivers and streams flow downhill between their banks, and the sea rolls in with real waves, whitecaps and surf breaking along the shore.
+- Water hazards play just as before.
+- Runs as fast as before.
+
 ## 0.19.1 - 18 November 2026
 - Smooth grass lines: the rough meets the tees, fairways, collars and bunkers in a clean curve again, not a jagged one.
 - Matching colours: every cut is now the same fresh green, lighter the shorter it's mown - the greens lightest, then the fairways and tees, then the rough - so the course reads as one lawn.
