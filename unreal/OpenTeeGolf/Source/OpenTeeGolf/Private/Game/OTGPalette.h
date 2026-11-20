@@ -43,7 +43,14 @@ namespace otg
 		// and .Blue - at the cut's own lightness (its green, OTG.Palette.<cut>)
 		inline FLinearColor Of(const FString& S)
 		{
-			if (S == TEXT("native")) return Made(S) * FLinearColor(Cv(TEXT("OTG.Palette.Native"), 0.9f), Cv(TEXT("OTG.Palette.Native"), 0.9f) * 1.03f, Cv(TEXT("OTG.Palette.Native"), 0.9f) * 1.1f);
+			// (the deep rough: the rough's green with some straw in it - OTG.Palette.NativeStraw of the
+			// way to its own straw colour. Full straw, it stood out from the rough as a yellow patch)
+			if (S == TEXT("native"))
+			{
+				const float N = Cv(TEXT("OTG.Palette.Native"), 0.9f);
+				const FLinearColor Straw = Made(S) * FLinearColor(N, N * 1.03f, N * 1.1f);
+				return FMath::Lerp(Of(TEXT("rough")), Straw, Cv(TEXT("OTG.Palette.NativeStraw"), 0.25f));
+			}
 			const float G = S == TEXT("green") ? Cv(TEXT("OTG.Palette.Green"), 0.05f)
 				: S == TEXT("fringe") ? Cv(TEXT("OTG.Palette.Fringe"), 0.065f)
 				: S == TEXT("rough") ? Cv(TEXT("OTG.Palette.Rough"), 0.054f)

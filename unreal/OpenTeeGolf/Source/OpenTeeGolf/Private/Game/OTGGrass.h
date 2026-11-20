@@ -114,6 +114,7 @@ namespace otg
 		FPlaced Place(int32 Kind, int32 CX, int32 CY) const;
 		// (how likely a patch of the kind is at X, Y - the level's cm from the origin - before its random keep)
 		float Chance(const FGrassKind& K, double X, double Y) const;
+		float DeepRamp(float W, double X, double Y) const;
 		TMap<UMaterialInterface*, UMaterialInterface*> Swaps;
 		float Mask(const FString& Name, double X, double Y) const;
 		double GroundZ(double X, double Y, FVector* OutNormal) const;

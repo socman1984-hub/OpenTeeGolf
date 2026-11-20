@@ -53,6 +53,8 @@ class OPENTEEGOLF_API AOTGRuntimeCourse : public AActor
 	GENERATED_BODY()
 
 public:
+	// (the highest water surface over a point, world cm, or a huge negative: none - OTGWater.cpp)
+	double WaterTopAt(const FVector& P) const;
 	AOTGRuntimeCourse();
 	virtual void Tick(float Dt) override;
 	virtual void EndPlay(const EEndPlayReason::Type Reason) override;
@@ -136,6 +138,7 @@ private:
 	UPROPERTY() TArray<TObjectPtr<class ATidewrightWater>> Lakes;
 	UPROPERTY() TArray<TObjectPtr<class ATidewrightRiver>> Rivers;
 	UPROPERTY() TObjectPtr<class ATidewrightWater> Sea;
+	TArray<FBox2D> RiverBoxes;   // (Rivers' footprints, in step)
 	double TidewrightCheckAt = 0;
 	double GroundAt(double X, double Y) const;
 	void BuildTrees();

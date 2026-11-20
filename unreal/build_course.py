@@ -667,7 +667,13 @@ def build_ground(land):
         nat = E(unreal.MaterialExpressionLinearInterpolate, -850, -250)
         mel.connect_material_expressions(turf, "", nat, "A")
         mel.connect_material_expressions(tinted(TURF["native"], "native", -1000, -200), "", nat, "B")
-        mel.connect_material_expressions(op(unreal.MaterialExpressionMultiply, m["native"], const(0.85, -1000, -150), -950, -150), "", nat, "Alpha")
+        # (a gradual change, not a line: from the rough's colour at the outline to the deep rough's
+        # ~2.5 m in - the field's 0.5 at the outline, 3 m = 0.5 - so the rough itself is untouched)
+        nss = E(unreal.MaterialExpressionSmoothStep, -1100, -150)
+        mel.connect_material_expressions(const(0.5, -1250, -190), "", nss, "Min")
+        mel.connect_material_expressions(const(0.5 + 2.5 / 6.0, -1250, -110), "", nss, "Max")
+        mel.connect_material_expressions(raw["native"], "R", nss, "Value")
+        mel.connect_material_expressions(op(unreal.MaterialExpressionMultiply, nss, const(0.85, -1000, -150), -950, -150), "", nat, "Alpha")
         turf = nat
     # the fringe round the greens: its own deeper green
     if "fringe" in m:

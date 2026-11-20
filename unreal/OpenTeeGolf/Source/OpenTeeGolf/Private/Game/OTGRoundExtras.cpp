@@ -204,6 +204,8 @@ void AOTGRound::FreeFly(float Dt, const FVector& Move, const FVector2D& Look, bo
 		const double MinZ = Data->CourseToWorld(FVector(C.X, G, C.Z)).Z + 40;
 		if (FreePos.Z < MinZ) FreePos.Z = MinZ;
 	}
+	// (nor under the water: AOTGRuntimeCourse::WaterTopAt)
+	for (TActorIterator<AOTGRuntimeCourse> It(GetWorld()); It; ++It) { FreePos.Z = FMath::Max(FreePos.Z, It->WaterTopAt(FreePos) + 40); break; }
 	if (Cam) Cam->SetActorLocationAndRotation(FreePos, FreeRot);
 }
 

@@ -779,8 +779,21 @@ void AOTGRuntimeCourse::BuildBoulders()
 	DrawnRocks.Reset();
 	auto Put = [&](const FRockRec& R, double Size, bool bAdded, const FString& Model) {
 		const double S = R.Size / 100.0 * Size;
+		// (on the ground as it's drawn - the lowest under its middle and round it: boulders.json's height
+		// is the export's, and in a stream bed dug out for its water a stone stood clear of the bed)
+		FVector P = R.P;
+		{
+			const double Rr = R.Size * Size * 0.3;
+			double G = GroundAt(P.X, P.Y);
+			for (int32 k = 0; k < 6; k++)
+			{
+				const double A = k * UE_DOUBLE_PI / 3.0;
+				G = FMath::Min(G, GroundAt(P.X + FMath::Cos(A) * Rr, P.Y + FMath::Sin(A) * Rr));
+			}
+			P.Z = G;
+		}
 		// (a bigger stone sits a little deeper)
-		const FVector At = Data->LevelOrigin + R.P - FVector(0, 0, (Size - 1) * R.Size * 0.15);
+		const FVector At = Data->LevelOrigin + P - FVector(0, 0, (Size - 1) * R.Size * 0.15);
 		const TArray<UStaticMesh*>* Kite = Model.IsEmpty() ? nullptr : KiteRocks.Find(Model);
 		if (Kite && Kite->Num())
 		{
@@ -1650,6 +1663,7 @@ static TAutoConsoleVariable<float> CVarPalFringe(TEXT("OTG.Palette.Fringe"), 0.0
 static TAutoConsoleVariable<float> CVarPalRough(TEXT("OTG.Palette.Rough"), 0.054f, TEXT("The rough's (and first cut's) lightness"));
 static TAutoConsoleVariable<float> CVarPalRoughRed(TEXT("OTG.Palette.RoughRed"), 0.88f, TEXT("The rough's blades' red against the palette's (their tips are yellower than the ground they were made for)"));
 static TAutoConsoleVariable<float> CVarPalNative(TEXT("OTG.Palette.Native"), 0.9f, TEXT("The deep rough's ground: x its own straw-green"));
+static TAutoConsoleVariable<float> CVarPalNativeStraw(TEXT("OTG.Palette.NativeStraw"), 0.25f, TEXT("The deep rough: how far from the rough's green to its own straw colour (0..1)"));
 static TAutoConsoleVariable<float> CVarPalMat(TEXT("OTG.Palette.MatLight"), 1.15f, TEXT("Greensward's mats (the deep rough) against our blades in the same colour (their dense blades shade each other: darker)"));
 static TAutoConsoleVariable<float> CVarPalCut1(TEXT("OTG.Palette.FirstCut"), 1.04f, TEXT("The first cut's blades against the rough's colour (a touch lighter: shorter)"));
 

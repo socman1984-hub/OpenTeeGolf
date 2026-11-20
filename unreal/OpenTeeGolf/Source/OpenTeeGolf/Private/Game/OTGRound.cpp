@@ -1020,6 +1020,8 @@ void AOTGRound::FreeLookAt(const FVector& Target, double Dist, double Height, do
 	if (!bFreeView) ToggleFreeView();
 	const double Y = FMath::DegreesToRadians(YawDeg);
 	FreePos = Target - FVector(FMath::Cos(Y), FMath::Sin(Y), 0) * Dist + FVector(0, 0, Height);
+	if (const AOTGRuntimeCourse* RC = CourseOf(GetWorld()))
+		FreePos.Z = FMath::Max(FreePos.Z, RC->WaterTopAt(FreePos) + 60);
 	FreeRot = (Target - FreePos).Rotation();
 	if (Cam) Cam->SetActorLocationAndRotation(FreePos, FreeRot);
 }
@@ -1789,6 +1791,9 @@ void AOTGRound::UpdateCamera(float Dt)
 		const double MinZ = Data->CourseToWorld(FVector(C.X, G, C.Z)).Z + 60;
 		if (CamPos.Z < MinZ) CamPos.Z = MinZ;
 	}
+	// (nor under the water: there's nothing to see down there)
+	if (const AOTGRuntimeCourse* RC = CourseOf(GetWorld()))
+		CamPos.Z = FMath::Max(CamPos.Z, RC->WaterTopAt(CamPos) + 60);
 	if (Cam) Cam->SetActorLocationAndRotation(CamPos, (CamLookNow - CamPos).Rotation());
 }
 

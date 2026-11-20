@@ -52,6 +52,21 @@ namespace
 	constexpr double RiverWiden = 1.15;     // (a river a little wider than its channel: the banks hide the rest)
 	constexpr int32 LakesAlive = 2;         // (ponds simulating at once: the nearest)
 	constexpr double LakeAliveCm = 60000;   // (...within 600 m)
+	constexpr double ShoreDryCm = 50;       // (the sea's shallows under this: dry to its surf - BuildTidewrightSea)
+
+	// (a river's footprint, its widest half-width round it: WaterTopAt's quick test)
+	FBox2D RiverBox(const ATidewrightRiver* R)
+	{
+		FBox2D B(ForceInit);
+		const USplineComponent* Sp = R->GetSpline();
+		double W = 0;
+		for (int32 i = 0; i < Sp->GetNumberOfSplinePoints(); i++)
+		{
+			B += FVector2D(Sp->GetLocationAtSplinePoint(i, ESplineCoordinateSpace::World));
+			W = FMath::Max(W, 50.0 * R->River.Width * Sp->GetScaleAtSplinePoint(i).Y);
+		}
+		return B.ExpandBy(W + 500.0);
+	}
 
 	struct FBody { bool bLake = false; TArray<FVector> Pts; TArray<double> W; };
 
@@ -149,7 +164,20 @@ bool AOTGRuntimeCourse::BuildTidewright(TArray<bool>& OutGone)
 			FBox2D Box(ForceInit);
 			for (const FVector& P : B.Pts) Box += FVector2D(P);
 			Box = Box.ExpandBy(LakeMarginCm);
-			const double Level = B.Pts[0].Z;
+			// (its level: where the game's own water settled in it - up to the bank. water_bodies.json's
+			// is the outline's lowest point, often well under that: the water stopped short of the bank,
+			// a strip of bare bed showing all round)
+			double Level = B.Pts[0].Z;
+			{
+				TArray<double> Ys;
+				for (const FVector3f& V : WaterPos)
+					if (Inside(B.Pts, V.X * 100.0, V.Z * 100.0)) Ys.Add(V.Y * 100.0);
+				if (Ys.Num())
+				{
+					Ys.Sort();
+					Level = FMath::Max(Level, Ys[Ys.Num() / 2]);
+				}
+			}
 			bool bSafe = true;
 			for (double Y = Box.Min.Y; Y <= Box.Max.Y && bSafe; Y += 100)
 				for (double X = Box.Min.X; X <= Box.Max.X; X += 100)
@@ -166,6 +194,7 @@ bool AOTGRuntimeCourse::BuildTidewright(TArray<bool>& OutGone)
 			W->SimulationQuality = ETidewrightSimulationQuality::Low;
 			W->ViewDistance = 2.0f;
 			W->bShareWavesWithMaterials = !bShared;   // (one water in a level shares its waves)
+			W->Underwater.bEnabled = false;   // (the camera never goes under: AOTGRound::UpdateCamera)
 			W->Seed = NLakes + 1;
 			bShared = true;
 			W->FinishSpawning(FTransform(O + FVector(C.X, C.Y, Level + LiftCm)));
@@ -194,10 +223,12 @@ bool AOTGRuntimeCourse::BuildTidewright(TArray<bool>& OutGone)
 			// (a golf course's creek or canal: clearer and calmer than the plugin's silty river, a
 			// thin line of foam at the banks)
 			R->River.FlowSpeed = 0.8f;
-			R->River.BankFoamWidth = 0.25f;
-			R->River.FoamAmount = 0.35f;
-			R->River.ScatterColor = FLinearColor(0.006f, 0.012f, 0.011f, 1.0f);
-			R->River.Absorption = FLinearColor(0.55f, 0.22f, 0.25f, 1.0f);
+			R->River.BankFoamWidth = 0.0f;   // (no white line along the banks: a creek's edge is grass)
+			R->River.FoamAmount = 0.2f;
+			// (a river's colour: green-brown, not the sea's cyan - blue taken out as much as red - and
+			// darkening quickly with depth, so its deep middle isn't as clear as its edges)
+			R->River.ScatterColor = FLinearColor(0.006f, 0.008f, 0.005f, 1.0f);
+			R->River.Absorption = FLinearColor(1.1f, 0.65f, 1.2f, 1.0f);
 			R->FinishSpawning(FTransform(O + Pts[0] + FVector(0, 0, LiftCm)));
 			USplineComponent* S = R->GetSpline();
 			if (!S) { R->Destroy(); continue; }
@@ -210,6 +241,7 @@ bool AOTGRuntimeCourse::BuildTidewright(TArray<bool>& OutGone)
 			S->UpdateSpline();
 			R->RebuildRiver();
 			Rivers.Add(R);
+			RiverBoxes.Add(RiverBox(R));
 			NRivers++;
 			for (int32 v = 0; v < WaterPos.Num(); v++)
 			{
@@ -288,6 +320,7 @@ bool AOTGRuntimeCourse::BuildStillPond(const TArray<FVector>& Poly, double Level
 	S->UpdateSpline();
 	R->RebuildRiver();
 	Rivers.Add(R);
+	RiverBoxes.Add(RiverBox(R));
 	return true;
 }
 
@@ -343,6 +376,9 @@ bool AOTGRuntimeCourse::BuildTidewrightSea(const otg::FGlbMesh& Mesh, const FBox
 		// (the surf's foam: a narrower, broken band - at full strength the whole coast was a white stripe)
 		Shore->Shore.ShoreFoamAmount = 0.5f;
 		Shore->Shore.ShoreFoamDepth = 0.18f;
+		// (no run-up, a lower surf: the water rising over the shore drew it over the grass)
+		Shore->Shore.RunUpHeight = 0.f;
+		Shore->Shore.SurfHeight = 0.35f;
 		Shore->GetArea()->SetBoxExtent(FVector(Half.X, Half.Y, 5000.0));
 		const int32 Size = 512;
 		const FVector2D C(Centre.X - O.X, Centre.Y - O.Y);
@@ -378,7 +414,11 @@ bool AOTGRuntimeCourse::BuildTidewrightSea(const otg::FGlbMesh& Mesh, const FBox
 			for (int32 x = 0; x < Size; x++)
 			{
 				const double G = GroundAt(C.X - Half.X + (x + 0.5) * CellX, C.Y - Half.Y + (y + 0.5) * CellY);
-				Hts[y * Size + x] = float(O.Z + (InSea[y * Size + x] ? G : FMath::Max(G, Level + 100.0)));
+				// (and, in the sea, the shallows under half a metre: the surf and its foam start where the
+				// water's that deep. Over a wide flat the sea barely covers, they spread across it, the grass
+				// showing through a net of white)
+				const bool bWet = InSea[y * Size + x] && G < Level - ShoreDryCm;
+				Hts[y * Size + x] = float(O.Z + (bWet ? G : FMath::Max(G, Level + 100.0)));
 			}
 		// (its scan's fields aren't public: set as a saved scan would be)
 		UClass* K = ATidewrightShoreline::StaticClass();
@@ -401,6 +441,7 @@ bool AOTGRuntimeCourse::BuildTidewrightSea(const otg::FGlbMesh& Mesh, const FBox
 	W->SimulationQuality = ETidewrightSimulationQuality::Medium;
 	W->ViewDistance = 40.0f;
 	W->bShareWavesWithMaterials = Lakes.Num() == 0;
+	W->Underwater.bEnabled = false;   // (the camera never goes under: AOTGRound::UpdateCamera)
 	W->FinishSpawning(FTransform(Centre));
 	W->ApplyPreset(Bay, 0.f);
 	if (!Swell.IsNearlyZero())
@@ -412,4 +453,20 @@ bool AOTGRuntimeCourse::BuildTidewrightSea(const otg::FGlbMesh& Mesh, const FBox
 	Sea = W;
 	UE_LOG(LogOTGWater, Display, TEXT("Tidewright sea at %.2f m, shoreline %.0f x %.0f m"), LevelM, Half.X / 50.0, Half.Y / 50.0);
 	return true;
+}
+
+// The highest water surface over a point (world cm), or -infinity: the sea, a pond's level, a
+// river's surface. The camera stays over it (AOTGRound): nothing in the game is seen from under water
+double AOTGRuntimeCourse::WaterTopAt(const FVector& P) const
+{
+	double Top = -UE_BIG_NUMBER;
+	if (Sea) Top = Sea->GetActorLocation().Z;
+	for (const ATidewrightWater* W : Lakes)
+		if (W && FMath::Abs(P.X - W->GetActorLocation().X) <= W->LakeSize.X * 50.0 && FMath::Abs(P.Y - W->GetActorLocation().Y) <= W->LakeSize.Y * 50.0) Top = FMath::Max(Top, W->GetActorLocation().Z);
+	// (a river only where it's near: its nearest point is a search along its whole spline)
+	FVector S, N, V;
+	for (int32 i = 0; i < Rivers.Num(); i++)
+		if (Rivers[i] && (!RiverBoxes.IsValidIndex(i) || RiverBoxes[i].IsInside(FVector2D(P))) && Rivers[i]->SampleRiver(P, S, N, V))
+			Top = FMath::Max(Top, S.Z);
+	return Top;
 }

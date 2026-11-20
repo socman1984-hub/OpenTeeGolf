@@ -450,6 +450,14 @@ double otg::FGrass::GroundZ(double X, double Y, FVector* OutNormal) const
 	return FMath::Lerp(FMath::Lerp(H00, H10, FU), FMath::Lerp(H01, H11, FU), FV);
 }
 
+// (0 at the deep rough's outline to 1 its DeepRampM in, ragged with noise: its mats' density and height)
+float otg::FGrass::DeepRamp(float W, double X, double Y) const
+{
+	constexpr float DeepRampM = 2.5f;   // (the masks: 0.5 on the outline, 1/6 a metre in or out)
+	const float In = (W - 0.5f) * 6.f / DeepRampM;
+	return FMath::SmoothStep(0.f, 1.f, In + (float(Noise(X / 100.0, Y / 100.0, 1.5, 611)) - 0.5f) * 0.9f);
+}
+
 // (Place's odds of a patch at a spot, before the random keep: the mask past its edge, not in the
 // water or on a path, a road or a mown surface, in its meadow patch)
 float otg::FGrass::Chance(const FGrassKind& K, double X, double Y) const
@@ -459,6 +467,10 @@ float otg::FGrass::Chance(const FGrassKind& K, double X, double Y) const
 	// (Greensward's mats: on the outline itself, 25 cm either way - our blades reach past it and their
 	// material folds them away there)
 	float P = K.IsGreensward() ? FMath::Clamp((W - 0.5f) * 24.f + 0.5f, 0.f, 1.f) : FMath::Clamp((W - 0.33f) * 12.f, 0.f, 1.f);
+	// (the deep rough's mats thin out towards its edge, raggedly, over its first DeepRampM: at full
+	// density from the outline in, it stood out from the rough as a pale patch with a hard rim)
+	if (K.IsGreensward() && K.Masks.Contains(TEXT("native")))
+		P *= DeepRamp(W, X, Y);
 	if (P <= 0) return 0.f;
 	P *= FMath::Clamp((0.45f - Mask(TEXT("water"), X, Y)) * 10.f, 0.f, 1.f);
 	P *= FMath::Clamp((0.85f - Mask(TEXT("path"), X, Y)) * 2.f, 0.f, 1.f);
@@ -569,6 +581,9 @@ otg::FGrass::FPlaced otg::FGrass::Place(int32 KindI, int32 CX, int32 CY) const
 			FQuat Tilt = FQuat::FindBetweenNormals(FVector::UpVector, Nrm);
 			const FQuat Turn(FVector::UpVector, bTiled ? R.RandRange(0, 3) * 0.5 * PI : R.FRand() * 2 * PI);
 			float Sc = FMath::Lerp(K.ScaleLo, K.ScaleHi, R.FRand());
+			// (and lower there: the deep rough rises out of the rough rather than starting as a step)
+			if (K.IsGreensward() && K.Masks.Contains(TEXT("native")))
+				Sc *= FMath::Lerp(0.45f, 1.f, DeepRamp(Mask(TEXT("native"), X, Y), X, Y));
 			if (K.Masks.Contains(TEXT("native")))
 			{
 				// (left to grow: taller here, lower there over a few metres, and each clump leaning its own way)
