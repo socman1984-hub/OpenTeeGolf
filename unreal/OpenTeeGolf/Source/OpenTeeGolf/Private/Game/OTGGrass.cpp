@@ -21,7 +21,7 @@
 namespace
 {
 	constexpr double CellM = 16.0;
-	TAutoConsoleVariable<int32> CVarFarGrass(TEXT("OTG.Grass.Far"), 1, TEXT("The grass far off (the rough 80-220 m, the tall grass 150-450 m): 1 on, 0 off"));
+	TAutoConsoleVariable<int32> CVarFarGrass(TEXT("OTG.Grass.Far"), 1, TEXT("The grass far off (the rough 80-400 m, the tall grass 150-450 m): 1 on, 0 off"));
 	double CellFor(const otg::FGrassKind& K) { return K.CellM > 0 ? K.CellM : CellM; }
 	constexpr int32 MaxStartsAFrame = 6, MaxInFlight = 12, MaxAddsAFrame = 4;
 
@@ -82,7 +82,9 @@ const TArray<otg::FGrassKind>& otg::FGrass::DefaultKinds()
 			return G;
 		};
 		// (2500 a 100 m2: one 20 cm square patch to each square of a 20 cm grid - they tile)
-		Mown(TEXT("green"), TEXT("Greens (5 mm)"), { TEXT("green") }, 2500, 14, 24);
+		// (off unless a course's designer turns it on, as the fairways: a green is the ground's smooth
+		// turf texture - its 5 mm blades read as dark specks standing up over it)
+		Mown(TEXT("green"), TEXT("Greens (5 mm)"), { TEXT("green") }, 2500, 14, 24).bOn = false;
 		Mown(TEXT("fringe"), TEXT("Collars (1 cm)"), { TEXT("fringe") }, 2500, 18, 30);
 		// (off unless a course's designer turns it on: fairways and tees are the ground's turf texture -
 		// a mown fairway reads as a smooth carpet, its separate blades as stubble)
@@ -97,11 +99,12 @@ const TArray<otg::FGrassKind>& otg::FGrass::DefaultKinds()
 		// at an edge, left a staircase round the tees and bunkers, and read darker or lighter than the
 		// mown cuts beside them by the angle they were seen from)
 		const bool bGs = !FParse::Param(FCommandLine::Get(), TEXT("oldgrass"));
-		// the rough far off, 80 to 220 m: fewer, wider blades in bigger patches (build_course.py's
+		// the rough far off, 80 to 400 m: fewer, wider blades in bigger patches (make_turf.py's
 		// rough_far), so the rough keeps a grass texture past where its near blades go - it ended in a
-		// bare band at 100 m. Off with the other far kinds (OTG.Grass.Far 0)
+		// bare band at 100 m, and at 220 m the rough round a long hole's green was the ground's flat,
+		// paler texture. Off with the other far kinds (OTG.Grass.Far 0)
 		{
-			FGrassKind& G = Add(TEXT("rough_far"), TEXT("Rough grass (far off)"), { TEXT("rough") }, 200, 170, 220, 1.0f, 1.1f, 1.45f);
+			FGrassKind& G = Add(TEXT("rough_far"), TEXT("Rough grass (far off)"), { TEXT("rough") }, 200, 330, 400, 1.0f, 1.1f, 1.45f);
 			G.MinDrawM = 80;
 			G.CellM = 48;
 			G.FarOf = TEXT("rough");

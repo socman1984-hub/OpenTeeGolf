@@ -426,7 +426,7 @@ def make_cut_turf():
     # (the far-off rough from the new rough, as build_course.py makes it)
     far = dict(TURF_GRASS["rough"])
     far.update({"blades": max(40, far["blades"] // 4), "width_mm": (far["width_mm"][0] * 2.0, far["width_mm"][1] * 2.2),
-                "patch_cm": far["patch_cm"] * 2, "density": far["density"] / 12.0, "draw_m": (170.0, 220.0), "scale": (1.1, 1.45),
+                "patch_cm": far["patch_cm"] * 2, "density": far["density"] / 12.0, "draw_m": (330.0, 400.0), "scale": (1.1, 1.45),
                 "clumps": 0, "segs": 2})
     TURF_GRASS["rough_far"] = far
     only = [k.strip() for k in os.environ.get("OTG_TURF_ONLY", "").split(",") if k.strip()]
