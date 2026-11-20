@@ -22,6 +22,10 @@
 #     root and lighter at the tip, each blade a little different, lit through from behind (two-sided
 #     foliage), with the designer's colour on top (Tint, and TurfTint: the fairway or green look)
 #   - the wind comes from MPC_Wind (wind_offset), as the trees' does
+#   - a blade is kept or folded whole: every vertex reads the masks at its blade's root (the third UV
+#     channel: its offset from the root). Read where each vertex stood, a blade leaning across an
+#     edge had its tip folded under the ground and its root left standing (or the other way) - a
+#     stretched, flat sliver lit pale, dotted along the rough's edge
 #
 # Keep TURF_CUTS' draw distances and densities the same as OTGGrass.cpp's DefaultKinds.
 
@@ -86,13 +90,14 @@ def cut_patch(kind, cfg, seed=7):
     strip curving over as it leans, tapering to a point (the long grass) or cut square across (cfg
     "cut": the mown), twisting a little, darker at the root. Thinner towards the patch's edge, so the
     patches the game scatters overlap without a seam. Vertex colours: how far up, the blade's random
-    value, whether it's dry (write_glb puts them in the UVs)."""
+    value, whether it's dry (write_glb puts them in the UVs). And each vertex's offset from its
+    blade's root (glb x, z), for the third UV channel."""
     rnd = _rand_for(kind)
     R = cfg["patch_cm"] / 200.0
     segs = cfg.get("segs", SEGS_OF.get(kind, 3))
     cut = cfg.get("cut")
     up = cfg.get("up", 0.93)
-    pos, nrm, col, idx = [], [], [], []
+    pos, nrm, col, idx, root = [], [], [], [], []
 
     def disk():
         # (uniform over the disk, then thinned by a soft edge: a blade near the rim kept less often)
@@ -148,6 +153,7 @@ def cut_patch(kind, cfg, seed=7):
                 pos += [p[0], p[1], p[2]]
                 nrm += [n[0] / ln, n[1] / ln, n[2] / ln]
                 col += [t, v, dry, 1.0]
+                root += [p[0] - x, p[2] - z]
             rows.append(row)
         for a, b in zip(rows, rows[1:]):
             if len(b) == 1:
@@ -169,10 +175,11 @@ def cut_patch(kind, cfg, seed=7):
                         pos += [px_ + ax * half * sgn, py_, pz_ + az * half * sgn]
                         nrm += [0.0, 1.0, 0.0]
                         col += [1.0, v, 1.0, 1.0]
+                        root += [px_ + ax * half * sgn - x, pz_ + az * half * sgn - z]
             for k in (0, 6):
                 q = sb + k
                 idx += [q, q + 2, q + 1, q + 1, q + 2, q + 3, q + 2, q + 4, q + 3, q + 3, q + 4, q + 5]
-    return pos, nrm, col, idx
+    return pos, nrm, col, idx, root
 
 
 # Which blades stay (HLSL, per vertex: the masks where it stands, t its blade's own outline - 0.5,
@@ -281,13 +288,29 @@ def cut_material(kind, land_size_cm):
     mel.connect_material_expressions(wp, "", xy, "")
     size = scalar("LandSizeCm", land_size_cm, -2250, 100)
     uv = op(unreal.MaterialExpressionDivide, xy, size, -2100, 0)
+    # (and where its blade's root is, for which blades stay: the third UV channel, the vertex's offset
+    # from it - Unreal's local x, y from the glb's x, z, in metres - turned into the world with the
+    # instance's turn and size)
+    rt = E(unreal.MaterialExpressionTextureCoordinate, -2700, 160)
+    rt.set_editor_property("coordinate_index", 2)
+    rt3 = op(unreal.MaterialExpressionAppendVector, rt, const(0.0, -2700, 220), -2600, 160)
+    rt_cm = op(unreal.MaterialExpressionMultiply, rt3, const(100.0, -2600, 220), -2500, 160)
+    rt_w = E(unreal.MaterialExpressionTransform, -2400, 160)
+    rt_w.set_editor_property("transform_source_type", unreal.MaterialVectorCoordTransformSource.TRANSFORMSOURCE_LOCAL)
+    rt_w.set_editor_property("transform_type", unreal.MaterialVectorCoordTransform.TRANSFORM_WORLD)
+    mel.connect_material_expressions(rt_cm, "", rt_w, "")
+    rt_xy = E(unreal.MaterialExpressionComponentMask, -2300, 160)
+    rt_xy.set_editor_property("r", True)
+    rt_xy.set_editor_property("g", True)
+    mel.connect_material_expressions(rt_w, "", rt_xy, "")
+    ruv = op(unreal.MaterialExpressionDivide, op(unreal.MaterialExpressionSubtract, xy, rt_xy, -2200, 160), size, -2100, 160)
     t_up, t_rand, t_dry = channel(0, "r", -1700, 260), channel(0, "g", -1700, 320), channel(1, "r", -1700, 380)
 
     # which blades stay: the masks where each vertex stands
     names = KEEP[rule]
     samples = []
     for i, nm in enumerate(names):
-        s = param_sample(mat, "Mask_" + nm.lower(), uv, -1900, 1800 + i * 160, S.SAMPLERTYPE_LINEAR_GRAYSCALE)
+        s = param_sample(mat, "Mask_" + nm.lower(), ruv, -1900, 1800 + i * 160, S.SAMPLERTYPE_LINEAR_GRAYSCALE)
         samples.append((nm, s, "R"))
     band = op(unreal.MaterialExpressionDivide, scalar("FirstCutM", FIRST_CUT_M, -1900, 3400), const(6.0, -1900, 3460), -1750, 3400)
     code = "float t = 0.5 + (Rand - 0.5) * %.4f;\nfloat k = 1;\n" % (2 * BLADE_JITTER)

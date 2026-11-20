@@ -4,6 +4,9 @@
 // car pack stands there instead: any static mesh in the game's content under a folder with "car" or
 // "vehicle" in its path, car sized (3-6.5 m long). No pack: no cars, and their collision boxes go too
 // (a ball bounced off nothing). -boxcars: the export's boxes as before.
+// The pack in the game's content: Kerbside Cars (Content/KerbsideCars, copied from the pack's own
+// project). Its one car material takes each car's paint as per-instance custom data - linear RGB,
+// metallic, rim darkness - so each car gets a colour from a car park's usual mix.
 
 #include "Game/OTGRuntimeCourse.h"
 #include "OTGCourseData.h"
@@ -25,6 +28,7 @@ namespace
 	{
 		TArray<FAssetData> All;
 		IAssetRegistry& AR = FAssetRegistryModule::GetRegistry();
+		if (AR.IsLoadingAssets()) AR.WaitForCompletion();   // (uncooked: still scanning at start-up)
 		FARFilter F;
 		F.PackagePaths.Add(TEXT("/Game"));
 		F.bRecursivePaths = true;
@@ -48,6 +52,17 @@ namespace
 		}
 		return Out;
 	}
+
+	// a car park's colours (sRGB, metallic): mostly white, black, grey and silver, a few colours
+	struct FPaint { uint8 R, G, B; float Metal; };
+	const FPaint Paints[] = {
+		{ 236, 236, 232, 0.0f }, { 236, 236, 232, 0.0f }, { 230, 230, 226, 0.6f }, { 240, 238, 230, 0.0f },
+		{ 18, 18, 20, 0.0f }, { 22, 22, 26, 0.8f }, { 18, 18, 20, 0.0f },
+		{ 150, 152, 156, 1.0f }, { 170, 172, 175, 1.0f }, { 150, 152, 156, 1.0f },
+		{ 88, 90, 94, 0.9f }, { 70, 72, 76, 0.8f }, { 100, 102, 106, 0.0f },
+		{ 22, 40, 82, 0.8f }, { 40, 70, 120, 0.7f }, { 140, 20, 22, 0.6f }, { 170, 28, 28, 0.0f },
+		{ 30, 60, 40, 0.7f }, { 110, 90, 70, 0.7f }, { 180, 170, 150, 0.6f }, { 60, 30, 34, 0.8f },
+	};
 }
 
 bool AOTGRuntimeCourse::PlaceCars(const otg::FGlbMesh&)
@@ -93,6 +108,7 @@ bool AOTGRuntimeCourse::PlaceCars(const otg::FGlbMesh&)
 		{
 			H = NewObject<UHierarchicalInstancedStaticMeshComponent>(this);
 			H->SetStaticMesh(M);
+			H->NumCustomDataFloats = 5;   // (paint RGB, metallic, rim darkness)
 			H->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 			H->SetMobility(EComponentMobility::Static);
 			H->SetupAttachment(GetRootComponent());
@@ -106,8 +122,14 @@ bool AOTGRuntimeCourse::PlaceCars(const otg::FGlbMesh&)
 		const double Flip = ((uint32(i) * 40503u) >> 5) & 1 ? 180.0 : 0.0;
 		const double Yaw = FMath::RadiansToDegrees(S.Yaw) - MeshYaw + Flip;
 		const FVector Base = Data->LevelOrigin + FVector(S.At.X * 100.0, S.At.Y * 100.0, S.Bottom * 100.0 - M->GetBoundingBox().Min.Z);
-		H->AddInstance(FTransform(FRotator(0, Yaw, 0), Base), true);
+		const int32 Inst = H->AddInstance(FTransform(FRotator(0, Yaw, 0), Base), true);
+		const uint32 Hash = uint32(i) * 2246822519u ^ 0x9E3779B9u;
+		const FPaint& P = Paints[(Hash >> 9) % UE_ARRAY_COUNT(Paints)];
+		const FLinearColor Lin = FLinearColor(FColor(P.R, P.G, P.B));
+		const float Rim = ((Hash >> 3) % 5) == 0 ? 1.0f : 0.0f;   // (one in five with black wheels)
+		H->SetCustomData(Inst, { Lin.R, Lin.G, Lin.B, P.Metal, Rim }, true);
 	}
-	UE_LOG(LogOTGCars, Display, TEXT("Cars: %d placed from %d pack meshes"), Spots.Num(), Pack.Num());
+	UE_LOG(LogOTGCars, Display, TEXT("Cars: %d placed from %d pack meshes, the first at %s"), Spots.Num(), Pack.Num(),
+		*(Spots.Num() ? (Data->LevelOrigin + FVector(Spots[0].At.X * 100.0, Spots[0].At.Y * 100.0, Spots[0].Bottom * 100.0)).ToString() : FString()));
 	return true;
 }
