@@ -3,8 +3,8 @@
 // (L_Course's template sun, atmosphere, sky light and clouds: removed when it's spawned). The round still owns the weather - FOTGWeather, live or a preset, changing as the round
 // goes on, what the physics plays - and the time of day (SunHour); ApplySky turns them into the
 // sky's weather and time each time either changes. Ours still: the weather's sound (UOTGWeatherSound:
-// Meridian ships none - its lightning brings our thunder, OnSkyBolt), the rain (its streaks, far
-// curtains and splashes), the height fog (the level's light haze: Meridian's is a dark band on a
+// Meridian ships none - its lightning brings our thunder, OnSkyBolt), the rain (its streaks and
+// splashes on hard ground), the height fog (the level's light haze: Meridian's is a dark band on a
 // clear day), the ground's wetness (MPC_Weather), the trees' and flag's wind (MPC_Wind) and the
 // picture's grade (LookVolume, above Meridian's own post process).
 //
@@ -128,7 +128,7 @@ bool AOTGRound::EnsureSky()
 	Sky->UtcOffsetHours = Sky->Longitude / 15.f;   // (the clock is the sun's time there: SunHour 12 is noon)
 	Sky->SetDate(FDateTime::Now().GetYear(), 6, 21);   // (midsummer, as SunAt has it)
 	Sky->LightningDistanceRange = FVector2D(600.f, 9000.f);
-	// (the rain's ours: grey streaks tinted to the sky, curtains far off, splashes - Meridian's own
+	// (the rain's ours: grey streaks tinted to the sky, the fog thicker far off, splashes - Meridian's own
 	// fell as bright white rods, and darkened the ground in streaks in a storm)
 	Sky->RainSystem.Reset();
 	Sky->CloudySkyLightBoost = 1.5f;
@@ -216,8 +216,11 @@ void AOTGRound::ApplySky()
 	FMeridianWeatherState S;
 	S.CloudCoverage = float(Cloudy);
 	S.Storminess = FMath::Max(Storm, 0.2f * Over);
+	// (rain thickens the haze, a storm's most: the far rain, greying a hole's far end smoothly with
+	// distance - no sheet of it standing at one distance)
+	const double RainHaze = Mm > 0.05 ? 0.06 + 0.1 * Storm : 0.0;
 	// (Meridian squares its fogginess: the root keeps our fog as thick as it was)
-	S.Fogginess = FMath::Sqrt(float(FMath::Min(1.0, Weather.Fog + (Mm > 0.05 ? 0.06 : 0.0))));
+	S.Fogginess = FMath::Sqrt(float(FMath::Min(1.0, Weather.Fog + RainHaze)));
 	S.Rain = Mm > 0.05 ? float(FMath::Clamp(0.2 + Mm / 7.0, 0.0, 1.0)) : 0.f;
 	S.Snow = 0.f;
 	double Mps = 0, FromDeg = 0;
@@ -234,7 +237,7 @@ void AOTGRound::ApplySky()
 	Sky->SkyLightIntensity = OrigSky * Cv(TEXT("OTG.Look.Sky"), 1.3f) * FMath::Lerp(1.f, 0.85f, Over);
 	Sky->FogDensityRange.X = OrigFog * Cv(TEXT("OTG.Look.Fog"), 0.5f) * CVarSkyFog.GetValueOnGameThread();
 	if (UExponentialHeightFogComponent* LF = LevelFog.Get())
-		LF->SetFogDensity(FMath::Lerp(OrigFog * Cv(TEXT("OTG.Look.Fog"), 0.5f), 0.25f, float(FMath::Min(1.0, Weather.Fog + (Mm > 0.05 ? 0.06 : 0.0)))));
+		LF->SetFogDensity(FMath::Lerp(OrigFog * Cv(TEXT("OTG.Look.Fog"), 0.5f), 0.25f, float(FMath::Min(1.0, Weather.Fog + RainHaze))));
 	Sky->CloudySkyLightBoost = CVarSkyBoost.GetValueOnGameThread();
 	if (UDirectionalLightComponent* Sun = Part<UDirectionalLightComponent>(Sky, TEXT("SunLight")))
 	{

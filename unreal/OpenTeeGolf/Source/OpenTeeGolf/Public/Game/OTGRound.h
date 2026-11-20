@@ -191,10 +191,7 @@ private:
 	UPROPERTY() TObjectPtr<class UMaterialParameterCollection> FabWindMPC;   // (the Megascans plants' wind)
 	UPROPERTY() TObjectPtr<class UMaterialParameterCollection> WeatherMPC;   // (MPC_Weather: Wet, Rain)
 	UPROPERTY() TObjectPtr<class UMaterialParameterCollection> GsMPC;        // (MPC_Greensward: its grass's wetness)
-	// the rain far off: grey curtains of it round the camera (M_RainCurtain), and splashes on the
-	// ground near it
-	UPROPERTY() TObjectPtr<class UProceduralMeshComponent> CurtainMesh;
-	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> CurtainMat;
+	// the rain's splashes on hard ground near the camera (far rain is the height fog's)
 	struct FSplash { FVector P; float Age = 0, Size = 1; };
 	TArray<FSplash> Splashes;
 	float SplashCarry = 0;

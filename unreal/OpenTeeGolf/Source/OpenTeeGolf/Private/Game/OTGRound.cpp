@@ -353,11 +353,6 @@ AOTGRound::AOTGRound()
 	RainMesh->SetupAttachment(RootComponent);
 	RainMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	RainMesh->SetCastShadow(false);
-	CurtainMesh = CreateDefaultSubobject<UProceduralMeshComponent>(TEXT("RainCurtain"));
-	CurtainMesh->SetupAttachment(RootComponent);
-	CurtainMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-	CurtainMesh->SetCastShadow(false);
-	CurtainMesh->SetUsingAbsoluteLocation(true);
 }
 
 // ------------------------------------------------------------------ setting up

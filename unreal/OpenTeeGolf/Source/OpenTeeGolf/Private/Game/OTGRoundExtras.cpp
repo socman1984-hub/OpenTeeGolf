@@ -231,54 +231,20 @@ void AOTGRound::UpdateWet(float Dt)
 	}
 }
 
-// The rain away from the camera: curtains of it - rings of grey streaked sheets round the camera,
-// 250 and 500 m out, so the far end of a hole greys over in a downpour (M_RainCurtain: make_sky.py)
-// - and splashes where the drops hit the ground in front of it (little crowns, a fifth of a second
-// each: three streaks fanning up and out, with the rain's own material)
+// The rain away from the camera. No curtains: sheets at a fixed distance read as a wall standing
+// across the hole; far rain is the height fog's (thicker in rain, ApplySky), which greys the far end
+// of a hole smoothly with distance. Here: splashes where the drops hit hard ground in front of the
+// camera - paths (little crowns, a fifth of a second each: three streaks fanning up and out, with the
+// rain's own material) and, softer and lower, bunker sand. Grass, greens and rough take the rain
+// without a splash (their wetness is MPC_Weather's).
 void AOTGRound::UpdateRainFar(float Dt, double Mm)
 {
 	const bool bOn = Mm > 0.05 && Cam && Data && RainMat;
 	if (!bOn)
 	{
-		if (CurtainMesh->GetNumSections()) CurtainMesh->ClearAllMeshSections();
 		if (SplashVerts) { RainMesh->ClearMeshSection(1); SplashVerts = 0; }
 		Splashes.Reset();
 		return;
-	}
-	// ---- the curtains
-	if (!CurtainMesh->GetNumSections())
-		if (UMaterialInterface* M = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/OpenTeeGolf/Game/M_RainCurtain.M_RainCurtain")))
-		{
-			CurtainMat = UMaterialInstanceDynamic::Create(M, this);
-			TArray<FVector> V;
-			TArray<int32> T;
-			TArray<FVector2D> UV;
-			constexpr int32 Seg = 48;
-			for (const double R : { 25000.0, 50000.0 })
-				for (int32 s = 0; s <= Seg; s++)
-				{
-					const double A = 2.0 * PI * s / Seg;
-					const FVector P(FMath::Cos(A) * R, FMath::Sin(A) * R, 0);
-					const int32 B = V.Num();
-					V.Add(P + FVector(0, 0, R * 0.6));
-					V.Add(P - FVector(0, 0, 4000));
-					// (U: the streaks' columns, about the same width apart on every ring)
-					const float U = float(s) / Seg * float(R / 3000.0);
-					UV.Add(FVector2D(U, 0));
-					UV.Add(FVector2D(U, 1));
-					if (s) T.Append({ B - 2, B - 1, B, B, B - 1, B + 1 });
-				}
-			CurtainMesh->CreateMeshSection_LinearColor(0, V, T, TArray<FVector>(), UV, TArray<FLinearColor>(), TArray<FProcMeshTangent>(), false);
-			CurtainMesh->SetMaterial(0, CurtainMat);
-		}
-	CurtainMesh->SetWorldLocation(CamPos);
-	if (CurtainMat)
-	{
-		CurtainMat->SetScalarParameterValue(TEXT("Opacity"), float(FMath::Clamp(0.25 + Mm * 0.08, 0.25, 0.8)));
-		// (grey as the day is: darker in a storm, never brighter than the sky behind)
-		const float G = float(FMath::Lerp(0.16, 0.07, FMath::Clamp((Mm - 0.05) / 7.0, 0.0, 1.0)));
-		CurtainMat->SetVectorParameterValue(TEXT("Tint"), FLinearColor(G, G * 1.04f, G * 1.12f));
-		CurtainMat->SetScalarParameterValue(TEXT("Speed"), float(1.2 + FMath::Min(Mm, 10.0) * 0.08));
 	}
 	// ---- splashes: as many as the rain is heavy, on the ground ahead (in a fan 3 to 18 m out)
 	const FVector Fwd = Cam->GetActorForwardVector().GetSafeNormal2D();
@@ -290,8 +256,14 @@ void AOTGRound::UpdateRainFar(float Dt, double Mm)
 		const double D = 300.0 + FMath::Sqrt(FMath::FRand()) * 1500.0;
 		FVector P = CamPos + Fwd.RotateAngleAxis(FMath::FRandRange(-65.f, 65.f), FVector::UpVector) * D;
 		const FVector C = Data->WorldToCourse(P);
+		// (only where a drop would splash: a path's hard top; sand a small low puff; anything grown none)
+		const otg::Surface Su = Course.SurfaceAt(C.X, C.Z);
+		float Size;
+		if (Su == otg::Surface::Path) Size = FMath::FRandRange(0.7f, 1.4f);
+		else if (Su == otg::Surface::Sand) Size = FMath::FRandRange(0.3f, 0.5f);
+		else continue;
 		P.Z = World(otg::V3{ C.X, Course.HeightAt(C.X, C.Z), C.Z }).Z + 0.5;
-		Splashes.Add({ P, 0.f, FMath::FRandRange(0.7f, 1.4f) });
+		Splashes.Add({ P, 0.f, Size });
 	}
 	TArray<FVector> V;
 	TArray<int32> T;
