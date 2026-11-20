@@ -165,6 +165,12 @@ private:
 	void BuildFarLand();
 	bool BuildRealFarLand();   // (the export's farland.json: real heights and photos; false if it hasn't one)
 	void BuildProps();
+	// (the houses as Hearthline houses - OTGHouses.cpp - and the footprints they stand on, in the
+	// buildings glb's frame: the export's own blocks there go)
+	void BuildHouses();
+	struct FHouseFoot { TArray<FVector2D> Pts; FBox2D Box = FBox2D(ForceInit); };
+	TArray<FHouseFoot> HouseFeet;
+	bool UnderHouse(const FVector2D& GlbXZ) const;
 	void BuildGrass();
 	TMap<FString, TArray<TPair<UStaticMesh*, UMaterialInterface*>>> GrassMeshes(const TArray<otg::FGrassKind>& Kinds);
 	TMap<FString, TArray<TPair<UStaticMesh*, UMaterialInterface*>>> GrassMeshCache;

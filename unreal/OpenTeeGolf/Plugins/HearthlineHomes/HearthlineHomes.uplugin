@@ -1,0 +1,19 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "0.1.0",
+	"FriendlyName": "Hearthline Homes - Procedural House Exteriors",
+	"Description": "Configurable suburban house exteriors: multi-wing footprints, four roof types, five claddings, porches, garages, dormers, chimneys and one-click baking to Nanite static meshes.",
+	"Category": "Environment",
+	"CreatedBy": "__PUBLISHER__",
+	"CreatedByURL": "",
+	"DocsURL": "",
+	"MarketplaceURL": "",
+	"SupportURL": "",
+	"CanContainContent": true,
+	"IsBetaVersion": false,
+	"Installed": false,
+	"Modules": [
+		{ "Name": "HearthlineHomes", "Type": "Runtime", "LoadingPhase": "Default", "PlatformAllowList": [ "Win64" ] }
+	]
+}

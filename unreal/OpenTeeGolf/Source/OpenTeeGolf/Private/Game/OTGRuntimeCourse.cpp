@@ -147,6 +147,7 @@ void AOTGRuntimeCourse::Build(UOTGCourseData* D, TFunction<void(float, const FSt
 	BuildWater();
 	BuildSea();
 	BuildFarLand();
+	BuildHouses();   // (before the props: the export's blocks under Hearthline's houses left out there)
 	BuildProps();
 	BuildGrass();
 	UE_LOG(LogOTGRuntimeCourse, Display, TEXT("%s built in %.1f s"), *D->CourseName, FPlatformTime::Seconds() - T0);
@@ -169,6 +170,7 @@ void AOTGRuntimeCourse::BuildInSteps(UOTGCourseData* D, TFunction<void(float, co
 	Steps.Add({ TEXT("Trees"), [this]() { BuildTrees(); } });
 	Steps.Add({ TEXT("Rocks and water"), [this]() { BuildBoulders(); BuildWater(); BuildSea(); } });
 	Steps.Add({ TEXT("The land round it"), [this]() { BuildFarLand(); } });
+	Steps.Add({ TEXT("Houses"), [this]() { BuildHouses(); } });   // (OTGHouses.cpp: before the props - the export's blocks under them left out there)
 	Steps.Add({ TEXT("Paths and buildings"), [this]() { BuildProps(); } });
 	Steps.Add({ TEXT("Grass"), [this]() { BuildGrass(); } });
 	StepsTotal = Steps.Num();
@@ -1430,6 +1432,24 @@ void AOTGRuntimeCourse::BuildProps()
 			}
 			G.Indices = MoveTemp(Keep);
 			UE_LOG(LogOTGRuntimeCourse, Display, TEXT("Props: %s, %d of %d triangles off the ground (the rest painted in it)"), *Kind, G.Indices.Num() / 3, Before);
+			if (!G.Indices.Num()) continue;
+		}
+		if (Kind == TEXT("building") && HouseFeet.Num())
+		{
+			// (a Hearthline house stands there: OTGHouses.cpp)
+			const int32 Before = G.Indices.Num() / 3;
+			TArray<int32> Keep;
+			for (int32 t = 0; t + 2 < G.Indices.Num(); t += 3)
+			{
+				// (its middle or any corner on it: the blocks' roofs reach well past their footprints, their eaves' triangles
+				// long - by their middles, some stayed, spikes across the sky)
+				const FVector3f Mid = (G.Positions[G.Indices[t]] + G.Positions[G.Indices[t + 1]] + G.Positions[G.Indices[t + 2]]) / 3.f;
+				bool bUnder = UnderHouse(FVector2D(Mid.X, Mid.Z));
+				for (int32 k = 0; k < 3 && !bUnder; k++) { const FVector3f& Pv = G.Positions[G.Indices[t + k]]; bUnder = UnderHouse(FVector2D(Pv.X, Pv.Z)); }
+				if (!bUnder) Keep.Append(&G.Indices[t], 3);
+			}
+			G.Indices = MoveTemp(Keep);
+			UE_LOG(LogOTGRuntimeCourse, Display, TEXT("Props: building, %d of %d triangles left (the rest Hearthline houses)"), G.Indices.Num() / 3, Before);
 			if (!G.Indices.Num()) continue;
 		}
 		UMaterialInterface* M = Load<UMaterialInterface>(TEXT("M_Prop_") + Kind);

@@ -18,5 +18,7 @@ public class OpenTeeGolf : ModuleRules
 		PrivateDependencyModuleNames.AddRange(new string[] { "MeridianSky" });
 		// (the ponds, lakes, rivers and sea: the Tidewright Water plugin - OTGWater.cpp)
 		PrivateDependencyModuleNames.AddRange(new string[] { "Tidewright", "ProceduralMeshComponent" });
+		// (the houses round the course: the Hearthline Homes plugin - OTGHouses.cpp - its houses made static meshes here)
+		PrivateDependencyModuleNames.AddRange(new string[] { "HearthlineHomes", "GeometryCore", "GeometryFramework" });
 	}
 }

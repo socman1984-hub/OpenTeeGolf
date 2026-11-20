@@ -19,6 +19,7 @@ OpenTeeGolf is free software under the GNU General Public License v3 (see `LICEN
 | [Flight Relay Protocol](https://github.com/flightrelay/spec) 0.1 (the shot format `lib/frp.js` reads) | CC0 1.0 |
 | [Node.js](https://nodejs.org) (bundled in the Windows release zip) | MIT and others, see `node/LICENSE` in the zip |
 | Tidewright Water 0.6.0, an Unreal Engine plugin (`unreal/OpenTeeGolf/Plugins/Tidewright`): the ponds, lakes, rivers and sea in the Unreal game (`OTGWater.cpp`) | No licence stated in the plugin |
+| Hearthline Homes 0.1.0, an Unreal Engine plugin (`unreal/OpenTeeGolf/Plugins/HearthlineHomes`): the houses round the course in the Unreal game (`OTGHouses.cpp`); its textures generated for the plugin | No licence stated in the plugin (its README: "All Rights Reserved", publisher not named) |
 
 ## Textures (in `public/textures/`)
 

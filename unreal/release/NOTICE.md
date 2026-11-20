@@ -22,6 +22,7 @@ project's licence). This game is built with Unreal Engine and includes the follo
 | Plugin | Licence |
 | --- | --- |
 | Tidewright Water 0.6.0: the ponds, lakes, rivers and sea, included in compiled form | No licence stated in the plugin |
+| Hearthline Homes 0.1.0: the houses round the course, included in compiled form with its materials and textures | No licence stated in the plugin (its README: "All Rights Reserved", publisher not named) |
 
 ## Programs included
 
