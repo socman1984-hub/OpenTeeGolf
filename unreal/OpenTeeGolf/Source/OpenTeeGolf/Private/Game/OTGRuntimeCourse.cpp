@@ -326,6 +326,7 @@ bool AOTGRuntimeCourse::GroundDrawnAt(double XCm, double YCm) const
 void AOTGRuntimeCourse::LiftPondBanks()
 {
 	PondLevels.Reset();
+	PondOutlines.Reset();
 	GroundHeights = Data->Heights;
 	const int32 N = Data->HeightSamples;
 	if (GroundHeights.Num() != N * N) return;
@@ -333,7 +334,7 @@ void AOTGRuntimeCourse::LiftPondBanks()
 	if (!J.IsValid() || J->Type != EJson::Array) return;
 	const double Step = Data->MetresPerSample * 100.0;
 	const double ZScale = Data->HeightRange * 100.0 / 65535.0;
-	const double Clear = 8.0, Deepest = 25.0;   // cm over the water (it's drawn WaterLiftCm up); how far under it a bank may be
+	const double Clear = 8.0;   // cm over the water a metre and a half out (it's drawn WaterLiftCm up)
 	constexpr int32 Reach = 3;                  // samples out from the outline
 	int32 Lifted = 0;
 	for (const TSharedPtr<FJsonValue>& B : J->AsArray())
@@ -398,17 +399,78 @@ void AOTGRuntimeCourse::LiftPondBanks()
 			}
 		}
 		PondLevels.Add(Level);
-		const double Want = Level + Clear;
+		// The bank shaped round the outline, rounded (its corners every 5 m or so were the water's edge:
+		// straight runs and points): outside it the ground rises from just over the water to clear of it
+		// over a metre and a half, inside it falls away under the water - one smooth slope through the
+		// waterline, so the water's edge is the rounded outline. (Lifting the odd low sample on its own
+		// made a sawtooth along the shore, each lifted sample a tooth.) Only the ground's drawing: the
+		// ball plays on the course's own heights
+		TArray<FVector2D> Round = Poly;
+		for (int32 it = 0; it < 3 && Round.Num() >= 3; it++)
+		{
+			TArray<FVector2D> Next;
+			for (int32 i = 0; i < Round.Num(); i++)
+			{
+				const FVector2D Pa = Round[i], Pb = Round[(i + 1) % Round.Num()];
+				Next.Add(Pa * 0.75 + Pb * 0.25); Next.Add(Pa * 0.25 + Pb * 0.75);
+			}
+			Round = MoveTemp(Next);
+		}
+		TArray<FVector2D>& Kept = PondOutlines.AddDefaulted_GetRef();
+		for (const FVector2D& P : Round) Kept.Add(P * Step);
+		const double M = Data->MetresPerSample;
 		for (int32 y = 0; y < H; y++)
 			for (int32 x = 0; x < W; x++)
 			{
-				if (Ring[y * W + x] < 2) continue;
+				const FVector2D S(X0 + x, Y0 + y);
+				bool bIn = false;
+				double D2 = TNumericLimits<double>::Max();
+				for (int32 ia = 0, ib = Round.Num() - 1; ia < Round.Num(); ib = ia++)
+				{
+					const FVector2D& Pa = Round[ia]; const FVector2D& Pb = Round[ib];
+					if ((Pa.Y > S.Y) != (Pb.Y > S.Y) && S.X < (Pb.X - Pa.X) * (S.Y - Pa.Y) / (Pb.Y - Pa.Y) + Pa.X) bIn = !bIn;
+					const FVector2D AB = Pb - Pa;
+					const double T = FMath::Clamp(FVector2D::DotProduct(S - Pa, AB) / FMath::Max(AB.SizeSquared(), 1e-9), 0.0, 1.0);
+					D2 = FMath::Min(D2, FVector2D::DistSquared(S, Pa + AB * T));
+				}
+				const double D = FMath::Sqrt(D2) * M;   // (metres from the rounded outline)
 				uint16& Hv = GroundHeights[(Y0 + y) * N + (X0 + x)];
 				const double Z = Hv * ZScale;
-				if (Z < Want && Z > Level - Deepest) { Hv = uint16(FMath::Clamp(FMath::CeilToDouble(Want / ZScale), 0.0, 65535.0)); Lifted++; }
+				double Z2 = Z;
+				// (the export carves the bed with a hard step along its raw outline - corners every 5 m -
+				// a little ledge along the shore: near the outline the ground is blurred over 2 m first,
+				// the step a slope)
+				if (D < 3.5)
+				{
+					double Sum = 0, Wt = 0;
+					for (int32 dy = -2; dy <= 2; dy++)
+						for (int32 dx = -2; dx <= 2; dx++)
+						{
+							const int32 u = FMath::Clamp(X0 + x + dx, 0, N - 1), v = FMath::Clamp(Y0 + y + dy, 0, N - 1);
+							const double w = FMath::Exp(-(dx * dx + dy * dy) / 2.5);
+							Sum += Data->Heights[v * N + u] * ZScale * w; Wt += w;
+						}
+					Z2 = FMath::Lerp(Sum / Wt, Z, FMath::SmoothStep(2.0, 3.5, D));
+				}
+				if (!bIn && D < 3.0)
+				{
+					// (from 2 cm over the water at the outline to Clear + 2 a metre out; ground more
+					// than 60 cm under the water - a ditch beyond the bank - left as it is)
+					// (the lift fading out from 1.5 m to 3 m: lifted to a fixed height right out to 3 m, a ridge
+					// ran along the shore where it stopped, a straight step)
+					const double Want = Level + 2.0 + Clear * FMath::SmoothStep(0.0, 1.0, D);
+					if (Z2 < Want && Z2 > Level - 60.0) Z2 += (Want - Z2) * (1.0 - FMath::SmoothStep(1.5, 3.0, D));
+				}
+				else if (bIn && D < 2.0)
+				{
+					// (just under the water at the outline, 20 cm under it a metre and a half in)
+					const double Cap = Level - 2.0 - 18.0 * FMath::SmoothStep(0.0, 1.5, D);
+					if (Z2 > Cap && Z2 < Level + 60.0) Z2 = Cap;
+				}
+				if (FMath::Abs(Z2 - Z) > 0.5) { Hv = uint16(FMath::Clamp(FMath::RoundToDouble(Z2 / ZScale), 0.0, 65535.0)); Lifted++; }
 			}
 	}
-	UE_LOG(LogOTGRuntimeCourse, Display, TEXT("Pond banks: %d samples lifted clear of the water"), Lifted);
+	UE_LOG(LogOTGRuntimeCourse, Display, TEXT("Pond banks: %d samples shaped round the rounded outlines"), Lifted);
 }
 
 // The water's surface (water.glb: a point on each of the ground's samples, at its water's level),
@@ -1487,8 +1549,56 @@ void AOTGRuntimeCourse::RedrawPathMask(const otg::FGlbMesh& G)
 	UE_LOG(LogOTGRuntimeCourse, Display, TEXT("Paths: the mask drawn from their mesh (%d outline edges)"), Outline);
 }
 
+// The ponds' part of the water mask (the ground's paint - the pond's bed - and no grass on it) drawn
+// again from their rounded outlines (LiftPondBanks, which shaped the banks to them): the export's is
+// the raw outline, a corner every 5 m - a pale strip of bare bank with straight edges along the
+// shore, between where the grass stopped and the water began. Within 3 m of a rounded outline, and
+// inside it; the rest (the streams) as it was. A distance field as the export's masks are.
+void AOTGRuntimeCourse::RedrawPondMasks()
+{
+	otg::FPicture* P = MaskPixels.Find(TEXT("water"));
+	if (!P || !P->W || !GroundMat || !PondOutlines.Num() || FParse::Param(FCommandLine::Get(), TEXT("oldpondmask"))) return;
+	const int32 W = P->W, H = P->H;
+	const double Px = LandCm / W, Py = LandCm / H, Reach = 300.0;
+	int32 Changed = 0;
+	for (const TArray<FVector2D>& R : PondOutlines)
+	{
+		if (R.Num() < 3) continue;
+		const FBox2D Box = FBox2D(R).ExpandBy(Reach);
+		const int32 I0 = FMath::Max(0, FMath::FloorToInt(Box.Min.X / Px)), I1 = FMath::Min(W - 1, FMath::CeilToInt(Box.Max.X / Px));
+		const int32 J0 = FMath::Max(0, FMath::FloorToInt(Box.Min.Y / Py)), J1 = FMath::Min(H - 1, FMath::CeilToInt(Box.Max.Y / Py));
+		for (int32 j = J0; j <= J1; j++)
+			for (int32 i = I0; i <= I1; i++)
+			{
+				const FVector2D Q((i + 0.5) * Px, (j + 0.5) * Py);
+				bool bIn = false;
+				double D2 = TNumericLimits<double>::Max();
+				for (int32 a = 0, b = R.Num() - 1; a < R.Num(); b = a++)
+				{
+					const FVector2D& Pa = R[a]; const FVector2D& Pb = R[b];
+					if ((Pa.Y > Q.Y) != (Pb.Y > Q.Y) && Q.X < (Pb.X - Pa.X) * (Q.Y - Pa.Y) / (Pb.Y - Pa.Y) + Pa.X) bIn = !bIn;
+					const FVector2D AB = Pb - Pa;
+					const double T = FMath::Clamp(FVector2D::DotProduct(Q - Pa, AB) / FMath::Max(AB.SizeSquared(), 1e-6), 0.0, 1.0);
+					D2 = FMath::Min(D2, FVector2D::DistSquared(Q, Pa + AB * T));
+				}
+				const double D = FMath::Sqrt(D2);
+				if (!bIn && D > Reach) continue;
+				const double S = (bIn ? 1.0 : -1.0) * D / 600.0;
+				P->Pixels[j * W + i] = uint8(FMath::Clamp(0.5 + S, 0.0, 1.0) * 255.0 + 0.5);
+				Changed++;
+			}
+	}
+	if (UTexture2D* T = otg::MakeTexture(*P, otg::ETexKind::Mask, this))
+	{
+		Textures.Add(TEXT("Mask_water"), T);
+		GroundMat->SetTextureParameterValue(TEXT("Mask_water"), T);
+	}
+	UE_LOG(LogOTGRuntimeCourse, Display, TEXT("Ponds: the water mask drawn from their rounded outlines (%d pixels)"), Changed);
+}
+
 void AOTGRuntimeCourse::BuildProps()
 {
+	RedrawPondMasks();
 	const TSharedPtr<FJsonValue> J = ReadJson(FPaths::Combine(Data->ExportDir, TEXT("props.json")));
 	if (!J.IsValid()) return;
 	for (const TSharedPtr<FJsonValue>& V : J->AsArray())
@@ -1521,6 +1631,7 @@ void AOTGRuntimeCourse::BuildProps()
 			UE_LOG(LogOTGRuntimeCourse, Display, TEXT("Props: %s, %d of %d triangles off the ground (the rest painted in it)"), *Kind, G.Indices.Num() / 3, Before);
 			if (!G.Indices.Num()) continue;
 		}
+		if (Kind == TEXT("car") && PlaceCars(G)) continue;
 		if (Kind == TEXT("building") && HouseFeet.Num())
 		{
 			// (a Hearthline house stands there: OTGHouses.cpp)
@@ -1762,12 +1873,12 @@ void AOTGRuntimeCourse::SetGrassColours(const TArray<otg::FGrassKind>& Kinds)
 }
 
 // The turf's palette (OTGPalette.h), tunable live
-static TAutoConsoleVariable<float> CVarPalRed(TEXT("OTG.Palette.Red"), 0.6f, TEXT("The turf's hue: red as a share of its green (lower: fresher, bluer; 0.66 was the old olive)"));
-static TAutoConsoleVariable<float> CVarPalBlue(TEXT("OTG.Palette.Blue"), 0.1f, TEXT("The turf's hue: blue as a share of its green"));
-static TAutoConsoleVariable<float> CVarPalGreen(TEXT("OTG.Palette.Green"), 0.09f, TEXT("The greens' lightness (their linear green; their short blades, lit from above, read about 40% lighter than this)"));
-static TAutoConsoleVariable<float> CVarPalFairway(TEXT("OTG.Palette.Fairway"), 0.12f, TEXT("The fairways' and tees' lightness"));
-static TAutoConsoleVariable<float> CVarPalFringe(TEXT("OTG.Palette.Fringe"), 0.11f, TEXT("The collars' lightness"));
-static TAutoConsoleVariable<float> CVarPalRough(TEXT("OTG.Palette.Rough"), 0.1f, TEXT("The rough's (and first cut's) lightness"));
+static TAutoConsoleVariable<float> CVarPalRed(TEXT("OTG.Palette.Red"), 0.55f, TEXT("The turf's hue: red as a share of its green (lower: fresher, bluer; 0.66 was the old olive)"));
+static TAutoConsoleVariable<float> CVarPalBlue(TEXT("OTG.Palette.Blue"), 0.35f, TEXT("The turf's hue: blue as a share of its green"));
+static TAutoConsoleVariable<float> CVarPalGreen(TEXT("OTG.Palette.Green"), 0.08f, TEXT("The greens' lightness (their linear green; their short blades, lit from above, read about 40% lighter than this)"));
+static TAutoConsoleVariable<float> CVarPalFairway(TEXT("OTG.Palette.Fairway"), 0.1f, TEXT("The fairways' and tees' lightness"));
+static TAutoConsoleVariable<float> CVarPalFringe(TEXT("OTG.Palette.Fringe"), 0.095f, TEXT("The collars' lightness"));
+static TAutoConsoleVariable<float> CVarPalRough(TEXT("OTG.Palette.Rough"), 0.085f, TEXT("The rough's (and first cut's) lightness"));
 static TAutoConsoleVariable<float> CVarPalRoughRed(TEXT("OTG.Palette.RoughRed"), 0.88f, TEXT("The rough's blades' red against the palette's (their tips are yellower than the ground they were made for)"));
 static TAutoConsoleVariable<float> CVarPalNative(TEXT("OTG.Palette.Native"), 0.9f, TEXT("The deep rough's ground: x its own straw-green"));
 static TAutoConsoleVariable<float> CVarPalNativeStraw(TEXT("OTG.Palette.NativeStraw"), 0.25f, TEXT("The deep rough: how far from the rough's green to its own straw colour (0..1)"));

@@ -143,6 +143,7 @@ private:
 	UPROPERTY() TObjectPtr<class ATidewrightWater> Sea;
 	TArray<FBox2D> RiverBoxes;   // (Rivers' footprints, in step)
 	void RiverAroundRocks(class ATidewrightRiver* R);   // (OTGRiverRocks.cpp: the water parts round a rock)
+	TArray<TArray<FVector2D>> PondOutlines;   // (each lake's outline, rounded, cm in the level's frame: LiftPondBanks; a still pond's water is laid over it)
 	TArray<double> PondLevels;   // (each lake's water level, cm, in water_bodies.json's order: LiftPondBanks)
 	void AddBeach(const TArray<float>& FromWater, const TArray<double>& Gs, int32 Size, const FVector2D& Min, const FVector2D& Cell, double Level);
 	double TidewrightCheckAt = 0;
@@ -163,7 +164,7 @@ private:
 	void BuildWater();
 	// (the ponds and rivers as Tidewright water - OTGWater.cpp; OutGone: the game's own water's points under them)
 	bool BuildTidewright(TArray<bool>& OutGone);
-	bool BuildStillPond(const TArray<FVector>& Poly, double Level);
+	bool BuildStillPond(const TArray<FVector>& Poly, double Level, const TArray<FVector2D>* Round = nullptr);
 	void UpdateTidewright();
 	// (the sea as a Tidewright ocean, with a shoreline for the surf: false - none, the game's own)
 	bool BuildTidewrightSea(const otg::FGlbMesh& Mesh, const FBox& Box, const FVector2D& Swell, double LevelM);
@@ -172,6 +173,9 @@ private:
 	bool BuildRealFarLand();   // (the export's farland.json: real heights and photos; false if it hasn't one)
 	void BuildProps();
 	void RedrawPathMask(const otg::FGlbMesh& G);
+	void RedrawPondMasks();
+	// (the parked cars: a car pack's on the export's box cars' spots, or none - OTGCars.cpp. False: draw the boxes)
+	bool PlaceCars(const otg::FGlbMesh& G);
 	// (the houses as Hearthline houses - OTGHouses.cpp - and the footprints they stand on, in the
 	// buildings glb's frame: the export's own blocks there go)
 	void BuildHouses();

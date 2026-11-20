@@ -1,4 +1,6 @@
-// The turf's palette (bright, lime greens - DZ Grasses' showcase light): every cut's colour from one place, as a well-kept course (and DZ Grasses'
+// The turf's palette (a living lawn's green, as measured: a leaf reflects a little over half as much
+// red as green and about a third as much blue - blue at a tenth of green, as it was, made a lime
+// that read as cartoon): every cut's colour from one place, as a well-kept course (and DZ Grasses'
 // showcase) has it - one green, its hue the same from the greens to the rough, each cut set apart by
 // how light it is and how tall its grass stands, not by a colour of its own. The greens lightest,
 // then the fairways and tees, the collars, the rough (and its first cut); the deep rough (the tall
@@ -51,11 +53,11 @@ namespace otg
 				const FLinearColor Straw = Made(S) * FLinearColor(N, N * 1.03f, N * 1.1f);
 				return FMath::Lerp(Of(TEXT("rough")), Straw, Cv(TEXT("OTG.Palette.NativeStraw"), 0.25f));
 			}
-			const float G = S == TEXT("green") ? Cv(TEXT("OTG.Palette.Green"), 0.09f)
-				: S == TEXT("fringe") ? Cv(TEXT("OTG.Palette.Fringe"), 0.11f)
-				: S == TEXT("rough") ? Cv(TEXT("OTG.Palette.Rough"), 0.1f)
-				: Cv(TEXT("OTG.Palette.Fairway"), 0.12f);
-			return FLinearColor(G * Cv(TEXT("OTG.Palette.Red"), 0.6f), G, G * Cv(TEXT("OTG.Palette.Blue"), 0.1f));
+			const float G = S == TEXT("green") ? Cv(TEXT("OTG.Palette.Green"), 0.08f)
+				: S == TEXT("fringe") ? Cv(TEXT("OTG.Palette.Fringe"), 0.095f)
+				: S == TEXT("rough") ? Cv(TEXT("OTG.Palette.Rough"), 0.085f)
+				: Cv(TEXT("OTG.Palette.Fairway"), 0.1f);
+			return FLinearColor(G * Cv(TEXT("OTG.Palette.Red"), 0.55f), G, G * Cv(TEXT("OTG.Palette.Blue"), 0.35f));
 		}
 
 		// What to multiply a surface's made colour by to draw it in the palette's

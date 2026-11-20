@@ -172,9 +172,12 @@ bool AOTGRuntimeCourse::BuildTidewright(TArray<bool>& OutGone)
 			// is the outline's lowest point, often well under that: the water stopped short of the bank,
 			// a strip of bare bed showing all round)
 			double Level = B.Pts[0].Z;
-			// (up to the bank's top: LiftPondBanks)
-			if (PondLevels.IsValidIndex(NLakeSeen)) Level = FMath::Max(Level, PondLevels[NLakeSeen]);
+			// (up to the bank's top: LiftPondBanks, which shaped the bank round it at that level)
+			const bool bShaped = PondLevels.IsValidIndex(NLakeSeen);
+			if (bShaped) Level = FMath::Max(Level, PondLevels[NLakeSeen]);
+			const TArray<FVector2D>* Round = PondOutlines.IsValidIndex(NLakeSeen) ? &PondOutlines[NLakeSeen] : nullptr;
 			NLakeSeen++;
+			if (!bShaped)
 			{
 				TArray<double> Ys;
 				for (const FVector3f& V : WaterPos)
@@ -190,7 +193,7 @@ bool AOTGRuntimeCourse::BuildTidewright(TArray<bool>& OutGone)
 				for (double X = Box.Min.X; X <= Box.Max.X; X += 100)
 					if (!Inside(B.Pts, X, Y) && DistToLine(B.Pts, X, Y, true) > LakeMarginCm && GroundAt(X, Y) < Level + LiftCm + 2) { bSafe = false; break; }
 			if (bSeaCourse) bSafe = false;
-			if (!bSafe) { if (BuildStillPond(B.Pts, Level)) NSkipped++; continue; }
+			if (!bSafe) { if (BuildStillPond(B.Pts, Level, Round)) NSkipped++; continue; }
 			FActorSpawnParameters SP;
 			SP.bDeferConstruction = true;
 			const FVector2D C = Box.GetCenter();
@@ -270,7 +273,7 @@ bool AOTGRuntimeCourse::BuildTidewright(TArray<bool>& OutGone)
 // A pond a rectangle can't hold (lower ground beside it would be under the water too): a Tidewright
 // river with no current laid down its long axis, as wide at each step as the pond there (and a
 // little more, under the banks), flat at the pond's level - the pond's own shape, ripples, no foam
-bool AOTGRuntimeCourse::BuildStillPond(const TArray<FVector>& Poly, double Level)
+bool AOTGRuntimeCourse::BuildStillPond(const TArray<FVector>& Poly, double Level, const TArray<FVector2D>* Round)
 {
 	// (its long axis: the outline's principal direction)
 	FVector2D C(0, 0);
@@ -332,6 +335,51 @@ bool AOTGRuntimeCourse::BuildStillPond(const TArray<FVector>& Poly, double Level
 	}
 	S->UpdateSpline();
 	R->RebuildRiver();
+	// Its surface: not the strip down its long axis (its edges straight runs from one station to the
+	// next, cutting across the pond's bays and fading out over its ends: water stopping short of the
+	// bank) but a flat sheet a metre a square over the whole rounded outline and 2.5 m on under the
+	// bank - LiftPondBanks shaped the bank round that outline, so the water's edge is where the ground
+	// rises through it
+	if (Round && Round->Num() >= 3 && !FParse::Param(FCommandLine::Get(), TEXT("oldponds")))
+		if (UProceduralMeshComponent* PM = R->FindComponentByClass<UProceduralMeshComponent>())
+		{
+			TArray<FVector> RP;
+			for (const FVector2D& P : *Round) RP.Add(FVector(P, 0));
+			const double Under = 250, Cell = 100;
+			FBox2D Box(*Round);
+			Box = Box.ExpandBy(Under + Cell);
+			const int32 NX = FMath::CeilToInt(Box.GetSize().X / Cell) + 1, NY = FMath::CeilToInt(Box.GetSize().Y / Cell) + 1;
+			const FVector Org = PM->GetComponentLocation();
+			const double Z = O3.Z + Level + LiftCm - Org.Z;
+			TArray<FVector> V; TArray<FVector> Nm; TArray<FVector2D> UV; TArray<FLinearColor> Col; TArray<FProcMeshTangent> Tg; TArray<int32> Tri;
+			V.Reserve(NX * NY);
+			for (int32 j = 0; j < NY; j++)
+				for (int32 i = 0; i < NX; i++)
+				{
+					const FVector2D P = Box.Min + FVector2D(i, j) * Cell;
+					V.Add(FVector(O3.X + P.X - Org.X, O3.Y + P.Y - Org.Y, Z));
+					Nm.Add(FVector::UpVector);
+					UV.Add(P * 0.01);
+					Col.Add(FLinearColor(0.5f, 0.f, 0.2f, 1.f));
+					Tg.Add(FProcMeshTangent(FVector(1, 0, 0), false));
+				}
+			for (int32 j = 0; j + 1 < NY; j++)
+				for (int32 i = 0; i + 1 < NX; i++)
+				{
+					const FVector2D Mid = Box.Min + FVector2D(i + 0.5, j + 0.5) * Cell;
+					if (!Inside(RP, Mid.X, Mid.Y) && DistToLine(RP, Mid.X, Mid.Y, true) > Under) continue;
+					const int32 Ia = j * NX + i, Ib = Ia + 1, Ic = Ia + NX, Id = Ic + 1;
+					Tri.Append({ Ia, Ic, Id, Ia, Id, Ib });   // (facing up: A->C is +Y, A->B +X)
+				}
+			if (Tri.Num())
+			{
+				UMaterialInterface* Mat = PM->GetMaterial(0);
+				PM->ClearAllMeshSections();
+				PM->CreateMeshSection_LinearColor(0, V, Tri, Nm, UV, Col, Tg, false);
+				if (Mat) PM->SetMaterial(0, Mat);
+				UE_LOG(LogOTGWater, Display, TEXT("Still pond: a sheet of %d triangles over its rounded outline"), Tri.Num() / 3);
+			}
+		}
 	Rivers.Add(R);
 	RiverBoxes.Add(RiverBox(R));
 	return true;

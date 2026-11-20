@@ -84,7 +84,9 @@ const TArray<otg::FGrassKind>& otg::FGrass::DefaultKinds()
 		// (2500 a 100 m2: one 20 cm square patch to each square of a 20 cm grid - they tile)
 		Mown(TEXT("green"), TEXT("Greens (5 mm)"), { TEXT("green") }, 2500, 14, 24);
 		Mown(TEXT("fringe"), TEXT("Collars (1 cm)"), { TEXT("fringe") }, 2500, 18, 30);
-		Mown(TEXT("fairway"), TEXT("Fairways and tees (1.1 cm)"), { TEXT("fairway"), TEXT("tee") }, 2500, 24, 38);
+		// (off unless a course's designer turns it on: fairways and tees are the ground's turf texture -
+		// a mown fairway reads as a smooth carpet, its separate blades as stubble)
+		Mown(TEXT("fairway"), TEXT("Fairways and tees (1.1 cm)"), { TEXT("fairway"), TEXT("tee") }, 2500, 24, 38).bOn = false;
 		{
 			FGrassKind& G = Add(TEXT("cut1"), TEXT("First cut (3 cm)"), { TEXT("rough") }, 2500, 40, 60, 1.0f, 0.9f, 1.1f);
 			G.BandM = 1.5f;
