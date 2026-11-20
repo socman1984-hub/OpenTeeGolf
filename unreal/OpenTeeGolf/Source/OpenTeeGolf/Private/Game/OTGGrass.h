@@ -85,6 +85,8 @@ namespace otg
 		// in from every edge and on no other surface - for photographing its colour (OTG.Look.Swatch)
 		bool FindSurface(const FString& Mask, const FVector& From, FVector& Out, double InsideM = 3, double MaxM = 600) const;
 		const TArray<FGrassKind>& Kinds() const { return KindList; }
+		// The grass drawn in cells within R cm of At (world cm): OTG.Look.Bake
+		TArray<UPrimitiveComponent*> ComponentsNear(const FVector& At, double R) const;
 		// (a kind's first mesh's height, cm, at scale 1; 0 if it has none)
 		float MeshHeightCm(int32 Kind) const;
 		// How wide the first cut is (m: its BandM), or 0 when it's off - the rough grows to the fairway then

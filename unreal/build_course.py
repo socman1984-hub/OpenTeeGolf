@@ -492,6 +492,15 @@ def build_ground(land):
         tex["lawn"] = import_texture(os.path.join(BED_TEXTURES, "turf_color.jpg"), "T_turf_color")
         tex["lawn_n"] = import_texture(os.path.join(BED_TEXTURES, "turf_normal.jpg"), "T_turf_normal", "normal")
         tex["lawn_r"] = import_texture(os.path.join(BED_TEXTURES, "turf_roughness.jpg"), "T_turf_roughness", "mask")
+    # the rough: the game's own rough grass photographed from above (bake_turf.py), when it's there -
+    # the ground under the blades and on past them the same grass, not the web version's texture
+    if os.path.exists(os.path.join(BED_TEXTURES, "rough_baked_color.jpg")):
+        tex["rough"] = import_texture(os.path.join(BED_TEXTURES, "rough_baked_color.jpg"), "T_rough_baked_color")
+        tex["rough_n"] = import_texture(os.path.join(BED_TEXTURES, "rough_baked_normal.jpg"), "T_rough_baked_normal", "normal")
+        try:
+            GROUND_MEAN["rough"] = tuple(json.load(open(os.path.join(BED_TEXTURES, "rough_baked.json")))["mean"])
+        except Exception:
+            warn("rough_baked.json: " + traceback.format_exc().splitlines()[-1])
     # (the stream bed's)
     tex["rock"] = import_texture(os.path.join(GAME_TEXTURES, "rock_color.jpg"), "T_rock_color")
     if os.path.exists(os.path.join(BED_TEXTURES, "creekbed_color.png")):

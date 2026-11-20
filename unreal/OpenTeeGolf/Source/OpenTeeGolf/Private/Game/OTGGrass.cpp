@@ -751,3 +751,12 @@ bool otg::FGrass::FindNear(const FString& Name, const FVector& From, FVector& Ou
 	}
 	return false;
 }
+
+TArray<UPrimitiveComponent*> otg::FGrass::ComponentsNear(const FVector& At, double R) const
+{
+	TArray<UPrimitiveComponent*> Out;
+	for (const auto& C : Cells)
+		for (UInstancedStaticMeshComponent* I : C.Value.Comps)
+			if (I && I->IsRegistered() && I->GetInstanceCount() > 0 && I->Bounds.GetBox().ExpandBy(R).IsInsideXY(At)) Out.Add(I);
+	return Out;
+}

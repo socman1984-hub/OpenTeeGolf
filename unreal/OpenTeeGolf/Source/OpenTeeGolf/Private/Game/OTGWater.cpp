@@ -249,6 +249,7 @@ bool AOTGRuntimeCourse::BuildTidewright(TArray<bool>& OutGone)
 			}
 			S->UpdateSpline();
 			R->RebuildRiver();
+			RiverAroundRocks(R);
 			Rivers.Add(R);
 			RiverBoxes.Add(RiverBox(R));
 			NRivers++;

@@ -162,6 +162,14 @@ namespace
 		R->FreeLookAt(At, Arg(1, 500), Arg(2, 250), Yaw);
 		UE_LOG(LogTemp, Display, TEXT("Swatch %s at %s"), *A[0], *At.ToString());
 	}));
+	// (the ground's turf textures made from the grass itself: OTGTurfBake.cpp. Bring the camera near
+	// first - OTG.Look.Swatch - so the grass there is drawn)
+	FAutoConsoleCommandWithWorldAndArgs BakeCmd(TEXT("OTG.Look.Bake"), TEXT("OTG.Look.Bake <fairway|green|fringe|rough|native|tee> <size cm> <name>: (making textures) the grass on a patch of that surface, from above, into Saved/TurfBake"), FCmd::CreateLambda([](const TArray<FString>& A, UWorld* W) {
+		AOTGRuntimeCourse* C = CourseOf(W);
+		APlayerController* PC = W ? W->GetFirstPlayerController() : nullptr;
+		if (!C || A.Num() < 3 || !PC || !PC->PlayerCameraManager) return;
+		C->BakeTurf(A[0], FCString::Atod(*A[1]), A[2], PC->PlayerCameraManager->GetCameraLocation());
+	}));
 	FAutoConsoleCommandWithWorldAndArgs TreesShowCmd(TEXT("OTG.Trees.Show"), TEXT("OTG.Trees.Show <species>: the free view flown to one"), FCmd::CreateLambda([](const TArray<FString>& A, UWorld* W) {
 		if (AOTGRound* R = RoundIn(W)) if (A.Num()) R->ShowTree(A[0]);
 	}));
@@ -1100,6 +1108,7 @@ void AOTGRound::UpdateRain(float Dt)
 {
 	const double Mm = Weather.RainMm;
 	UpdateRainFar(Dt, Mm);
+	UpdateRipples(Dt);
 	if (Mm <= 0.05 || !RainMat || !Cam)
 	{
 		if (RainVerts) { RainMesh->ClearAllMeshSections(); RainVerts = 0; RainDrops.Reset(); }
@@ -1274,6 +1283,8 @@ void AOTGRound::FinishShot()
 {
 	if (bRange) return RangeShotDone();
 	const otg::Surface Surface = Course.SurfaceAt(Res.rest.x, Res.rest.z);
+	// (into the water: a splash and rings where it went in)
+	if (Res.result == "water" || Surface == otg::Surface::Water) AddRipple(World(Res.rest));
 	FString Title, Small;
 	if (Res.result == "holed")
 	{

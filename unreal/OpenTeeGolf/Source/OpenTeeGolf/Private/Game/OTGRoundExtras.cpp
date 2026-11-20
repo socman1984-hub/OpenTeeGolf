@@ -560,3 +560,107 @@ double AOTGRound::WindFromRelative() const
 	const double Ref = FMath::RadiansToDegrees(FMath::Atan2(H.GreenCenter.X - T.x, H.GreenCenter.Z - T.z));
 	return FMath::Fmod(FromDeg - Ref + 720.0, 360.0);
 }
+
+// ------------------------------------------------------------------ a ball into the water
+// Tidewright's water takes nothing thrown into it (its ripples are its own simulation's), so the
+// game draws it: a crown of spray for half a second, then three rings spreading over the surface and
+// fading, as a stone dropped in a pond. M_Rain (see-through, unlit: UV.y its opacity, the soft edges
+// across UV.x), whiter. OTG.Look.Ripple splashes in front of the camera (testing).
+void AOTGRound::AddRipple(const FVector& WorldAt)
+{
+	FVector P = WorldAt;
+	for (TActorIterator<AOTGRuntimeCourse> It(GetWorld()); It; ++It)
+	{
+		const double Top = It->WaterTopAt(P);
+		if (Top > -1e9) P.Z = Top + 2.0;
+		break;
+	}
+	Ripples.Add({ P, 0.f });
+}
+
+void AOTGRound::UpdateRipples(float Dt)
+{
+	if (!Ripples.Num() && !RippleMesh) return;
+	if (!RippleMesh)
+	{
+		RippleMesh = NewObject<UProceduralMeshComponent>(this);
+		RippleMesh->SetupAttachment(RootComponent);
+		RippleMesh->SetUsingAbsoluteLocation(true);
+		RippleMesh->SetUsingAbsoluteRotation(true);
+		RippleMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		RippleMesh->SetCastShadow(false);
+		RippleMesh->bVisibleInRayTracing = false;
+		RippleMesh->RegisterComponent();
+		RippleMesh->SetWorldLocationAndRotation(FVector::ZeroVector, FRotator::ZeroRotator);
+		if (UMaterialInterface* M = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/OpenTeeGolf/Game/M_Rain.M_Rain")))
+		{
+			RippleMat = UMaterialInstanceDynamic::Create(M, this);
+			RippleMat->SetVectorParameterValue(TEXT("Tint"), FLinearColor(0.7f, 0.76f, 0.8f, 1));
+			RippleMat->SetScalarParameterValue(TEXT("Opacity"), 0.3f);
+		}
+	}
+	constexpr float Life = 4.f, SprayTime = 0.5f;
+	TArray<FVector> V; TArray<int32> T; TArray<FVector2D> UV;
+	auto Quad = [&](const FVector& A, const FVector& B, const FVector& C, const FVector& D, float Fade) {
+		const int32 I = V.Num();
+		V.Append({ A, B, C, D });
+		UV.Append({ FVector2D(0, Fade), FVector2D(1, Fade), FVector2D(0, Fade), FVector2D(1, Fade) });
+		T.Append({ I, I + 2, I + 1, I + 1, I + 2, I + 3 });
+	};
+	for (int32 i = Ripples.Num() - 1; i >= 0; i--)
+	{
+		FRipple& R = Ripples[i];
+		R.Age += Dt;
+		if (R.Age > Life) { Ripples.RemoveAtSwap(i); continue; }
+		// the rings: each a band 12 cm wide, spreading at 70 cm/s, a quarter second after the last
+		for (int32 k = 0; k < 3; k++)
+		{
+			const float A = R.Age - k * 0.3f;
+			if (A <= 0) continue;
+			const double Rad = 12.0 + A * 70.0, W = 3.0 + A * 2.0;
+			const float Fade = FMath::Clamp(1.f - A / (Life - k * 0.3f), 0.f, 1.f) * (k == 0 ? 1.f : 0.7f) * FMath::Clamp(A * 4.f, 0.f, 1.f);
+			constexpr int32 Seg = 48;
+			for (int32 s = 0; s < Seg; s++)
+			{
+				const double a0 = 2 * PI * s / Seg, a1 = 2 * PI * (s + 1) / Seg;
+				const FVector D0(FMath::Cos(a0), FMath::Sin(a0), 0), D1(FMath::Cos(a1), FMath::Sin(a1), 0);
+				// (UV.x across the band: 0 inside, 1 outside, its middle the brightest)
+				Quad(R.P + D0 * (Rad - W), R.P + D0 * (Rad + W), R.P + D1 * (Rad - W), R.P + D1 * (Rad + W), Fade);
+			}
+		}
+		// the spray: a crown of streaks up and out, falling back
+		if (R.Age < SprayTime && Cam)
+		{
+			const float K = R.Age / SprayTime;
+			const FVector ToCam = (CamPos - R.P).GetSafeNormal();
+			for (int32 k = 0; k < 10; k++)
+			{
+				const FVector Dir(FMath::Cos(k * 0.63 + i), FMath::Sin(k * 0.63 + i), 0);
+				const double Up = 45.0 * FMath::Sin(PI * FMath::Min(1.f, K * 1.2f)), Out = 25.0 * K;
+				const FVector A = R.P, B = R.P + Dir * Out + FVector(0, 0, Up);
+				const FVector Side = FVector::CrossProduct((B - A).GetSafeNormal(), ToCam).GetSafeNormal() * 1.5;
+				Quad(B - Side, B + Side, A - Side, A + Side, 1.f - K);
+			}
+		}
+	}
+	if (V.Num())
+	{
+		RippleMesh->CreateMeshSection_LinearColor(0, V, T, TArray<FVector>(), UV, TArray<FLinearColor>(), TArray<FProcMeshTangent>(), false);
+		if (RippleMat) RippleMesh->SetMaterial(0, RippleMat);
+	}
+	else RippleMesh->ClearAllMeshSections();
+}
+
+namespace
+{
+	FAutoConsoleCommandWithWorldAndArgs RippleCmd(TEXT("OTG.Look.Ripple"), TEXT("(testing) a ball's splash into the water 15 m in front of the camera"), FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>&, UWorld* W) {
+		APlayerController* PC = W ? W->GetFirstPlayerController() : nullptr;
+		if (!PC || !PC->PlayerCameraManager) return;
+		for (TActorIterator<AOTGRound> It(W); It; ++It)
+		{
+			const FVector C = PC->PlayerCameraManager->GetCameraLocation(), F = PC->PlayerCameraManager->GetCameraRotation().Vector().GetSafeNormal2D();
+			It->AddRipple(C + F * 1500.0);
+			return;
+		}
+	}));
+}

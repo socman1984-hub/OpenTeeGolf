@@ -63,10 +63,10 @@ TURF_CUTS = {
     # (each blade its own: lighter or darker, yellower or bluer, a few dry; lit as blades, not as a
     # surface - "up" 0.92 lit every blade as the ground, an even flat green - with a waxy sheen and
     # dark down among the roots. At one even green, one width and one shade it looked painted)
-    "rough": {"keep": "rough", "masks": ["rough"], "height_cm": (5.0, 12.5), "width_mm": (2.5, 6.0), "lean": 0.5, "blades": 320, "segs": 4, "up": 0.6,
+    "rough": {"keep": "rough", "masks": ["rough"], "height_cm": (7.0, 16.0), "width_mm": (3.5, 7.5), "lean": 0.55, "blades": 300, "segs": 5, "up": 0.6,
               "patch_cm": 30, "density": 2400, "draw_m": (70, 100), "clumps": 6, "clump_cm": 4.5, "clump_mix": 0.55,
               "root": (0.022, 0.036, 0.011), "tip": (0.085, 0.122, 0.038), "dry": (0.14, 0.13, 0.06), "dry_share": 0.06, "vary": 0.22,
-              "hue": 1.0, "ao_root": 0.3, "rough": 0.48, "spec": 0.5},
+              "hue": 1.0, "ao_root": 0.3, "rough": 0.48, "spec": 0.5, "sss": 1.8},
 }
 # (build_course.py's own kinds: the rough's tufts, the far-off rough and the tall grass. Kept, made
 # again here with these blades: opaque, more segments up the long ones)
@@ -374,7 +374,9 @@ def cut_material(kind, land_size_cm):
         col = op(unreal.MaterialExpressionMultiply, col, p, -700, 350 - i * 40, "", "RGB")
     mel.connect_material_property(col, "", unreal.MaterialProperty.MP_BASE_COLOR)
     # lit through from behind: a warmer, yellower green
-    mel.connect_material_property(op(unreal.MaterialExpressionMultiply, col, const3((0.95, 1.05, 0.5), -650, 600), -500, 560), "", unreal.MaterialProperty.MP_SUBSURFACE_COLOR)
+    # (sss: how strongly - the rough's long blades glow lime against the sun, as a real lawn's do)
+    k_ = cfg.get("sss", 1.0)
+    mel.connect_material_property(op(unreal.MaterialExpressionMultiply, col, const3((0.95 * k_, 1.05 * k_, 0.5 * k_), -650, 600), -500, 560), "", unreal.MaterialProperty.MP_SUBSURFACE_COLOR)
     # (in the turf's own shade low down)
     ao = lerp(const(cfg.get("ao_root", 0.6), -650, 750), const(1.0, -650, 790), up_c, -500, 760)
     try:

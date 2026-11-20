@@ -1762,12 +1762,12 @@ void AOTGRuntimeCourse::SetGrassColours(const TArray<otg::FGrassKind>& Kinds)
 }
 
 // The turf's palette (OTGPalette.h), tunable live
-static TAutoConsoleVariable<float> CVarPalRed(TEXT("OTG.Palette.Red"), 0.55f, TEXT("The turf's hue: red as a share of its green (lower: fresher, bluer; 0.66 was the old olive)"));
-static TAutoConsoleVariable<float> CVarPalBlue(TEXT("OTG.Palette.Blue"), 0.25f, TEXT("The turf's hue: blue as a share of its green"));
-static TAutoConsoleVariable<float> CVarPalGreen(TEXT("OTG.Palette.Green"), 0.05f, TEXT("The greens' lightness (their linear green; their short blades, lit from above, read about 40% lighter than this)"));
-static TAutoConsoleVariable<float> CVarPalFairway(TEXT("OTG.Palette.Fairway"), 0.07f, TEXT("The fairways' and tees' lightness"));
-static TAutoConsoleVariable<float> CVarPalFringe(TEXT("OTG.Palette.Fringe"), 0.065f, TEXT("The collars' lightness"));
-static TAutoConsoleVariable<float> CVarPalRough(TEXT("OTG.Palette.Rough"), 0.054f, TEXT("The rough's (and first cut's) lightness"));
+static TAutoConsoleVariable<float> CVarPalRed(TEXT("OTG.Palette.Red"), 0.6f, TEXT("The turf's hue: red as a share of its green (lower: fresher, bluer; 0.66 was the old olive)"));
+static TAutoConsoleVariable<float> CVarPalBlue(TEXT("OTG.Palette.Blue"), 0.1f, TEXT("The turf's hue: blue as a share of its green"));
+static TAutoConsoleVariable<float> CVarPalGreen(TEXT("OTG.Palette.Green"), 0.09f, TEXT("The greens' lightness (their linear green; their short blades, lit from above, read about 40% lighter than this)"));
+static TAutoConsoleVariable<float> CVarPalFairway(TEXT("OTG.Palette.Fairway"), 0.12f, TEXT("The fairways' and tees' lightness"));
+static TAutoConsoleVariable<float> CVarPalFringe(TEXT("OTG.Palette.Fringe"), 0.11f, TEXT("The collars' lightness"));
+static TAutoConsoleVariable<float> CVarPalRough(TEXT("OTG.Palette.Rough"), 0.1f, TEXT("The rough's (and first cut's) lightness"));
 static TAutoConsoleVariable<float> CVarPalRoughRed(TEXT("OTG.Palette.RoughRed"), 0.88f, TEXT("The rough's blades' red against the palette's (their tips are yellower than the ground they were made for)"));
 static TAutoConsoleVariable<float> CVarPalNative(TEXT("OTG.Palette.Native"), 0.9f, TEXT("The deep rough's ground: x its own straw-green"));
 static TAutoConsoleVariable<float> CVarPalNativeStraw(TEXT("OTG.Palette.NativeStraw"), 0.25f, TEXT("The deep rough: how far from the rough's green to its own straw colour (0..1)"));

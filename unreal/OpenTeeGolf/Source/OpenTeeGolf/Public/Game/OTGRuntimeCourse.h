@@ -92,6 +92,9 @@ public:
 	void SetGrassColours(const TArray<otg::FGrassKind>& Kinds);
 	bool FindGrass(const FString& Kind, const FVector& From, FVector& Out) const;
 	bool FindSurface(const FString& Mask, const FVector& From, FVector& Out, double InsideM = 3) const;   // (well inside it: OTG.Look.Swatch)
+	// (making the ground's turf textures: the grass on a patch of a surface photographed from straight
+	// above - its colour, normal and height - into Saved/TurfBake/<Name>_*.png. OTGTurfBake.cpp)
+	bool BakeTurf(const FString& Surface, double SizeCm, const FString& Name, const FVector& From);
 	void DumpGrassTints() const;   // (testing: OTG.Grass.Tints)
 	void SetGrassParam(const FString& Kind, const FString& Param, const FLinearColor& V);   // (testing: OTG.Grass.Param)
 
@@ -139,6 +142,7 @@ private:
 	UPROPERTY() TArray<TObjectPtr<class ATidewrightRiver>> Rivers;
 	UPROPERTY() TObjectPtr<class ATidewrightWater> Sea;
 	TArray<FBox2D> RiverBoxes;   // (Rivers' footprints, in step)
+	void RiverAroundRocks(class ATidewrightRiver* R);   // (OTGRiverRocks.cpp: the water parts round a rock)
 	TArray<double> PondLevels;   // (each lake's water level, cm, in water_bodies.json's order: LiftPondBanks)
 	void AddBeach(const TArray<float>& FromWater, const TArray<double>& Gs, int32 Size, const FVector2D& Min, const FVector2D& Cell, double Level);
 	double TidewrightCheckAt = 0;

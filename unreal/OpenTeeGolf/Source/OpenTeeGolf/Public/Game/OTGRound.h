@@ -197,6 +197,15 @@ private:
 	float SplashCarry = 0;
 	int32 SplashVerts = 0;
 	void UpdateRainFar(float Dt, double Mm);
+	// a ball into water: a splash, then rings spreading over the surface (OTGRoundExtras.cpp)
+	struct FRipple { FVector P; float Age = 0; };
+	TArray<FRipple> Ripples;
+	UPROPERTY() TObjectPtr<class UProceduralMeshComponent> RippleMesh;
+	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> RippleMat;
+public:
+	void AddRipple(const FVector& WorldAt);
+private:
+	void UpdateRipples(float Dt);
 	// a storm's lightning, and the weather's sound (UOTGWeatherSound: rain, wind, thunder)
 	UPROPERTY() TObjectPtr<class UOTGWeatherSound> WxSound;
 	UPROPERTY() TObjectPtr<class UAudioComponent> WxAudio;
