@@ -148,9 +148,11 @@ const TArray<otg::FGrassKind>& otg::FGrass::DefaultKinds()
 			G.CellM = 48;
 		}
 		Far(TEXT("native_short"));
-		Add(TEXT("flowers_yellow"), TEXT("Yellow wildflowers"), { TEXT("native") }, 70, 70, 100, 1.0f, 0.85f, 1.2f, 9, 0.43f, 0.48f, false);
-		Add(TEXT("flowers_white"), TEXT("White wildflowers"), { TEXT("native") }, 70, 70, 100, 1.0f, 0.85f, 1.2f, 11, 0.44f, 0.49f, false);
-		Add(TEXT("flowers_purple"), TEXT("Purple wildflowers"), { TEXT("native") }, 60, 70, 100, 1.0f, 0.85f, 1.2f, 7, 0.44f, 0.5f, false);
+		// (the wildflowers only near: out to 70-100 m their patches read from afar as yellow and white
+		// blotches across the tall grass)
+		Add(TEXT("flowers_yellow"), TEXT("Yellow wildflowers"), { TEXT("native") }, 70, 30, 45, 1.0f, 0.85f, 1.2f, 9, 0.43f, 0.48f, false);
+		Add(TEXT("flowers_white"), TEXT("White wildflowers"), { TEXT("native") }, 70, 30, 45, 1.0f, 0.85f, 1.2f, 11, 0.44f, 0.49f, false);
+		Add(TEXT("flowers_purple"), TEXT("Purple wildflowers"), { TEXT("native") }, 60, 30, 45, 1.0f, 0.85f, 1.2f, 7, 0.44f, 0.5f, false);
 		// heather in its own patches through the tall grass, thinning out at their edges (KiteDemo's: knee
 		// high, its own colour; none where the pack isn't in the game). Off unless the grass designer
 		// turns it on: its pink and purple drifts under the trees looked out of place on most courses
@@ -342,6 +344,7 @@ TArray<otg::FGrassKind> otg::FGrass::LoadKinds(const FString& Dir)
 		const float DefTo = K->DrawTo;
 		Num(TEXT("drawTo"), K->DrawTo, 10, 800);
 		if (Name == TEXT("fescue") && FMath::IsNearlyEqual(K->DrawTo, 450.f)) K->DrawTo = DefTo;
+		if (Name.StartsWith(TEXT("flowers_")) && FMath::IsNearlyEqual(K->DrawTo, 100.f)) K->DrawTo = DefTo;   // (blotches far off)
 		K->DrawFrom = K->DrawTo * From;
 		Num(TEXT("patchM"), K->PatchM, 0, 200);
 		Num(TEXT("patchLo"), K->PatchLo, 0, 1);
@@ -583,7 +586,7 @@ otg::FGrass::FPlaced otg::FGrass::Place(int32 KindI, int32 CX, int32 CY) const
 			float Sc = FMath::Lerp(K.ScaleLo, K.ScaleHi, R.FRand());
 			// (and lower there: the deep rough rises out of the rough rather than starting as a step)
 			if (K.IsGreensward() && K.Masks.Contains(TEXT("native")))
-				Sc *= FMath::Lerp(0.45f, 1.f, DeepRamp(Mask(TEXT("native"), X, Y), X, Y));
+				Sc *= FMath::Lerp(0.8f, 1.f, DeepRamp(Mask(TEXT("native"), X, Y), X, Y));
 			if (K.Masks.Contains(TEXT("native")))
 			{
 				// (left to grow: taller here, lower there over a few metres, and each clump leaning its own way)

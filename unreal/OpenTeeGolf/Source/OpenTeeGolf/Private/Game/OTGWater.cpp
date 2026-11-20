@@ -42,6 +42,9 @@
 #include "Components/BoxComponent.h"
 #include "UObject/UnrealType.h"
 #include "TidewrightWater.h"
+#include "OTGTextures.h"
+#include "Game/OTGGrassFwd.h"
+#include "Materials/MaterialInstanceDynamic.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogOTGWater, Log, All);
 
@@ -52,7 +55,8 @@ namespace
 	constexpr double RiverWiden = 1.15;     // (a river a little wider than its channel: the banks hide the rest)
 	constexpr int32 LakesAlive = 2;         // (ponds simulating at once: the nearest)
 	constexpr double LakeAliveCm = 60000;   // (...within 600 m)
-	constexpr double ShoreDryCm = 50;       // (the sea's shallows under this: dry to its surf - BuildTidewrightSea)
+	const FLinearColor PondScatter(0.0045f, 0.006f, 0.003f, 1.0f);    // (a pond's colour: BuildStillPond)
+	const FLinearColor PondAbsorption(1.6f, 1.05f, 2.0f, 1.0f);
 
 	// (a river's footprint, its widest half-width round it: WaterTopAt's quick test)
 	FBox2D RiverBox(const ATidewrightRiver* R)
@@ -154,7 +158,7 @@ bool AOTGRuntimeCourse::BuildTidewright(TArray<bool>& OutGone)
 	}
 	const FVector O = Data->LevelOrigin;
 	const bool bSeaCourse = FPaths::FileExists(FPaths::Combine(Data->ExportDir, TEXT("sea.glb")));
-	int32 NLakes = 0, NSkipped = 0, NRivers = 0;
+	int32 NLakes = 0, NSkipped = 0, NRivers = 0, NLakeSeen = 0;
 	bool bShared = false;
 	for (const FBody& B : Bodies)
 	{
@@ -168,6 +172,9 @@ bool AOTGRuntimeCourse::BuildTidewright(TArray<bool>& OutGone)
 			// is the outline's lowest point, often well under that: the water stopped short of the bank,
 			// a strip of bare bed showing all round)
 			double Level = B.Pts[0].Z;
+			// (up to the bank's top: LiftPondBanks)
+			if (PondLevels.IsValidIndex(NLakeSeen)) Level = FMath::Max(Level, PondLevels[NLakeSeen]);
+			NLakeSeen++;
 			{
 				TArray<double> Ys;
 				for (const FVector3f& V : WaterPos)
@@ -199,6 +206,8 @@ bool AOTGRuntimeCourse::BuildTidewright(TArray<bool>& OutGone)
 			bShared = true;
 			W->FinishSpawning(FTransform(O + FVector(C.X, C.Y, Level + LiftCm)));
 			W->ApplyPreset(Glass, 0.f);
+			W->Look.ScatterColor = PondScatter;   // (as a still pond's: BuildStillPond)
+			W->Look.Absorption = PondAbsorption;
 			Lakes.Add(W);
 			NLakes++;
 			// (the game's own water under it: gone)
@@ -227,8 +236,8 @@ bool AOTGRuntimeCourse::BuildTidewright(TArray<bool>& OutGone)
 			R->River.FoamAmount = 0.2f;
 			// (a river's colour: green-brown, not the sea's cyan - blue taken out as much as red - and
 			// darkening quickly with depth, so its deep middle isn't as clear as its edges)
-			R->River.ScatterColor = FLinearColor(0.006f, 0.008f, 0.005f, 1.0f);
-			R->River.Absorption = FLinearColor(1.1f, 0.65f, 1.2f, 1.0f);
+			R->River.ScatterColor = FLinearColor(0.005f, 0.007f, 0.004f, 1.0f);
+			R->River.Absorption = FLinearColor(1.4f, 0.9f, 1.7f, 1.0f);
 			R->FinishSpawning(FTransform(O + Pts[0] + FVector(0, 0, LiftCm)));
 			USplineComponent* S = R->GetSpline();
 			if (!S) { R->Destroy(); continue; }
@@ -305,8 +314,11 @@ bool AOTGRuntimeCourse::BuildStillPond(const TArray<FVector>& Poly, double Level
 	R->River.BankFoamWidth = 0.0f;
 	R->River.FoamAmount = 0.0f;
 	R->River.RippleStrength = 0.6f;
-	R->River.ScatterColor = FLinearColor(0.006f, 0.013f, 0.016f, 1.0f);
-	R->River.Absorption = FLinearColor(0.45f, 0.16f, 0.13f, 1.0f);
+	// (a golf pond's water: olive-brown, dark within a metre or so - the plugin's clear blue-green
+	// showed the whole bed down to the middle, a swimming pool. Blue goes first, so what light comes
+	// back is green-brown)
+	R->River.ScatterColor = PondScatter;
+	R->River.Absorption = PondAbsorption;
 	R->SegmentLength = 1.0f;
 	R->FinishSpawning(FTransform(O3 + Pts[0] + FVector(0, 0, LiftCm)));
 	USplineComponent* S = R->GetSpline();
@@ -373,14 +385,17 @@ bool AOTGRuntimeCourse::BuildTidewrightSea(const otg::FGlbMesh& Mesh, const FBox
 	if (Shore)
 	{
 		Shore->bRebuildOnBeginPlay = false;
-		// (the surf's foam: a narrower, broken band - at full strength the whole coast was a white stripe)
-		Shore->Shore.ShoreFoamAmount = 0.5f;
-		Shore->Shore.ShoreFoamDepth = 0.18f;
+		// (the surf's foam: a faint, narrow band - the foam that moves is the surf's; a stronger band at the
+		// water's edge stood still, a white line along the coast)
+		Shore->Shore.ShoreFoamAmount = 0.15f;
+		Shore->Shore.ShoreFoamDepth = 0.1f;
 		// (no run-up, a lower surf: the water rising over the shore drew it over the grass)
 		Shore->Shore.RunUpHeight = 0.f;
 		Shore->Shore.SurfHeight = 0.35f;
 		Shore->GetArea()->SetBoxExtent(FVector(Half.X, Half.Y, 5000.0));
-		const int32 Size = 512;
+		// (cells of about a metre and a half, up to 2048 a side: at 512 over a long coast they were 4 m
+		// and more, and the water's edge followed them in steps, a saw of foam across the grass)
+		const int32 Size = FMath::Clamp(FMath::CeilToInt(2.0 * FMath::Max(Half.X, Half.Y) / 150.0), 512, 2048);
 		const FVector2D C(Centre.X - O.X, Centre.Y - O.Y);
 		const double CellX = 2.0 * Half.X / Size, CellY = 2.0 * Half.Y / Size;
 		// (the sea is where the export's sea is: its mesh, laid on the grid. Low ground anywhere else -
@@ -408,18 +423,53 @@ bool AOTGRuntimeCourse::BuildTidewrightSea(const otg::FGlbMesh& Mesh, const FBox
 					if (A >= -0.02 && B >= -0.02 && A + B <= 1.02) InSea[y * Size + x] = 1;
 				}
 		}
-		TArray<float> Hts;
-		Hts.SetNumUninitialized(Size * Size);
+		// (each cell's distance, metres, to the nearest cell set in In: two chamfer passes)
+		auto DistTo = [&](const TArray<uint8>& In, TArray<float>& D) {
+			const float Ax = float(CellX / 100.0), Ay = float(CellY / 100.0), Ad = FMath::Sqrt(Ax * Ax + Ay * Ay);
+			D.Init(1e9f, Size * Size);
+			for (int32 i = 0; i < Size * Size; i++) if (In[i]) D[i] = 0;
+			for (int32 y = 0; y < Size; y++)
+				for (int32 x = 0; x < Size; x++)
+				{
+					float& V = D[y * Size + x];
+					if (x > 0) V = FMath::Min(V, D[y * Size + x - 1] + Ax);
+					if (y > 0) { V = FMath::Min(V, D[(y - 1) * Size + x] + Ay); if (x > 0) V = FMath::Min(V, D[(y - 1) * Size + x - 1] + Ad); if (x < Size - 1) V = FMath::Min(V, D[(y - 1) * Size + x + 1] + Ad); }
+				}
+			for (int32 y = Size - 1; y >= 0; y--)
+				for (int32 x = Size - 1; x >= 0; x--)
+				{
+					float& V = D[y * Size + x];
+					if (x < Size - 1) V = FMath::Min(V, D[y * Size + x + 1] + Ax);
+					if (y < Size - 1) { V = FMath::Min(V, D[(y + 1) * Size + x] + Ay); if (x < Size - 1) V = FMath::Min(V, D[(y + 1) * Size + x + 1] + Ad); if (x > 0) V = FMath::Min(V, D[(y + 1) * Size + x - 1] + Ad); }
+				}
+		};
+		TArray<double> Gs;
+		Gs.SetNumUninitialized(Size * Size);
+		TArray<uint8> Wet;
+		Wet.Init(0, Size * Size);
 		for (int32 y = 0; y < Size; y++)
 			for (int32 x = 0; x < Size; x++)
 			{
-				const double G = GroundAt(C.X - Half.X + (x + 0.5) * CellX, C.Y - Half.Y + (y + 0.5) * CellY);
-				// (and, in the sea, the shallows under half a metre: the surf and its foam start where the
-				// water's that deep. Over a wide flat the sea barely covers, they spread across it, the grass
-				// showing through a net of white)
-				const bool bWet = InSea[y * Size + x] && G < Level - ShoreDryCm;
-				Hts[y * Size + x] = float(O.Z + (bWet ? G : FMath::Max(G, Level + 100.0)));
+				const int32 i = y * Size + x;
+				Gs[i] = GroundAt(C.X - Half.X + (x + 0.5) * CellX, C.Y - Half.Y + (y + 0.5) * CellY);
+				Wet[i] = InSea[i] && Gs[i] < Level;
 			}
+		TArray<float> FromSea, FromWater;
+		DistTo(InSea, FromSea);
+		DistTo(Wet, FromWater);
+		// the heights: the ground as it's drawn by the sea, a whisker lower (the water's edge is then
+		// where the ground meets the water, under the land, never a line drawn on the grass). Further
+		// from the export's sea - 15 to 30 m - low ground (a bunker, a links hollow at the sea's level)
+		// rises to dry land a metre up, or the surf and its foam showed through the ground there
+		TArray<float> Hts;
+		Hts.SetNumUninitialized(Size * Size);
+		for (int32 i = 0; i < Size * Size; i++)
+		{
+			const double Near = Gs[i] - 10.0, Far = FMath::Max(Gs[i], Level + 100.0);
+			const double A = FMath::SmoothStep(15.0, 30.0, double(FromSea[i]));
+			Hts[i] = float(O.Z + FMath::Lerp(Near, Far, A));
+		}
+		AddBeach(FromWater, Gs, Size, C - Half, FVector2D(CellX, CellY), Level);
 		// (its scan's fields aren't public: set as a saved scan would be)
 		UClass* K = ATidewrightShoreline::StaticClass();
 		auto Field = [&](const TCHAR* Name) { FProperty* P = K->FindPropertyByName(Name); return P ? P->ContainerPtrToValuePtr<void>(Shore) : nullptr; };
@@ -453,6 +503,54 @@ bool AOTGRuntimeCourse::BuildTidewrightSea(const otg::FGlbMesh& Mesh, const FBox
 	Sea = W;
 	UE_LOG(LogOTGWater, Display, TEXT("Tidewright sea at %.2f m, shoreline %.0f x %.0f m"), LevelM, Half.X / 50.0, Half.Y / 50.0);
 	return true;
+}
+
+// A sand beach along the sea: the bunkers' mask (the ground's sand; no grass grows on it) widened
+// by a band about 12 m wide inland from the water's edge - wavering, and only on low ground: where
+// the coast rises over 2 m above the sea it fades out, a cliff stays grass - and under the shallows.
+// FromWater: metres to the sea's water, on the shoreline's grid (Size a side from Min, Cell cm a cell);
+// Gs: the ground there (cm).
+void AOTGRuntimeCourse::AddBeach(const TArray<float>& FromWater, const TArray<double>& Gs, int32 Size, const FVector2D& Min, const FVector2D& Cell, double Level)
+{
+	if (FParse::Param(FCommandLine::Get(), TEXT("nobeach")) || !GroundMat) return;
+	otg::FPicture* P = MaskPixels.Find(TEXT("bunker"));
+	if (!P || !P->W)
+	{
+		otg::FPicture Blank;
+		Blank.W = Blank.H = 2048;
+		Blank.Pixels.Init(0, Blank.W * Blank.H);
+		P = &MaskPixels.Add(TEXT("bunker"), MoveTemp(Blank));
+	}
+	auto Sample = [&](const auto& A, double Gx, double Gy) {
+		const int32 I = FMath::Clamp(FMath::FloorToInt(Gx), 0, Size - 2), J = FMath::Clamp(FMath::FloorToInt(Gy), 0, Size - 2);
+		const double U = FMath::Clamp(Gx - I, 0.0, 1.0), V = FMath::Clamp(Gy - J, 0.0, 1.0);
+		return FMath::Lerp(FMath::Lerp(double(A[J * Size + I]), double(A[J * Size + I + 1]), U), FMath::Lerp(double(A[(J + 1) * Size + I]), double(A[(J + 1) * Size + I + 1]), U), V);
+	};
+	int32 Sand = 0;
+	ParallelFor(P->H, [&](int32 j)
+	{
+		for (int32 i = 0; i < P->W; i++)
+		{
+			const double X = (i + 0.5) / P->W * LandCm, Y = (j + 0.5) / P->H * LandCm;
+			const double Gx = (X - Min.X) / Cell.X - 0.5, Gy = (Y - Min.Y) / Cell.Y - 0.5;
+			if (Gx < 0 || Gy < 0 || Gx > Size - 1 || Gy > Size - 1) continue;
+			const double D = Sample(FromWater, Gx, Gy);
+			if (D > 60) continue;
+			const double G = Sample(Gs, Gx, Gy);
+			const double Width = 12.0 + 5.0 * FMath::PerlinNoise2D(FVector2D(X / 2500.0, Y / 2500.0));
+			// (metres inside the beach: its width from the water, less 3 a metre over 2 m up)
+			const double In = FMath::Min(Width - D, (Level + 200.0 - G) / 100.0 * 3.0);
+			const uint8 V = uint8(FMath::Clamp(0.5 + In / 6.0, 0.0, 1.0) * 255.0);
+			uint8& Px = P->Pixels[j * P->W + i];
+			if (V > Px) Px = V;
+		}
+	});
+	if (UTexture2D* T = otg::MakeTexture(*P, otg::ETexKind::Mask, this))
+	{
+		Textures.Add(TEXT("Mask_bunker"), T);
+		GroundMat->SetTextureParameterValue(TEXT("Mask_bunker"), T);
+	}
+	UE_LOG(LogOTGWater, Display, TEXT("Sea: a beach along it (the bunkers' mask, %d x %d)"), P->W, P->H);
 }
 
 // The highest water surface over a point (world cm), or -infinity: the sea, a pond's level, a

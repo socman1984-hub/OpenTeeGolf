@@ -68,6 +68,20 @@ UTexture2D* otg::LoadTexture(const FString& File, ETexKind Kind, int32 MaxSize, 
 		W = NW; H = NH;
 	}
 	if (OutPixels) { OutPixels->W = W; OutPixels->H = H; OutPixels->Channels = Ch; OutPixels->Pixels = Top; }
+	FPicture Pic;
+	Pic.W = W; Pic.H = H; Pic.Channels = Ch; Pic.Pixels = MoveTemp(Top);
+	UTexture2D* T = MakeTexture(Pic, Kind, Outer);
+	if (T) UE_LOG(LogOTGTextures, Display, TEXT("%s: %d x %d, %d mips"), *FPaths::GetCleanFilename(File), W, H, T->GetPlatformData()->Mips.Num());
+	return T;
+}
+
+UTexture2D* otg::MakeTexture(const FPicture& Pic, ETexKind Kind, UObject* Outer)
+{
+	const bool bGrey = Kind == ETexKind::Mask;
+	const int32 W = Pic.W, H = Pic.H;
+	const int32 Ch = bGrey ? 1 : 4;
+	if (W <= 0 || H <= 0 || Pic.Channels != Ch || Pic.Pixels.Num() != W * H * Ch) return nullptr;
+	const TArray<uint8>& Top = Pic.Pixels;
 	UTexture2D* T = UTexture2D::CreateTransient(W, H, bGrey ? PF_G8 : PF_B8G8R8A8, NAME_None);
 	if (!T) return nullptr;
 	T->SRGB = Kind == ETexKind::Photo;
@@ -84,7 +98,7 @@ UTexture2D* otg::LoadTexture(const FString& File, ETexKind Kind, int32 MaxSize, 
 		FMemory::Memcpy(Dst, Top.GetData(), Top.Num());
 		PD->Mips[0].BulkData.Unlock();
 	}
-	TArray<uint8> Level = MoveTemp(Top);
+	TArray<uint8> Level = Top;
 	int32 LW = W, LH = H;
 	while (LW > 1 || LH > 1)
 	{
@@ -99,6 +113,5 @@ UTexture2D* otg::LoadTexture(const FString& File, ETexKind Kind, int32 MaxSize, 
 		Mip->BulkData.Unlock();
 	}
 	T->UpdateResource();
-	UE_LOG(LogOTGTextures, Display, TEXT("%s: %d x %d, %d mips"), *FPaths::GetCleanFilename(File), W, H, PD->Mips.Num());
 	return T;
 }

@@ -139,6 +139,8 @@ private:
 	UPROPERTY() TArray<TObjectPtr<class ATidewrightRiver>> Rivers;
 	UPROPERTY() TObjectPtr<class ATidewrightWater> Sea;
 	TArray<FBox2D> RiverBoxes;   // (Rivers' footprints, in step)
+	TArray<double> PondLevels;   // (each lake's water level, cm, in water_bodies.json's order: LiftPondBanks)
+	void AddBeach(const TArray<float>& FromWater, const TArray<double>& Gs, int32 Size, const FVector2D& Min, const FVector2D& Cell, double Level);
 	double TidewrightCheckAt = 0;
 	double GroundAt(double X, double Y) const;
 	void BuildTrees();
@@ -165,6 +167,7 @@ private:
 	void BuildFarLand();
 	bool BuildRealFarLand();   // (the export's farland.json: real heights and photos; false if it hasn't one)
 	void BuildProps();
+	void RedrawPathMask(const otg::FGlbMesh& G);
 	// (the houses as Hearthline houses - OTGHouses.cpp - and the footprints they stand on, in the
 	// buildings glb's frame: the export's own blocks there go)
 	void BuildHouses();

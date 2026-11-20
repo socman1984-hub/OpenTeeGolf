@@ -24,4 +24,7 @@ namespace otg
 
 	// A picture's pixels kept on the CPU too (the grass reads the masks where it grows)
 	UTexture2D* LoadTexture(const FString& File, ETexKind Kind, int32 MaxSize, UObject* Outer, FPicture* OutPixels);
+
+	// Pixels as a texture (Kind's format: one channel for a mask, BGRA for the others)
+	UTexture2D* MakeTexture(const FPicture& Pic, ETexKind Kind, UObject* Outer);
 }

@@ -60,9 +60,13 @@ TURF_CUTS = {
              "patch_cm": 20, "density": 2500, "draw_m": (40, 60), "shade": (0.85, 1.15),
              "root": (0.034, 0.052, 0.014), "tip": (0.075, 0.11, 0.027), "dry": (0.11, 0.12, 0.045), "dry_share": 0.01, "vary": 0.1},
     # the rough: longer, clumpier, pointed (it grows back between cuts), still one even green
-    "rough": {"keep": "rough", "masks": ["rough"], "height_cm": (5.5, 11.0), "width_mm": (3.0, 5.0), "lean": 0.5, "blades": 320, "segs": 4, "up": 0.92,
+    # (each blade its own: lighter or darker, yellower or bluer, a few dry; lit as blades, not as a
+    # surface - "up" 0.92 lit every blade as the ground, an even flat green - with a waxy sheen and
+    # dark down among the roots. At one even green, one width and one shade it looked painted)
+    "rough": {"keep": "rough", "masks": ["rough"], "height_cm": (5.0, 12.5), "width_mm": (2.5, 6.0), "lean": 0.5, "blades": 320, "segs": 4, "up": 0.6,
               "patch_cm": 30, "density": 2400, "draw_m": (70, 100), "clumps": 6, "clump_cm": 4.5, "clump_mix": 0.55,
-              "root": (0.034, 0.055, 0.014), "tip": (0.092, 0.136, 0.032), "dry": (0.13, 0.135, 0.045), "dry_share": 0.02, "vary": 0.1},
+              "root": (0.022, 0.036, 0.011), "tip": (0.085, 0.122, 0.038), "dry": (0.14, 0.13, 0.06), "dry_share": 0.06, "vary": 0.22,
+              "hue": 1.0, "ao_root": 0.3, "rough": 0.48, "spec": 0.5},
 }
 # (build_course.py's own kinds: the rough's tufts, the far-off rough and the tall grass. Kept, made
 # again here with these blades: opaque, more segments up the long ones)
@@ -341,6 +345,10 @@ def cut_material(kind, land_size_cm):
     dried = lerp(col, op(unreal.MaterialExpressionMultiply, const3(cfg["dry"], -1450, 420), t_up, -1350, 420), t_dry, -1150, 300)
     vary = op(unreal.MaterialExpressionAdd, const(1.0 - cfg["vary"], -1300, 480), op(unreal.MaterialExpressionMultiply, t_rand, const(2 * cfg["vary"], -1450, 520), -1300, 520), -1150, 480)
     col = op(unreal.MaterialExpressionMultiply, dried, vary, -1000, 350)
+    if cfg.get("hue"):
+        # (and its own hue: a little yellower or bluer, from its random value)
+        col = custom("float h = frac(Rand * 7.31); float3 t = lerp(float3(1.1, 1.03, 0.72), float3(0.86, 1.0, 1.18), h); return Col * lerp(float3(1, 1, 1), t, %.3f);" % cfg["hue"],
+                     unreal.CustomMaterialOutputType.CMOT_FLOAT3, [("Rand", t_rand, ""), ("Col", col, "")], -950, 300)
     ph = param_sample(mat, "Photo", uv, -1900, 600, S.SAMPLERTYPE_COLOR)
     photo_blur(ph)
     lum = E(unreal.MaterialExpressionDotProduct, -1700, 600)
@@ -368,13 +376,13 @@ def cut_material(kind, land_size_cm):
     # lit through from behind: a warmer, yellower green
     mel.connect_material_property(op(unreal.MaterialExpressionMultiply, col, const3((0.95, 1.05, 0.5), -650, 600), -500, 560), "", unreal.MaterialProperty.MP_SUBSURFACE_COLOR)
     # (in the turf's own shade low down)
-    ao = lerp(const(0.6, -650, 750), const(1.0, -650, 790), up_c, -500, 760)
+    ao = lerp(const(cfg.get("ao_root", 0.6), -650, 750), const(1.0, -650, 790), up_c, -500, 760)
     try:
         mel.connect_material_property(ao, "", unreal.MaterialProperty.MP_AMBIENT_OCCLUSION)
     except Exception:
         pass
-    mel.connect_material_property(const(0.58 if cfg.get("cut") else 0.65, -500, 820), "", unreal.MaterialProperty.MP_ROUGHNESS)
-    mel.connect_material_property(const(0.4, -500, 880), "", unreal.MaterialProperty.MP_SPECULAR)
+    mel.connect_material_property(const(cfg.get("rough", 0.58 if cfg.get("cut") else 0.65), -500, 820), "", unreal.MaterialProperty.MP_ROUGHNESS)
+    mel.connect_material_property(const(cfg.get("spec", 0.4), -500, 880), "", unreal.MaterialProperty.MP_SPECULAR)
     mel.recompile_material(mat)
     unreal.EditorAssetLibrary.save_loaded_asset(mat)
     return mat

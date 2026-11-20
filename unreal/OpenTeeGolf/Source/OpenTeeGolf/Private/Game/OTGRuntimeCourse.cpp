@@ -325,6 +325,7 @@ bool AOTGRuntimeCourse::GroundDrawnAt(double XCm, double YCm) const
 // it (the ball still plays on the course's own heights: a few cm)
 void AOTGRuntimeCourse::LiftPondBanks()
 {
+	PondLevels.Reset();
 	GroundHeights = Data->Heights;
 	const int32 N = Data->HeightSamples;
 	if (GroundHeights.Num() != N * N) return;
@@ -382,6 +383,21 @@ void AOTGRuntimeCourse::LiftPondBanks()
 				}
 			Ring = MoveTemp(Next);
 		}
+		// (the water up to the bank's top: the low end of the ground 2-3 samples out round it - where
+		// the grass starts - less a few cm. The outline's own level, its lowest point, often sat well
+		// under it, and a strip of dug bank showed all round between the water and the grass)
+		{
+			TArray<double> Rim;
+			for (int32 i = 0; i < W * H; i++)
+				if (Ring[i] >= 3) Rim.Add(GroundHeights[(Y0 + i / W) * N + (X0 + i % W)] * ZScale);
+			if (Rim.Num() > 8)
+			{
+				Rim.Sort();
+				const double Top = Rim[Rim.Num() / 10] - 6.0;
+				if (Top > Level) Level = FMath::Min(Top, Level + 200.0);
+			}
+		}
+		PondLevels.Add(Level);
 		const double Want = Level + Clear;
 		for (int32 y = 0; y < H; y++)
 			for (int32 x = 0; x < W; x++)
@@ -1401,6 +1417,76 @@ double AOTGRuntimeCourse::GroundAt(double X, double Y) const
 	return FMath::Lerp(FMath::Lerp(H(i, j), H(i + 1, j), fu), FMath::Lerp(H(i, j + 1), H(i + 1, j + 1), fu), fv) * ZScale;
 }
 
+// The cart paths' mask (the ground's paint, and no grass on them) drawn again from their own mesh:
+// the export's is the course's surface map, a pixel a metre or so, blurred - its edges wandered in
+// and out along a path. The mesh is the path's line at its width: straight, even edges.
+// A distance field as the export's masks are: 0.5 on the edge, 3 m = 0.5.
+void AOTGRuntimeCourse::RedrawPathMask(const otg::FGlbMesh& G)
+{
+	otg::FPicture* P = MaskPixels.Find(TEXT("path"));
+	if (!P || !P->W || !GroundMat || G.Indices.Num() < 3 || FParse::Param(FCommandLine::Get(), TEXT("oldpaths"))) return;
+	const int32 W = P->W, H = P->H;
+	const double Px = LandCm / W, Py = LandCm / H, Reach = 300.0;
+	auto At = [&](int32 v) { const FVector3f& V = G.Positions[v]; return FVector2D(V.X * 100.0, V.Z * 100.0); };
+	// the outline: the edges of one triangle only (vertices matched by place: a strip's are shared or not)
+	auto Key = [&](int32 v) { const FVector2D A = At(v); return FIntPoint(FMath::RoundToInt(A.X), FMath::RoundToInt(A.Y)); };
+	TMap<TPair<FIntPoint, FIntPoint>, int32> Edges;
+	auto EdgeKey = [](FIntPoint A, FIntPoint B) { if (A.X > B.X || (A.X == B.X && A.Y > B.Y)) Swap(A, B); return TPair<FIntPoint, FIntPoint>(A, B); };
+	for (int32 t = 0; t + 2 < G.Indices.Num(); t += 3)
+		for (int32 k = 0; k < 3; k++) Edges.FindOrAdd(EdgeKey(Key(G.Indices[t + k]), Key(G.Indices[t + (k + 1) % 3])))++;
+	TArray<float> Dist;
+	Dist.Init(float(Reach), W * H);
+	TArray<uint8> In;
+	In.Init(0, W * H);
+	// inside: each triangle's pixels
+	for (int32 t = 0; t + 2 < G.Indices.Num(); t += 3)
+	{
+		const FVector2D A = At(G.Indices[t]), B = At(G.Indices[t + 1]), C = At(G.Indices[t + 2]);
+		const double D = (B.X - A.X) * (C.Y - A.Y) - (C.X - A.X) * (B.Y - A.Y);
+		if (FMath::Abs(D) < 1e-6) continue;
+		const int32 I0 = FMath::Max(0, FMath::FloorToInt(FMath::Min3(A.X, B.X, C.X) / Px)), I1 = FMath::Min(W - 1, FMath::CeilToInt(FMath::Max3(A.X, B.X, C.X) / Px));
+		const int32 J0 = FMath::Max(0, FMath::FloorToInt(FMath::Min3(A.Y, B.Y, C.Y) / Py)), J1 = FMath::Min(H - 1, FMath::CeilToInt(FMath::Max3(A.Y, B.Y, C.Y) / Py));
+		for (int32 j = J0; j <= J1; j++)
+			for (int32 i = I0; i <= I1; i++)
+			{
+				const double X = (i + 0.5) * Px, Y = (j + 0.5) * Py;
+				const double U = ((B.X - X) * (C.Y - Y) - (C.X - X) * (B.Y - Y)) / D, V = ((C.X - X) * (A.Y - Y) - (A.X - X) * (C.Y - Y)) / D;
+				if (U >= 0 && V >= 0 && U + V <= 1) In[j * W + i] = 1;
+			}
+	}
+	// the distance to the outline, within 3 m of it
+	int32 Outline = 0;
+	for (const auto& E : Edges)
+	{
+		if (E.Value != 1) continue;
+		Outline++;
+		const FVector2D A(E.Key.Key), B(E.Key.Value);
+		const int32 I0 = FMath::Max(0, FMath::FloorToInt((FMath::Min(A.X, B.X) - Reach) / Px)), I1 = FMath::Min(W - 1, FMath::CeilToInt((FMath::Max(A.X, B.X) + Reach) / Px));
+		const int32 J0 = FMath::Max(0, FMath::FloorToInt((FMath::Min(A.Y, B.Y) - Reach) / Py)), J1 = FMath::Min(H - 1, FMath::CeilToInt((FMath::Max(A.Y, B.Y) + Reach) / Py));
+		const FVector2D AB = B - A;
+		const double L2 = FMath::Max(AB.SizeSquared(), 1e-6);
+		for (int32 j = J0; j <= J1; j++)
+			for (int32 i = I0; i <= I1; i++)
+			{
+				const FVector2D Q((i + 0.5) * Px, (j + 0.5) * Py);
+				const double T = FMath::Clamp(FVector2D::DotProduct(Q - A, AB) / L2, 0.0, 1.0);
+				float& Dv = Dist[j * W + i];
+				Dv = FMath::Min(Dv, float(FVector2D::Distance(Q, A + AB * T)));
+			}
+	}
+	for (int32 q = 0; q < W * H; q++)
+	{
+		const double S = (In[q] ? 1.0 : -1.0) * Dist[q] / 600.0;
+		P->Pixels[q] = uint8(FMath::Clamp(0.5 + S, 0.0, 1.0) * 255.0 + 0.5);
+	}
+	if (UTexture2D* T = otg::MakeTexture(*P, otg::ETexKind::Mask, this))
+	{
+		Textures.Add(TEXT("Mask_path"), T);
+		GroundMat->SetTextureParameterValue(TEXT("Mask_path"), T);
+	}
+	UE_LOG(LogOTGRuntimeCourse, Display, TEXT("Paths: the mask drawn from their mesh (%d outline edges)"), Outline);
+}
+
 void AOTGRuntimeCourse::BuildProps()
 {
 	const TSharedPtr<FJsonValue> J = ReadJson(FPaths::Combine(Data->ExportDir, TEXT("props.json")));
@@ -1418,6 +1504,7 @@ void AOTGRuntimeCourse::BuildProps()
 		// the path's): those triangles go
 		if (bPath)
 		{
+			RedrawPathMask(G);
 			const int32 Before = G.Indices.Num() / 3;
 			TArray<int32> Keep;
 			for (int32 t = 0; t + 2 < G.Indices.Num(); t += 3)

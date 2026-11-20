@@ -233,10 +233,10 @@ def kite_usage():
 # plant is its own colour, so each kind's plants get one tint, pulling them to one colour (the rough's
 # tufts are the game's own grass now, in the rough's colours: build_course.py's rough_clump):
 #   the tall grass: heathland - fescue a muted heather brown with a little mauve, the wild and tundra
-#   grass between its drifts a bronze olive
+#   grass between its drifts an olive green (a bronze olive read as pale yellow clumps from afar)
 FAB_TINTS = {
     (0.12, 0.085, 0.09): ("Tall_Grass_rbEkI", "Tall_Grass_rbEkP", "Tall_Grass_rbEla"),
-    (0.1, 0.1, 0.06): ("Wild_Grass_vczndjqja", "Tundra_Grass_wk2oaeyqx", "Grass_smdrailr", "Grass_slBm1"),
+    (0.075, 0.095, 0.05): ("Wild_Grass_vczndjqja", "Tundra_Grass_wk2oaeyqx", "Grass_smdrailr", "Grass_slBm1"),
 }
 
 
