@@ -4,6 +4,12 @@ The newest version first. The game shows this on its What's new page. make_relea
 OpenTeeGolf.exe, and publish_release.py puts each version's part on its GitHub release.
 A version's heading is "## <version> - <date>", and its changes are "- " lines under it.
 
+## 0.23.0 - 20 November 2026
+- More natural grass colour: a true living-lawn green instead of lime, a touch darker on every cut.
+- Fairways and tees are a smooth mown carpet, without separate blades sticking up.
+- Ponds have smooth, rounded edges, with the water and grass meeting all the way round: no jagged shoreline, no ledge and no gap between the water and the bank.
+- The plain box cars are gone from the car parks (cars from a car pack can stand there instead).
+
 ## 0.22.0 - 20 November 2026
 - Brighter, more natural grass: fresher lime greens on every cut, and a longer, lusher rough that glows when the sun is behind it.
 - The rough looks like real grass all the way out: its ground is now made from the game's own grass, not a flat green.
