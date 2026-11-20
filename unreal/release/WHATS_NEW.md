@@ -4,6 +4,17 @@ The newest version first. The game shows this on its What's new page. make_relea
 OpenTeeGolf.exe, and publish_release.py puts each version's part on its GitHub release.
 A version's heading is "## <version> - <date>", and its changes are "- " lines under it.
 
+## 0.22.0 - 20 November 2026
+- Brighter, more natural grass: fresher lime greens on every cut, and a longer, lusher rough that glows when the sun is behind it.
+- The rough looks like real grass all the way out: its ground is now made from the game's own grass, not a flat green.
+- Water flows around rocks in creeks instead of running straight through them.
+- A splash and spreading ripples when your ball goes in the water.
+- A sandy beach along the sea, and the water's edge follows the shore smoothly.
+- Ponds fill right up to their banks, and are darker and greener the deeper they are.
+- Cart paths have smooth, straight edges.
+- Rain: no more wall of rain in the distance, splashes only on hard ground, and a natural rain sound.
+- Wildflowers no longer show as yellow blotches from afar.
+
 ## 0.21.0 - 19 November 2026
 - Real houses round the course: the homes along the fairways are now proper houses, with roofs, windows, porches and garages, instead of plain blocks.
 - Calmer shores: no more white surf washing up over dry land at the sea.
