@@ -4,6 +4,15 @@ The newest version first. The game shows this on its What's new page. make_relea
 OpenTeeGolf.exe, and publish_release.py puts each version's part on its GitHub release.
 A version's heading is "## <version> - <date>", and its changes are "- " lines under it.
 
+## 0.21.0 - 19 November 2026
+- Real houses round the course: the homes along the fairways are now proper houses, with roofs, windows, porches and garages, instead of plain blocks.
+- Calmer shores: no more white surf washing up over dry land at the sea.
+- Ponds fill right up to their banks, and creeks run without a white edge of foam.
+- Darker, greener rivers and streams, getting darker the deeper they are.
+- Rocks in a creek now sit on its bed instead of floating.
+- The deep rough blends into the rough instead of meeting it at a hard line.
+- The camera stays above the water.
+
 ## 0.20.0 - 19 November 2026
 - New water everywhere (Tidewright): ponds and lakes ripple in the breeze and mirror the trees, rivers and streams flow downhill between their banks, and the sea rolls in with real waves, whitecaps and surf breaking along the shore.
 - Water hazards play just as before.
