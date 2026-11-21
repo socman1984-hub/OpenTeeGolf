@@ -4,6 +4,16 @@ The newest version first. The game shows this on its What's new page. make_relea
 OpenTeeGolf.exe, and publish_release.py puts each version's part on its GitHub release.
 A version's heading is "## <version> - <date>", and its changes are "- " lines under it.
 
+## 0.24.0 - 20 November 2026
+- Creeks are full of water right to their ends: no more dry dirt where a creek meets a pond, and the creek joins the pond at its level.
+- A pond that sits above a creek is held back by a grassy bank instead of its water hanging in the air.
+- Creek banks are gentle grassy slopes instead of steep dirt cliffs, and a wide river's bed is full of water instead of bare dirt.
+- Rain makes small rings on ponds and creeks, more of them the harder it rains.
+- Parked cars in the car parks, in a car park's usual mix of colours.
+- Greens are smooth turf, without dark specks.
+- The rough looks like grass much further out, all the way round a long hole's green, and the game runs a little faster.
+- Grass at the edge between two cuts no longer shows pale slivers.
+
 ## 0.23.0 - 20 November 2026
 - More natural grass colour: a true living-lawn green instead of lime, a touch darker on every cut.
 - Fairways and tees are a smooth mown carpet, without separate blades sticking up.
