@@ -125,37 +125,209 @@ namespace
 	}
 }
 
+// The creeks, before the ground is drawn: each piece of a river (cut where it runs through a pond) laid
+// out so its water always ends against ground or other water. The river's water fades out over its
+// first and last 3 m; a short creek between two ponds (Majestic hole 1's is 10 m) showed its dug bed
+// at both ends, dry dirt, and the ponds' sheets ended in mid-air over its channel. At a pond:
+// - the pond's level within 60 cm of the creek's: the creek eases to the pond's level over its last
+//   20 m and runs on 4 m into the pond, its fading end under the pond's water
+// - the pond lower: the creek falls to the pond's level over its last 10 m, then on into it the same
+// - the pond higher (Majestic's sits 3.4 m over its creek): the creek keeps its own level and runs into
+//   the berm holding the pond (LiftPondBanks), its fading end under the grass; that ground isn't dug
+// And the ground under each creek is dug to a bed below its water, its banks eased to at most about
+// 30 degrees over 5 m either side (the export's channel walls stood up to 2 m sheer). Only the
+// ground's drawing: the ball plays on the course's own heights. -oldcreeks: as the export has them
+void AOTGRuntimeCourse::PlanCreeks()
+{
+	bCreeksPlanned = true;
+	Creeks.Reset();
+	TArray<FBody> Bodies = ReadBodies(Data->ExportDir);
+	// the ponds and their levels (as BuildTidewright lays them: up to the bank's top)
+	TArray<const FBody*> Ponds;
+	TArray<double> PondZ;
+	for (const FBody& B : Bodies)
+	{
+		if (!B.bLake) continue;
+		double Level = B.Pts[0].Z;
+		const int32 k = Ponds.Num();
+		if (PondLevels.IsValidIndex(k)) Level = FMath::Max(Level, PondLevels[k]);
+		else
+		{
+			TArray<double> Ys;
+			for (const FVector3f& V : WaterPos) if (Inside(B.Pts, V.X * 100.0, V.Z * 100.0)) Ys.Add(V.Y * 100.0);
+			if (Ys.Num()) { Ys.Sort(); Level = FMath::Max(Level, Ys[Ys.Num() / 2]); }
+		}
+		Ponds.Add(&B);
+		PondZ.Add(Level);
+	}
+	auto PondAt = [&](const FVector& P, double Reach) -> int32 {
+		for (int32 k = 0; k < Ponds.Num(); k++)
+			if (Inside(Ponds[k]->Pts, P.X, P.Y) || (Reach > 0 && DistToLine(Ponds[k]->Pts, P.X, P.Y, true) < Reach)) return k;
+		return INDEX_NONE;
+	};
+	// (a pond over a creek, and how far out from it its berm reaches: LiftPondBanks, about 30 degrees down
+	// from just over its water - not dug)
+	TMap<int32, double> Berms;
+	PondHolds.Reset();
+	const bool bOld = FParse::Param(FCommandLine::Get(), TEXT("oldcreeks"));
+	int32 Joined = 0, Spills = 0;
+	for (const FBody& B : Bodies)
+	{
+		if (B.bLake) continue;
+		// (cut where it runs through a pond, so a pond stays a pond - a river laid across one covered it in
+		// river water; each piece remembers the ponds at its ends)
+		struct FPiece { FCreek C; int32 PondA = INDEX_NONE, PondB = INDEX_NONE; };
+		TArray<FPiece> Pieces;
+		FPiece Cur;
+		int32 Last = INDEX_NONE;   // (the pond the line came out of)
+		for (int32 i = 0; i < B.Pts.Num(); i++)
+		{
+			const int32 In = PondAt(B.Pts[i], 200);
+			if (In != INDEX_NONE)
+			{
+				Cur.PondB = In;
+				if (Cur.C.Pts.Num() >= 2) Pieces.Add(Cur);
+				Cur = FPiece();
+				Last = In;
+				continue;
+			}
+			if (!Cur.C.Pts.Num()) Cur.PondA = Last;
+			Cur.C.Pts.Add(B.Pts[i]);
+			Cur.C.W.Add(B.W[i]);
+		}
+		if (Cur.C.Pts.Num() >= 2) Pieces.Add(Cur);
+		for (FPiece& Pc : Pieces)
+		{
+			TArray<FVector>& P = Pc.C.Pts;
+			TArray<double>& W = Pc.C.W;
+			// (an end near a pond without the line running into it: that pond too)
+			if (Pc.PondA == INDEX_NONE) Pc.PondA = PondAt(P[0], 400);
+			if (Pc.PondB == INDEX_NONE) Pc.PondB = PondAt(P.Last(), 400);
+			if (!bOld)
+				for (int32 End = 0; End < 2; End++)
+				{
+					const int32 Pond = End == 0 ? Pc.PondA : Pc.PondB;
+					if (Pond == INDEX_NONE) continue;
+					// (worked from this end: the points in order from it)
+					if (End == 1) { Algo::Reverse(P); Algo::Reverse(W); }
+					TArray<double> S;
+					S.Add(0);
+					for (int32 i = 1; i < P.Num(); i++) S.Add(S.Last() + FVector2D::Distance(FVector2D(P[i]), FVector2D(P[i - 1])));
+					const double Len = FMath::Max(S.Last(), 1.0);
+					const double Zp = PondZ[Pond], Ze = P[0].Z;
+					const FVector2D Dir = (FVector2D(P[0]) - FVector2D(P[1])).GetSafeNormal();
+					// (how far on to the pond's outline)
+					double ToPond = 0;
+					while (ToPond < 3000 && !Inside(Ponds[Pond]->Pts, P[0].X + Dir.X * ToPond, P[0].Y + Dir.Y * ToPond)) ToPond += 50;
+					if (ToPond >= 3000) ToPond = DistToLine(Ponds[Pond]->Pts, P[0].X, P[0].Y, true);
+					if (Zp > Ze + 60)
+					{
+						// the pond over the creek: held by its berm (HoldPonds), which buries the creek's fading end
+						// (run on into it, it reached the pond's deep bed and showed through the pond's water)
+						Berms.FindOrAdd(Pond) = FMath::Max(Berms.FindRef(Pond), (Zp + 10.0 - (Ze - 60.0)) / 0.55 + 320.0);
+						PondHolds.Add({ Pond, FVector2D(P[0]) });
+						Spills++;
+					}
+					else
+					{
+						// the creek to the pond's level - over 20 m to one about level with it, 10 m down to a
+						// lower one - and on into it under its water
+						const double Over = FMath::Min(Zp < Ze - 60 ? 1000.0 : 2000.0, Len * (Pc.PondA != INDEX_NONE && Pc.PondB != INDEX_NONE ? 0.5 : 1.0));
+						for (int32 i = 0; i < P.Num(); i++) P[i].Z = FMath::Lerp(Zp, P[i].Z, FMath::SmoothStep(0.0, Over, S[i]));
+						P.Insert(FVector(FVector2D(P[0]) + Dir * (ToPond + 400.0), Zp), 0);
+						const double W0 = W[0];
+						W.Insert(W0, 0);
+						Joined++;
+					}
+					if (End == 1) { Algo::Reverse(P); Algo::Reverse(W); }
+				}
+			// (upstream first, never running uphill)
+			if (P[0].Z < P.Last().Z) { Algo::Reverse(P); Algo::Reverse(W); }
+			for (int32 i = 1; i < P.Num(); i++) P[i].Z = FMath::Min(P[i].Z, P[i - 1].Z);
+			Creeks.Add(MoveTemp(Pc.C));
+		}
+	}
+	if (bOld) { UE_LOG(LogOTGWater, Display, TEXT("Creeks: %d, as the export has them (-oldcreeks)"), Creeks.Num()); return; }
+	const int32 N = Data->HeightSamples;
+	if (GroundHeights.Num() != N * N) return;
+	const double Step = Data->MetresPerSample * 100.0;
+	const double ZScale = Data->HeightRange * 100.0 / 65535.0;
+	auto Box = [&](FBox2D B, int32& X0, int32& Y0, int32& X1, int32& Y1) {
+		X0 = FMath::Max(0, FMath::FloorToInt(B.Min.X / Step)); Y0 = FMath::Max(0, FMath::FloorToInt(B.Min.Y / Step));
+		X1 = FMath::Min(N - 1, FMath::CeilToInt(B.Max.X / Step)); Y1 = FMath::Min(N - 1, FMath::CeilToInt(B.Max.Y / Step));
+	};
+	// the ponds over creeks banked (HoldPonds), and that ground left alone
+	HoldPonds();
+	auto InBerm = [&](const FVector2D& Q) {
+		for (const FPondHold& H : PondHolds)
+			if (FVector2D::Distance(Q, H.At) < 1500.0 && DistToLine(Ponds[H.Pond]->Pts, Q.X, Q.Y, true) < Berms.FindRef(H.Pond)) return true;
+		return false;
+	};
+	// the ground dug to follow them
+	constexpr double BankCm = 500.0, BankSlope = 0.55;   // (the banks eased over 5 m, to about 30 degrees)
+	int32 Dug = 0;
+	int32 Deep = 0;
+	for (const FCreek& C : Creeks)
+	{
+		const int32 Before = Dug;
+		FVector2D Sum(0, 0); double MaxDown = 0;
+		FBox2D B(ForceInit);
+		double MaxHalf = 0;
+		for (int32 i = 0; i < C.Pts.Num(); i++) { B += FVector2D(C.Pts[i]); MaxHalf = FMath::Max(MaxHalf, C.W[i] * 0.5); }
+		int32 X0, Y0, X1, Y1;
+		Box(B.ExpandBy(MaxHalf + BankCm + Step), X0, Y0, X1, Y1);
+		for (int32 y = Y0; y <= Y1; y++)
+			for (int32 x = X0; x <= X1; x++)
+			{
+				const FVector2D Q(x * Step, y * Step);
+				// (the nearest point of the line: its water level and half-width there)
+				double Best = TNumericLimits<double>::Max(), Zw = 0, Half = 0;
+				FVector2D On;
+				for (int32 i = 0; i + 1 < C.Pts.Num(); i++)
+				{
+					const FVector2D A(C.Pts[i]), Bp(C.Pts[i + 1]), AB = Bp - A;
+					const double T = FMath::Clamp(FVector2D::DotProduct(Q - A, AB) / FMath::Max(AB.SizeSquared(), 1e-6), 0.0, 1.0);
+					const double D = FVector2D::Distance(Q, A + AB * T);
+					if (D < Best) { Best = D; On = A + AB * T; Zw = FMath::Lerp(C.Pts[i].Z, C.Pts[i + 1].Z, T); Half = FMath::Lerp(C.W[i], C.W[i + 1], T) * 0.5; }
+				}
+				if (Best > Half + BankCm) continue;
+				// (where the course's own ground on the creek's line stands well over its water - its level in
+				// water_bodies.json metres low there (Walden: 5 m) - left as it is: dug to it, a deep dry
+				// trench with dark walls)
+				if (Data->Heights[FMath::Clamp(FMath::RoundToInt(On.Y / Step), 0, N - 1) * N + FMath::Clamp(FMath::RoundToInt(On.X / Step), 0, N - 1)] * ZScale - Zw > 350.0) { Deep++; continue; }
+				if (PondAt(FVector(Q, 0), 0) != INDEX_NONE || InBerm(Q)) continue;   // (a pond's bed is its own: LiftPondBanks)
+				uint16& Hv = GroundHeights[y * N + x];
+				const double Z = Hv * ZScale;
+				double Want;
+				if (Best < Half) Want = Zw - 25.0 - 35.0 * FMath::Clamp(1.0 - Best / FMath::Max(Half, 1.0), 0.0, 1.0);   // (the bed: 25 cm under at the edge, 60 in the middle)
+				else
+				{
+					// (the bank: from just over the water at the edge, rising no steeper than BankSlope; from
+					// 3.5 m out, back to the ground as it was)
+					const double Out = Best - Half;
+					const double Cap = Zw + 4.0 + Out * BankSlope;
+					Want = FMath::Lerp(FMath::Min(Z, Cap), Z, FMath::SmoothStep(BankCm * 0.7, BankCm, Out));
+				}
+				if (Z > Want + 0.5) { Hv = uint16(FMath::Clamp(FMath::FloorToDouble(Want / ZScale), 0.0, 65535.0)); Dug++; Sum += Q; MaxDown = FMath::Max(MaxDown, Z - Want); }
+			}
+		if (Dug - Before > 50) UE_LOG(LogOTGWater, Display, TEXT("  creek: dug at %d samples round %.0f %.0f, down to %.0f cm"), Dug - Before, Sum.X / (Dug - Before), Sum.Y / (Dug - Before), MaxDown);
+	}
+	UE_LOG(LogOTGWater, Display, TEXT("Creeks: %d pieces; %d ends joined to their ponds' levels, %d into a pond's berm over them; the ground dug at %d samples (%d left alone: the water metres under the ground there)"),
+		Creeks.Num(), Joined, Spills, Dug, Deep);
+}
+
 bool AOTGRuntimeCourse::BuildTidewright(TArray<bool>& OutGone)
 {
 	OutGone.Init(false, WaterPos.Num());
 	if (FParse::Param(FCommandLine::Get(), TEXT("oldwater"))) return false;
 	UTidewrightPreset* Glass = LoadObject<UTidewrightPreset>(nullptr, TEXT("/Tidewright/Presets/TWP_GlassLake.TWP_GlassLake"));
 	if (!Glass) { UE_LOG(LogOTGWater, Warning, TEXT("No Tidewright presets (the plugin's content): the game's own water")); return false; }
-	TArray<FBody> Bodies = ReadBodies(Data->ExportDir);
-	// (a stream's centre line runs on through the ponds it feeds: cut there, so a pond stays a pond -
-	// a river laid across one covered it in river water)
-	{
-		TArray<const FBody*> Ponds;
-		for (const FBody& B : Bodies) if (B.bLake) Ponds.Add(&B);
-		auto InPond = [&](const FVector& P) {
-			for (const FBody* L : Ponds) if (Inside(L->Pts, P.X, P.Y) || DistToLine(L->Pts, P.X, P.Y, true) < 200) return true;
-			return false;
-		};
-		TArray<FBody> Split;
-		for (const FBody& B : Bodies)
-		{
-			if (B.bLake) { Split.Add(B); continue; }
-			FBody Cur;
-			for (int32 i = 0; i < B.Pts.Num(); i++)
-			{
-				if (InPond(B.Pts[i])) { if (Cur.Pts.Num() >= 2) Split.Add(Cur); Cur = FBody(); continue; }
-				Cur.Pts.Add(B.Pts[i]);
-				Cur.W.Add(B.W[i]);
-			}
-			if (Cur.Pts.Num() >= 2) Split.Add(Cur);
-		}
-		Bodies = MoveTemp(Split);
-	}
+	// (the ponds as they are; the rivers as PlanCreeks laid them out - cut where they run through a
+	// pond, each running from one pond's level to the next)
+	if (!bCreeksPlanned) PlanCreeks();
+	TArray<FBody> Bodies;
+	for (FBody& B : ReadBodies(Data->ExportDir)) if (B.bLake) Bodies.Add(MoveTemp(B));
+	for (const FCreek& C : Creeks) { FBody B; B.Pts = C.Pts; B.W = C.W; Bodies.Add(MoveTemp(B)); }
 	const FVector O = Data->LevelOrigin;
 	const bool bSeaCourse = FPaths::FileExists(FPaths::Combine(Data->ExportDir, TEXT("sea.glb")));
 	int32 NLakes = 0, NSkipped = 0, NRivers = 0, NLakeSeen = 0;
@@ -262,7 +434,9 @@ bool AOTGRuntimeCourse::BuildTidewright(TArray<bool>& OutGone)
 				int32 Seg = 0;
 				const double D = DistToLine(Pts, X, Y, false, &Seg);
 				const double Half = FMath::Max(W[Seg], W[FMath::Min(Seg + 1, W.Num() - 1)]) * 0.5;
-				if (D < Half + 300 && FMath::Abs(WaterPos[v].Y * 100.0 - Pts[Seg].Z) < 80) OutGone[v] = true;
+				// (the game's own water along it, whatever its level: the creek's runs from pond to pond, the
+				// export's in steps - left, its pieces showed as stairs beside the creek and the ponds)
+				if (D < Half + 300 && FMath::Abs(WaterPos[v].Y * 100.0 - Pts[Seg].Z) < 400) OutGone[v] = true;
 			}
 		}
 	}
@@ -351,6 +525,15 @@ bool AOTGRuntimeCourse::BuildStillPond(const TArray<FVector>& Poly, double Level
 			const int32 NX = FMath::CeilToInt(Box.GetSize().X / Cell) + 1, NY = FMath::CeilToInt(Box.GetSize().Y / Cell) + 1;
 			const FVector Org = PM->GetComponentLocation();
 			const double Z = O3.Z + Level + LiftCm - Org.Z;
+			auto OverCreek = [&](const FVector2D& Q) {
+				for (const FCreek& Cr : Creeks)
+				{
+					int32 Seg = 0;
+					const double D = DistToLine(Cr.Pts, Q.X, Q.Y, false, &Seg);
+					if (D < FMath::Max(Cr.W[Seg], Cr.W[FMath::Min(Seg + 1, Cr.W.Num() - 1)]) * 0.5 + 100.0) return true;
+				}
+				return false;
+			};
 			TArray<FVector> V; TArray<FVector> Nm; TArray<FVector2D> UV; TArray<FLinearColor> Col; TArray<FProcMeshTangent> Tg; TArray<int32> Tri;
 			V.Reserve(NX * NY);
 			for (int32 j = 0; j < NY; j++)
@@ -368,6 +551,9 @@ bool AOTGRuntimeCourse::BuildStillPond(const TArray<FVector>& Poly, double Level
 				{
 					const FVector2D Mid = Box.Min + FVector2D(i + 0.5, j + 0.5) * Cell;
 					if (!Inside(RP, Mid.X, Mid.Y) && DistToLine(RP, Mid.X, Mid.Y, true) > Under) continue;
+					// (nor out over a creek leaving it: the creek's water is there, and the sheet's square edge
+					// showed over its channel as stairs)
+					if (!Inside(RP, Mid.X, Mid.Y) && OverCreek(Mid)) continue;
 					const int32 Ia = j * NX + i, Ib = Ia + 1, Ic = Ia + NX, Id = Ic + 1;
 					Tri.Append({ Ia, Ic, Id, Ia, Id, Ib });   // (facing up: A->C is +Y, A->B +X)
 				}
@@ -616,4 +802,12 @@ double AOTGRuntimeCourse::WaterTopAt(const FVector& P) const
 		if (Rivers[i] && (!RiverBoxes.IsValidIndex(i) || RiverBoxes[i].IsInside(FVector2D(P))) && Rivers[i]->SampleRiver(P, S, N, V))
 			Top = FMath::Max(Top, S.Z);
 	return Top;
+}
+
+double AOTGRuntimeCourse::OpenWaterAt(const FVector& P) const
+{
+	const double Top = WaterTopAt(P);
+	if (Top < -1e9 || !Data) return Top;
+	const FVector O = Data->LevelOrigin;
+	return Top > O.Z + GroundAt(P.X - O.X, P.Y - O.Y) + 3.0 ? Top : -UE_BIG_NUMBER;
 }

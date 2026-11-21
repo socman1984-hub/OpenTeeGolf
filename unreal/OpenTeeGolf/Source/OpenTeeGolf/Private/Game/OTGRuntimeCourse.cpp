@@ -238,6 +238,7 @@ void AOTGRuntimeCourse::PrepareGround()
 	for (const auto& P : SavedTurfLooks()) SetTurfLook(P.Key, P.Value);
 	LiftPondBanks();
 	SettleWater();
+	PlanCreeks();   // (and HoldPonds, where a creek leaves a pond over it)
 	const int32 N = Data->HeightSamples;
 	TileQuads = N > 2049 ? 128 : 64;   // (a tile's samples a side: bigger tiles on a big course)
 	TileCount = FMath::DivideAndRoundUp(N - 1, TileQuads);
@@ -352,8 +353,9 @@ void AOTGRuntimeCourse::LiftPondBanks()
 			Level = Q->GetNumberField(TEXT("z"));
 		}
 		FBox2D Box(Poly);
-		const int32 X0 = FMath::Max(0, FMath::FloorToInt(Box.Min.X) - Reach - 1), Y0 = FMath::Max(0, FMath::FloorToInt(Box.Min.Y) - Reach - 1);
-		const int32 X1 = FMath::Min(N - 1, FMath::CeilToInt(Box.Max.X) + Reach + 1), Y1 = FMath::Min(N - 1, FMath::CeilToInt(Box.Max.Y) + Reach + 1);
+		const int32 Margin = Reach + 1;
+		const int32 X0 = FMath::Max(0, FMath::FloorToInt(Box.Min.X) - Margin), Y0 = FMath::Max(0, FMath::FloorToInt(Box.Min.Y) - Margin);
+		const int32 X1 = FMath::Min(N - 1, FMath::CeilToInt(Box.Max.X) + Margin), Y1 = FMath::Min(N - 1, FMath::CeilToInt(Box.Max.Y) + Margin);
 		const int32 W = X1 - X0 + 1, H = Y1 - Y0 + 1;
 		if (W <= 0 || H <= 0) continue;
 		// inside the outline (crossings), then out from it a sample at a time
@@ -471,6 +473,69 @@ void AOTGRuntimeCourse::LiftPondBanks()
 			}
 	}
 	UE_LOG(LogOTGRuntimeCourse, Display, TEXT("Pond banks: %d samples shaped round the rounded outlines"), Lifted);
+}
+
+// A pond held by its bank where a creek leaves it from below (PondHolds: PlanCreeks). There the ground
+// beside the pond - the creek's channel, dug by SettleWater under the export's own water - lay well
+// under the pond's water, which stood over it in mid-air, the sheet's square edge showing as stairs.
+// Within 15 m of the creek's end the ground's raised to a berm: its top 3 m wide just over the water,
+// its outside falling about 30 degrees to the ground, fading out from 10 to 15 m (raised all round
+// every pond, it left a sawtooth along their shores). Only the ground's drawing
+void AOTGRuntimeCourse::HoldPonds()
+{
+	BermCells.Reset();
+	if (FParse::Param(FCommandLine::Get(), TEXT("oldbanks"))) return;   // (-oldbanks: as LiftPondBanks left them)
+	const int32 N = Data->HeightSamples;
+	if (GroundHeights.Num() != N * N) return;
+	const double Step = Data->MetresPerSample * 100.0;
+	const double ZScale = Data->HeightRange * 100.0 / 65535.0;
+	constexpr double BermCm = 1200.0, Fall = 0.55, Clear = 8.0;   // (its reach; its fall, cm a cm: about 30 degrees)
+	constexpr double Near = 1000.0, Far = 1500.0;   // (round the creek's end: full, fading out)
+	int32 Raised = 0;
+	BermCells.Reset();
+	for (const FPondHold& Hold : PondHolds)
+	{
+		const int32 k = Hold.Pond;
+		if (!PondOutlines.IsValidIndex(k) || !PondLevels.IsValidIndex(k)) continue;
+		const TArray<FVector2D>& R = PondOutlines[k];
+		if (R.Num() < 3) continue;
+		const double Level = PondLevels[k];
+		const int32 Before = Raised;
+		FVector2D Sum(0, 0); double MaxUp = 0;
+		const FBox2D Box(Hold.At - FVector2D(Far + Step), Hold.At + FVector2D(Far + Step));
+		const int32 X0 = FMath::Max(0, FMath::FloorToInt(Box.Min.X / Step)), Y0 = FMath::Max(0, FMath::FloorToInt(Box.Min.Y / Step));
+		const int32 X1 = FMath::Min(N - 1, FMath::CeilToInt(Box.Max.X / Step)), Y1 = FMath::Min(N - 1, FMath::CeilToInt(Box.Max.Y / Step));
+		for (int32 y = Y0; y <= Y1; y++)
+			for (int32 x = X0; x <= X1; x++)
+			{
+				uint16& Hv = GroundHeights[y * N + x];
+				const double Z = Hv * ZScale;
+				if (Z >= Level + 2.0 + Clear) continue;   // (high enough whatever: the usual bank)
+				const FVector2D S(x * Step, y * Step);
+				const double K = 1.0 - FMath::SmoothStep(Near, Far, FVector2D::Distance(S, Hold.At));
+				if (K <= 0) continue;
+				bool bIn = false;
+				double D2 = TNumericLimits<double>::Max();
+				for (int32 ia = 0, ib = R.Num() - 1; ia < R.Num(); ib = ia++)
+				{
+					const FVector2D& Pa = R[ia]; const FVector2D& Pb = R[ib];
+					if ((Pa.Y > S.Y) != (Pb.Y > S.Y) && S.X < (Pb.X - Pa.X) * (S.Y - Pa.Y) / (Pb.Y - Pa.Y) + Pa.X) bIn = !bIn;
+					const FVector2D AB = Pb - Pa;
+					const double T = FMath::Clamp(FVector2D::DotProduct(S - Pa, AB) / FMath::Max(AB.SizeSquared(), 1e-9), 0.0, 1.0);
+					D2 = FMath::Min(D2, FVector2D::DistSquared(S, Pa + AB * T));
+				}
+				if (bIn) continue;
+				const double D = FMath::Sqrt(D2);   // (cm from the rounded outline)
+				if (D > BermCm) continue;
+				// (its top 3 m wide, just over the water: the water's drawn that far past the outline - a lake's
+				// rectangle, a still pond's sheet - and over a berm falling from 1.5 m it hung in the air, black)
+				const double Berm = FMath::Lerp(Z, Level + 2.0 + Clear * FMath::SmoothStep(0.0, 100.0, D) - FMath::Max(0.0, D - 320.0) * Fall, K);
+				if (Berm > Z + 0.5) { Hv = uint16(FMath::Clamp(FMath::CeilToDouble(Berm / ZScale), 0.0, 65535.0)); Raised++; Sum += S; MaxUp = FMath::Max(MaxUp, Berm - Z); }
+				if (Berm > Z + 15.0) BermCells.Add(FIntPoint(x, y));
+			}
+		if (Raised > Before) UE_LOG(LogOTGRuntimeCourse, Display, TEXT("  pond %d: berm at %d samples round %.0f %.0f, up to %.0f cm"), k, Raised - Before, Sum.X / (Raised - Before), Sum.Y / (Raised - Before), MaxUp);
+	}
+	UE_LOG(LogOTGRuntimeCourse, Display, TEXT("Ponds held: the ground raised to a berm at %d samples"), Raised);
 }
 
 // The water's surface (water.glb: a point on each of the ground's samples, at its water's level),
@@ -1561,9 +1626,11 @@ void AOTGRuntimeCourse::RedrawPondMasks()
 	const int32 W = P->W, H = P->H;
 	const double Px = LandCm / W, Py = LandCm / H, Reach = 300.0;
 	int32 Changed = 0;
-	for (const TArray<FVector2D>& R : PondOutlines)
+	for (int32 k = 0; k < PondOutlines.Num(); k++)
 	{
+		const TArray<FVector2D>& R = PondOutlines[k];
 		if (R.Num() < 3) continue;
+		const double Level = PondLevels.IsValidIndex(k) ? PondLevels[k] : -1e9;
 		const FBox2D Box = FBox2D(R).ExpandBy(Reach);
 		const int32 I0 = FMath::Max(0, FMath::FloorToInt(Box.Min.X / Px)), I1 = FMath::Min(W - 1, FMath::CeilToInt(Box.Max.X / Px));
 		const int32 J0 = FMath::Max(0, FMath::FloorToInt(Box.Min.Y / Py)), J1 = FMath::Min(H - 1, FMath::CeilToInt(Box.Max.Y / Py));
@@ -1583,16 +1650,42 @@ void AOTGRuntimeCourse::RedrawPondMasks()
 				}
 				const double D = FMath::Sqrt(D2);
 				if (!bIn && D > Reach) continue;
+				// (the shore just under the water - drawn dark, the water over it - only where the ground
+				// is: on a bank standing well over the water, a berm holding the pond, it showed black)
+				if (!bIn && GroundAt(Q.X, Q.Y) > Level + 4.0) { P->Pixels[j * W + i] = 0; Changed++; continue; }
 				const double S = (bIn ? 1.0 : -1.0) * D / 600.0;
 				P->Pixels[j * W + i] = uint8(FMath::Clamp(0.5 + S, 0.0, 1.0) * 255.0 + 0.5);
 				Changed++;
 			}
 	}
+	// (a berm holding a pond over a creek's channel or a ditch - HoldPonds: rough, not the export's water
+	// and stream bed there. With those only cleared, no surface was left and the ground fell back to
+	// the aerial photo, the dark water of the channel: a black patch)
+	otg::FPicture* St = MaskPixels.Find(TEXT("stream"));
+	otg::FPicture* Ro = MaskPixels.Find(TEXT("rough"));
+	const double Step = Data->MetresPerSample * 100.0;
+	for (const FIntPoint& C : BermCells)
+		for (otg::FPicture* M : { P, St, Ro })
+		{
+			if (!M || !M->W) continue;
+			const double Mx = LandCm / M->W, My = LandCm / M->H;
+			const int32 I0 = FMath::Max(0, FMath::FloorToInt((C.X - 0.5) * Step / Mx)), I1 = FMath::Min(M->W - 1, FMath::CeilToInt((C.X + 0.5) * Step / Mx));
+			const int32 J0 = FMath::Max(0, FMath::FloorToInt((C.Y - 0.5) * Step / My)), J1 = FMath::Min(M->H - 1, FMath::CeilToInt((C.Y + 0.5) * Step / My));
+			for (int32 j = J0; j <= J1; j++) for (int32 i = I0; i <= I1; i++) M->Pixels[j * M->W + i] = M == Ro ? 255 : 0;
+		}
 	if (UTexture2D* T = otg::MakeTexture(*P, otg::ETexKind::Mask, this))
 	{
 		Textures.Add(TEXT("Mask_water"), T);
 		GroundMat->SetTextureParameterValue(TEXT("Mask_water"), T);
 	}
+	if (BermCells.Num())
+		for (const TPair<const TCHAR*, otg::FPicture*> KV : { TPair<const TCHAR*, otg::FPicture*>(TEXT("Mask_stream"), St), TPair<const TCHAR*, otg::FPicture*>(TEXT("Mask_rough"), Ro) })
+			if (KV.Value && KV.Value->W)
+				if (UTexture2D* T = otg::MakeTexture(*KV.Value, otg::ETexKind::Mask, this))
+				{
+					Textures.Add(KV.Key, T);
+					GroundMat->SetTextureParameterValue(KV.Key, T);
+				}
 	UE_LOG(LogOTGRuntimeCourse, Display, TEXT("Ponds: the water mask drawn from their rounded outlines (%d pixels)"), Changed);
 }
 

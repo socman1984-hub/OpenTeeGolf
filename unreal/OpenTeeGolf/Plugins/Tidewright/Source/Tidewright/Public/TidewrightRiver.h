@@ -25,6 +25,14 @@ struct TIDEWRIGHT_API FTidewrightRiverSettings
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Interp, Category = "River", meta = (ClampMin = "0.0", ClampMax = "15.0", Units = "m/s"))
 	float FlowSpeed = 1.6f;
 
+	/**
+	 * How much faster the water runs where the river narrows, and slower where it widens, as the same water squeezes
+	 * through. 0 keeps one speed along the whole river; 1 is full continuity (half the width, twice the speed).
+	 * Measured against the river's typical width, and limited to between 0.65 and 1.6 times Flow Speed.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "River", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float NarrowsSpeedup = 0.7f;
+
 	/** Size of the ripple pattern carried by the current. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Surface", meta = (ClampMin = "0.2", ClampMax = "50.0", Units = "m"))
 	float RippleSize = 5.0f;
@@ -133,6 +141,11 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<UMaterialInstanceDynamic> SurfaceMaterial;
 
+	/** Speed of the current along the river relative to Flow Speed (Narrows Speedup), one value per mesh row. */
+	float WidthSpeedAt(double Distance) const;
+
 	FTidewrightRiverSettings AppliedRiver;
 	bool bMaterialDirty = true;
+	TArray<float> RowWidthSpeed;
+	double RowWidthSpeedLength = 0.0;
 };

@@ -578,9 +578,52 @@ void AOTGRound::AddRipple(const FVector& WorldAt)
 	Ripples.Add({ P, 0.f });
 }
 
+// Rain on the water: where the drops land, small rings - a couple of centimetres growing to a
+// hand's width in under a second, one and a fainter one inside it - scattered over the water ahead
+// of the camera out to 35 m, as many as the rain is hard (drizzle a few a second on a pond, heavy
+// rain dozens). Only on open water (AOTGRuntimeCourse::OpenWaterAt), at most RainRingMax at once;
+// further off a ring's line is drawn wider, so it doesn't break up into flicker.
+namespace
+{
+	constexpr float RainRingLife = 0.75f;
+	constexpr int32 RainRingMax = 400;
+}
+
+void AOTGRound::SpawnRainRings(float Dt)
+{
+	const double Mm = Weather.RainMm;
+	APlayerController* PC = GetWorld() ? GetWorld()->GetFirstPlayerController() : nullptr;
+	if (Mm <= 0.05 || !PC || !PC->PlayerCameraManager) { RainRingCarry = 0; return; }
+	AOTGRuntimeCourse* Built = nullptr;
+	for (TActorIterator<AOTGRuntimeCourse> It(GetWorld()); It; ++It) { Built = *It; break; }
+	if (!Built) return;
+	const FVector Eye = PC->PlayerCameraManager->GetCameraLocation();
+	const double Yaw = PC->PlayerCameraManager->GetCameraRotation().Yaw;
+	// (spots tried a second: 300 a mm of rain an hour, most of them on dry ground)
+	RainRingCarry += Dt * float(FMath::Min(Mm, 10.0) * 300.0);
+	int32 Tries = FMath::FloorToInt(RainRingCarry);
+	RainRingCarry -= Tries;
+	Tries = FMath::Min(Tries, 60);
+	for (int32 n = 0; n < Tries && RainRings.Num() < RainRingMax; n++)
+	{
+		// (even over the ground: a sector 50 degrees either side of the view, 2 to 35 m out)
+		const double Dist = FMath::Sqrt(FMath::FRandRange(0.0033, 1.0)) * 3500.0;
+		const double A = FMath::DegreesToRadians(Yaw + FMath::FRandRange(-50.0, 50.0));
+		const FVector At = Eye + FVector(FMath::Cos(A), FMath::Sin(A), 0) * Dist;
+		const double Top = Built->OpenWaterAt(At);
+		if (Top < -1e9 || Top > Eye.Z) continue;
+		FRainRing R;
+		R.P = FVector(At.X, At.Y, Top + 1.0);
+		R.Size = FMath::FRandRange(0.7f, 1.3f);
+		R.Width = float(FMath::Max(0.6, FVector::Dist(Eye, R.P) * 0.0012));
+		RainRings.Add(R);
+	}
+}
+
 void AOTGRound::UpdateRipples(float Dt)
 {
-	if (!Ripples.Num() && !RippleMesh) return;
+	SpawnRainRings(Dt);
+	if (!Ripples.Num() && !RainRings.Num() && !RippleMesh) return;
 	if (!RippleMesh)
 	{
 		RippleMesh = NewObject<UProceduralMeshComponent>(this);
@@ -597,6 +640,11 @@ void AOTGRound::UpdateRipples(float Dt)
 			RippleMat = UMaterialInstanceDynamic::Create(M, this);
 			RippleMat->SetVectorParameterValue(TEXT("Tint"), FLinearColor(0.7f, 0.76f, 0.8f, 1));
 			RippleMat->SetScalarParameterValue(TEXT("Opacity"), 0.3f);
+			// (the rain's rings, their own: much darker - unlit, in the dim light of a rainy day the
+			// camera's exposure made them chalk-white whatever their opacity)
+			RainRingMat = UMaterialInstanceDynamic::Create(M, this);
+			RainRingMat->SetVectorParameterValue(TEXT("Tint"), FLinearColor(0.16f, 0.18f, 0.2f, 1));
+			RainRingMat->SetScalarParameterValue(TEXT("Opacity"), 0.3f);
 		}
 	}
 	constexpr float Life = 4.f, SprayTime = 0.5f;
@@ -643,12 +691,41 @@ void AOTGRound::UpdateRipples(float Dt)
 			}
 		}
 	}
+	// (the ball's: section 0)
 	if (V.Num())
 	{
 		RippleMesh->CreateMeshSection_LinearColor(0, V, T, TArray<FVector>(), UV, TArray<FLinearColor>(), TArray<FProcMeshTangent>(), false);
 		if (RippleMat) RippleMesh->SetMaterial(0, RippleMat);
 	}
-	else RippleMesh->ClearAllMeshSections();
+	else if (RippleMesh->GetNumSections() > 0) RippleMesh->ClearMeshSection(0);
+	V.Reset(); T.Reset(); UV.Reset();
+	// the rain's rings (section 1): an outer ring and, a moment behind it, a fainter one inside
+	for (int32 i = RainRings.Num() - 1; i >= 0; i--)
+	{
+		FRainRing& R = RainRings[i];
+		R.Age += Dt;
+		if (R.Age > RainRingLife) { RainRings.RemoveAtSwap(i); continue; }
+		for (int32 k = 0; k < 2; k++)
+		{
+			const float A = R.Age - k * 0.12f;
+			if (A <= 0) continue;
+			const double Rad = (2.0 + A * 32.0) * R.Size, W = R.Width * (1.0 + A * 1.5);
+			const float Fade = FMath::Clamp(1.f - A / (RainRingLife - k * 0.12f), 0.f, 1.f) * FMath::Clamp(A * 12.f, 0.f, 1.f) * (k == 0 ? 0.7f : 0.4f);
+			constexpr int32 Seg = 16;
+			for (int32 s = 0; s < Seg; s++)
+			{
+				const double a0 = 2 * PI * s / Seg, a1 = 2 * PI * (s + 1) / Seg;
+				const FVector D0(FMath::Cos(a0), FMath::Sin(a0), 0), D1(FMath::Cos(a1), FMath::Sin(a1), 0);
+				Quad(R.P + D0 * FMath::Max(0.0, Rad - W), R.P + D0 * (Rad + W), R.P + D1 * FMath::Max(0.0, Rad - W), R.P + D1 * (Rad + W), Fade);
+			}
+		}
+	}
+	if (V.Num())
+	{
+		RippleMesh->CreateMeshSection_LinearColor(1, V, T, TArray<FVector>(), UV, TArray<FLinearColor>(), TArray<FProcMeshTangent>(), false);
+		if (RainRingMat) RippleMesh->SetMaterial(1, RainRingMat);
+	}
+	else if (RippleMesh->GetNumSections() > 1) RippleMesh->ClearMeshSection(1);
 }
 
 namespace

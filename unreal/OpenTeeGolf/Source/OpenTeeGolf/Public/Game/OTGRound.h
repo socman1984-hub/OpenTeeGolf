@@ -200,12 +200,18 @@ private:
 	// a ball into water: a splash, then rings spreading over the surface (OTGRoundExtras.cpp)
 	struct FRipple { FVector P; float Age = 0; };
 	TArray<FRipple> Ripples;
+	// rain on the water: small rings where the drops land, more the harder it rains
+	struct FRainRing { FVector P; float Age = 0; float Size = 1; float Width = 1; };
+	TArray<FRainRing> RainRings;
+	float RainRingCarry = 0;
+	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> RainRingMat;
 	UPROPERTY() TObjectPtr<class UProceduralMeshComponent> RippleMesh;
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> RippleMat;
 public:
 	void AddRipple(const FVector& WorldAt);
 private:
 	void UpdateRipples(float Dt);
+	void SpawnRainRings(float Dt);
 	// a storm's lightning, and the weather's sound (UOTGWeatherSound: rain, wind, thunder)
 	UPROPERTY() TObjectPtr<class UOTGWeatherSound> WxSound;
 	UPROPERTY() TObjectPtr<class UAudioComponent> WxAudio;

@@ -22,3 +22,10 @@ Thumbs.db
 
 # Launch monitor bridge programs (downloaded by lib/bridges.js)
 bridges/
+
+# Python caches
+__pycache__/
+
+# The Kerbside Cars pack's own project (a separate product: its own repository, not redistributed here;
+# the game's copy is under Content/, which is ignored too)
+unreal/OpenTeeGolf/Plugins/CarPackFab/

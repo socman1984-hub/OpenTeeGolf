@@ -55,6 +55,9 @@ class OPENTEEGOLF_API AOTGRuntimeCourse : public AActor
 public:
 	// (the highest water surface over a point, world cm, or a huge negative: none - OTGWater.cpp)
 	double WaterTopAt(const FVector& P) const;
+	// (the same, but only where the water stands over the ground there - not a still pond's sheet
+	// running on under its banks: where rain's rings go)
+	double OpenWaterAt(const FVector& P) const;
 	AOTGRuntimeCourse();
 	virtual void Tick(float Dt) override;
 	virtual void EndPlay(const EEndPlayReason::Type Reason) override;
@@ -134,6 +137,10 @@ private:
 	void PrepareGround();
 	void LiftPondBanks();
 	void SettleWater();
+	void HoldPonds();
+	struct FPondHold { int32 Pond = 0; FVector2D At; };
+	TArray<FPondHold> PondHolds;   // (where a creek leaves a pond sitting over it: PlanCreeks; HoldPonds banks the pond there)
+	TArray<FIntPoint> BermCells;   // (the ground's samples HoldPonds raised: dry grass, not the export's water or stream bed)
 	// (water.glb's surface, its levels smoothed, read before the ground: SettleWater)
 	TArray<FVector3f> WaterPos;
 	TArray<int32> WaterIdx;
@@ -145,6 +152,12 @@ private:
 	void RiverAroundRocks(class ATidewrightRiver* R);   // (OTGRiverRocks.cpp: the water parts round a rock)
 	TArray<TArray<FVector2D>> PondOutlines;   // (each lake's outline, rounded, cm in the level's frame: LiftPondBanks; a still pond's water is laid over it)
 	TArray<double> PondLevels;   // (each lake's water level, cm, in water_bodies.json's order: LiftPondBanks)
+	// The creeks as drawn (OTGWater.cpp PlanCreeks): each piece of a river between the ponds it runs
+	// through - its centre line (cm, the level's frame; z its water level, falling downstream) and width
+	void PlanCreeks();
+	struct FCreek { TArray<FVector> Pts; TArray<double> W; };
+	TArray<FCreek> Creeks;
+	bool bCreeksPlanned = false;
 	void AddBeach(const TArray<float>& FromWater, const TArray<double>& Gs, int32 Size, const FVector2D& Min, const FVector2D& Cell, double Level);
 	double TidewrightCheckAt = 0;
 	double GroundAt(double X, double Y) const;

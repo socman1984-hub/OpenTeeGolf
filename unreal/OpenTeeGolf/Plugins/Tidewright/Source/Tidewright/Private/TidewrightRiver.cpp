@@ -111,9 +111,46 @@ void ATidewrightRiver::RebuildRiver()
 	const FVector Origin = GetActorLocation();
 	SurfaceMesh->SetWorldLocationAndRotation(Origin, FQuat::Identity);
 
+	// The same water squeezes through the narrows and spreads out in the wide places: each row's speed against the
+	// river's typical (median) width, smoothed over a few metres so a quick change of width doesn't shear the ripples.
+	RowWidthSpeed.SetNum(Rows);
+	RowWidthSpeedLength = Length;
+	{
+		TArray<double> Halves;
+		Halves.SetNum(Rows);
+		for (int32 Row = 0; Row < Rows; ++Row)
+		{
+			Halves[Row] = TidewrightRiver::SectionAt(*Spline, Length * Row / (Rows - 1), River.Width).HalfWidth;
+		}
+		TArray<double> Sorted = Halves;
+		Sorted.Sort();
+		const double Typical = Sorted[Sorted.Num() / 2];
+		TArray<float> Raw;
+		Raw.SetNum(Rows);
+		for (int32 Row = 0; Row < Rows; ++Row)
+		{
+			const double Ratio = Typical / FMath::Max(Halves[Row], 1.0);
+			Raw[Row] = static_cast<float>(FMath::Clamp(FMath::Pow(Ratio, static_cast<double>(FMath::Clamp(River.NarrowsSpeedup, 0.0f, 1.0f))), 0.65, 1.6));
+		}
+		const double RowSpacing = Rows > 1 ? Length / (Rows - 1) : Length;
+		const int32 Reach = FMath::Max(1, FMath::RoundToInt32(400.0 / FMath::Max(RowSpacing, 1.0)));
+		for (int32 Row = 0; Row < Rows; ++Row)
+		{
+			float Sum = 0.0f;
+			int32 Count = 0;
+			for (int32 Other = FMath::Max(0, Row - Reach); Other <= FMath::Min(Rows - 1, Row + Reach); ++Other)
+			{
+				Sum += Raw[Other];
+				++Count;
+			}
+			RowWidthSpeed[Row] = Sum / FMath::Max(Count, 1);
+		}
+	}
+
 	TArray<FVector> Vertices;
 	TArray<FVector> Normals;
 	TArray<FVector2D> UV0;
+	TArray<FVector2D> UV1;
 	TArray<FLinearColor> Colors;
 	TArray<FProcMeshTangent> Tangents;
 	TArray<int32> Triangles;
@@ -136,6 +173,8 @@ void ATidewrightRiver::RebuildRiver()
 			Tangents.Add(FProcMeshTangent(Section.Right, false));
 			// River space, in metres: X across from the centre line, Y along the flow.
 			UV0.Add(FVector2D(Across * Section.HalfWidth * 0.01, Distance * 0.01));
+			// The current's speed here from the river's width (the material multiplies its own by it; 0 is "none set").
+			UV1.Add(FVector2D(RowWidthSpeed[Row], 0.0));
 			Colors.Add(FLinearColor(static_cast<float>(FMath::Abs(Across)), FMath::Min(Section.Slope, 1.0f), static_cast<float>(Section.HalfWidth * 0.01 / 100.0), EndFade));
 		}
 	}
@@ -165,7 +204,7 @@ void ATidewrightRiver::RebuildRiver()
 	}
 
 	SurfaceMesh->ClearAllMeshSections();
-	SurfaceMesh->CreateMeshSection_LinearColor(0, Vertices, Triangles, Normals, UV0, Colors, Tangents, false);
+	SurfaceMesh->CreateMeshSection_LinearColor(0, Vertices, Triangles, Normals, UV0, UV1, TArray<FVector2D>(), TArray<FVector2D>(), Colors, Tangents, false);
 
 	if (!SurfaceMaterial)
 	{
@@ -204,7 +243,7 @@ void ATidewrightRiver::PushMaterialParameters()
 void ATidewrightRiver::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
-	if (SurfaceMesh && !FMath::IsNearlyEqual(AppliedRiver.Width, River.Width))
+	if (SurfaceMesh && (!FMath::IsNearlyEqual(AppliedRiver.Width, River.Width) || !FMath::IsNearlyEqual(AppliedRiver.NarrowsSpeedup, River.NarrowsSpeedup)))
 	{
 		RebuildRiver();
 	}
@@ -274,9 +313,20 @@ bool ATidewrightRiver::SampleRiver(const FVector& WorldLocation, FVector& OutSur
 
 	OutSurfaceLocation = FVector(WorldLocation.X, WorldLocation.Y, Section.Location.Z - Along * Section.Slope);
 	OutNormal = FVector(Section.Along.X * Section.Slope, Section.Along.Y * Section.Slope, 1.0).GetSafeNormal();
-	const float Factor = FlowFactor(static_cast<float>(Across / Section.HalfWidth), Section.Slope, River.RapidsSlope);
+	const float Factor = FlowFactor(static_cast<float>(Across / Section.HalfWidth), Section.Slope, River.RapidsSlope) * WidthSpeedAt(Distance);
 	OutVelocity = (Section.Along - FVector(0.0, 0.0, Section.Slope)) * (River.FlowSpeed * 100.0 * Factor);
 	return true;
+}
+
+float ATidewrightRiver::WidthSpeedAt(double Distance) const
+{
+	if (RowWidthSpeed.Num() < 2 || RowWidthSpeedLength <= 0.0)
+	{
+		return 1.0f;
+	}
+	const double Row = FMath::Clamp(Distance / RowWidthSpeedLength, 0.0, 1.0) * (RowWidthSpeed.Num() - 1);
+	const int32 Below = FMath::Min(FMath::FloorToInt32(Row), RowWidthSpeed.Num() - 2);
+	return FMath::Lerp(RowWidthSpeed[Below], RowWidthSpeed[Below + 1], static_cast<float>(Row - Below));
 }
 
 bool ATidewrightRiver::SampleAnyRiver(const UWorld* World, const FVector& WorldLocation, FVector& OutSurfaceLocation, FVector& OutNormal, FVector& OutVelocity)
