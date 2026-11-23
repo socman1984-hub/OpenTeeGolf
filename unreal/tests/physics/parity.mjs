@@ -1,4 +1,4 @@
-// Physics parity: the Unreal game's C++ ball physics (unreal/OpenTeeGolf/Source/.../OTGBallPhysics.cpp)
+// Physics parity: the Unreal game's C++ ball physics (unreal/OpenTeeGolf/Plugins/OTGBallPhysics/.../OTGBallPhysics.cpp)
 // against the web version's (public/js/physics.js). The same shots on the same formula courses
 // (a flat hole and a hilly one: tee, fairway, rough, a bunker, water, fringe, a green and its cup),
 // with the same seeded random numbers, through both; every result must match.
@@ -15,7 +15,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '../../..');
-const SRC = path.join(ROOT, 'unreal/OpenTeeGolf/Source/OpenTeeGolf');
+const SRC = path.join(ROOT, 'unreal/OpenTeeGolf/Plugins/OTGBallPhysics/Source/OTGBallPhysics');
 const OUT = path.join(HERE, 'build');
 const EXE = path.join(OUT, 'parity.exe');
 

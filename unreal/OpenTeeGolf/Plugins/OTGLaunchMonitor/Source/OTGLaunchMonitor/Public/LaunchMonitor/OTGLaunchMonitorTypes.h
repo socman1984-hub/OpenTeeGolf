@@ -91,12 +91,12 @@ struct FOTGLaunchMonitorStatus
 };
 
 // Ball data as the devices give it (OpenConnect's BallData names), before toShot's clamping
-struct OPENTEEGOLF_API FOTGBallData
+struct OTGLAUNCHMONITOR_API FOTGBallData
 {
 	TOptional<double> Speed, VLA, HLA, BackSpin, SideSpin, TotalSpin, SpinAxis, CarryYd;
 	FOTGClubData Club;
 };
 
 // toShot (server.js): clamped into an FOTGShot
-OPENTEEGOLF_API FOTGShot OTGToShot(const FOTGBallData& B, const FString& Source, const FString& Device, int32 ShotNumber = -1);
-OPENTEEGOLF_API FString OTGShotLine(const FOTGShot& S); // "150.3 mph, VLA 12.0, HLA 1.3, spin 2737 rpm, axis 9.5"
+OTGLAUNCHMONITOR_API FOTGShot OTGToShot(const FOTGBallData& B, const FString& Source, const FString& Device, int32 ShotNumber = -1);
+OTGLAUNCHMONITOR_API FString OTGShotLine(const FOTGShot& S); // "150.3 mph, VLA 12.0, HLA 1.3, spin 2737 rpm, axis 9.5"

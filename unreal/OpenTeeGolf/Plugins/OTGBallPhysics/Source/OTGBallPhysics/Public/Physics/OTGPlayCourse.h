@@ -15,7 +15,7 @@
 
 namespace otg
 {
-	struct PlayCourse : Course
+	struct OTGBALLPHYSICS_API PlayCourse : Course
 	{
 		// The export's heightmap: N x N samples, sample (i, j) at x0 + i * step, z1 - j * step, value v
 		// at base + v / 65535 * range metres
@@ -50,7 +50,7 @@ namespace otg
 	// (prisms on their footprint's convex outline) and the flagstick, every one grown by the ball's
 	// radius so a ray along the ball's centre acts as the ball. Obstacles are bucketed on a 10 m grid.
 	// (OTGPlayCollider.cpp)
-	struct PlayCollider : Collider
+	struct OTGBALLPHYSICS_API PlayCollider : Collider
 	{
 		void Build(const PlayCourse& course, const std::vector<Tree>& trees, const std::vector<Solid>& solids);
 		void SetPin(const V3* pin) override;
@@ -82,7 +82,7 @@ namespace otg
 
 	// The course's trees, bucketed on a 10 m grid (as the game's TreeIndex: each tree in every cell
 	// its crown reaches)
-	struct PlayTrees : Trees
+	struct OTGBALLPHYSICS_API PlayTrees : Trees
 	{
 		std::vector<Tree> all;
 		void Build(double cell = 10);

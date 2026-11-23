@@ -15,7 +15,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '../../..');
-const SRC = path.join(ROOT, 'unreal/OpenTeeGolf/Source/OpenTeeGolf');
+const SRC = path.join(ROOT, 'unreal/OpenTeeGolf/Plugins/OTGBallPhysics/Source/OTGBallPhysics');
 const OUT = path.join(HERE, 'build');
 const EXE = path.join(OUT, 'course.exe');
 const ID = process.argv[2] || 'Majestic_Springs_Golf_Club';

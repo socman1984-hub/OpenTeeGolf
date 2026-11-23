@@ -1,0 +1,15 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "1.0",
+	"FriendlyName": "OpenTeeGolf Ball Physics",
+	"Description": "The golf ball's flight, bounce and roll (OpenFairway), and a course for it to play on. Plain C++, the same as the web version's physics.",
+	"Category": "OpenTeeGolf",
+	"CreatedBy": "OpenTeeGolf contributors",
+	"CanContainContent": false,
+	"EnabledByDefault": true,
+	"Installed": false,
+	"Modules": [
+		{ "Name": "OTGBallPhysics", "Type": "Runtime", "LoadingPhase": "Default" }
+	]
+}

@@ -15,6 +15,11 @@
 #include <string>
 #include <vector>
 
+// (exported from the plugin's module in Unreal; nothing outside it, as in the parity tests)
+#ifndef OTGBALLPHYSICS_API
+#define OTGBALLPHYSICS_API
+#endif
+
 namespace otg
 {
 	struct V3
@@ -25,7 +30,7 @@ namespace otg
 	// ---- OpenFairway: the ball, the air, contacts and roll (openfairway.js)
 	namespace of
 	{
-		extern const double MASS, RADIUS, G, RAD_PER_RPM, DT;
+		OTGBALLPHYSICS_API extern const double MASS, RADIUS, G, RAD_PER_RPM, DT;
 
 		// A surface's contact settings (openfairway.js `surface`)
 		struct SurfaceParams
@@ -59,41 +64,41 @@ namespace otg
 			double speed = 0, spinRatio = 0, reynolds = 0, cd = 0, cl = 0, spinDecay = 0;
 		};
 
-		SurfaceParams MakeSurface(double kineticFriction, double rollingFriction, double grassViscosity, double criticalAngle, double spinbackResponseScale);
-		const SurfaceParams& Preset(const char* name); // fairway, fairwaySoft, rough, firm, fringe, green, sand
+		OTGBALLPHYSICS_API SurfaceParams MakeSurface(double kineticFriction, double rollingFriction, double grassViscosity, double criticalAngle, double spinbackResponseScale);
+		OTGBALLPHYSICS_API const SurfaceParams& Preset(const char* name); // fairway, fairwaySoft, rough, firm, fringe, green, sand
 
-		double GreenRollingFriction(double stimpFt, double viscosity = -1);
-		double PuttSpeed(double distanceM, double stimpFt, double viscosity = -1);
-		double AirDensity(double altitudeM, double tempC, double humidity = 0, double stationPressurePa = 0);
-		double AirViscosity(double tempC);
-		double WindFactor(double heightM, double referenceM = 10, double roughnessM = 0.03);
-		double DragCoefficient(double re);
-		double LiftCoefficient(double re, double spinRatio);
-		Aero AeroSample(const V3& air, const V3& spin, const Env& env);
-		Aero StepFlight(V3& v, V3& spin, const Env& env, const V3& wind, double dt);
-		std::string RegimeKey(double mph, double vla, double rpm);
-		std::string LandingBucket(double vla, double rpm);
-		Launch ResolveLaunch(double speedMph, double vlaDeg, double totalSpinRpm);
-		void ResolveImpact(V3& v, V3& spin, const V3& n, const SurfaceParams& surf, bool firstImpact, const Landing* response);
-		bool HasRebound(const V3& v, const V3& n, const SurfaceParams& surf);
-		V3 LaunchSpin(const V3& v, const V3& measured, const V3& n);
-		double SpinFrictionMultiplier(double rpm, double speed);
-		void StepGround(V3& v, V3& spin, const V3& n, const SurfaceParams& surf, double impactRpm, double dt);
-		bool CanRest(const V3& v, const V3& spin, const V3& n, const SurfaceParams& surf);
+		OTGBALLPHYSICS_API double GreenRollingFriction(double stimpFt, double viscosity = -1);
+		OTGBALLPHYSICS_API double PuttSpeed(double distanceM, double stimpFt, double viscosity = -1);
+		OTGBALLPHYSICS_API double AirDensity(double altitudeM, double tempC, double humidity = 0, double stationPressurePa = 0);
+		OTGBALLPHYSICS_API double AirViscosity(double tempC);
+		OTGBALLPHYSICS_API double WindFactor(double heightM, double referenceM = 10, double roughnessM = 0.03);
+		OTGBALLPHYSICS_API double DragCoefficient(double re);
+		OTGBALLPHYSICS_API double LiftCoefficient(double re, double spinRatio);
+		OTGBALLPHYSICS_API Aero AeroSample(const V3& air, const V3& spin, const Env& env);
+		OTGBALLPHYSICS_API Aero StepFlight(V3& v, V3& spin, const Env& env, const V3& wind, double dt);
+		OTGBALLPHYSICS_API std::string RegimeKey(double mph, double vla, double rpm);
+		OTGBALLPHYSICS_API std::string LandingBucket(double vla, double rpm);
+		OTGBALLPHYSICS_API Launch ResolveLaunch(double speedMph, double vlaDeg, double totalSpinRpm);
+		OTGBALLPHYSICS_API void ResolveImpact(V3& v, V3& spin, const V3& n, const SurfaceParams& surf, bool firstImpact, const Landing* response);
+		OTGBALLPHYSICS_API bool HasRebound(const V3& v, const V3& n, const SurfaceParams& surf);
+		OTGBALLPHYSICS_API V3 LaunchSpin(const V3& v, const V3& measured, const V3& n);
+		OTGBALLPHYSICS_API double SpinFrictionMultiplier(double rpm, double speed);
+		OTGBALLPHYSICS_API void StepGround(V3& v, V3& spin, const V3& n, const SurfaceParams& surf, double impactRpm, double dt);
+		OTGBALLPHYSICS_API bool CanRest(const V3& v, const V3& spin, const V3& n, const SurfaceParams& surf);
 	}
 
 	// ---- the ball on the course (physics.js)
 
 	// The course's surfaces (physics.js SURFACES; None: off the course)
 	enum class Surface : uint8_t { None, Water, Green, Fringe, Fairway, Tee, FirstCut, Rough, DeepRough, Native, Path, Sand, Oob };
-	const char* SurfaceName(Surface s);   // as the game names them: "green", "deeprough" ...
-	Surface SurfaceFromName(const std::string& name);
+	OTGBALLPHYSICS_API const char* SurfaceName(Surface s);   // as the game names them: "green", "deeprough" ...
+	OTGBALLPHYSICS_API Surface SurfaceFromName(const std::string& name);
 
-	extern const double BALL_RADIUS, CUP_RADIUS;
+	OTGBALLPHYSICS_API extern const double BALL_RADIUS, CUP_RADIUS;
 
 	// How the lie affects the next strike (physics.js LIE_EFFECT)
 	struct LieEffect { double speed = 1, spin = 1; };
-	LieEffect LieEffectFor(Surface lie);
+	OTGBALLPHYSICS_API LieEffect LieEffectFor(Surface lie);
 
 	struct Course
 	{
@@ -175,5 +180,5 @@ namespace otg
 		std::string regime;
 	};
 
-	ShotResult SimulateShot(const Course& course, const V3& origin, const Shot& shot, const ShotOptions& opts);
+	OTGBALLPHYSICS_API ShotResult SimulateShot(const Course& course, const V3& origin, const Shot& shot, const ShotOptions& opts);
 }

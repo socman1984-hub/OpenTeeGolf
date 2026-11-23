@@ -35,7 +35,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOTGShotEvent, const FOTGShot&, Shot
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOTGLMStatusEvent, const FOTGLaunchMonitorStatus&, Status);
 
 UCLASS()
-class OPENTEEGOLF_API UOTGLaunchMonitorSubsystem : public UGameInstanceSubsystem
+class OTGLAUNCHMONITOR_API UOTGLaunchMonitorSubsystem : public UGameInstanceSubsystem
 {
 	GENERATED_BODY()
 

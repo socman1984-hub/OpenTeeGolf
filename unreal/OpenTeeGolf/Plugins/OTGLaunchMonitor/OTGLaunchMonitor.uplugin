@@ -1,0 +1,15 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "1.0",
+	"FriendlyName": "OpenTeeGolf Launch Monitor",
+	"Description": "Shots from a launch monitor: OpenConnect (FS Golf, Garmin R10 and Square bridges), the Mevo+ directly, and FRP.",
+	"Category": "OpenTeeGolf",
+	"CreatedBy": "OpenTeeGolf contributors",
+	"CanContainContent": false,
+	"EnabledByDefault": true,
+	"Installed": false,
+	"Modules": [
+		{ "Name": "OTGLaunchMonitor", "Type": "Runtime", "LoadingPhase": "Default" }
+	]
+}

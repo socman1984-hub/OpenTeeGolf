@@ -1,6 +1,6 @@
 // The C++ side of the physics parity test (parity.mjs): plays every shot in shots.txt on the same
 // formula courses as parity.mjs, with the same seeded random numbers, and prints the results.
-// Built by parity.mjs with MSVC; the physics is the game's own Source/.../OTGBallPhysics.cpp.
+// Built by parity.mjs with MSVC; the physics is the game's own Plugins/OTGBallPhysics/.../OTGBallPhysics.cpp.
 
 #include "Physics/OTGBallPhysics.h"
 
