@@ -1,5 +1,5 @@
 // The game mode for every level (DefaultEngine.ini GlobalDefaultGameMode). Anywhere but a course's
-// level it shows the menu (SOTGMenus.h). In a course's level
+// level it shows the menu (UI/Menus/SOTGMainMenu.h). In a course's level
 // (the course the course subsystem opened, UOTGCourseSubsystem::Current) it starts a round
 // (AOTGRound) on hole 1, or the hole -hole=<n> names. No pawn: the round moves its own camera.
 //

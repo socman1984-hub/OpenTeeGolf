@@ -1,6 +1,6 @@
 // See SOTGRange.h.
 
-#include "UI/SOTGRange.h"
+#include "UI/Hud/SOTGRange.h"
 
 #include "UI/OTGUi.h"
 #include "Widgets/Layout/SBox.h"

@@ -16,7 +16,7 @@
 #include "Course/OTGCourseData.h"
 #include "Course/OTGCourseSubsystem.h"
 #include "Engine/GameViewportClient.h"
-#include "UI/SOTGMenus.h"
+#include "UI/Menus/SOTGMainMenu.h"
 #include "UnrealClient.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogOTGGame, Log, All);

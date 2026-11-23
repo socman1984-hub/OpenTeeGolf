@@ -1,6 +1,7 @@
-// The course editor's map (see SOTGEditor.h): drawing the course, and the mouse and keys on it.
+// See SOTGEditCanvas.h. The course editor's map: drawing the course, and the mouse and keys on it.
 
-#include "UI/SOTGEditor.h"
+#include "UI/Editor/SOTGEditCanvas.h"
+#include "UI/Editor/SOTGCourseEditor.h"
 
 #include "UI/OTGUi.h"
 #include "Brushes/SlateRoundedBoxBrush.h"

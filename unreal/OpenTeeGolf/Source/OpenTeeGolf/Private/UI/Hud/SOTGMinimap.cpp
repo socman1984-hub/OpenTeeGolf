@@ -1,6 +1,6 @@
 // See SOTGMinimap.h (public/js/main.js drawMinimap, mapLabel, minimapInput).
 
-#include "UI/SOTGMinimap.h"
+#include "UI/Hud/SOTGMinimap.h"
 
 #include "Engine/Texture2D.h"
 #include "Fonts/FontMeasure.h"

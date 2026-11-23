@@ -1,6 +1,6 @@
 // See SOTGPanels.h (public/js/main.js updateHud's wind, and the test panel).
 
-#include "UI/SOTGPanels.h"
+#include "UI/Hud/SOTGPanels.h"
 
 #include "UI/OTGUi.h"
 #include "Rendering/DrawElements.h"

@@ -3,10 +3,13 @@
 //  - SOTGMainMenu (the start level): Play (the courses - searched by name or place, sorted by name,
 //    recently played or newest - and for the one picked the tees, pins, where to start, 18 or 9
 //    holes, the weather, who's playing and the game), Practice (driving range, putt-putt), New course (find a real course on the map and build it:
-//    SOTGCourseBuilder), Players (the profiles: name, colour, handicap, hand, tees), Launch monitor,
-//    Settings and What's new (each version's changes); and a button to join the Discord
-//  - SOTGLaunchMonitorPanel: how shots arrive, the device's status, and the Mevo+ setup (also in the
-//    round's pause menu)
+//    SOTGCourseBuilder), Players (the profiles: name, colour, handicap, hand, tees), Launch monitor
+//    (SOTGLaunchMonitorPanel.h), Settings and What's new (each version's changes); and a button to
+//    join the Discord
+//
+// The pages are in files of their own: SOTGMainMenu.cpp (the frame, the tabs, the update bar),
+// SOTGMainMenuPlay.cpp (the courses and the round's setup), SOTGMainMenuPractice.cpp (Practice and
+// Players), SOTGMainMenuInfo.cpp (Settings and What's new); their shared look: SOTGMenuStyle.h.
 
 #pragma once
 
@@ -21,28 +24,6 @@ class SBox;
 class STextBlock;
 class UOTGLaunchMonitorSubsystem;
 class UOTGCourseSubsystem;
-
-class SOTGLaunchMonitorPanel : public SCompoundWidget
-{
-public:
-	SLATE_BEGIN_ARGS(SOTGLaunchMonitorPanel) {}
-	SLATE_END_ARGS()
-
-	void Construct(const FArguments& Args);
-	virtual void Tick(const FGeometry& Geometry, const double Time, const float Dt) override;
-
-private:
-	void Rebuild();
-	UOTGLaunchMonitorSubsystem* LM() const;
-
-	TSharedPtr<SBox> Body;
-	TSharedPtr<STextBlock> StatusText, DetailText;
-	FString Address;
-	FOTGMevoSetup Draft;
-	bool bArmOnTurn = true;
-	EOTGConnection Shown = EOTGConnection::FSGolf;
-	bool bShownOff = false;
-};
 
 class SOTGMainMenu : public SCompoundWidget
 {

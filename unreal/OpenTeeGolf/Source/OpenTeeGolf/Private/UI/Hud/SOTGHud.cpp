@@ -1,13 +1,13 @@
 // See SOTGHud.h.
 
-#include "UI/SOTGHud.h"
+#include "UI/Hud/SOTGHud.h"
 #include "Widgets/Images/SImage.h"
 
 #include "UI/OTGUi.h"
-#include "UI/SOTGMenus.h"
-#include "UI/SOTGMinimap.h"
-#include "UI/SOTGPanels.h"
-#include "UI/SOTGDesigner.h"
+#include "UI/Menus/SOTGLaunchMonitorPanel.h"
+#include "UI/Hud/SOTGMinimap.h"
+#include "UI/Hud/SOTGPanels.h"
+#include "UI/Designer/SOTGCourseDesigner.h"
 #include "GameFramework/GameUserSettings.h"
 #include "Engine/Engine.h"
 #include "RenderCore.h"
