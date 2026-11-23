@@ -224,5 +224,3 @@ TSharedRef<SWidget> SOTGMainMenu::PlayersPage()
 	];
 	return SNew(SScrollBox) + SScrollBox::Slot()[Box(V, FMargin(20, 16), Solid)];
 }
-
-// The picked course's way into the editor: there when the helper has what it was built from

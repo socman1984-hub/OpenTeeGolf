@@ -320,6 +320,7 @@ void SOTGMainMenu::Rebuild()
 	else Body->SetContent(SNew(SScrollBox) + SScrollBox::Slot()[Box(SNew(SOTGLaunchMonitorPanel), FMargin(20, 16), Solid)]);
 }
 
+// The picked course's way into the editor: there when the helper has what it was built from
 TSharedRef<SWidget> SOTGMainMenu::EditLink(const FOTGCourseInfo* Info)
 {
 	if (!Info || Info->ExportDir.IsEmpty()) return SNullWidget::NullWidget;
