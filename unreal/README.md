@@ -113,7 +113,7 @@ version, built by the game itself when they're opened, played without a browser 
 Everything the golf needs runs inside the game, in C++.
 
 - Done: the project (Unreal 5.8, C++; needs Visual Studio with "Game development with C++"), and
-  the ball physics, `Source/OpenTeeGolf/.../Physics/OTGBallPhysics.*`: `public/js/openfairway.js`
+  the ball physics, `Plugins/OTGBallPhysics` (`OTGBallPhysics.*`): `public/js/openfairway.js`
   and `public/js/physics.js` line for line (flight, wind, bounce, roll, surfaces, the cup, trees,
   solid things).
 - `node unreal/tests/physics/parity.mjs` plays the same shots on the same test holes through both
@@ -140,7 +140,7 @@ Everything the golf needs runs inside the game, in C++.
   (`powershell -File unreal/make_assets.ps1`, which runs `build_course.py` in its `OTG_RUNTIME`
   mode). Console `OTG.Courses`, `OTG.Play <id>`; `-course=<id>` on the command line opens one at
   start. The game project needs the Fab trees in its `Content` folder (not in git).
-- The driving range (`Game/OTGRange.*`, `SOTGRange.*`): a practice ground the game makes itself, no
+- The driving range (`Round/OTGRange.*`, `UI/SOTGRange.*`): a practice ground the game makes itself, no
   download or export. `otg::range::Ensure` writes it as an export folder in `Saved/Range` (play.json,
   heightmap, surfaces, photo, masks, mowing, trees, and `farland.json` with made-up mountains: a valley,
   foothills and snowy peaks 10-30 km off, highest beyond the far end) the first time, and again only
@@ -294,7 +294,7 @@ Everything the golf needs runs inside the game, in C++.
   fake Mevo+, fake FRP device and fake bridge, plus an OpenConnect shot, and checks every shot
   against what the web version makes of it. It also checks the Mevo+ dropping out and quitting
   while armed. It needs the editor target built and no editor open.
-- The round (`Source/OpenTeeGolf/.../Game/`): `OTGGameMode` starts a round when a course's level
+- The round (`Source/OpenTeeGolf/.../Round/`): `OTGGameMode` starts a round when a course's level
   opens (`-course=<id>`, optionally `-hole=<n>`). `AOTGRound` plays it the way `main.js` does:
   - The hole flow and aiming, with the auto club and the lie's effect on the strike.
   - Penalties: stroke and distance for out of bounds, and a drop for water (at the export's drop
@@ -312,7 +312,7 @@ Everything the golf needs runs inside the game, in C++.
   `OTG.Round.Club 1|-1`, `OTG.Round.Continue`, `OTG.Round.Drop <yd>` (testing), `OTG.Shot <name>`
   (a screenshot). For checking without anyone at the keyboard, `-roundexec="<s>:<command>|..."` runs
   commands at set times after the round starts, and `-RenderOffscreen` renders without a window.
-- The putt-putt (`Game/OTGMiniGolf.*`): nine holes of mini golf the game makes itself, with no
+- The putt-putt (`Round/OTGMiniGolf.*`): nine holes of mini golf the game makes itself, with no
   course folder. The first six are the web version's (`public/js/practice.js` `puttPutt`): Warm-up,
   Dogleg, The ramp, The windmill, Tunnel and volcano, Zig-zag. Three are new: Camel humps, The pond
   (a narrow bridge over water) and The big bend (a banked U-turn). Each is par 2 or 3.

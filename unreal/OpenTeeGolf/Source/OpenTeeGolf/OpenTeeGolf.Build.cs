@@ -6,6 +6,8 @@ public class OpenTeeGolf : ModuleRules
 	public OpenTeeGolf(ReadOnlyTargetRules Target) : base(Target)
 	{
 		PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
+		// (every header by its folder - "Round/OTGRound.h", "UI/SOTGHud.h" - public or private; see README.md)
+		PrivateIncludePaths.Add(System.IO.Path.Combine(ModuleDirectory, "Private"));
 		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "DeveloperSettings" });
 		// (the project's own plugins: the ball physics and the launch monitors - Plugins/OTGBallPhysics,
 		// Plugins/OTGLaunchMonitor. Public: the round's header uses their types)

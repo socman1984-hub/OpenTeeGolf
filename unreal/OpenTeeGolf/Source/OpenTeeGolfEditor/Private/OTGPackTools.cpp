@@ -2,7 +2,7 @@
 
 #include "OTGPackTools.h"
 
-#include "OTGCourseData.h"
+#include "Course/OTGCourseData.h"
 
 #include "Editor.h"
 #include "Engine/World.h"
