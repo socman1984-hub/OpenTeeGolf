@@ -42,9 +42,9 @@ DEFINE_LOG_CATEGORY_STATIC(LogOTGRuntimeCourse, Log, All);
 #include "World/OTGCourseShared.h"
 
 // The ponds and streams (water.glb): one surface, the game's water on it
-void AOTGRuntimeCourse::BuildWater()
+void FOTGCourseWater::BuildWater()
 {
-	if (!bWaterSettled) SettleWater();
+	if (!bWaterSettled) Course->Ground.SettleWater();
 	if (!WaterPos.Num()) return;
 	otg::FGlbMesh G;
 	G.Positions = WaterPos;   // (flat enough: straight up everywhere - no normals)
@@ -54,12 +54,12 @@ void AOTGRuntimeCourse::BuildWater()
 	// is drawn; -oldwater draws it as before, for comparison)
 	TArray<bool> Gone;
 	if (BuildTidewright(Gone)) return;
-	UStaticMeshComponent* C = MeshFromGlb(this, G, Data->LevelOrigin, WaterLiftCm, false, Load<UMaterialInterface>(TEXT("M_Water")));
+	UStaticMeshComponent* C = MeshFromGlb(Course, G, Course->Data->LevelOrigin, WaterLiftCm, false, Load<UMaterialInterface>(TEXT("M_Water")));
 	C->SetCastShadow(false);
 	// (see-through: it mustn't hide what's under it from the renderer - the ground tiles under a
 	// pond were culled as hidden, and the water showed the sky)
 	C->bUseAsOccluder = false;
-	Parts.Add(C);
+	Course->Parts.Add(C);
 	UE_LOG(LogOTGRuntimeCourse, Display, TEXT("Water: %d triangles"), G.Indices.Num() / 3);
 }
 
@@ -68,24 +68,24 @@ void AOTGRuntimeCourse::BuildWater()
 // as a pond. Each point's metres to the shore and depth of the sea bed come in its colours (read
 // by the material from its uvs). Past the sea's own surface, out to the horizon, a flat sea at the
 // same level (the land round it, where it's at or under the sea, put under it: BuildRealFarLand).
-void AOTGRuntimeCourse::BuildSea()
+void FOTGCourseWater::BuildSea()
 {
 	bSea = false;
 	otg::FGlbMesh G;
-	if (!otg::ReadGlb(FPaths::Combine(Data->ExportDir, TEXT("sea.glb")), G) || !G.Colors.Num()) return;
+	if (!otg::ReadGlb(FPaths::Combine(Course->Data->ExportDir, TEXT("sea.glb")), G) || !G.Colors.Num()) return;
 	UMaterialInterface* Base = Load<UMaterialInterface>(TEXT("M_Sea"));
 	if (!Base)
 	{
 		UE_LOG(LogOTGRuntimeCourse, Warning, TEXT("Sea: no M_Sea - drawn as the ponds are"));
 		Base = Load<UMaterialInterface>(TEXT("M_Water"));
 	}
-	UMaterialInstanceDynamic* M = UMaterialInstanceDynamic::Create(Base, this);
+	UMaterialInstanceDynamic* M = UMaterialInstanceDynamic::Create(Base, Course);
 	FBox Box(ForceInit);
 	for (const FVector3f& P : G.Positions) Box += FVector(P);
 	bSea = true;
 	SeaLevelM = G.Positions[0].Y;
 	FVector2D Swell = FVector2D::ZeroVector;
-	const TSharedPtr<FJsonValue> J = ReadJson(FPaths::Combine(Data->ExportDir, TEXT("sea.json")));
+	const TSharedPtr<FJsonValue> J = ReadJson(FPaths::Combine(Course->Data->ExportDir, TEXT("sea.json")));
 	const TSharedPtr<FJsonObject>* Obj = nullptr;
 	if (J.IsValid() && J->TryGetObject(Obj))
 	{
@@ -102,10 +102,10 @@ void AOTGRuntimeCourse::BuildSea()
 	if (BuildTidewrightSea(G, Box, Swell, SeaLevelM)) return;
 	auto Add = [&](const otg::FGlbMesh& Mesh)
 	{
-		UStaticMeshComponent* C = MeshFromGlb(this, Mesh, Data->LevelOrigin, WaterLiftCm, true, M);
+		UStaticMeshComponent* C = MeshFromGlb(Course, Mesh, Course->Data->LevelOrigin, WaterLiftCm, true, M);
 		C->SetCastShadow(false);
 		C->bUseAsOccluder = false;
-		Parts.Add(C);
+		Course->Parts.Add(C);
 		return C;
 	};
 	Add(G);
@@ -113,7 +113,7 @@ void AOTGRuntimeCourse::BuildSea()
 	// bounds: where they're land, the land stands above it), as far from the shore as the material
 	// knows (full swell, deep)
 	otg::FGlbMesh O;
-	const double Far = 45000, Cx = LandCm / 200.0, Cz = LandCm / 200.0, Y = SeaLevelM;
+	const double Far = 45000, Cx = Course->LandCm / 200.0, Cz = Course->LandCm / 200.0, Y = SeaLevelM;
 	const double X0 = Box.Min.X, X1 = Box.Max.X, Z0 = Box.Min.Z, Z1 = Box.Max.Z;
 	const double Xs[4] = { Cx - Far, X0, X1, Cx + Far }, Zs[4] = { Cz - Far, Z0, Z1, Cz + Far };
 	for (int32 j = 0; j < 4; j++)
@@ -146,12 +146,12 @@ void AOTGRuntimeCourse::BuildSea()
 // the raw outline, a corner every 5 m - a pale strip of bare bank with straight edges along the
 // shore, between where the grass stopped and the water began. Within 3 m of a rounded outline, and
 // inside it; the rest (the streams) as it was. A distance field as the export's masks are.
-void AOTGRuntimeCourse::RedrawPondMasks()
+void FOTGCourseWater::RedrawPondMasks()
 {
-	otg::FPicture* P = MaskPixels.Find(TEXT("water"));
-	if (!P || !P->W || !GroundMat || !PondOutlines.Num() || FParse::Param(FCommandLine::Get(), TEXT("oldpondmask"))) return;
+	otg::FPicture* P = Course->MaskPixels.Find(TEXT("water"));
+	if (!P || !P->W || !Course->GroundMat || !PondOutlines.Num() || FParse::Param(FCommandLine::Get(), TEXT("oldpondmask"))) return;
 	const int32 W = P->W, H = P->H;
-	const double Px = LandCm / W, Py = LandCm / H, Reach = 300.0;
+	const double Px = Course->LandCm / W, Py = Course->LandCm / H, Reach = 300.0;
 	int32 Changed = 0;
 	for (int32 k = 0; k < PondOutlines.Num(); k++)
 	{
@@ -179,7 +179,7 @@ void AOTGRuntimeCourse::RedrawPondMasks()
 				if (!bIn && D > Reach) continue;
 				// (the shore just under the water - drawn dark, the water over it - only where the ground
 				// is: on a bank standing well over the water, a berm holding the pond, it showed black)
-				if (!bIn && GroundAt(Q.X, Q.Y) > Level + 4.0) { P->Pixels[j * W + i] = 0; Changed++; continue; }
+				if (!bIn && Course->Ground.GroundAt(Q.X, Q.Y) > Level + 4.0) { P->Pixels[j * W + i] = 0; Changed++; continue; }
 				const double S = (bIn ? 1.0 : -1.0) * D / 600.0;
 				P->Pixels[j * W + i] = uint8(FMath::Clamp(0.5 + S, 0.0, 1.0) * 255.0 + 0.5);
 				Changed++;
@@ -188,30 +188,30 @@ void AOTGRuntimeCourse::RedrawPondMasks()
 	// (a berm holding a pond over a creek's channel or a ditch - HoldPonds: rough, not the export's water
 	// and stream bed there. With those only cleared, no surface was left and the ground fell back to
 	// the aerial photo, the dark water of the channel: a black patch)
-	otg::FPicture* St = MaskPixels.Find(TEXT("stream"));
-	otg::FPicture* Ro = MaskPixels.Find(TEXT("rough"));
-	const double Step = Data->MetresPerSample * 100.0;
-	for (const FIntPoint& C : BermCells)
+	otg::FPicture* St = Course->MaskPixels.Find(TEXT("stream"));
+	otg::FPicture* Ro = Course->MaskPixels.Find(TEXT("rough"));
+	const double Step = Course->Data->MetresPerSample * 100.0;
+	for (const FIntPoint& C : Course->Ground.BermCells)
 		for (otg::FPicture* M : { P, St, Ro })
 		{
 			if (!M || !M->W) continue;
-			const double Mx = LandCm / M->W, My = LandCm / M->H;
+			const double Mx = Course->LandCm / M->W, My = Course->LandCm / M->H;
 			const int32 I0 = FMath::Max(0, FMath::FloorToInt((C.X - 0.5) * Step / Mx)), I1 = FMath::Min(M->W - 1, FMath::CeilToInt((C.X + 0.5) * Step / Mx));
 			const int32 J0 = FMath::Max(0, FMath::FloorToInt((C.Y - 0.5) * Step / My)), J1 = FMath::Min(M->H - 1, FMath::CeilToInt((C.Y + 0.5) * Step / My));
 			for (int32 j = J0; j <= J1; j++) for (int32 i = I0; i <= I1; i++) M->Pixels[j * M->W + i] = M == Ro ? 255 : 0;
 		}
-	if (UTexture2D* T = otg::MakeTexture(*P, otg::ETexKind::Mask, this))
+	if (UTexture2D* T = otg::MakeTexture(*P, otg::ETexKind::Mask, Course))
 	{
-		Textures.Add(TEXT("Mask_water"), T);
-		GroundMat->SetTextureParameterValue(TEXT("Mask_water"), T);
+		Course->Textures.Add(TEXT("Mask_water"), T);
+		Course->GroundMat->SetTextureParameterValue(TEXT("Mask_water"), T);
 	}
-	if (BermCells.Num())
+	if (Course->Ground.BermCells.Num())
 		for (const TPair<const TCHAR*, otg::FPicture*> KV : { TPair<const TCHAR*, otg::FPicture*>(TEXT("Mask_stream"), St), TPair<const TCHAR*, otg::FPicture*>(TEXT("Mask_rough"), Ro) })
 			if (KV.Value && KV.Value->W)
-				if (UTexture2D* T = otg::MakeTexture(*KV.Value, otg::ETexKind::Mask, this))
+				if (UTexture2D* T = otg::MakeTexture(*KV.Value, otg::ETexKind::Mask, Course))
 				{
-					Textures.Add(KV.Key, T);
-					GroundMat->SetTextureParameterValue(KV.Key, T);
+					Course->Textures.Add(KV.Key, T);
+					Course->GroundMat->SetTextureParameterValue(KV.Key, T);
 				}
 	UE_LOG(LogOTGRuntimeCourse, Display, TEXT("Ponds: the water mask drawn from their rounded outlines (%d pixels)"), Changed);
 }

@@ -46,24 +46,24 @@ DEFINE_LOG_CATEGORY_STATIC(LogOTGRuntimeCourse, Log, All);
 // at random; conifers the pine and spruce models (pines for the pines). As build_course.py does it.
 // Then as the course's tree designer has them (UOTGCourseData::ForEachDesignedTree, as the ball's
 // trees are): a species drawn with the model picked for it, larger or smaller, fewer or more.
-void AOTGRuntimeCourse::BuildTrees()
+void FOTGCourseTrees::BuildTrees()
 {
 	if (!bTreesRead)
 	{
 		bTreesRead = true;
-		const TSharedPtr<FJsonValue> J = ReadJson(FPaths::Combine(Data->ExportDir, TEXT("trees.json")));
+		const TSharedPtr<FJsonValue> J = ReadJson(FPaths::Combine(Course->Data->ExportDir, TEXT("trees.json")));
 		if (J.IsValid())
 			for (const TSharedPtr<FJsonValue>& V : J->AsArray())
 			{
 				const TSharedPtr<FJsonObject> T = V->AsObject();
 				if (!T.IsValid()) continue;
-				FTreeRec R;
+				FOTGCourseTrees::FTreeRec R;
 				R.X = T->GetNumberField(TEXT("x")); R.Y = T->GetNumberField(TEXT("y")); R.Z = T->GetNumberField(TEXT("z")); R.H = T->GetNumberField(TEXT("h"));
 				T->TryGetStringField(TEXT("kind"), R.Kind);
 				TreeRecs.Add(R);
 			}
 	}
-	for (UHierarchicalInstancedStaticMeshComponent* C : TreeComps) if (C) { Parts.Remove(C); C->DestroyComponent(); }
+	for (UHierarchicalInstancedStaticMeshComponent* C : TreeComps) if (C) { Course->Parts.Remove(C); C->DestroyComponent(); }
 	TreeComps.Reset();
 	TreeCount = 0;
 	if (!TreeRecs.Num()) return;
@@ -77,7 +77,7 @@ void AOTGRuntimeCourse::BuildTrees()
 	if (!Beeches.Num()) Beeches = Broad;
 	if (!Hornbeams.Num()) Hornbeams = Broad;
 	if (!Broad.Num() && !Cones.Num()) { UE_LOG(LogOTGRuntimeCourse, Warning, TEXT("No tree models in the game")); return; }
-	const FOTGTreeDesign& Design = Data->TreeDesign;
+	const FOTGTreeDesign& Design = Course->Data->TreeDesign;
 	// (KiteDemo's models the design uses, where the pack is in the game: else a tree drawn as one is
 	// drawn as its species)
 	TMap<FString, TArray<FTreeModel>> KiteModels;
@@ -108,45 +108,45 @@ void AOTGRuntimeCourse::BuildTrees()
 		const double S = FMath::Clamp(H / FMath::Max(1.0, M.Height), 0.7 * FMath::Min(1.0, Scale), 1.4 * FMath::Max(1.0, Scale)) * (0.92 + 0.16 * Hash01(X, Y, 5.3));
 		const double Yaw = Hash01(X, Y, 2.9) * 360;
 		FGroup& G = ByMesh.FindOrAdd(M.Mesh);
-		const FVector Foot = Data->LevelOrigin + FVector(X, Y, Zc - 10);
+		const FVector Foot = Course->Data->LevelOrigin + FVector(X, Y, Zc - 10);
 		G.Xfs.Add(FTransform(FRotator(0, Yaw, 0), Foot, FVector(S)));
 		const FLinearColor T = E ? E->LeafTint() : FLinearColor(0, 0, 0, 0);
 		G.Tints.Add(T);
 		G.bTinted |= E && E->HasColour();
-		FDrawn& D = DrawnTrees.AddDefaulted_GetRef();
+		FOTGCourseTrees::FDrawn& D = DrawnTrees.AddDefaulted_GetRef();
 		D.Base = Foot; D.H = M.Height * S; D.R = FMath::Max(150.0, D.H * 0.22); D.Kind = Kind; D.bAdded = E && E->bAdded; D.Mesh = M.Mesh;
 	};
-	if (TreeRecs.Num() == Data->Trees.Num())
+	if (TreeRecs.Num() == Course->Data->Trees.Num())
 	{
-		Data->ForEachDesignedTree([&](int32 Src, double X, double Z, double Ground, float Scale, const FOTGTreeEdit* E) {
+		Course->Data->ForEachDesignedTree([&](int32 Src, double X, double Z, double Ground, float Scale, const FOTGTreeEdit* E) {
 			const int32 n = DrawnTrees.Num();
 			if (Src < 0)
 			{
 				// (added in the designer: standing on the ground where it was put, its own height)
 				const double H = E->Height * E->Size * 100.0;
-				Place(E->Kind, (X - Data->HeightX0) * 100.0, (Data->HeightZ1 - Z) * 100.0, (Ground - Data->HeightBase) * 100.0, H, FMath::Max(0.3, H / 1500.0), E);
+				Place(E->Kind, (X - Course->Data->HeightX0) * 100.0, (Course->Data->HeightZ1 - Z) * 100.0, (Ground - Course->Data->HeightBase) * 100.0, H, FMath::Max(0.3, H / 1500.0), E);
 			}
 			else
 			{
-				const FTreeRec& R = TreeRecs[Src];
-				const FOTGTreeShape& S = Data->Trees[Src];
-				const double Zc = R.Z + (Ground - Data->GroundAt(S.X, S.Z)) * 100.0;
-				Place(R.Kind, (X - Data->HeightX0) * 100.0, (Data->HeightZ1 - Z) * 100.0, Zc, R.H * Scale, Scale, E);
+				const FOTGCourseTrees::FTreeRec& R = TreeRecs[Src];
+				const FOTGTreeShape& S = Course->Data->Trees[Src];
+				const double Zc = R.Z + (Ground - Course->Data->GroundAt(S.X, S.Z)) * 100.0;
+				Place(R.Kind, (X - Course->Data->HeightX0) * 100.0, (Course->Data->HeightZ1 - Z) * 100.0, Zc, R.H * Scale, Scale, E);
 			}
 			if (DrawnTrees.Num() > n) { DrawnTrees.Last().X = X; DrawnTrees.Last().Z = Z; }
 		});
 	}
 	else
 	{
-		UE_LOG(LogOTGRuntimeCourse, Warning, TEXT("trees.json (%d) and play.json (%d) disagree: the trees drawn as exported"), TreeRecs.Num(), Data->Trees.Num());
-		for (const FTreeRec& R : TreeRecs) Place(R.Kind, R.X, R.Y, R.Z, R.H, 1.0, nullptr);
+		UE_LOG(LogOTGRuntimeCourse, Warning, TEXT("trees.json (%d) and play.json (%d) disagree: the trees drawn as exported"), TreeRecs.Num(), Course->Data->Trees.Num());
+		for (const FOTGCourseTrees::FTreeRec& R : TreeRecs) Place(R.Kind, R.X, R.Y, R.Z, R.H, 1.0, nullptr);
 		DrawnTrees.Reset();   // (no designing them one at a time: they aren't the ball's trees)
 	}
 	int32 Standins = 0;
 	TSet<UStaticMesh*> Colourable;
 	for (auto& P : ByMesh)
 	{
-		UHierarchicalInstancedStaticMeshComponent* C = Instances(P.Key, P.Value.Xfs, TreeCull[0], TreeCull[1]);
+		UHierarchicalInstancedStaticMeshComponent* C = Course->Instances(P.Key, P.Value.Xfs, TreeCull[0], TreeCull[1]);
 		// (trees given their own leaf colour: the leaves' material reads it per tree - M_TreeLeaves)
 		if (P.Value.bTinted)
 		{
@@ -170,35 +170,35 @@ void AOTGRuntimeCourse::BuildTrees()
 				}
 		TreeCount += P.Value.Xfs.Num();
 	}
-	for (FDrawn& D : DrawnTrees) D.bColourable = Colourable.Contains(D.Mesh);
+	for (FOTGCourseTrees::FDrawn& D : DrawnTrees) D.bColourable = Colourable.Contains(D.Mesh);
 	UE_LOG(LogOTGRuntimeCourse, Display, TEXT("Trees: %d from %d models (%d stand-in materials)%s"), TreeCount, ByMesh.Num(), Standins, Design.IsDefault() ? TEXT("") : TEXT(", as the course's tree designer has them"));
 }
 
 // Boulders (boulders.json: [x, y, z, size cm, yaw, flat, kind]): the game's six stones (as the
 // tree designer has them: there or not, how many, how big)
-void AOTGRuntimeCourse::BuildBoulders()
+void FOTGCourseTrees::BuildBoulders()
 {
 	if (!bRocksRead)
 	{
 		bRocksRead = true;
-		const TSharedPtr<FJsonValue> J = ReadJson(FPaths::Combine(Data->ExportDir, TEXT("boulders.json")));
+		const TSharedPtr<FJsonValue> J = ReadJson(FPaths::Combine(Course->Data->ExportDir, TEXT("boulders.json")));
 		if (J.IsValid())
 			for (const TSharedPtr<FJsonValue>& V : J->AsArray())
 			{
 				const TArray<TSharedPtr<FJsonValue>>& B = V->AsArray();
 				if (B.Num() < 7) continue;
-				FRockRec R;
+				FOTGCourseTrees::FRockRec R;
 				R.P = FVector(B[0]->AsNumber(), B[1]->AsNumber(), B[2]->AsNumber());
 				R.Size = B[3]->AsNumber(); R.Yaw = B[4]->AsNumber(); R.Flat = B[5]->AsNumber(); R.Kind = int32(B[6]->AsNumber()) % BoulderKinds;
 				RockRecs.Add(R);
 			}
 	}
-	for (UHierarchicalInstancedStaticMeshComponent* C : RockComps) if (C) { Parts.Remove(C); C->DestroyComponent(); }
+	for (UHierarchicalInstancedStaticMeshComponent* C : RockComps) if (C) { Course->Parts.Remove(C); C->DestroyComponent(); }
 	RockComps.Reset();
 	RockCount = 0;
 	TArray<UStaticMesh*> Meshes;
 	for (int32 k = 0; k < BoulderKinds; k++) Meshes.Add(Find<UStaticMesh>(FString::Printf(TEXT("SM_Boulder_%d"), k)));
-	const FOTGTreeDesign& Design = Data->TreeDesign;
+	const FOTGTreeDesign& Design = Course->Data->TreeDesign;
 	// (KiteDemo's rocks, where the pack is in the game: a look none of whose meshes are here is the game's stones)
 	TMap<FString, TArray<UStaticMesh*>> KiteRocks;
 	{
@@ -210,23 +210,23 @@ void AOTGRuntimeCourse::BuildBoulders()
 	}
 	TMap<UStaticMesh*, TArray<FTransform>> ByMesh;
 	DrawnRocks.Reset();
-	auto Put = [&](const FRockRec& R, double Size, bool bAdded, const FString& Model) {
+	auto Put = [&](const FOTGCourseTrees::FRockRec& R, double Size, bool bAdded, const FString& Model) {
 		const double S = R.Size / 100.0 * Size;
 		// (on the ground as it's drawn - the lowest under its middle and round it: boulders.json's height
 		// is the export's, and in a stream bed dug out for its water a stone stood clear of the bed)
 		FVector P = R.P;
 		{
 			const double Rr = R.Size * Size * 0.3;
-			double G = GroundAt(P.X, P.Y);
+			double G = Course->Ground.GroundAt(P.X, P.Y);
 			for (int32 k = 0; k < 6; k++)
 			{
 				const double A = k * UE_DOUBLE_PI / 3.0;
-				G = FMath::Min(G, GroundAt(P.X + FMath::Cos(A) * Rr, P.Y + FMath::Sin(A) * Rr));
+				G = FMath::Min(G, Course->Ground.GroundAt(P.X + FMath::Cos(A) * Rr, P.Y + FMath::Sin(A) * Rr));
 			}
 			P.Z = G;
 		}
 		// (a bigger stone sits a little deeper)
-		const FVector At = Data->LevelOrigin + P - FVector(0, 0, (Size - 1) * R.Size * 0.15);
+		const FVector At = Course->Data->LevelOrigin + P - FVector(0, 0, (Size - 1) * R.Size * 0.15);
 		const TArray<UStaticMesh*>* Kite = Model.IsEmpty() ? nullptr : KiteRocks.Find(Model);
 		if (Kite && Kite->Num())
 		{
@@ -237,10 +237,10 @@ void AOTGRuntimeCourse::BuildBoulders()
 			ByMesh.FindOrAdd(M).Add(FTransform(FRotator(0, R.Yaw, 0), At - FVector(0, 0, (B.Min.Z + 0.2 * B.GetSize().Z) * K), FVector(K)));
 		}
 		else if (Meshes[R.Kind]) ByMesh.FindOrAdd(Meshes[R.Kind]).Add(FTransform(FRotator(0, R.Yaw, 0), At, FVector(S, S, S * R.Flat)));
-		FDrawn& D = DrawnRocks.AddDefaulted_GetRef();
+		FOTGCourseTrees::FDrawn& D = DrawnRocks.AddDefaulted_GetRef();
 		D.Base = At; D.R = FMath::Max(60.0, R.Size * Size * 0.5); D.H = R.Size * Size; D.X = R.P.X / 100.0; D.Z = R.P.Y / 100.0; D.bAdded = bAdded;
 	};
-	for (const FRockRec& R : RockRecs)
+	for (const FOTGCourseTrees::FRockRec& R : RockRecs)
 	{
 		if (!Design.KeepRock(R.P.X / 100.0, R.P.Y / 100.0)) continue;
 		const FOTGRockEdit* E = Design.Rocks.Num() ? Design.RockEditAt(R.P.X / 100.0, R.P.Y / 100.0) : nullptr;
@@ -251,73 +251,73 @@ void AOTGRuntimeCourse::BuildBoulders()
 	for (const FOTGRockEdit& E : Design.Rocks)
 	{
 		if (!E.bAdded || E.bRemoved) continue;
-		FRockRec R;
-		const double CX = Data->HeightX0 + E.X, CZ = Data->HeightZ1 - E.Z;
-		R.P = FVector(E.X * 100.0, E.Z * 100.0, (Data->GroundAt(CX, CZ) - Data->HeightBase) * 100.0);
+		FOTGCourseTrees::FRockRec R;
+		const double CX = Course->Data->HeightX0 + E.X, CZ = Course->Data->HeightZ1 - E.Z;
+		R.P = FVector(E.X * 100.0, E.Z * 100.0, (Course->Data->GroundAt(CX, CZ) - Course->Data->HeightBase) * 100.0);
 		R.Size = 100.0;
 		R.Yaw = FOTGTreeDesign::Hash01(E.X, E.Z, 7) * 360;
 		R.Flat = 0.6 + 0.3 * FOTGTreeDesign::Hash01(E.X, E.Z, 11);
 		R.Kind = int32(FOTGTreeDesign::Hash01(E.X, E.Z, 13) * BoulderKinds) % BoulderKinds;
 		Put(R, E.Size, true, E.Model.IsEmpty() ? Design.RockModel : E.Model);
 	}
-	for (auto& P : ByMesh) { RockComps.Add(Instances(P.Key, P.Value, BoulderCull[0], BoulderCull[1])); RockCount += P.Value.Num(); }
+	for (auto& P : ByMesh) { RockComps.Add(Course->Instances(P.Key, P.Value, BoulderCull[0], BoulderCull[1])); RockCount += P.Value.Num(); }
 	UE_LOG(LogOTGRuntimeCourse, Display, TEXT("Boulders: %d"), RockCount);
 }
 
-const FOTGTreeDesign& AOTGRuntimeCourse::TreeDesign() const
+const FOTGTreeDesign& FOTGCourseTrees::TreeDesign() const
 {
 	static const FOTGTreeDesign None;
-	return Data ? Data->TreeDesign : None;
+	return Course->Data ? Course->Data->TreeDesign : None;
 }
 
-void AOTGRuntimeCourse::SetTreeDesign(const FOTGTreeDesign& Design)
+void FOTGCourseTrees::SetTreeDesign(const FOTGTreeDesign& Design)
 {
-	if (!Data) return;
-	Data->TreeDesign = Design;
+	if (!Course->Data) return;
+	Course->Data->TreeDesign = Design;
 	BuildTrees();
 	BuildBoulders();
 }
 
-bool AOTGRuntimeCourse::SaveTreeDesign(FString* Where) const
+bool FOTGCourseTrees::SaveTreeDesign(FString* Where) const
 {
-	if (!Data) return false;
-	if (Where) *Where = FPaths::Combine(Data->ExportDir, TEXT("trees_design.json"));
-	return Data->TreeDesign.Save(Data->ExportDir);
+	if (!Course->Data) return false;
+	if (Where) *Where = FPaths::Combine(Course->Data->ExportDir, TEXT("trees_design.json"));
+	return Course->Data->TreeDesign.Save(Course->Data->ExportDir);
 }
 
-FOTGTreeDesign AOTGRuntimeCourse::SavedTreeDesign() const
+FOTGTreeDesign FOTGCourseTrees::SavedTreeDesign() const
 {
-	return Data ? FOTGTreeDesign::Load(Data->ExportDir) : FOTGTreeDesign();
+	return Course->Data ? FOTGTreeDesign::Load(Course->Data->ExportDir) : FOTGTreeDesign();
 }
 
-TArray<TPair<FString, int32>> AOTGRuntimeCourse::TreeSpecies() const
+TArray<TPair<FString, int32>> FOTGCourseTrees::TreeSpecies() const
 {
 	TMap<FString, int32> N;
-	if (Data) for (const FOTGTreeShape& S : Data->Trees) N.FindOrAdd(S.Kind)++;
+	if (Course->Data) for (const FOTGTreeShape& S : Course->Data->Trees) N.FindOrAdd(S.Kind)++;
 	TArray<TPair<FString, int32>> Out;
 	for (const auto& KV : N) Out.Add(TPair<FString, int32>(KV.Key, KV.Value));
 	Out.Sort([](const TPair<FString, int32>& A, const TPair<FString, int32>& B) { return A.Value > B.Value; });
 	return Out;
 }
 
-bool AOTGRuntimeCourse::NearestTree(const FString& Kind, const FVector& From, FVector& OutBase, double& OutHeightCm) const
+bool FOTGCourseTrees::NearestTree(const FString& Kind, const FVector& From, FVector& OutBase, double& OutHeightCm) const
 {
 	double Best = TNumericLimits<double>::Max();
 	if (Kind == TEXT("rock"))
 	{
 		// (the rocks: the nearest as drawn)
-		for (const FDrawn& D : DrawnRocks)
+		for (const FOTGCourseTrees::FDrawn& D : DrawnRocks)
 		{
 			const double Dist = FVector::DistSquared2D(D.Base, From);
 			if (Dist < Best && Dist > 1000.0 * 1000.0) { Best = Dist; OutBase = D.Base; OutHeightCm = D.H; }
 		}
 		return Best < TNumericLimits<double>::Max();
 	}
-	if (!Data || TreeRecs.Num() != Data->Trees.Num()) return false;
-	Data->ForEachDesignedTree([&](int32 Src, double X, double Z, double Ground, float Scale, const FOTGTreeEdit* E) {
-		const FString& K = E && !E->Kind.IsEmpty() ? E->Kind : Data->Trees[Src].Kind;
+	if (!Course->Data || TreeRecs.Num() != Course->Data->Trees.Num()) return false;
+	Course->Data->ForEachDesignedTree([&](int32 Src, double X, double Z, double Ground, float Scale, const FOTGTreeEdit* E) {
+		const FString& K = E && !E->Kind.IsEmpty() ? E->Kind : Course->Data->Trees[Src].Kind;
 		if (K != Kind) return;
-		const FVector P = Data->CourseToWorld(FVector(X, Ground, Z));
+		const FVector P = Course->Data->CourseToWorld(FVector(X, Ground, Z));
 		const double D = FVector::DistSquared2D(P, From);
 		// (not right on top of you: one you can see)
 		if (D < Best && D > 2500.0 * 2500.0) { Best = D; OutBase = P; OutHeightCm = Src >= 0 ? TreeRecs[Src].H * Scale : E->Height * E->Size * 100.0; }
@@ -325,28 +325,14 @@ bool AOTGRuntimeCourse::NearestTree(const FString& Kind, const FVector& From, FV
 	return Best < TNumericLimits<double>::Max();
 }
 
-FVector2D AOTGRuntimeCourse::CourseXZ(const FVector& World) const
-{
-	if (!Data) return FVector2D::ZeroVector;
-	const FVector C = Data->WorldToCourse(World);
-	return FVector2D(C.X, C.Z);
-}
-
-FVector2D AOTGRuntimeCourse::RockXY(const FVector& World) const
-{
-	if (!Data) return FVector2D::ZeroVector;
-	const FVector L = World - Data->LevelOrigin;
-	return FVector2D(L.X / 100.0, L.Y / 100.0);
-}
-
-bool AOTGRuntimeCourse::Pick(const FVector& Origin, const FVector& Dir, double MaxT, FOTGPicked& Out) const
+bool FOTGCourseTrees::Pick(const FVector& Origin, const FVector& Dir, double MaxT, FOTGPicked& Out) const
 {
 	const FVector D = Dir.GetSafeNormal();
 	double Best = TNumericLimits<double>::Max();
-	const FDrawn* Hit = nullptr;
+	const FOTGCourseTrees::FDrawn* Hit = nullptr;
 	bool bRock = false;
 	// a tree: the line passing within its crown's reach of its trunk's line, foot to top
-	for (const FDrawn& T : DrawnTrees)
+	for (const FOTGCourseTrees::FDrawn& T : DrawnTrees)
 	{
 		const FVector W0 = Origin - T.Base;
 		const double B = D.Z, Dd = FVector::DotProduct(D, W0), E = W0.Z, Den = FMath::Max(1e-6, 1 - B * B);
@@ -360,7 +346,7 @@ bool AOTGRuntimeCourse::Pick(const FVector& Origin, const FVector& Dir, double M
 		Best = At; Hit = &T; bRock = false;
 	}
 	// a rock: within its size of its middle
-	for (const FDrawn& R : DrawnRocks)
+	for (const FOTGCourseTrees::FDrawn& R : DrawnRocks)
 	{
 		const FVector C = R.Base + FVector(0, 0, R.R * 0.4);
 		const double At = FVector::DotProduct(C - Origin, D);
@@ -373,7 +359,7 @@ bool AOTGRuntimeCourse::Pick(const FVector& Origin, const FVector& Dir, double M
 	return true;
 }
 
-void AOTGRuntimeCourse::MarkPicked(const FOTGPicked& P)
+void FOTGCourseTrees::MarkPicked(const FOTGPicked& P)
 {
 	// (made the first time: a ring of gold beads, and a cone pointing down at it from above)
 	if (!PickRing)
@@ -382,11 +368,11 @@ void AOTGRuntimeCourse::MarkPicked(const FOTGPicked& P)
 		UStaticMesh* Cone = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Cone.Cone"));
 		UMaterialInterface* Base = LoadObject<UMaterialInterface>(nullptr, TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
 		if (!Sphere || !Cone || !Base) return;
-		UMaterialInstanceDynamic* Gold = UMaterialInstanceDynamic::Create(Base, this);
+		UMaterialInstanceDynamic* Gold = UMaterialInstanceDynamic::Create(Base, Course);
 		Gold->SetVectorParameterValue(TEXT("Color"), FLinearColor(1.f, 0.72f, 0.08f));
-		PickRing = NewObject<UInstancedStaticMeshComponent>(this);
+		PickRing = NewObject<UInstancedStaticMeshComponent>(Course);
 		PickRing->SetStaticMesh(Sphere);
-		PickCone = NewObject<UStaticMeshComponent>(this);
+		PickCone = NewObject<UStaticMeshComponent>(Course);
 		PickCone->SetStaticMesh(Cone);
 		for (UStaticMeshComponent* C : { static_cast<UStaticMeshComponent*>(PickRing), PickCone.Get() })
 		{
@@ -394,7 +380,7 @@ void AOTGRuntimeCourse::MarkPicked(const FOTGPicked& P)
 			C->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 			C->SetCastShadow(false);
 			C->SetMobility(EComponentMobility::Movable);
-			C->SetupAttachment(RootComponent);
+			C->SetupAttachment(Course->RootComponent);
 			C->RegisterComponent();
 		}
 	}
@@ -417,13 +403,40 @@ void AOTGRuntimeCourse::MarkPicked(const FOTGPicked& P)
 	PickCone->SetVisibility(true);
 }
 
-bool AOTGRuntimeCourse::Picked(bool bRock, double X, double Z, FOTGPicked& Out) const
+bool FOTGCourseTrees::Picked(bool bRock, double X, double Z, FOTGPicked& Out) const
 {
-	for (const FDrawn& T : bRock ? DrawnRocks : DrawnTrees)
+	for (const FOTGCourseTrees::FDrawn& T : bRock ? DrawnRocks : DrawnTrees)
 		if (FMath::Abs(T.X - X) < 0.15 && FMath::Abs(T.Z - Z) < 0.15)
 		{
 			Out.bRock = bRock; Out.X = T.X; Out.Z = T.Z; Out.Kind = T.Kind; Out.HeightM = T.H / 100.0; Out.bAdded = T.bAdded; Out.Base = T.Base; Out.bColourable = T.bColourable; Out.RadiusM = T.R / 100.0;
 			return true;
 		}
 	return false;
+}
+
+// (each frame: the picked one's marks gone once the designer stops calling; the cone bobbing)
+void FOTGCourseTrees::UpdateMarks()
+{
+	if (PickRing && PickRing->IsVisible())
+	{
+		if (FPlatformTime::Seconds() - PickMarkedAt > 0.3) { PickRing->SetVisibility(false); PickCone->SetVisibility(false); }
+		else
+		{
+			const double T = FPlatformTime::Seconds();
+			// (bigger the farther the camera: findable from the tee)
+			double S = 1.3;
+			if (const APlayerController* PC = Course->GetWorld() ? Course->GetWorld()->GetFirstPlayerController() : nullptr)
+				if (PC->PlayerCameraManager) S = FMath::Clamp(FVector::Dist(PC->PlayerCameraManager->GetCameraLocation(), PickConeAt) / 2500.0, 1.3, 14.0);
+			PickCone->SetWorldLocationAndRotation(PickConeAt + FVector(0, 0, (60 * FMath::Sin(T * 3.0) + 60 + 40) * S), FRotator(180, T * 90.0, 0));
+			PickCone->SetWorldScale3D(FVector(S, S, S * 1.3));
+		}
+	}
+}
+
+void FOTGCourseTrees::AddReferencedObjects(FReferenceCollector& Collector)
+{
+	Collector.AddReferencedObject(PickRing);
+	Collector.AddReferencedObject(PickCone);
+	Collector.AddReferencedObjects(TreeComps);
+	Collector.AddReferencedObjects(RockComps);
 }

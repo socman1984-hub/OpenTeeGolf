@@ -45,12 +45,12 @@ DEFINE_LOG_CATEGORY_STATIC(LogOTGRuntimeCourse, Log, All);
 // the export's is the course's surface map, a pixel a metre or so, blurred - its edges wandered in
 // and out along a path. The mesh is the path's line at its width: straight, even edges.
 // A distance field as the export's masks are: 0.5 on the edge, 3 m = 0.5.
-void AOTGRuntimeCourse::RedrawPathMask(const otg::FGlbMesh& G)
+void FOTGCourseProps::RedrawPathMask(const otg::FGlbMesh& G)
 {
-	otg::FPicture* P = MaskPixels.Find(TEXT("path"));
-	if (!P || !P->W || !GroundMat || G.Indices.Num() < 3 || FParse::Param(FCommandLine::Get(), TEXT("oldpaths"))) return;
+	otg::FPicture* P = Course->MaskPixels.Find(TEXT("path"));
+	if (!P || !P->W || !Course->GroundMat || G.Indices.Num() < 3 || FParse::Param(FCommandLine::Get(), TEXT("oldpaths"))) return;
 	const int32 W = P->W, H = P->H;
-	const double Px = LandCm / W, Py = LandCm / H, Reach = 300.0;
+	const double Px = Course->LandCm / W, Py = Course->LandCm / H, Reach = 300.0;
 	auto At = [&](int32 v) { const FVector3f& V = G.Positions[v]; return FVector2D(V.X * 100.0, V.Z * 100.0); };
 	// the outline: the edges of one triangle only (vertices matched by place: a strip's are shared or not)
 	auto Key = [&](int32 v) { const FVector2D A = At(v); return FIntPoint(FMath::RoundToInt(A.X), FMath::RoundToInt(A.Y)); };
@@ -103,25 +103,25 @@ void AOTGRuntimeCourse::RedrawPathMask(const otg::FGlbMesh& G)
 		const double S = (In[q] ? 1.0 : -1.0) * Dist[q] / 600.0;
 		P->Pixels[q] = uint8(FMath::Clamp(0.5 + S, 0.0, 1.0) * 255.0 + 0.5);
 	}
-	if (UTexture2D* T = otg::MakeTexture(*P, otg::ETexKind::Mask, this))
+	if (UTexture2D* T = otg::MakeTexture(*P, otg::ETexKind::Mask, Course))
 	{
-		Textures.Add(TEXT("Mask_path"), T);
-		GroundMat->SetTextureParameterValue(TEXT("Mask_path"), T);
+		Course->Textures.Add(TEXT("Mask_path"), T);
+		Course->GroundMat->SetTextureParameterValue(TEXT("Mask_path"), T);
 	}
 	UE_LOG(LogOTGRuntimeCourse, Display, TEXT("Paths: the mask drawn from their mesh (%d outline edges)"), Outline);
 }
 
-void AOTGRuntimeCourse::BuildProps()
+void FOTGCourseProps::BuildProps()
 {
-	RedrawPondMasks();
-	const TSharedPtr<FJsonValue> J = ReadJson(FPaths::Combine(Data->ExportDir, TEXT("props.json")));
+	Course->Water.RedrawPondMasks();
+	const TSharedPtr<FJsonValue> J = ReadJson(FPaths::Combine(Course->Data->ExportDir, TEXT("props.json")));
 	if (!J.IsValid()) return;
 	for (const TSharedPtr<FJsonValue>& V : J->AsArray())
 	{
 		const TSharedPtr<FJsonObject> P = V->AsObject();
 		const FString Kind = P->GetStringField(TEXT("kind"));
 		otg::FGlbMesh G;
-		if (!otg::ReadGlb(FPaths::Combine(Data->ExportDir, P->GetStringField(TEXT("file"))), G)) continue;
+		if (!otg::ReadGlb(FPaths::Combine(Course->Data->ExportDir, P->GetStringField(TEXT("file"))), G)) continue;
 		const bool bPath = Kind.StartsWith(TEXT("path"));
 		// The paths are painted in the ground (its path mask): their mesh is only wanted where it
 		// leaves the ground - bridges, boardwalks. Lying on the ground, sunk a little, it pokes up
@@ -138,7 +138,7 @@ void AOTGRuntimeCourse::BuildProps()
 				for (int32 k = 0; k < 3 && !bOff; k++)
 				{
 					const FVector3f& Pv = G.Positions[G.Indices[t + k]];
-					bOff = Pv.Y * 100.0 - GroundAt(Pv.X * 100.0, Pv.Z * 100.0) > PathOffGroundCm;
+					bOff = Pv.Y * 100.0 - Course->Ground.GroundAt(Pv.X * 100.0, Pv.Z * 100.0) > PathOffGroundCm;
 				}
 				if (bOff) Keep.Append(&G.Indices[t], 3);
 			}
@@ -167,8 +167,8 @@ void AOTGRuntimeCourse::BuildProps()
 		}
 		UMaterialInterface* M = Load<UMaterialInterface>(TEXT("M_Prop_") + Kind);
 		if (!M) M = Load<UMaterialInterface>(TEXT("M_Prop_building"));
-		UStaticMeshComponent* C = MeshFromGlb(this, G, Data->LevelOrigin, bPath ? PathSinkCm : 0, !bPath, M);
-		Parts.Add(C);
+		UStaticMeshComponent* C = MeshFromGlb(Course, G, Course->Data->LevelOrigin, bPath ? PathSinkCm : 0, !bPath, M);
+		Course->Parts.Add(C);
 		UE_LOG(LogOTGRuntimeCourse, Display, TEXT("Props: %s, %d triangles"), *Kind, G.Indices.Num() / 3);
 	}
 }

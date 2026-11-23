@@ -55,9 +55,9 @@ DEFINE_LOG_CATEGORY_STATIC(LogOTGRuntimeCourse, Log, All);
 // ground nearer the course - on it, each spot taking the sharpest that covers it (M_FarLand). The
 // hills stand where they really are and look like the country round the course, not plain green.
 // Under the course's own ground it sits 4 m down (the export lowered it).
-bool AOTGRuntimeCourse::BuildRealFarLand()
+bool FOTGCourseFarLand::BuildRealFarLand()
 {
-	const FString Dir = Data->ExportDir;
+	const FString Dir = Course->Data->ExportDir;
 	const TSharedPtr<FJsonValue> J = ReadJson(FPaths::Combine(Dir, TEXT("farland.json")));
 	const TSharedPtr<FJsonObject>* Obj = nullptr;
 	if (!J.IsValid() || !J->TryGetObject(Obj)) return false;
@@ -86,9 +86,9 @@ bool AOTGRuntimeCourse::BuildRealFarLand()
 			const TSharedPtr<FJsonObject> L = (*LayerList)[k]->AsObject();
 			if (!L.IsValid()) continue;
 			// (the nearest at full size, the wider ones smaller: they're only ever seen far off)
-			UTexture2D* T = otg::LoadTexture(FPaths::Combine(Dir, L->GetStringField(TEXT("file"))), otg::ETexKind::Photo, Photos.Num() ? 2048 : 4096, this);
+			UTexture2D* T = otg::LoadTexture(FPaths::Combine(Dir, L->GetStringField(TEXT("file"))), otg::ETexKind::Photo, Photos.Num() ? 2048 : 4096, Course);
 			if (!T) continue;
-			Textures.Add(FName(*FString::Printf(TEXT("Far%d"), Photos.Num())), T);
+			Course->Textures.Add(FName(*FString::Printf(TEXT("Far%d"), Photos.Num())), T);
 			Photos.Add({ T, L->GetNumberField(TEXT("halfMetres")) });
 		}
 	UMaterialInterface* Base = Load<UMaterialInterface>(TEXT("M_FarLand"));
@@ -115,11 +115,11 @@ bool AOTGRuntimeCourse::BuildRealFarLand()
 			const double Rim = FMath::SmoothStep(0.82, 1.0, Out) * (250.0 + 400.0 * (0.5 + 0.5 * FMath::PerlinNoise2D(FVector2D(X, Z) / 6000.0)));
 			// (the export put it 4 m under the course's whole square; where the ground's left out,
 			// back up - a few cm under - so it's the ground there: PlanGroundTiles)
-			const bool bInSquare = X > 0 && Z > 0 && X * 100.0 < LandCm && Z * 100.0 < LandCm;
-			const double Up = bInSquare && !GroundDrawnAt(X * 100.0, Z * 100.0) ? 3.95 : 0.0;
+			const bool bInSquare = X > 0 && Z > 0 && X * 100.0 < Course->LandCm && Z * 100.0 < Course->LandCm;
+			const double Up = bInSquare && !Course->Ground.GroundDrawnAt(X * 100.0, Z * 100.0) ? 3.95 : 0.0;
 			double H = Hts[j * Side + i] + Rim + Up;
 			// (at or just over the sea's level: the open sea's - BuildSea - so a little under it)
-			if (bSea && H < SeaLevelM + 0.5 && H > SeaLevelM - 3) H = SeaLevelM - 3;
+			if (Course->Water.bSea && H < Course->Water.SeaLevelM + 0.5 && H > Course->Water.SeaLevelM - 3) H = Course->Water.SeaLevelM - 3;
 			G.Positions.Add(FVector3f(X, H, Z));   // (the export's frame: x east, y up, z south)
 			G.UVs.Add(FVector2f((X - (Cx - Widest.Half)) / (2 * Widest.Half), (Z - (Cz - Widest.Half)) / (2 * Widest.Half)));
 		}
@@ -147,7 +147,7 @@ bool AOTGRuntimeCourse::BuildRealFarLand()
 	for (FVector3f& Nn : G.Normals) Nn = Nn.GetSafeNormal();
 	// the material: the three photos (fewer: the widest stands in) and how much each is zoomed in
 	// from the widest's uvs
-	UMaterialInstanceDynamic* M = UMaterialInstanceDynamic::Create(Base, this);
+	UMaterialInstanceDynamic* M = UMaterialInstanceDynamic::Create(Base, Course);
 	const int32 NL = Photos.Num();
 	const FLayer& L0 = Photos[0];
 	const FLayer& L1 = NL >= 3 ? Photos[1] : Widest;
@@ -156,22 +156,22 @@ bool AOTGRuntimeCourse::BuildRealFarLand()
 	M->SetTextureParameterValue(TEXT("Photo2"), Widest.Tex);
 	M->SetScalarParameterValue(TEXT("Zoom0"), float(Widest.Half / L0.Half));
 	M->SetScalarParameterValue(TEXT("Zoom1"), float(Widest.Half / L1.Half));
-	UStaticMeshComponent* C = MeshFromGlb(this, G, Data->LevelOrigin, 0, false, M);
+	UStaticMeshComponent* C = MeshFromGlb(Course, G, Course->Data->LevelOrigin, 0, false, M);
 	C->SetCastShadow(false);
 	C->bUseAsOccluder = false;
 	C->SetCullDistance(0);
 	C->SetBoundsScale(1.f);
-	Parts.Add(C);
+	Course->Parts.Add(C);
 	UE_LOG(LogOTGRuntimeCourse, Display, TEXT("The land round it: real heights and %d photos, %d km across"), NL, FMath::RoundToInt(Half * 2 / 1000));
 	return true;
 }
 
-void AOTGRuntimeCourse::BuildFarLand()
+void FOTGCourseFarLand::BuildFarLand()
 {
 	if (BuildRealFarLand()) return;
-	const int32 N = Data->HeightSamples;
-	if (Data->Heights.Num() != N * N) return;
-	const double SizeM = (N - 1) * Data->MetresPerSample;
+	const int32 N = Course->Data->HeightSamples;
+	if (Course->Data->Heights.Num() != N * N) return;
+	const double SizeM = (N - 1) * Course->Data->MetresPerSample;
 	const double StepM = 32.0;
 	const int32 Side = FMath::Max(8, FMath::RoundToInt(SizeM / StepM));
 	const int32 Around = Side * 4;
@@ -196,7 +196,7 @@ void AOTGRuntimeCourse::BuildFarLand()
 		const double t = double(k % Side) / Side * SizeM;
 		const FVector2D P = s == 0 ? FVector2D(t, 0) : s == 1 ? FVector2D(SizeM, t) : s == 2 ? FVector2D(SizeM - t, SizeM) : FVector2D(0, SizeM - t);
 		Edge.Add(P);
-		EdgeH.Add(GroundAt(P.X * 100.0, P.Y * 100.0) / 100.0);
+		EdgeH.Add(Course->Ground.GroundAt(P.X * 100.0, P.Y * 100.0) / 100.0);
 		MeanH += EdgeH.Last() / Around;
 	}
 	const FVector2D Mid(SizeM / 2, SizeM / 2);
@@ -251,11 +251,11 @@ void AOTGRuntimeCourse::BuildFarLand()
 	}
 	for (FVector3f& Nn : G.Normals) Nn = Nn.GetSafeNormal();
 	UMaterialInterface* M = Load<UMaterialInterface>(TEXT("M_Prop_building"));
-	UStaticMeshComponent* C = MeshFromGlb(this, G, Data->LevelOrigin, 0, true, M);
+	UStaticMeshComponent* C = MeshFromGlb(Course, G, Course->Data->LevelOrigin, 0, true, M);
 	C->SetCastShadow(false);
 	C->bUseAsOccluder = false;
 	C->SetCullDistance(0);
 	C->SetBoundsScale(1.f);
-	Parts.Add(C);
+	Course->Parts.Add(C);
 	UE_LOG(LogOTGRuntimeCourse, Display, TEXT("The land round it: %d km out"), FMath::RoundToInt(Rings[NumRings - 1] / 1000));
 }

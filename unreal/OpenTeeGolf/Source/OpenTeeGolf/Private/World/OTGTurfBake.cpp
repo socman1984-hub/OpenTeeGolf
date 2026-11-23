@@ -39,15 +39,15 @@ namespace
 
 bool AOTGRuntimeCourse::BakeTurf(const FString& Surface, double SizeCm, const FString& Name, const FVector& From)
 {
-	if (!Grass.IsValid() || !Data) return false;
+	if (!Turf.Grass.IsValid() || !Data) return false;
 	// the patch: well inside the surface, its whole square on it (From and the patch: world cm; the
 	// grass's own search is in the level's frame)
 	FVector At;
 	bool bFound = false;
 	for (const double In : { SizeCm / 200.0 + 1.0, SizeCm / 200.0 + 0.3 })
-		if ((bFound = Grass->FindSurface(Surface, From, At, In))) break;
+		if ((bFound = Turf.Grass->FindSurface(Surface, From, At, In))) break;
 	if (!bFound) { UE_LOG(LogOTGTurfBake, Warning, TEXT("Bake %s: no patch %.0f cm square inside it near here"), *Surface, SizeCm); return false; }
-	const TArray<UPrimitiveComponent*> Comps = Grass->ComponentsNear(At, SizeCm);
+	const TArray<UPrimitiveComponent*> Comps = Turf.Grass->ComponentsNear(At, SizeCm);
 	if (!Comps.Num()) { UE_LOG(LogOTGTurfBake, Warning, TEXT("Bake %s: no grass drawn there yet (bring the camera to it first)"), *Surface); return false; }
 
 	UTextureRenderTarget2D* RT = NewObject<UTextureRenderTarget2D>(this);

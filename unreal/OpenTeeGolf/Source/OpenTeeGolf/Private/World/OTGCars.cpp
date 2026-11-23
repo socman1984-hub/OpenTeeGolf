@@ -65,15 +65,15 @@ namespace
 	};
 }
 
-bool AOTGRuntimeCourse::PlaceCars(const otg::FGlbMesh&)
+bool FOTGCourseProps::PlaceCars(const otg::FGlbMesh&)
 {
 	if (FParse::Param(FCommandLine::Get(), TEXT("boxcars"))) return false;
 	// the cars' boxes (the play frame: x, z metres) - each a car's spot in the glb's frame
 	TArray<FCarSpot> Spots;
 	TArray<int32> Boxes;
-	for (int32 s = 0; s < Data->Solids.Num(); s++)
+	for (int32 s = 0; s < Course->Data->Solids.Num(); s++)
 	{
-		const FOTGSolid& S = Data->Solids[s];
+		const FOTGSolid& S = Course->Data->Solids[s];
 		TArray<FVector2D> Pts = S.Footprint;
 		if (Pts.Num() == 5 && Pts[0].Equals(Pts.Last(), 1e-3)) Pts.Pop();
 		if (Pts.Num() != 4 || S.Height > 2.0) continue;
@@ -81,11 +81,11 @@ bool AOTGRuntimeCourse::PlaceCars(const otg::FGlbMesh&)
 		if (L < 4.0 || L > 5.5 || W < 1.5 || W > 2.3) continue;
 		FCarSpot C;
 		const FVector2D Mid = (Pts[0] + Pts[1] + Pts[2] + Pts[3]) * 0.25;
-		C.At = FVector2D(Mid.X - Data->HeightX0, Data->HeightZ1 - Mid.Y);   // (the play frame to the glb's)
+		C.At = FVector2D(Mid.X - Course->Data->HeightX0, Course->Data->HeightZ1 - Mid.Y);   // (the play frame to the glb's)
 		const FVector2D Ax = Pts[3] - Pts[0];
 		C.Yaw = FMath::Atan2(-Ax.Y, Ax.X);   // (z flipped)
 		C.Length = L;
-		C.Bottom = GroundAt(C.At.X * 100.0, C.At.Y * 100.0) / 100.0;
+		C.Bottom = Course->Ground.GroundAt(C.At.X * 100.0, C.At.Y * 100.0) / 100.0;
 		Spots.Add(C);
 		Boxes.Add(s);
 	}
@@ -93,9 +93,9 @@ bool AOTGRuntimeCourse::PlaceCars(const otg::FGlbMesh&)
 	if (!Pack.Num())
 	{
 		// no cars, and none of their collision boxes
-		const int32 Before = Data->Solids.Num();
-		for (int32 k = Boxes.Num() - 1; k >= 0; k--) Data->Solids.RemoveAt(Boxes[k]);
-		UE_LOG(LogOTGCars, Display, TEXT("Cars: %d spots, no car pack in the game's content - none drawn (%d collision boxes taken out)"), Spots.Num(), Before - Data->Solids.Num());
+		const int32 Before = Course->Data->Solids.Num();
+		for (int32 k = Boxes.Num() - 1; k >= 0; k--) Course->Data->Solids.RemoveAt(Boxes[k]);
+		UE_LOG(LogOTGCars, Display, TEXT("Cars: %d spots, no car pack in the game's content - none drawn (%d collision boxes taken out)"), Spots.Num(), Before - Course->Data->Solids.Num());
 		return true;
 	}
 	TMap<UStaticMesh*, UHierarchicalInstancedStaticMeshComponent*> Comps;
@@ -106,14 +106,14 @@ bool AOTGRuntimeCourse::PlaceCars(const otg::FGlbMesh&)
 		UHierarchicalInstancedStaticMeshComponent*& H = Comps.FindOrAdd(M);
 		if (!H)
 		{
-			H = NewObject<UHierarchicalInstancedStaticMeshComponent>(this);
+			H = NewObject<UHierarchicalInstancedStaticMeshComponent>(Course);
 			H->SetStaticMesh(M);
 			H->NumCustomDataFloats = 5;   // (paint RGB, metallic, rim darkness)
 			H->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 			H->SetMobility(EComponentMobility::Static);
-			H->SetupAttachment(GetRootComponent());
+			H->SetupAttachment(Course->GetRootComponent());
 			H->RegisterComponent();
-			Parts.Add(H);
+			Course->Parts.Add(H);
 		}
 		// (the glb's x, z: the world's X, Y; its long axis along the mesh's longer side; pointing either
 		// way along the bay, chosen by the car)
@@ -121,7 +121,7 @@ bool AOTGRuntimeCourse::PlaceCars(const otg::FGlbMesh&)
 		const double MeshYaw = Ext.X >= Ext.Y ? 0.0 : 90.0;
 		const double Flip = ((uint32(i) * 40503u) >> 5) & 1 ? 180.0 : 0.0;
 		const double Yaw = FMath::RadiansToDegrees(S.Yaw) - MeshYaw + Flip;
-		const FVector Base = Data->LevelOrigin + FVector(S.At.X * 100.0, S.At.Y * 100.0, S.Bottom * 100.0 - M->GetBoundingBox().Min.Z);
+		const FVector Base = Course->Data->LevelOrigin + FVector(S.At.X * 100.0, S.At.Y * 100.0, S.Bottom * 100.0 - M->GetBoundingBox().Min.Z);
 		const int32 Inst = H->AddInstance(FTransform(FRotator(0, Yaw, 0), Base), true);
 		const uint32 Hash = uint32(i) * 2246822519u ^ 0x9E3779B9u;
 		const FPaint& P = Paints[(Hash >> 9) % UE_ARRAY_COUNT(Paints)];
@@ -130,6 +130,6 @@ bool AOTGRuntimeCourse::PlaceCars(const otg::FGlbMesh&)
 		H->SetCustomData(Inst, { Lin.R, Lin.G, Lin.B, P.Metal, Rim }, true);
 	}
 	UE_LOG(LogOTGCars, Display, TEXT("Cars: %d placed from %d pack meshes, the first at %s"), Spots.Num(), Pack.Num(),
-		*(Spots.Num() ? (Data->LevelOrigin + FVector(Spots[0].At.X * 100.0, Spots[0].At.Y * 100.0, Spots[0].Bottom * 100.0)).ToString() : FString()));
+		*(Spots.Num() ? (Course->Data->LevelOrigin + FVector(Spots[0].At.X * 100.0, Spots[0].At.Y * 100.0, Spots[0].Bottom * 100.0)).ToString() : FString()));
 	return true;
 }

@@ -47,6 +47,17 @@ AOTGRuntimeCourse::AOTGRuntimeCourse()
 {
 	PrimaryActorTick.bCanEverTick = true;
 	RootComponent = CreateDefaultSubobject<USceneComponent>(TEXT("Root"));
+	Ground.Course = Water.Course = Trees.Course = FarLand.Course = Props.Course = Turf.Course = this;
+}
+
+void AOTGRuntimeCourse::AddReferencedObjects(UObject* InThis, FReferenceCollector& Collector)
+{
+	Super::AddReferencedObjects(InThis, Collector);
+	AOTGRuntimeCourse* C = CastChecked<AOTGRuntimeCourse>(InThis);
+	C->Ground.AddReferencedObjects(Collector);
+	C->Water.AddReferencedObjects(Collector);
+	C->Trees.AddReferencedObjects(Collector);
+	C->Turf.AddReferencedObjects(Collector);
 }
 
 void AOTGRuntimeCourse::Build(UOTGCourseData* D, TFunction<void(float, const FString&)> Progress)
@@ -57,17 +68,17 @@ void AOTGRuntimeCourse::Build(UOTGCourseData* D, TFunction<void(float, const FSt
 	LandCm = (D->HeightSamples - 1) * D->MetresPerSample * 100.0;
 	if (Progress) Progress(0.02f, TEXT("The course's pictures"));
 	LoadPictures();
-	BuildGround(Progress);
+	Ground.BuildGround(Progress);
 	if (Progress) Progress(0.6f, TEXT("Trees"));
-	BuildTrees();
+	Trees.BuildTrees();
 	if (Progress) Progress(0.75f, TEXT("Water, paths and buildings"));
-	BuildBoulders();
-	BuildWater();
-	BuildSea();
-	BuildFarLand();
-	BuildHouses();   // (before the props: the export's blocks under Hearthline's houses left out there)
-	BuildProps();
-	BuildGrass();
+	Trees.BuildBoulders();
+	Water.BuildWater();
+	Water.BuildSea();
+	FarLand.BuildFarLand();
+	Props.BuildHouses();   // (before the props: the export's blocks under Hearthline's houses left out there)
+	Props.BuildProps();
+	Turf.BuildGrass();
 	UE_LOG(LogOTGRuntimeCourse, Display, TEXT("%s built in %.1f s"), *D->CourseName, FPlatformTime::Seconds() - T0);
 }
 
@@ -78,19 +89,19 @@ void AOTGRuntimeCourse::BuildInSteps(UOTGCourseData* D, TFunction<void(float, co
 	LandCm = (D->HeightSamples - 1) * D->MetresPerSample * 100.0;
 	StepProgress = Progress;
 	StepsDone = Done;
-	Steps.Add({ TEXT("The course's pictures"), [this]() { LoadPictures(); PrepareGround(); } });
+	Steps.Add({ TEXT("The course's pictures"), [this]() { LoadPictures(); Ground.PrepareGround(); } });
 	// (the ground's tiles: added as steps once its size is known - PrepareGround - so the bar is right)
 	const int32 N = D->HeightSamples;
 	const int32 Quads = N > 2049 ? 128 : 64, Count = FMath::DivideAndRoundUp(N - 1, Quads), Total = Count * Count;
 	const int32 Batch = Quads > 64 ? 6 : 24;
 	for (int32 From = 0; From < Total; From += Batch)
-		Steps.Add({ TEXT("The ground"), [this, From, Batch, Total]() { BuildGroundTiles(From, FMath::Min(From + Batch, Total)); } });
-	Steps.Add({ TEXT("Trees"), [this]() { BuildTrees(); } });
-	Steps.Add({ TEXT("Rocks and water"), [this]() { BuildBoulders(); BuildWater(); BuildSea(); } });
-	Steps.Add({ TEXT("The land round it"), [this]() { BuildFarLand(); } });
-	Steps.Add({ TEXT("Houses"), [this]() { BuildHouses(); } });   // (OTGHouses.cpp: before the props - the export's blocks under them left out there)
-	Steps.Add({ TEXT("Paths and buildings"), [this]() { BuildProps(); } });
-	Steps.Add({ TEXT("Grass"), [this]() { BuildGrass(); } });
+		Steps.Add({ TEXT("The ground"), [this, From, Batch, Total]() { Ground.BuildGroundTiles(From, FMath::Min(From + Batch, Total)); } });
+	Steps.Add({ TEXT("Trees"), [this]() { Trees.BuildTrees(); } });
+	Steps.Add({ TEXT("Rocks and water"), [this]() { Trees.BuildBoulders(); Water.BuildWater(); Water.BuildSea(); } });
+	Steps.Add({ TEXT("The land round it"), [this]() { FarLand.BuildFarLand(); } });
+	Steps.Add({ TEXT("Houses"), [this]() { Props.BuildHouses(); } });   // (OTGHouses.cpp: before the props - the export's blocks under them left out there)
+	Steps.Add({ TEXT("Paths and buildings"), [this]() { Props.BuildProps(); } });
+	Steps.Add({ TEXT("Grass"), [this]() { Turf.BuildGrass(); } });
 	StepsTotal = Steps.Num();
 	if (Progress) Progress(0.f, Steps[0].Key);
 }
@@ -150,22 +161,9 @@ UHierarchicalInstancedStaticMeshComponent* AOTGRuntimeCourse::Instances(UStaticM
 void AOTGRuntimeCourse::Tick(float Dt)
 {
 	Super::Tick(Dt);
-	if ((Lakes.Num() || Rivers.Num() || Sea) && FPlatformTime::Seconds() > TidewrightCheckAt) { TidewrightCheckAt = FPlatformTime::Seconds() + 0.5; UpdateTidewright(); }
+	if ((Water.Lakes.Num() || Water.Rivers.Num() || Water.Sea) && FPlatformTime::Seconds() > Water.TidewrightCheckAt) { Water.TidewrightCheckAt = FPlatformTime::Seconds() + 0.5; Water.UpdateTidewright(); }
 	// (the picked one's marks: gone once the designer stops calling; the cone bobbing)
-	if (PickRing && PickRing->IsVisible())
-	{
-		if (FPlatformTime::Seconds() - PickMarkedAt > 0.3) { PickRing->SetVisibility(false); PickCone->SetVisibility(false); }
-		else
-		{
-			const double T = FPlatformTime::Seconds();
-			// (bigger the farther the camera: findable from the tee)
-			double S = 1.3;
-			if (const APlayerController* PC = GetWorld() ? GetWorld()->GetFirstPlayerController() : nullptr)
-				if (PC->PlayerCameraManager) S = FMath::Clamp(FVector::Dist(PC->PlayerCameraManager->GetCameraLocation(), PickConeAt) / 2500.0, 1.3, 14.0);
-			PickCone->SetWorldLocationAndRotation(PickConeAt + FVector(0, 0, (60 * FMath::Sin(T * 3.0) + 60 + 40) * S), FRotator(180, T * 90.0, 0));
-			PickCone->SetWorldScale3D(FVector(S, S, S * 1.3));
-		}
-	}
+	Trees.UpdateMarks();
 	// (BuildInSteps: one step a frame)
 	if (Steps.Num())
 	{
@@ -180,13 +178,29 @@ void AOTGRuntimeCourse::Tick(float Dt)
 		}
 		return;
 	}
-	if (!Grass.IsValid()) return;
+	if (!Turf.Grass.IsValid()) return;
 	APlayerController* PC = GetWorld() ? GetWorld()->GetFirstPlayerController() : nullptr;
-	if (PC && PC->PlayerCameraManager) Grass->Update(PC->PlayerCameraManager->GetCameraLocation());
+	if (PC && PC->PlayerCameraManager) Turf.Grass->Update(PC->PlayerCameraManager->GetCameraLocation());
 }
 
 void AOTGRuntimeCourse::EndPlay(const EEndPlayReason::Type Reason)
 {
-	if (Grass.IsValid()) Grass->Wait();
+	if (Turf.Grass.IsValid()) Turf.Grass->Wait();
 	Super::EndPlay(Reason);
 }
+
+FVector2D AOTGRuntimeCourse::CourseXZ(const FVector& World) const
+{
+	if (!Data) return FVector2D::ZeroVector;
+	const FVector C = Data->WorldToCourse(World);
+	return FVector2D(C.X, C.Z);
+}
+
+FVector2D AOTGRuntimeCourse::RockXY(const FVector& World) const
+{
+	if (!Data) return FVector2D::ZeroVector;
+	const FVector L = World - Data->LevelOrigin;
+	return FVector2D(L.X / 100.0, L.Y / 100.0);
+}
+
+TArray<otg::FGrassKind> AOTGRuntimeCourse::SavedGrassKinds() const { return Turf.SavedGrassKinds(); }

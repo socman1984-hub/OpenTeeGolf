@@ -184,22 +184,22 @@ namespace
 
 // (BuildProps: the export's own building triangles under a Hearthline house - in the glb's frame,
 // metres x east, z south - go)
-bool AOTGRuntimeCourse::UnderHouse(const FVector2D& GlbXZ) const
+bool FOTGCourseProps::UnderHouse(const FVector2D& GlbXZ) const
 {
-	for (const FHouseFoot& F : HouseFeet)
+	for (const FOTGCourseProps::FHouseFoot& F : HouseFeet)
 		if (F.Box.IsInside(GlbXZ) && (InPoly(F.Pts, GlbXZ) || DistToPoly(F.Pts, GlbXZ) < 1.5)) return true;
 	return false;
 }
 
-void AOTGRuntimeCourse::BuildHouses()
+void FOTGCourseProps::BuildHouses()
 {
 	HouseFeet.Reset();
-	if (FParse::Param(FCommandLine::Get(), TEXT("oldhouses")) || !Data || !Data->Solids.Num()) return;
+	if (FParse::Param(FCommandLine::Get(), TEXT("oldhouses")) || !Course->Data || !Course->Data->Solids.Num()) return;
 	const double T0 = FPlatformTime::Seconds();
 
 	// the footprints and what each one is
 	TArray<FFoot> Feet;
-	for (const FOTGSolid& S : Data->Solids)
+	for (const FOTGSolid& S : Course->Data->Solids)
 	{
 		FFoot F;
 		F.Pts = S.Footprint;
@@ -214,8 +214,8 @@ void AOTGRuntimeCourse::BuildHouses()
 	// the clubhouse, when the map doesn't say: of the buildings 150 m² or more within 350 m of where
 	// the round starts and turns (hole 1's and 10's tees, 9's and 18's greens), the closest
 	TArray<FVector2D> Start;
-	auto Tee = [&](int32 i) { if (Data->Holes.IsValidIndex(i) && Data->Holes[i].Tees.Num()) { const FVector T = Data->Holes[i].Tees.CreateConstIterator()->Value; Start.Add(FVector2D(T.X, T.Z)); } };
-	auto Green = [&](int32 i) { if (Data->Holes.IsValidIndex(i)) Start.Add(FVector2D(Data->Holes[i].GreenCenter.X, Data->Holes[i].GreenCenter.Z)); };
+	auto Tee = [&](int32 i) { if (Course->Data->Holes.IsValidIndex(i) && Course->Data->Holes[i].Tees.Num()) { const FVector T = Course->Data->Holes[i].Tees.CreateConstIterator()->Value; Start.Add(FVector2D(T.X, T.Z)); } };
+	auto Green = [&](int32 i) { if (Course->Data->Holes.IsValidIndex(i)) Start.Add(FVector2D(Course->Data->Holes[i].GreenCenter.X, Course->Data->Holes[i].GreenCenter.Z)); };
 	Tee(0); Green(8); Tee(9); Green(17);
 	if (Start.Num() && !Feet.ContainsByPredicate([](const FFoot& F) { return F.Type == TEXT("clubhouse"); }))
 	{
@@ -234,13 +234,13 @@ void AOTGRuntimeCourse::BuildHouses()
 	for (FFoot& F : Feet) if (F.Type.IsEmpty()) F.Type = F.Area < 20 ? TEXT("shed") : TEXT("house");
 
 	// where the course is, to turn the houses' backs to it
-	TArray<FVector2D> Course;
-	for (const FOTGHole& H : Data->Holes)
+	TArray<FVector2D> CoursePts;
+	for (const FOTGHole& H : Course->Data->Holes)
 	{
-		for (const auto& T : H.Tees) Course.Add(FVector2D(T.Value.X, T.Value.Z));
-		Course.Add(FVector2D(H.GreenCenter.X, H.GreenCenter.Z));
-		for (const FVector& P : H.Path) Course.Add(FVector2D(P.X, P.Z));
-		for (const FVector& P : H.Aims) Course.Add(FVector2D(P.X, P.Z));
+		for (const auto& T : H.Tees) CoursePts.Add(FVector2D(T.Value.X, T.Value.Z));
+		CoursePts.Add(FVector2D(H.GreenCenter.X, H.GreenCenter.Z));
+		for (const FVector& P : H.Path) CoursePts.Add(FVector2D(P.X, P.Z));
+		for (const FVector& P : H.Aims) CoursePts.Add(FVector2D(P.X, P.Z));
 	}
 
 	// one Hearthline house, made again for each
@@ -249,7 +249,7 @@ void AOTGRuntimeCourse::BuildHouses()
 	SP.ObjectFlags |= RF_Transient;
 	auto NewHouse = [&]() -> AHearthlineHouse*
 	{
-		AHearthlineHouse* H = GetWorld()->SpawnActor<AHearthlineHouse>(AHearthlineHouse::StaticClass(), FTransform::Identity, SP);
+		AHearthlineHouse* H = Course->GetWorld()->SpawnActor<AHearthlineHouse>(AHearthlineHouse::StaticClass(), FTransform::Identity, SP);
 		if (!H || !H->ShellComponent) return nullptr;
 		H->SetActorHiddenInGame(true);
 		H->ShellComponent->SetVisibleInRayTracing(false);
@@ -274,7 +274,7 @@ void AOTGRuntimeCourse::BuildHouses()
 		// its front: of the rectangle's four sides, the one facing furthest from the nearest of the course
 		FVector2D Away = FVector2D::ZeroVector;
 		double Near = TNumericLimits<double>::Max();
-		for (const FVector2D& P : Course) { const double D = FVector2D::DistSquared(P, R.C); if (D < Near) { Near = D; Away = R.C - P; } }
+		for (const FVector2D& P : CoursePts) { const double D = FVector2D::DistSquared(P, R.C); if (D < Near) { Near = D; Away = R.C - P; } }
 		Away = Away.GetSafeNormal();
 		const FVector2D Sides[4] = { R.U, -R.U, R.V, -R.V };
 		int32 Front = 0;
@@ -297,12 +297,12 @@ void AOTGRuntimeCourse::BuildHouses()
 
 		// the ground under it: it stands on the lowest, its foundation up to the highest
 		const FVector2D Ax = R.U * (R.HalfU + 1), Ay = R.V * (R.HalfV + 1);
-		auto LocalCm = [&](const FVector2D& P) { return FVector2D((P.X - Data->HeightX0) * 100.0, (Data->HeightZ1 - P.Y) * 100.0); };
+		auto LocalCm = [&](const FVector2D& P) { return FVector2D((P.X - Course->Data->HeightX0) * 100.0, (Course->Data->HeightZ1 - P.Y) * 100.0); };
 		double Lo = TNumericLimits<double>::Max(), Hi = -Lo;
 		for (const FVector2D& P : { R.C, R.C + Ax + Ay, R.C + Ax - Ay, R.C - Ax + Ay, R.C - Ax - Ay, R.C + Ax, R.C - Ax, R.C + Ay, R.C - Ay })
 		{
 			const FVector2D L = LocalCm(P);
-			const double G = GroundAt(L.X, L.Y);
+			const double G = Course->Ground.GroundAt(L.X, L.Y);
 			Lo = FMath::Min(Lo, G); Hi = FMath::Max(Hi, G);
 		}
 		if (Hi - Lo > MaxRiseCm) { Skipped++; continue; }
@@ -346,7 +346,7 @@ void AOTGRuntimeCourse::BuildHouses()
 		const FIntPoint Key(FMath::FloorToInt(F.Centroid.X / CellM), FMath::FloorToInt(F.Centroid.Y / CellM));
 		FCell& Cell = Cells.FindOrAdd(Key);
 		const FVector2D Lc = LocalCm(R.C);
-		const FVector At = Data->LevelOrigin + FVector(Lc.X, Lc.Y, Lo);
+		const FVector At = Course->Data->LevelOrigin + FVector(Lc.X, Lc.Y, Lo);
 		if (!Cell.Houses) Cell.Origin = At;
 		// (the house's front, +X, along Fwd: course x east, z north - the level's X east, Y south)
 		const FTransform Xf(FRotator(0, FMath::RadiansToDegrees(FMath::Atan2(-Fwd.Y, Fwd.X)), 0), At - Cell.Origin);
@@ -388,8 +388,8 @@ void AOTGRuntimeCourse::BuildHouses()
 		if (Made <= 6) UE_LOG(LogOTGHouses, Display, TEXT("House %d: %s, %.0f m2, at %.0f %.0f %.0f, facing %.0f"), Made, *StaticEnum<EHearthlineStyle>()->GetNameStringByValue(int64(Style)), F.Area, At.X, At.Y, At.Z, Xf.Rotator().Yaw);
 		Styles.FindOrAdd(Style)++;
 
-		FHouseFoot& Gone = HouseFeet.AddDefaulted_GetRef();
-		for (const FVector2D& P : F.Pts) { Gone.Pts.Add(FVector2D(P.X - Data->HeightX0, Data->HeightZ1 - P.Y)); Gone.Box += Gone.Pts.Last(); }
+		FOTGCourseProps::FHouseFoot& Gone = HouseFeet.AddDefaulted_GetRef();
+		for (const FVector2D& P : F.Pts) { Gone.Pts.Add(FVector2D(P.X - Course->Data->HeightX0, Course->Data->HeightZ1 - P.Y)); Gone.Box += Gone.Pts.Last(); }
 		Gone.Box = Gone.Box.ExpandBy(2.0);
 	}
 	if (House) House->Destroy();
@@ -439,21 +439,21 @@ void AOTGRuntimeCourse::BuildHouses()
 		// (tangents for the surfaces' normal maps)
 		FStaticMeshOperations::ComputeTriangleTangentsAndNormals(MD);
 		FStaticMeshOperations::ComputeTangentsAndNormals(MD, EComputeNTBsFlags::Tangents | EComputeNTBsFlags::IgnoreDegenerateTriangles);
-		UStaticMesh* Mesh = NewObject<UStaticMesh>(this);
+		UStaticMesh* Mesh = NewObject<UStaticMesh>(Course);
 		for (int32 s : Used) Mesh->GetStaticMaterials().Add(FStaticMaterial(SlotMat(Set, s), SlotName(s)));
 		UStaticMesh::FBuildMeshDescriptionsParams Params;
 		Params.bBuildSimpleCollision = false;
 		Params.bFastBuild = true;
 		Params.bMarkPackageDirty = false;
 		Mesh->BuildFromMeshDescriptions({ &MD }, Params);
-		UStaticMeshComponent* C = NewObject<UStaticMeshComponent>(this);
+		UStaticMeshComponent* C = NewObject<UStaticMeshComponent>(Course);
 		C->SetStaticMesh(Mesh);
 		C->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 		C->SetMobility(EComponentMobility::Movable);
-		C->SetupAttachment(GetRootComponent());
+		C->SetupAttachment(Course->GetRootComponent());
 		C->RegisterComponent();
 		C->SetWorldLocation(Cell.Origin);
-		Parts.Add(C);
+		Course->Parts.Add(C);
 		Tris += Cell.Mat.Num();
 	}
 	FString Kinds;

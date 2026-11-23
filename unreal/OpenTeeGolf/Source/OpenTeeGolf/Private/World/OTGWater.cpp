@@ -137,11 +137,11 @@ namespace
 // And the ground under each creek is dug to a bed below its water, its banks eased to at most about
 // 30 degrees over 5 m either side (the export's channel walls stood up to 2 m sheer). Only the
 // ground's drawing: the ball plays on the course's own heights. -oldcreeks: as the export has them
-void AOTGRuntimeCourse::PlanCreeks()
+void FOTGCourseWater::PlanCreeks()
 {
 	bCreeksPlanned = true;
 	Creeks.Reset();
-	TArray<FBody> Bodies = ReadBodies(Data->ExportDir);
+	TArray<FBody> Bodies = ReadBodies(Course->Data->ExportDir);
 	// the ponds and their levels (as BuildTidewright lays them: up to the bank's top)
 	TArray<const FBody*> Ponds;
 	TArray<double> PondZ;
@@ -176,7 +176,7 @@ void AOTGRuntimeCourse::PlanCreeks()
 		if (B.bLake) continue;
 		// (cut where it runs through a pond, so a pond stays a pond - a river laid across one covered it in
 		// river water; each piece remembers the ponds at its ends)
-		struct FPiece { FCreek C; int32 PondA = INDEX_NONE, PondB = INDEX_NONE; };
+		struct FPiece { FOTGCourseWater::FCreek C; int32 PondA = INDEX_NONE, PondB = INDEX_NONE; };
 		TArray<FPiece> Pieces;
 		FPiece Cur;
 		int32 Last = INDEX_NONE;   // (the pond the line came out of)
@@ -248,18 +248,18 @@ void AOTGRuntimeCourse::PlanCreeks()
 		}
 	}
 	if (bOld) { UE_LOG(LogOTGWater, Display, TEXT("Creeks: %d, as the export has them (-oldcreeks)"), Creeks.Num()); return; }
-	const int32 N = Data->HeightSamples;
-	if (GroundHeights.Num() != N * N) return;
-	const double Step = Data->MetresPerSample * 100.0;
-	const double ZScale = Data->HeightRange * 100.0 / 65535.0;
+	const int32 N = Course->Data->HeightSamples;
+	if (Course->Ground.GroundHeights.Num() != N * N) return;
+	const double Step = Course->Data->MetresPerSample * 100.0;
+	const double ZScale = Course->Data->HeightRange * 100.0 / 65535.0;
 	auto Box = [&](FBox2D B, int32& X0, int32& Y0, int32& X1, int32& Y1) {
 		X0 = FMath::Max(0, FMath::FloorToInt(B.Min.X / Step)); Y0 = FMath::Max(0, FMath::FloorToInt(B.Min.Y / Step));
 		X1 = FMath::Min(N - 1, FMath::CeilToInt(B.Max.X / Step)); Y1 = FMath::Min(N - 1, FMath::CeilToInt(B.Max.Y / Step));
 	};
 	// the ponds over creeks banked (HoldPonds), and that ground left alone
-	HoldPonds();
+	Course->Ground.HoldPonds();
 	auto InBerm = [&](const FVector2D& Q) {
-		for (const FPondHold& H : PondHolds)
+		for (const FOTGCourseWater::FPondHold& H : PondHolds)
 			if (FVector2D::Distance(Q, H.At) < 1500.0 && DistToLine(Ponds[H.Pond]->Pts, Q.X, Q.Y, true) < Berms.FindRef(H.Pond)) return true;
 		return false;
 	};
@@ -267,7 +267,7 @@ void AOTGRuntimeCourse::PlanCreeks()
 	constexpr double BankCm = 500.0, BankSlope = 0.55;   // (the banks eased over 5 m, to about 30 degrees)
 	int32 Dug = 0;
 	int32 Deep = 0;
-	for (const FCreek& C : Creeks)
+	for (const FOTGCourseWater::FCreek& C : Creeks)
 	{
 		const int32 Before = Dug;
 		FVector2D Sum(0, 0); double MaxDown = 0;
@@ -294,9 +294,9 @@ void AOTGRuntimeCourse::PlanCreeks()
 				// (where the course's own ground on the creek's line stands well over its water - its level in
 				// water_bodies.json metres low there (Walden: 5 m) - left as it is: dug to it, a deep dry
 				// trench with dark walls)
-				if (Data->Heights[FMath::Clamp(FMath::RoundToInt(On.Y / Step), 0, N - 1) * N + FMath::Clamp(FMath::RoundToInt(On.X / Step), 0, N - 1)] * ZScale - Zw > 350.0) { Deep++; continue; }
+				if (Course->Data->Heights[FMath::Clamp(FMath::RoundToInt(On.Y / Step), 0, N - 1) * N + FMath::Clamp(FMath::RoundToInt(On.X / Step), 0, N - 1)] * ZScale - Zw > 350.0) { Deep++; continue; }
 				if (PondAt(FVector(Q, 0), 0) != INDEX_NONE || InBerm(Q)) continue;   // (a pond's bed is its own: LiftPondBanks)
-				uint16& Hv = GroundHeights[y * N + x];
+				uint16& Hv = Course->Ground.GroundHeights[y * N + x];
 				const double Z = Hv * ZScale;
 				double Want;
 				if (Best < Half) Want = Zw - 25.0 - 35.0 * FMath::Clamp(1.0 - Best / FMath::Max(Half, 1.0), 0.0, 1.0);   // (the bed: 25 cm under at the edge, 60 in the middle)
@@ -316,7 +316,7 @@ void AOTGRuntimeCourse::PlanCreeks()
 		Creeks.Num(), Joined, Spills, Dug, Deep);
 }
 
-bool AOTGRuntimeCourse::BuildTidewright(TArray<bool>& OutGone)
+bool FOTGCourseWater::BuildTidewright(TArray<bool>& OutGone)
 {
 	OutGone.Init(false, WaterPos.Num());
 	if (FParse::Param(FCommandLine::Get(), TEXT("oldwater"))) return false;
@@ -326,10 +326,10 @@ bool AOTGRuntimeCourse::BuildTidewright(TArray<bool>& OutGone)
 	// pond, each running from one pond's level to the next)
 	if (!bCreeksPlanned) PlanCreeks();
 	TArray<FBody> Bodies;
-	for (FBody& B : ReadBodies(Data->ExportDir)) if (B.bLake) Bodies.Add(MoveTemp(B));
-	for (const FCreek& C : Creeks) { FBody B; B.Pts = C.Pts; B.W = C.W; Bodies.Add(MoveTemp(B)); }
-	const FVector O = Data->LevelOrigin;
-	const bool bSeaCourse = FPaths::FileExists(FPaths::Combine(Data->ExportDir, TEXT("sea.glb")));
+	for (FBody& B : ReadBodies(Course->Data->ExportDir)) if (B.bLake) Bodies.Add(MoveTemp(B));
+	for (const FOTGCourseWater::FCreek& C : Creeks) { FBody B; B.Pts = C.Pts; B.W = C.W; Bodies.Add(MoveTemp(B)); }
+	const FVector O = Course->Data->LevelOrigin;
+	const bool bSeaCourse = FPaths::FileExists(FPaths::Combine(Course->Data->ExportDir, TEXT("sea.glb")));
 	int32 NLakes = 0, NSkipped = 0, NRivers = 0, NLakeSeen = 0;
 	bool bShared = false;
 	for (const FBody& B : Bodies)
@@ -363,13 +363,13 @@ bool AOTGRuntimeCourse::BuildTidewright(TArray<bool>& OutGone)
 			bool bSafe = true;
 			for (double Y = Box.Min.Y; Y <= Box.Max.Y && bSafe; Y += 100)
 				for (double X = Box.Min.X; X <= Box.Max.X; X += 100)
-					if (!Inside(B.Pts, X, Y) && DistToLine(B.Pts, X, Y, true) > LakeMarginCm && GroundAt(X, Y) < Level + LiftCm + 2) { bSafe = false; break; }
+					if (!Inside(B.Pts, X, Y) && DistToLine(B.Pts, X, Y, true) > LakeMarginCm && Course->Ground.GroundAt(X, Y) < Level + LiftCm + 2) { bSafe = false; break; }
 			if (bSeaCourse) bSafe = false;
 			if (!bSafe) { if (BuildStillPond(B.Pts, Level, Round)) NSkipped++; continue; }
 			FActorSpawnParameters SP;
 			SP.bDeferConstruction = true;
 			const FVector2D C = Box.GetCenter();
-			ATidewrightWater* W = GetWorld()->SpawnActor<ATidewrightWater>(ATidewrightWater::StaticClass(), FTransform(O + FVector(C.X, C.Y, Level + LiftCm)), SP);
+			ATidewrightWater* W = Course->GetWorld()->SpawnActor<ATidewrightWater>(ATidewrightWater::StaticClass(), FTransform(O + FVector(C.X, C.Y, Level + LiftCm)), SP);
 			if (!W) continue;
 			W->Mode = ETidewrightWaterMode::Lake;
 			W->LakeSize = Box.GetSize() / 100.0;
@@ -401,7 +401,7 @@ bool AOTGRuntimeCourse::BuildTidewright(TArray<bool>& OutGone)
 			for (int32 i = 1; i < Pts.Num(); i++) Pts[i].Z = FMath::Min(Pts[i].Z, Pts[i - 1].Z);
 			FActorSpawnParameters SP;
 			SP.bDeferConstruction = true;
-			ATidewrightRiver* R = GetWorld()->SpawnActor<ATidewrightRiver>(ATidewrightRiver::StaticClass(), FTransform(O + Pts[0] + FVector(0, 0, LiftCm)), SP);
+			ATidewrightRiver* R = Course->GetWorld()->SpawnActor<ATidewrightRiver>(ATidewrightRiver::StaticClass(), FTransform(O + Pts[0] + FVector(0, 0, LiftCm)), SP);
 			if (!R) continue;
 			R->River.Width = 1.0f;   // (each point's width in its scale)
 			// (a golf course's creek or canal: clearer and calmer than the plugin's silty river, a
@@ -447,7 +447,7 @@ bool AOTGRuntimeCourse::BuildTidewright(TArray<bool>& OutGone)
 // A pond a rectangle can't hold (lower ground beside it would be under the water too): a Tidewright
 // river with no current laid down its long axis, as wide at each step as the pond there (and a
 // little more, under the banks), flat at the pond's level - the pond's own shape, ripples, no foam
-bool AOTGRuntimeCourse::BuildStillPond(const TArray<FVector>& Poly, double Level, const TArray<FVector2D>* Round)
+bool FOTGCourseWater::BuildStillPond(const TArray<FVector>& Poly, double Level, const TArray<FVector2D>* Round)
 {
 	// (its long axis: the outline's principal direction)
 	FVector2D C(0, 0);
@@ -482,10 +482,10 @@ bool AOTGRuntimeCourse::BuildStillPond(const TArray<FVector>& Poly, double Level
 		W.Add((B - A) + 2 * 150);
 	}
 	if (Pts.Num() < 2) return false;
-	const FVector O3 = Data->LevelOrigin;
+	const FVector O3 = Course->Data->LevelOrigin;
 	FActorSpawnParameters SP;
 	SP.bDeferConstruction = true;
-	ATidewrightRiver* R = GetWorld()->SpawnActor<ATidewrightRiver>(ATidewrightRiver::StaticClass(), FTransform(O3 + Pts[0] + FVector(0, 0, LiftCm)), SP);
+	ATidewrightRiver* R = Course->GetWorld()->SpawnActor<ATidewrightRiver>(ATidewrightRiver::StaticClass(), FTransform(O3 + Pts[0] + FVector(0, 0, LiftCm)), SP);
 	if (!R) return false;
 	R->River.Width = 1.0f;
 	R->River.FlowSpeed = 0.0f;           // (still)
@@ -526,7 +526,7 @@ bool AOTGRuntimeCourse::BuildStillPond(const TArray<FVector>& Poly, double Level
 			const FVector Org = PM->GetComponentLocation();
 			const double Z = O3.Z + Level + LiftCm - Org.Z;
 			auto OverCreek = [&](const FVector2D& Q) {
-				for (const FCreek& Cr : Creeks)
+				for (const FOTGCourseWater::FCreek& Cr : Creeks)
 				{
 					int32 Seg = 0;
 					const double D = DistToLine(Cr.Pts, Q.X, Q.Y, false, &Seg);
@@ -573,7 +573,7 @@ bool AOTGRuntimeCourse::BuildStillPond(const TArray<FVector>& Poly, double Level
 
 // The water's meshes kept out of ray tracing, and the ponds simulating: the nearest few to the
 // camera; the rest keep their last waves
-void AOTGRuntimeCourse::UpdateTidewright()
+void FOTGCourseWater::UpdateTidewright()
 {
 	// (Tidewright's surfaces are procedural meshes, made when each first builds or ticks: in the
 	// hardware ray tracing scene they cost the render thread ~100 ms a frame on a course with a dozen
@@ -589,7 +589,7 @@ void AOTGRuntimeCourse::UpdateTidewright()
 	for (ATidewrightRiver* R : Rivers) NoRayTracing(R);
 	NoRayTracing(Sea);
 	if (!Lakes.Num()) return;
-	const APlayerController* PC = GetWorld() ? GetWorld()->GetFirstPlayerController() : nullptr;
+	const APlayerController* PC = Course->GetWorld() ? Course->GetWorld()->GetFirstPlayerController() : nullptr;
 	if (!PC || !PC->PlayerCameraManager) return;
 	const FVector Cam = PC->PlayerCameraManager->GetCameraLocation();
 	TArray<TPair<double, ATidewrightWater*>> Near;
@@ -603,12 +603,12 @@ void AOTGRuntimeCourse::UpdateTidewright()
 
 // The sea: a Tidewright ocean, and a shoreline over the coast whose scan is the course's heights
 // (Box: the sea's surface, the export's frame in metres - x east, z south; Swell: x east, y south)
-bool AOTGRuntimeCourse::BuildTidewrightSea(const otg::FGlbMesh& Mesh, const FBox& Box, const FVector2D& Swell, double LevelM)
+bool FOTGCourseWater::BuildTidewrightSea(const otg::FGlbMesh& Mesh, const FBox& Box, const FVector2D& Swell, double LevelM)
 {
 	if (FParse::Param(FCommandLine::Get(), TEXT("oldwater"))) return false;
 	UTidewrightPreset* Bay = LoadObject<UTidewrightPreset>(nullptr, TEXT("/Tidewright/Presets/TWP_BreezyBay.TWP_BreezyBay"));
 	if (!Bay) { UE_LOG(LogOTGWater, Warning, TEXT("No Tidewright presets (the plugin's content): the game's own sea")); return false; }
-	const FVector O = Data->LevelOrigin;
+	const FVector O = Course->Data->LevelOrigin;
 	const double Level = LevelM * 100.0;
 	const FVector Centre = O + FVector((Box.Min.X + Box.Max.X) * 50.0, (Box.Min.Z + Box.Max.Z) * 50.0, Level + LiftCm);
 
@@ -616,7 +616,7 @@ bool AOTGRuntimeCourse::BuildTidewrightSea(const otg::FGlbMesh& Mesh, const FBox
 	const FVector2D Half((Box.Max.X - Box.Min.X) * 50.0 + 15000.0, (Box.Max.Z - Box.Min.Z) * 50.0 + 15000.0);
 	FActorSpawnParameters SP;
 	SP.bDeferConstruction = true;
-	ATidewrightShoreline* Shore = GetWorld()->SpawnActor<ATidewrightShoreline>(ATidewrightShoreline::StaticClass(), FTransform(Centre), SP);
+	ATidewrightShoreline* Shore = Course->GetWorld()->SpawnActor<ATidewrightShoreline>(ATidewrightShoreline::StaticClass(), FTransform(Centre), SP);
 	if (Shore)
 	{
 		Shore->bRebuildOnBeginPlay = false;
@@ -686,7 +686,7 @@ bool AOTGRuntimeCourse::BuildTidewrightSea(const otg::FGlbMesh& Mesh, const FBox
 			for (int32 x = 0; x < Size; x++)
 			{
 				const int32 i = y * Size + x;
-				Gs[i] = GroundAt(C.X - Half.X + (x + 0.5) * CellX, C.Y - Half.Y + (y + 0.5) * CellY);
+				Gs[i] = Course->Ground.GroundAt(C.X - Half.X + (x + 0.5) * CellX, C.Y - Half.Y + (y + 0.5) * CellY);
 				Wet[i] = InSea[i] && Gs[i] < Level;
 			}
 		TArray<float> FromSea, FromWater;
@@ -720,7 +720,7 @@ bool AOTGRuntimeCourse::BuildTidewrightSea(const otg::FGlbMesh& Mesh, const FBox
 		Shore->FinishSpawning(FTransform(Centre));
 	}
 
-	ATidewrightWater* W = GetWorld()->SpawnActor<ATidewrightWater>(ATidewrightWater::StaticClass(), FTransform(Centre), SP);
+	ATidewrightWater* W = Course->GetWorld()->SpawnActor<ATidewrightWater>(ATidewrightWater::StaticClass(), FTransform(Centre), SP);
 	if (!W) return false;
 	W->Mode = ETidewrightWaterMode::Ocean;
 	W->SimulationQuality = ETidewrightSimulationQuality::Medium;
@@ -745,16 +745,16 @@ bool AOTGRuntimeCourse::BuildTidewrightSea(const otg::FGlbMesh& Mesh, const FBox
 // the coast rises over 2 m above the sea it fades out, a cliff stays grass - and under the shallows.
 // FromWater: metres to the sea's water, on the shoreline's grid (Size a side from Min, Cell cm a cell);
 // Gs: the ground there (cm).
-void AOTGRuntimeCourse::AddBeach(const TArray<float>& FromWater, const TArray<double>& Gs, int32 Size, const FVector2D& Min, const FVector2D& Cell, double Level)
+void FOTGCourseWater::AddBeach(const TArray<float>& FromWater, const TArray<double>& Gs, int32 Size, const FVector2D& Min, const FVector2D& Cell, double Level)
 {
-	if (FParse::Param(FCommandLine::Get(), TEXT("nobeach")) || !GroundMat) return;
-	otg::FPicture* P = MaskPixels.Find(TEXT("bunker"));
+	if (FParse::Param(FCommandLine::Get(), TEXT("nobeach")) || !Course->GroundMat) return;
+	otg::FPicture* P = Course->MaskPixels.Find(TEXT("bunker"));
 	if (!P || !P->W)
 	{
 		otg::FPicture Blank;
 		Blank.W = Blank.H = 2048;
 		Blank.Pixels.Init(0, Blank.W * Blank.H);
-		P = &MaskPixels.Add(TEXT("bunker"), MoveTemp(Blank));
+		P = &Course->MaskPixels.Add(TEXT("bunker"), MoveTemp(Blank));
 	}
 	auto Sample = [&](const auto& A, double Gx, double Gy) {
 		const int32 I = FMath::Clamp(FMath::FloorToInt(Gx), 0, Size - 2), J = FMath::Clamp(FMath::FloorToInt(Gy), 0, Size - 2);
@@ -766,7 +766,7 @@ void AOTGRuntimeCourse::AddBeach(const TArray<float>& FromWater, const TArray<do
 	{
 		for (int32 i = 0; i < P->W; i++)
 		{
-			const double X = (i + 0.5) / P->W * LandCm, Y = (j + 0.5) / P->H * LandCm;
+			const double X = (i + 0.5) / P->W * Course->LandCm, Y = (j + 0.5) / P->H * Course->LandCm;
 			const double Gx = (X - Min.X) / Cell.X - 0.5, Gy = (Y - Min.Y) / Cell.Y - 0.5;
 			if (Gx < 0 || Gy < 0 || Gx > Size - 1 || Gy > Size - 1) continue;
 			const double D = Sample(FromWater, Gx, Gy);
@@ -780,17 +780,17 @@ void AOTGRuntimeCourse::AddBeach(const TArray<float>& FromWater, const TArray<do
 			if (V > Px) Px = V;
 		}
 	});
-	if (UTexture2D* T = otg::MakeTexture(*P, otg::ETexKind::Mask, this))
+	if (UTexture2D* T = otg::MakeTexture(*P, otg::ETexKind::Mask, Course))
 	{
-		Textures.Add(TEXT("Mask_bunker"), T);
-		GroundMat->SetTextureParameterValue(TEXT("Mask_bunker"), T);
+		Course->Textures.Add(TEXT("Mask_bunker"), T);
+		Course->GroundMat->SetTextureParameterValue(TEXT("Mask_bunker"), T);
 	}
 	UE_LOG(LogOTGWater, Display, TEXT("Sea: a beach along it (the bunkers' mask, %d x %d)"), P->W, P->H);
 }
 
 // The highest water surface over a point (world cm), or -infinity: the sea, a pond's level, a
 // river's surface. The camera stays over it (AOTGRound): nothing in the game is seen from under water
-double AOTGRuntimeCourse::WaterTopAt(const FVector& P) const
+double FOTGCourseWater::WaterTopAt(const FVector& P) const
 {
 	double Top = -UE_BIG_NUMBER;
 	if (Sea) Top = Sea->GetActorLocation().Z;
@@ -804,10 +804,17 @@ double AOTGRuntimeCourse::WaterTopAt(const FVector& P) const
 	return Top;
 }
 
-double AOTGRuntimeCourse::OpenWaterAt(const FVector& P) const
+double FOTGCourseWater::OpenWaterAt(const FVector& P) const
 {
 	const double Top = WaterTopAt(P);
-	if (Top < -1e9 || !Data) return Top;
-	const FVector O = Data->LevelOrigin;
-	return Top > O.Z + GroundAt(P.X - O.X, P.Y - O.Y) + 3.0 ? Top : -UE_BIG_NUMBER;
+	if (Top < -1e9 || !Course->Data) return Top;
+	const FVector O = Course->Data->LevelOrigin;
+	return Top > O.Z + Course->Ground.GroundAt(P.X - O.X, P.Y - O.Y) + 3.0 ? Top : -UE_BIG_NUMBER;
+}
+
+void FOTGCourseWater::AddReferencedObjects(FReferenceCollector& Collector)
+{
+	Collector.AddReferencedObjects(Lakes);
+	Collector.AddReferencedObjects(Rivers);
+	Collector.AddReferencedObject(Sea);
 }

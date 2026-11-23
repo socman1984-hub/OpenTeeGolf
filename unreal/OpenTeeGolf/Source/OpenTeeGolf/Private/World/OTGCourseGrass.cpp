@@ -45,7 +45,7 @@ DEFINE_LOG_CATEGORY_STATIC(LogOTGRuntimeCourse, Log, All);
 // The grass: each kind's turf patch and its material (reading this course's pictures), grown round
 // the camera as it moves (otg::FGrass): the game's kinds as the course's grass designer left them
 // (grass.json in its folder)
-TMap<FString, TArray<TPair<UStaticMesh*, UMaterialInterface*>>> AOTGRuntimeCourse::GrassMeshes(const TArray<otg::FGrassKind>& Kinds)
+TMap<FString, TArray<TPair<UStaticMesh*, UMaterialInterface*>>> FOTGCourseTurf::GrassMeshes(const TArray<otg::FGrassKind>& Kinds)
 {
 	TMap<FString, TArray<TPair<UStaticMesh*, UMaterialInterface*>>> Have;
 	for (const otg::FGrassKind& K : Kinds)
@@ -93,10 +93,10 @@ TMap<FString, TArray<TPair<UStaticMesh*, UMaterialInterface*>>> AOTGRuntimeCours
 						if (!Own->GetVectorParameterValue(FHashedMaterialParameterInfo(TEXT("Translucency Tint")), Through)) Through = Base;
 						FLinearColor Controls(1, 1, 1, 0);
 						Own->GetVectorParameterValue(FHashedMaterialParameterInfo(TEXT("Base Color Controls")), Controls);
-						UMaterialInstanceDynamic* M = UMaterialInstanceDynamic::Create(Own, this);
+						UMaterialInstanceDynamic* M = UMaterialInstanceDynamic::Create(Own, Course);
 						TurfMats.Add(M);
 						GrassSwaps.Add(Own, M);
-						GrassTints.FindOrAdd(K.Name).Add(FGrassTint{ M, true, Base, Through, Controls });
+						GrassTints.FindOrAdd(K.Name).Add(FOTGCourseTurf::FGrassTint{ M, true, Base, Through, Controls });
 					}
 				}
 			}
@@ -115,13 +115,13 @@ TMap<FString, TArray<TPair<UStaticMesh*, UMaterialInterface*>>> AOTGRuntimeCours
 			{
 				UStaticMesh* Mesh = LoadObject<UStaticMesh>(nullptr, *FString::Printf(TEXT("/Greensward/Mats/SM_GS_%s.SM_GS_%s"), *Mat, *Mat));
 				if (!Mesh) { UE_LOG(LogOTGRuntimeCourse, Warning, TEXT("Grass %s: Greensward's %s not in the game"), *K.Name, *Mat); continue; }
-				UMaterialInstanceDynamic* M = GsBase ? UMaterialInstanceDynamic::Create(GsBase, this) : nullptr;
+				UMaterialInstanceDynamic* M = GsBase ? UMaterialInstanceDynamic::Create(GsBase, Course) : nullptr;
 				if (M)
 				{
 					M->SetScalarParameterValue(TEXT("MacroVariation"), bDeep ? 0.35f : 0.f);
 					M->SetScalarParameterValue(TEXT("MicroVariation"), bDeep ? 0.5f : 0.3f);
 					TurfMats.Add(M);
-					GrassTints.FindOrAdd(K.Name).Add(FGrassTint{ M, false, Root, Tip, FLinearColor::White, true });
+					GrassTints.FindOrAdd(K.Name).Add(FOTGCourseTurf::FGrassTint{ M, false, Root, Tip, FLinearColor::White, true });
 				}
 				TurfMeshes.Add(Mesh);
 				V.Add(TPair<UStaticMesh*, UMaterialInterface*>(Mesh, M));
@@ -135,10 +135,10 @@ TMap<FString, TArray<TPair<UStaticMesh*, UMaterialInterface*>>> AOTGRuntimeCours
 			if (!Mesh || !Base) { UE_LOG(LogOTGRuntimeCourse, Warning, TEXT("Grass %s: not in the game's content"), *K.Name); }
 			else
 			{
-				UMaterialInstanceDynamic* M = UMaterialInstanceDynamic::Create(Base, this);
-				SetPictures(M);
+				UMaterialInstanceDynamic* M = UMaterialInstanceDynamic::Create(Base, Course);
+				Course->SetPictures(M);
 				TurfMats.Add(M);
-				GrassTints.FindOrAdd(K.Name).Add(FGrassTint{ M, false, FLinearColor::White, FLinearColor::White, FLinearColor::White });
+				GrassTints.FindOrAdd(K.Name).Add(FOTGCourseTurf::FGrassTint{ M, false, FLinearColor::White, FLinearColor::White, FLinearColor::White });
 				TurfMeshes.Add(Mesh);
 				V.Add(TPair<UStaticMesh*, UMaterialInterface*>(Mesh, M));
 			}
@@ -148,18 +148,18 @@ TMap<FString, TArray<TPair<UStaticMesh*, UMaterialInterface*>>> AOTGRuntimeCours
 	return Have;
 }
 
-void AOTGRuntimeCourse::BuildGrass()
+void FOTGCourseTurf::BuildGrass()
 {
-	const TArray<otg::FGrassKind> Kinds = otg::FGrass::LoadKinds(Data->ExportDir);
+	const TArray<otg::FGrassKind> Kinds = otg::FGrass::LoadKinds(Course->Data->ExportDir);
 	const TMap<FString, TArray<TPair<UStaticMesh*, UMaterialInterface*>>> Have = GrassMeshes(Kinds);
 	Grass = MakeShared<otg::FGrass>();
-	Grass->Init(this, Data, MaskPixels, LandCm, Kinds, Have);
+	Grass->Init(Course, Course->Data, Course->MaskPixels, Course->LandCm, Kinds, Have);
 	Grass->SetSwaps(GrassSwaps);
 	TintGrass();
 	int32 On = 0;
 	for (const otg::FGrassKind& K : Kinds) On += K.bOn ? 1 : 0;
 	UE_LOG(LogOTGRuntimeCourse, Display, TEXT("Grass: %d kinds (%d growing)%s"), Kinds.Num(), On,
-		FPaths::FileExists(FPaths::Combine(Data->ExportDir, TEXT("grass.json"))) ? TEXT(", as the course's grass designer left them") : TEXT(""));
+		FPaths::FileExists(FPaths::Combine(Course->Data->ExportDir, TEXT("grass.json"))) ? TEXT(", as the course's grass designer left them") : TEXT(""));
 }
 
 // The grass designer's changes from the console (testing, screenshots): OTG.Grass.List,
@@ -230,13 +230,13 @@ namespace
 	}));
 }
 
-const TArray<otg::FGrassKind>& AOTGRuntimeCourse::GrassKinds() const
+const TArray<otg::FGrassKind>& FOTGCourseTurf::GrassKinds() const
 {
 	static const TArray<otg::FGrassKind> None;
 	return Grass.IsValid() ? Grass->Kinds() : None;
 }
 
-void AOTGRuntimeCourse::SetGrassKinds(const TArray<otg::FGrassKind>& Kinds)
+void FOTGCourseTurf::SetGrassKinds(const TArray<otg::FGrassKind>& Kinds)
 {
 	if (!Grass.IsValid()) return;
 	TArray<otg::FGrassKind> K = Kinds;
@@ -246,7 +246,7 @@ void AOTGRuntimeCourse::SetGrassKinds(const TArray<otg::FGrassKind>& Kinds)
 	TintGrass();
 }
 
-void AOTGRuntimeCourse::SetGrassColours(const TArray<otg::FGrassKind>& Kinds)
+void FOTGCourseTurf::SetGrassColours(const TArray<otg::FGrassKind>& Kinds)
 {
 	if (!Grass.IsValid()) return;
 	TArray<otg::FGrassKind> K = Kinds;
@@ -271,28 +271,28 @@ static TAutoConsoleVariable<float> CVarPalCut1(TEXT("OTG.Palette.FirstCut"), 1.0
 
 // The ground's colour on every surface: the palette's, turned by the grass designer's colours - the
 // fairways' and greens' looks, and the rough's kind (the ground under its blades the same as they are)
-void AOTGRuntimeCourse::TintGround()
+void FOTGCourseTurf::TintGround()
 {
-	if (!GroundMat) return;
+	if (!Course->GroundMat) return;
 	const FLinearColor TurfGreen(0.06f, 0.09f, 0.022f);
 	for (const TCHAR* S : { TEXT("fairway"), TEXT("green") })
 	{
 		otg::FGrassKind K;
 		if (const FOTGTurfLook* L = TurfLooks.Find(S)) { K.Hue = L->Hue; K.Sat = L->Sat; K.Bright = L->Bright; }
-		GroundMat->SetVectorParameterValue(*(FString(TEXT("TurfTint_")) + S), otg::Palette::Factor(S) * K.TintFor(otg::Palette::Of(S)));
+		Course->GroundMat->SetVectorParameterValue(*(FString(TEXT("TurfTint_")) + S), otg::Palette::Factor(S) * K.TintFor(otg::Palette::Of(S)));
 	}
 	FLinearColor RoughLook = FLinearColor::White;
 	if (Grass.IsValid())
 		if (const otg::FGrassKind* R = Grass->Kinds().FindByPredicate([](const otg::FGrassKind& X) { return X.Name == TEXT("rough"); })) RoughLook = R->TintFor(TurfGreen);
-	GroundMat->SetVectorParameterValue(TEXT("TurfTint_rough"), otg::Palette::Factor(TEXT("rough")) * RoughLook);
-	GroundMat->SetVectorParameterValue(TEXT("TurfTint_fringe"), otg::Palette::Factor(TEXT("fringe")));
-	GroundMat->SetVectorParameterValue(TEXT("TurfTint_native"), otg::Palette::Factor(TEXT("native")));
+	Course->GroundMat->SetVectorParameterValue(TEXT("TurfTint_rough"), otg::Palette::Factor(TEXT("rough")) * RoughLook);
+	Course->GroundMat->SetVectorParameterValue(TEXT("TurfTint_fringe"), otg::Palette::Factor(TEXT("fringe")));
+	Course->GroundMat->SetVectorParameterValue(TEXT("TurfTint_native"), otg::Palette::Factor(TEXT("native")));
 }
 
 // Each kind's materials tinted as its colour is: our turf by its Tint (a multiplier on the green it
 // draws: the palette's colour for its cut, then the designer's hue, strength, brightness); a
 // Megascans plant by its Base Color Controls (strength and brightness only)
-void AOTGRuntimeCourse::TintGrass()
+void FOTGCourseTurf::TintGrass()
 {
 	TintGround();
 	if (!Grass.IsValid()) return;
@@ -300,8 +300,8 @@ void AOTGRuntimeCourse::TintGrass()
 	// (the first cut's width, which the rough leaves to it - 0 when it's off: the rough to the fairway)
 	const float FirstCut = otg::FGrass::FirstCutM(Grass->Kinds());
 	for (const otg::FGrassKind& K : Grass->Kinds())
-		if (const TArray<FGrassTint>* Ts = GrassTints.Find(K.Name))
-			for (const FGrassTint& T : *Ts)
+		if (const TArray<FOTGCourseTurf::FGrassTint>* Ts = GrassTints.Find(K.Name))
+			for (const FOTGCourseTurf::FGrassTint& T : *Ts)
 			{
 				UMaterialInstanceDynamic* M = T.M.Get();
 				if (!M) continue;
@@ -336,24 +336,24 @@ void AOTGRuntimeCourse::TintGrass()
 			}
 }
 
-bool AOTGRuntimeCourse::FindSurface(const FString& Mask, const FVector& From, FVector& Out, double InsideM) const
+bool FOTGCourseTurf::FindSurface(const FString& Mask, const FVector& From, FVector& Out, double InsideM) const
 {
 	return Grass.IsValid() && Grass->FindSurface(Mask, From, Out, InsideM);
 }
 
-bool AOTGRuntimeCourse::FindGrass(const FString& Kind, const FVector& From, FVector& Out) const
+bool FOTGCourseTurf::FindGrass(const FString& Kind, const FVector& From, FVector& Out) const
 {
 	return Grass.IsValid() && Grass->FindNear(Kind, From, Out);
 }
 
-bool AOTGRuntimeCourse::SaveGrassKinds(FString* Where) const
+bool FOTGCourseTurf::SaveGrassKinds(FString* Where) const
 {
-	if (!Grass.IsValid() || !Data) return false;
-	if (Where) *Where = FPaths::Combine(Data->ExportDir, TEXT("grass.json"));
-	return otg::FGrass::SaveKinds(Data->ExportDir, Grass->Kinds());
+	if (!Grass.IsValid() || !Course->Data) return false;
+	if (Where) *Where = FPaths::Combine(Course->Data->ExportDir, TEXT("grass.json"));
+	return otg::FGrass::SaveKinds(Course->Data->ExportDir, Grass->Kinds());
 }
 
-TArray<FString> AOTGRuntimeCourse::GrassPlants() const
+TArray<FString> FOTGCourseTurf::GrassPlants() const
 {
 	TSet<FString> Folders;
 	for (const FAssetData& A : AssetsUnder(TEXT("/Game/Fab/Megascans/Plants"), UStaticMesh::StaticClass()))
@@ -372,21 +372,21 @@ TArray<FString> AOTGRuntimeCourse::GrassPlants() const
 	return Out;
 }
 
-float AOTGRuntimeCourse::GrassHeightCm(const FString& Kind) const
+float FOTGCourseTurf::GrassHeightCm(const FString& Kind) const
 {
 	if (!Grass.IsValid()) return 0;
 	const int32 I = Grass->Kinds().IndexOfByPredicate([&](const otg::FGrassKind& K) { return K.Name == Kind; });
 	return I == INDEX_NONE ? 0 : Grass->MeshHeightCm(I);
 }
 
-void AOTGRuntimeCourse::SetTurfLook(const FString& Surface, const FOTGTurfLook& Look)
+void FOTGCourseTurf::SetTurfLook(const FString& Surface, const FOTGTurfLook& Look)
 {
 	TurfLooks.Add(Surface, Look);
-	if (!GroundMat) return;
+	if (!Course->GroundMat) return;
 	TintGrass();   // (the ground, and the blades mown on it)
 }
 
-FLinearColor AOTGRuntimeCourse::TurfLookTint(const FString& Kind) const
+FLinearColor FOTGCourseTurf::TurfLookTint(const FString& Kind) const
 {
 	// (a grass kind named for a mown surface - make_turf.py's fairway and green - takes its look)
 	const FOTGTurfLook* L = TurfLooks.Find(Kind);
@@ -396,11 +396,11 @@ FLinearColor AOTGRuntimeCourse::TurfLookTint(const FString& Kind) const
 	return K.TintFor(otg::Palette::Of(Kind));
 }
 
-TMap<FString, FOTGTurfLook> AOTGRuntimeCourse::SavedTurfLooks() const
+TMap<FString, FOTGTurfLook> FOTGCourseTurf::SavedTurfLooks() const
 {
 	TMap<FString, FOTGTurfLook> Out;
-	if (!Data) return Out;
-	const TSharedPtr<FJsonValue> V = ReadJson(FPaths::Combine(Data->ExportDir, TEXT("turf.json")));
+	if (!Course->Data) return Out;
+	const TSharedPtr<FJsonValue> V = ReadJson(FPaths::Combine(Course->Data->ExportDir, TEXT("turf.json")));
 	const TSharedPtr<FJsonObject> O = V.IsValid() ? V->AsObject() : nullptr;
 	if (!O.IsValid()) return Out;
 	for (const TCHAR* S : { TEXT("fairway"), TEXT("green") })
@@ -418,10 +418,10 @@ TMap<FString, FOTGTurfLook> AOTGRuntimeCourse::SavedTurfLooks() const
 	return Out;
 }
 
-bool AOTGRuntimeCourse::SaveTurfLooks(FString* Where) const
+bool FOTGCourseTurf::SaveTurfLooks(FString* Where) const
 {
-	if (!Data) return false;
-	const FString File = FPaths::Combine(Data->ExportDir, TEXT("turf.json"));
+	if (!Course->Data) return false;
+	const FString File = FPaths::Combine(Course->Data->ExportDir, TEXT("turf.json"));
 	if (Where) *Where = File;
 	const TSharedRef<FJsonObject> O = MakeShared<FJsonObject>();
 	for (const auto& P : TurfLooks)
@@ -438,20 +438,20 @@ bool AOTGRuntimeCourse::SaveTurfLooks(FString* Where) const
 	return FFileHelper::SaveStringToFile(Text, *File, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
 }
 
-TArray<otg::FGrassKind> AOTGRuntimeCourse::SavedGrassKinds() const
+TArray<otg::FGrassKind> FOTGCourseTurf::SavedGrassKinds() const
 {
-	return Data ? otg::FGrass::LoadKinds(Data->ExportDir) : otg::FGrass::DefaultKinds();
+	return Course->Data ? otg::FGrass::LoadKinds(Course->Data->ExportDir) : otg::FGrass::DefaultKinds();
 }
 
-int32 AOTGRuntimeCourse::GrassInstances() const
+int32 FOTGCourseTurf::GrassInstances() const
 {
 	return Grass.IsValid() ? Grass->Instances() : 0;
 }
 
-void AOTGRuntimeCourse::DumpGrassTints() const
+void FOTGCourseTurf::DumpGrassTints() const
 {
 	for (const auto& KV : GrassTints)
-		for (const FGrassTint& T : KV.Value)
+		for (const FOTGCourseTurf::FGrassTint& T : KV.Value)
 			if (UMaterialInstanceDynamic* M = T.M.Get())
 			{
 				FLinearColor V(0, 0, 0, 0);
@@ -459,7 +459,7 @@ void AOTGRuntimeCourse::DumpGrassTints() const
 				UE_LOG(LogOTGRuntimeCourse, Display, TEXT("Tint %s %s (of %s): %s"), *KV.Key, *M->GetName(), M->Parent ? *M->Parent->GetName() : TEXT("-"), *V.ToString());
 			}
 	TSet<FString> Seen;
-	for (const UActorComponent* AC : GetComponents())
+	for (const UActorComponent* AC : Course->GetComponents())
 		if (const UInstancedStaticMeshComponent* I = Cast<UInstancedStaticMeshComponent>(AC))
 			if (I->GetStaticMesh() && I->GetStaticMesh()->GetPathName().Contains(TEXT("/Fab/")) && !Seen.Contains(I->GetStaticMesh()->GetName()))
 			{
@@ -469,8 +469,14 @@ void AOTGRuntimeCourse::DumpGrassTints() const
 			}
 }
 
-void AOTGRuntimeCourse::SetGrassParam(const FString& Kind, const FString& Param, const FLinearColor& V)
+void FOTGCourseTurf::SetGrassParam(const FString& Kind, const FString& Param, const FLinearColor& V)
 {
-	if (const TArray<FGrassTint>* Ts = GrassTints.Find(Kind))
-		for (const FGrassTint& T : *Ts) if (UMaterialInstanceDynamic* M = T.M.Get()) M->SetVectorParameterValue(*Param, V);
+	if (const TArray<FOTGCourseTurf::FGrassTint>* Ts = GrassTints.Find(Kind))
+		for (const FOTGCourseTurf::FGrassTint& T : *Ts) if (UMaterialInstanceDynamic* M = T.M.Get()) M->SetVectorParameterValue(*Param, V);
+}
+
+void FOTGCourseTurf::AddReferencedObjects(FReferenceCollector& Collector)
+{
+	Collector.AddReferencedObjects(TurfMats);
+	Collector.AddReferencedObjects(TurfMeshes);
 }

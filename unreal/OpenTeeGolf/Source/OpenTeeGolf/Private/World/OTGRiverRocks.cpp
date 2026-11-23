@@ -26,7 +26,7 @@ namespace
 	struct FObstacle { double Along = 0, Across = 0, R = 0; };   // (river space, cm)
 }
 
-void AOTGRuntimeCourse::RiverAroundRocks(ATidewrightRiver* R)
+void FOTGCourseWater::RiverAroundRocks(ATidewrightRiver* R)
 {
 	if (!R || FParse::Param(FCommandLine::Get(), TEXT("nowaterrocks"))) return;
 	USplineComponent* Sp = R->GetSpline();
@@ -47,7 +47,7 @@ void AOTGRuntimeCourse::RiverAroundRocks(ATidewrightRiver* R)
 
 	// the rocks standing up through this river's water
 	TArray<FObstacle> Obs;
-	for (const FDrawn& D : DrawnRocks)
+	for (const FOTGCourseTrees::FDrawn& D : Course->Trees.DrawnRocks)
 	{
 		FVector S, N, V;
 		if (!R->SampleRiver(D.Base, S, N, V)) continue;
@@ -61,7 +61,7 @@ void AOTGRuntimeCourse::RiverAroundRocks(ATidewrightRiver* R)
 		// (out in the stream, not a bank stone at its edge, and the bed under it below the water)
 		if (FMath::Abs(Across) > Half - D.R * 0.5 || D.Base.Z > S.Z - 10) continue;
 		Obs.Add({ Dist + FVector::DotProduct(D.Base - Loc, Along), Across, FMath::Max(30.0, D.R * 0.8) });
-		UE_LOG(LogOTGRiverRocks, Display, TEXT("Rock in the water at %s (level %s), %.0f cm across"), *D.Base.ToString(), *(D.Base - Data->LevelOrigin).ToString(), D.R * 2);
+		UE_LOG(LogOTGRiverRocks, Display, TEXT("Rock in the water at %s (level %s), %.0f cm across"), *D.Base.ToString(), *(D.Base - Course->Data->LevelOrigin).ToString(), D.R * 2);
 	}
 	if (!Obs.Num()) return;
 
