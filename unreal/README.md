@@ -569,6 +569,11 @@ Everything the golf needs runs inside the game, in C++.
   the game closes. Raise the version in `package.json` for each release. Testing: `-updateurl=` a
   manifest's address, `-updateauto` (download and restart without asking), `-noupdate`.
 
+Code layout: the game module is in folders by area (App, Course, World, Round, UI), and the pieces
+that stand alone are project plugins (ball physics, launch monitor, minimap, wind box, shot tracer,
+weather sound, .glb reader, UI kit) - see `OpenTeeGolf/Source/OpenTeeGolf/README.md` and each
+plugin's README.
+
 Build: `Engine\Build\BatchFiles\Build.bat OpenTeeGolf Win64 Development -Project=<path>\OpenTeeGolf.uproject`
 (the editor target, `OpenTeeGolfEditor`, can't build while another Unreal Editor with Live Coding is
 open).
