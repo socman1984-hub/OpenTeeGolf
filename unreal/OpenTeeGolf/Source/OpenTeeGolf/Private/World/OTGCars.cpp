@@ -10,7 +10,7 @@
 
 #include "World/OTGRuntimeCourse.h"
 #include "Course/OTGCourseData.h"
-#include "Course/OTGGlb.h"
+#include "Glb/OTGGlb.h"
 
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "Components/HierarchicalInstancedStaticMeshComponent.h"

@@ -22,7 +22,7 @@
 // -oldwater: the game's own water everywhere, as before.
 
 #include "World/OTGRuntimeCourse.h"
-#include "Course/OTGGlb.h"
+#include "Glb/OTGGlb.h"
 
 #include "Course/OTGCourseData.h"
 #include "Components/SplineComponent.h"

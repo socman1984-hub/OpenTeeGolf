@@ -12,7 +12,7 @@
 
 class UTexture2D;
 
-struct FOTGMapState
+struct OTGMINIMAP_API FOTGMapState
 {
 	bool bValid = false;
 	FVector2D Ball, Aim, Pin, Tee;      // course x, z (metres)
@@ -21,7 +21,7 @@ struct FOTGMapState
 	TArray<TPair<FVector2D, FLinearColor>> Others;
 };
 
-class SOTGMinimap : public SLeafWidget
+class OTGMINIMAP_API SOTGMinimap : public SLeafWidget
 {
 public:
 	SLATE_BEGIN_ARGS(SOTGMinimap) {}

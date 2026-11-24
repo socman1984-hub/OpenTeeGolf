@@ -1,0 +1,15 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "1.0",
+	"FriendlyName": "OpenTeeGolf Wind Indicator",
+	"Description": "The wind box: an arrow showing which way the wind blows against the aim, and two lines of text (its speed and how it plays).",
+	"Category": "OpenTeeGolf",
+	"CreatedBy": "OpenTeeGolf contributors",
+	"CanContainContent": false,
+	"EnabledByDefault": true,
+	"Installed": false,
+	"Modules": [
+		{ "Name": "OTGWindIndicator", "Type": "Runtime", "LoadingPhase": "Default" }
+	]
+}

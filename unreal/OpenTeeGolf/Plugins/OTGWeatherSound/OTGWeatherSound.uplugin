@@ -1,0 +1,15 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "1.0",
+	"FriendlyName": "OpenTeeGolf Weather Sound",
+	"Description": "Rain, wind and thunder made as they play: a procedural sound wave driven by the rain, the wind and lightning strikes.",
+	"Category": "OpenTeeGolf",
+	"CreatedBy": "OpenTeeGolf contributors",
+	"CanContainContent": false,
+	"EnabledByDefault": true,
+	"Installed": false,
+	"Modules": [
+		{ "Name": "OTGWeatherSound", "Type": "Runtime", "LoadingPhase": "Default" }
+	]
+}

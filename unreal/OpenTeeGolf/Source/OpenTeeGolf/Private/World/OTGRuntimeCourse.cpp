@@ -6,7 +6,7 @@
 #include "World/OTGRuntimeCourse.h"
 
 #include "Course/OTGCourseData.h"
-#include "Course/OTGGlb.h"
+#include "Glb/OTGGlb.h"
 #include "World/OTGGrass.h"
 #include "Camera/PlayerCameraManager.h"
 #include "GameFramework/PlayerController.h"

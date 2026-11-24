@@ -5,7 +5,7 @@
 
 #include "UI/OTGUi.h"
 #include "UI/Menus/SOTGLaunchMonitorPanel.h"
-#include "UI/Hud/SOTGMinimap.h"
+#include "Minimap/SOTGMinimap.h"
 #include "UI/Hud/SOTGPanels.h"
 #include "UI/Designer/SOTGCourseDesigner.h"
 #include "GameFramework/GameUserSettings.h"

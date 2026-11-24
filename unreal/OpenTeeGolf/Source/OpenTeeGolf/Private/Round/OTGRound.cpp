@@ -15,7 +15,7 @@
 #include "Engine/SkyLight.h"
 #include "Engine/PostProcessVolume.h"
 #include "Engine/Texture2D.h"
-#include "UI/Hud/SOTGMinimap.h"
+#include "Minimap/SOTGMinimap.h"
 #include "UI/Hud/SOTGPanels.h"
 #include "Engine/DirectionalLight.h"
 #include "Engine/ExponentialHeightFog.h"

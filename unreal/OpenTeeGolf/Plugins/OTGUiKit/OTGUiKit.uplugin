@@ -1,0 +1,15 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "1.0",
+	"FriendlyName": "OpenTeeGolf UI Kit",
+	"Description": "The game's look in Slate: fonts, colours, panels and rounded buttons, shared by the game's widgets and the widget plugins.",
+	"Category": "OpenTeeGolf",
+	"CreatedBy": "OpenTeeGolf contributors",
+	"CanContainContent": false,
+	"EnabledByDefault": true,
+	"Installed": false,
+	"Modules": [
+		{ "Name": "OTGUiKit", "Type": "Runtime", "LoadingPhase": "Default" }
+	]
+}

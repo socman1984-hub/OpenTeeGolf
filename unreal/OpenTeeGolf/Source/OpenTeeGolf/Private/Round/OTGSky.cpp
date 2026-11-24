@@ -34,7 +34,7 @@
 #include "Misc/CommandLine.h"
 #include "Misc/Parse.h"
 #include "Course/OTGCourseData.h"
-#include "Round/OTGWeatherSound.h"
+#include "WeatherSound/OTGWeatherSound.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogOTGSky, Log, All);
 

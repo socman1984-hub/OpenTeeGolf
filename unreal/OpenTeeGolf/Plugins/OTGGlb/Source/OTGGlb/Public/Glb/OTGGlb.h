@@ -8,7 +8,7 @@
 
 namespace otg
 {
-	struct FGlbMesh
+	struct OTGGLB_API FGlbMesh
 	{
 		TArray<FVector3f> Positions;
 		TArray<FVector3f> Normals;     // (empty if the file has none)
@@ -17,5 +17,5 @@ namespace otg
 		TArray<int32> Indices;
 	};
 
-	bool ReadGlb(const FString& File, FGlbMesh& Out);
+	OTGGLB_API bool ReadGlb(const FString& File, FGlbMesh& Out);
 }

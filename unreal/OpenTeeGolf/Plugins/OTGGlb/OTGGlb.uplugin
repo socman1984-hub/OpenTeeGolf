@@ -1,0 +1,15 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "1.0",
+	"FriendlyName": "OpenTeeGolf GLB Reader",
+	"Description": "A glTF binary (.glb) read at run time: positions, normals, vertex colours, UVs and triangles, merged into one mesh.",
+	"Category": "OpenTeeGolf",
+	"CreatedBy": "OpenTeeGolf contributors",
+	"CanContainContent": false,
+	"EnabledByDefault": true,
+	"Installed": false,
+	"Modules": [
+		{ "Name": "OTGGlb", "Type": "Runtime", "LoadingPhase": "Default" }
+	]
+}

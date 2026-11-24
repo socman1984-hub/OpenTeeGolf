@@ -1,0 +1,15 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "1.0",
+	"FriendlyName": "OpenTeeGolf Minimap",
+	"Description": "A golf hole's minimap: the course's photo turned so the hole runs up the map, the ball, aim and pin, yardages, and click or drag to aim.",
+	"Category": "OpenTeeGolf",
+	"CreatedBy": "OpenTeeGolf contributors",
+	"CanContainContent": false,
+	"EnabledByDefault": true,
+	"Installed": false,
+	"Modules": [
+		{ "Name": "OTGMinimap", "Type": "Runtime", "LoadingPhase": "Default" }
+	]
+}

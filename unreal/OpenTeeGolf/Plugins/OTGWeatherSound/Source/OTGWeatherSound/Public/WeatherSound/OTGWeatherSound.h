@@ -14,7 +14,7 @@
 #include "OTGWeatherSound.generated.h"
 
 UCLASS()
-class UOTGWeatherSound : public USoundWaveProcedural
+class OTGWEATHERSOUND_API UOTGWeatherSound : public USoundWaveProcedural
 {
 	GENERATED_BODY()
 

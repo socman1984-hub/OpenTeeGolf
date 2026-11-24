@@ -1,6 +1,6 @@
 // See OTGGlb.h.
 
-#include "Course/OTGGlb.h"
+#include "Glb/OTGGlb.h"
 
 #include "Dom/JsonObject.h"
 #include "Misc/FileHelper.h"
