@@ -72,6 +72,8 @@
     .card h3 { margin: 0 0 6px; font-size: 18px; display: flex; gap: 10px; align-items: center; }
     .card h3 span { font-size: 22px; }
     .card p { margin: 0; color: var(--muted); font-size: 15px; }
+    .card p.plugin-link { margin-top: 10px; font-size: 14px; }
+    .card p.plugin-link a { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
 
     .gallery { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px 18px; }
     .gallery figure { margin: 0; }
@@ -121,6 +123,7 @@
         <a class="opt" href="#new">What's new</a>
         <a class="opt" href="https://github.com/socman1984-hub/OpenTeeGolf/releases">Release notes</a>
         <a class="opt" href="#start">Get started</a>
+        <a class="opt" href="#developers">Developers</a>
         <a class="opt" href="https://github.com/socman1984-hub/OpenTeeGolf">GitHub</a>
         <a class="btn discord small" href="https://discord.gg/YNsyWkCayd">
           <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M20.3 4.4A19.8 19.8 0 0 0 15.4 3l-.6 1.3a18.4 18.4 0 0 0-5.6 0L8.6 3a19.7 19.7 0 0 0-4.9 1.5C.6 9.1-.3 13.6.1 18.1a19.9 19.9 0 0 0 6 3l1.3-2.1a12.9 12.9 0 0 1-2-1l.5-.4a14.2 14.2 0 0 0 12.2 0l.5.4c-.6.4-1.3.7-2 1l1.3 2.1a19.8 19.8 0 0 0 6-3c.5-5.2-.8-9.7-3.6-13.7ZM8 15.3c-1.2 0-2.2-1.1-2.2-2.4S6.8 10.5 8 10.5s2.2 1.1 2.2 2.4-1 2.4-2.2 2.4Zm8 0c-1.2 0-2.2-1.1-2.2-2.4s1-2.4 2.2-2.4 2.2 1.1 2.2 2.4-1 2.4-2.2 2.4Z"/></svg>
@@ -202,6 +205,7 @@
         <h2>Recently added</h2>
         <p class="sub">OpenTeeGolf is in alpha and changes every week. The <a href="https://github.com/socman1984-hub/OpenTeeGolf/releases">release notes</a> have the full list.</p>
         <ul class="news">
+          <li><b>For developers: reusable plugins.</b> The Unreal edition's code is reorganised so others can build on it. The ball physics, launch monitor client, minimap, wind box, shot tracer, weather sound, .glb reader and UI kit are now Unreal Engine plugins you can drop into your own project, and every part of the game has a README. Nothing changes when you play. <a href="#developers">See the plugins</a>.</li>
           <li><b>Unreal edition 0.24: creeks that hold water.</b> Creeks are full of water right to their ends and meet the ponds at their level, ponds above a creek sit behind a grassy bank, creek banks are gentle grassy slopes, and wide rivers are full of water. Rain now makes rings on the water, parked cars fill the car parks, greens are smooth turf, and the rough looks like grass much further out.</li>
           <li><b>Unreal edition 0.23: a natural green.</b> The grass is now a true living-lawn green instead of lime, fairways and tees are a smooth mown carpet, ponds have smooth rounded edges with the water right up to the grass, and the plain box cars are gone from the car parks.</li>
           <li><b>Unreal edition 0.22: greener, more natural grass.</b> Fresher lime greens on every cut, a lusher rough that glows against the sun and looks like grass all the way out, water that flows around rocks in creeks, ripples when your ball goes in, a sandy beach along the sea, ponds full to their banks, smooth cart paths, and better rain.</li>
@@ -304,6 +308,23 @@
       </div>
     </section>
 
+    <section class="alt" id="developers">
+      <div class="wrap">
+        <h2>For developers: pieces you can reuse</h2>
+        <p class="sub">The Unreal edition's self-contained parts are Unreal Engine plugins, each with a README on how it works and how to use it in your own project. They don't depend on the game, so you can copy one folder into your project's <code>Plugins</code> and use it. The rest of the game's code is organised by area, with a README for each: <a href="https://github.com/socman1984-hub/OpenTeeGolf/tree/main/unreal/OpenTeeGolf/Source/OpenTeeGolf">start here</a>.</p>
+        <div class="grid">
+          <div class="card"><h3><span>⛳</span>Ball physics</h3><p>The ball's flight, bounce and roll (the OpenFairway model), and a course for it to play on. Plain C++, kept the same as the browser version's.</p><p class="plugin-link"><a href="https://github.com/socman1984-hub/OpenTeeGolf/tree/main/unreal/OpenTeeGolf/Plugins/OTGBallPhysics">OTGBallPhysics</a></p></div>
+          <div class="card"><h3><span>📡</span>Launch monitor client</h3><p>Shots from FS Golf and other OpenConnect apps, straight from the Mevo+ over its Wi-Fi, and from Flight Relay Protocol devices like the Garmin R10.</p><p class="plugin-link"><a href="https://github.com/socman1984-hub/OpenTeeGolf/tree/main/unreal/OpenTeeGolf/Plugins/OTGLaunchMonitor">OTGLaunchMonitor</a></p></div>
+          <div class="card"><h3><span>🗺️</span>Minimap</h3><p>A hole's map from its aerial photo, turned so the hole runs up the screen, with the yardages and click or drag to aim.</p><p class="plugin-link"><a href="https://github.com/socman1984-hub/OpenTeeGolf/tree/main/unreal/OpenTeeGolf/Plugins/OTGMinimap">OTGMinimap</a></p></div>
+          <div class="card"><h3><span>🧭</span>Wind box</h3><p>An arrow showing how the wind blows against your aim, with its speed and how it plays.</p><p class="plugin-link"><a href="https://github.com/socman1984-hub/OpenTeeGolf/tree/main/unreal/OpenTeeGolf/Plugins/OTGWindIndicator">OTGWindIndicator</a></p></div>
+          <div class="card"><h3><span>☄️</span>Shot tracer</h3><p>The ball's flight drawn as a ribbon that faces the camera and stays readable from the tee.</p><p class="plugin-link"><a href="https://github.com/socman1984-hub/OpenTeeGolf/tree/main/unreal/OpenTeeGolf/Plugins/OTGShotTracer">OTGShotTracer</a></p></div>
+          <div class="card"><h3><span>⛈️</span>Weather sound</h3><p>Rain, wind and rolling thunder made as they play, with no recordings to license.</p><p class="plugin-link"><a href="https://github.com/socman1984-hub/OpenTeeGolf/tree/main/unreal/OpenTeeGolf/Plugins/OTGWeatherSound">OTGWeatherSound</a></p></div>
+          <div class="card"><h3><span>📦</span>.glb reader</h3><p>Reads glTF binary models at run time: positions, normals, colours, UVs and triangles.</p><p class="plugin-link"><a href="https://github.com/socman1984-hub/OpenTeeGolf/tree/main/unreal/OpenTeeGolf/Plugins/OTGGlb">OTGGlb</a></p></div>
+          <div class="card"><h3><span>🎨</span>UI kit</h3><p>The game's Slate look: fonts, colours, glass panels and rounded buttons.</p><p class="plugin-link"><a href="https://github.com/socman1984-hub/OpenTeeGolf/tree/main/unreal/OpenTeeGolf/Plugins/OTGUiKit">OTGUiKit</a></p></div>
+        </div>
+      </div>
+    </section>
+
     <section id="community">
       <div class="wrap">
         <h2>Community</h2>
@@ -311,7 +332,7 @@
         <div class="community">
           <div class="card"><h3>Chat on Discord</h3><p>Questions, setups, course requests and what's coming next.</p><a class="btn discord" href="https://discord.gg/YNsyWkCayd">Join the Discord</a></div>
           <div class="card"><h3>Report a problem</h3><p>Something not working? Open an issue on GitHub with what happened.</p><a class="btn" href="https://github.com/socman1984-hub/OpenTeeGolf/issues">GitHub issues</a></div>
-          <div class="card"><h3>Contribute</h3><p>The whole game is open source. Improvements to physics, graphics, courses and launch-monitor support are welcome.</p><a class="btn" href="https://github.com/socman1984-hub/OpenTeeGolf">Source code</a></div>
+          <div class="card"><h3>Contribute</h3><p>The whole game is open source. Improvements to physics, graphics, courses and launch-monitor support are welcome. The Unreal edition's <a href="#developers">plugins and READMEs</a> are a good place to start.</p><a class="btn" href="https://github.com/socman1984-hub/OpenTeeGolf">Source code</a></div>
         </div>
       </div>
     </section>
