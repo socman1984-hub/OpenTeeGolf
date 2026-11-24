@@ -2,6 +2,7 @@
 // from above the tee, behind the ball at address, following it in flight.
 
 #include "Round/OTGRound.h"
+#include "Tracer/OTGShotTracerComponent.h"
 #include "World/OTGRuntimeCourse.h"
 #include "App/OTGHelperSubsystem.h"
 #include "Round/OTGMiniGolf.h"
@@ -81,62 +82,29 @@ void AOTGRound::ShowAim()
 	AimMesh->SetVisibility(true);
 	AimMesh->SetWorldLocation(World(A) + FVector(0, 0, 3));
 	AimMesh->SetWorldScale3D(FVector(R * 2, R * 2, 0.03));
-	UpdateHudInfo();
+	HudView.UpdateHudInfo();
 }
 
 void AOTGRound::UpdateTracer(int32 Upto, const FVector& Head)
 {
-	// The path so far, thinned to about a point a metre, as a ribbon facing the camera
-	TracerPts.Reset();
+	// The path so far (the level's cm), drawn by the tracer (Plugins/OTGShotTracer) as a ribbon facing the camera
+	TArray<FVector> Path;
 	const std::vector<otg::PathPoint>& Pts = Res.points;
-	for (int32 i = 0; i < Upto && i < int32(Pts.size()); i++)
-	{
-		const FVector W = World(otg::V3{ Pts[i].x, Pts[i].y, Pts[i].z }) + FVector(0, 0, 2);
-		if (!TracerPts.Num() || FVector::DistSquared(W, TracerPts.Last()) > 100 * 100) TracerPts.Add(W);
-	}
-	TracerPts.Add(Head + FVector(0, 0, 2));
-	if (TracerPts.Num() < 2) return;
-	TArray<FVector> V, Nrm;
-	TArray<int32> Tri;
-	TArray<FVector2D> UV;
-	TArray<FLinearColor> Col;
-	TArray<FProcMeshTangent> Tan;
-	const int32 Num = TracerPts.Num();
-	for (int32 i = 0; i < Num; i++)
-	{
-		const FVector P = TracerPts[i];
-		const FVector Along = (TracerPts[FMath::Min(i + 1, Num - 1)] - TracerPts[FMath::Max(i - 1, 0)]).GetSafeNormal();
-		const FVector ToCam = (CamPos - P).GetSafeNormal();
-		const FVector SideV = FVector::CrossProduct(Along, ToCam).GetSafeNormal();
-		const float W = FMath::Clamp(FVector::Dist(CamPos, P) * 0.0022f, 1.5f, 90.f);
-		V.Add(P - SideV * W * 0.5f);
-		V.Add(P + SideV * W * 0.5f);
-		Nrm.Add(ToCam); Nrm.Add(ToCam);
-		UV.Add(FVector2D(i / float(Num), 0)); UV.Add(FVector2D(i / float(Num), 1));
-		Col.Add(FLinearColor::White); Col.Add(FLinearColor::White);
-		if (i > 0)
-		{
-			const int32 A = (i - 1) * 2, B = i * 2;
-			Tri.Append({ A, B, A + 1, A + 1, B, B + 1 });
-			Tri.Append({ A, A + 1, B, A + 1, B + 1, B }); // (both faces)
-		}
-	}
-	TracerMesh->CreateMeshSection_LinearColor(0, V, Tri, Nrm, UV, Col, Tan, false);
-	TracerMesh->SetMaterial(0, TracerMat);
+	for (int32 i = 0; i < Upto && i < int32(Pts.size()); i++) Path.Add(World(otg::V3{ Pts[i].x, Pts[i].y, Pts[i].z }));
+	TracerMesh->Draw(Path, Head, Camera.CamPos);
 }
 
 void AOTGRound::ClearTracer()
 {
-	TracerMesh->ClearAllMeshSections();
-	TracerPts.Reset();
+	TracerMesh->Clear();
 }
 
-void AOTGRound::AddressView(bool bSnap)
+void FOTGRoundCamera::AddressView(bool bSnap)
 {
 	// Behind the ball, looking along the aim (lower and closer for a putt)
-	const FVector B = World(Ball);
-	const FVector D(FMath::Sin(Heading), -FMath::Cos(Heading), 0);
-	if (OnGreen())
+	const FVector B = Round->World(Round->Ball);
+	const FVector D(FMath::Sin(Round->Heading), -FMath::Cos(Round->Heading), 0);
+	if (Round->OnGreen())
 	{
 		CamGoal = B - D * 260 + FVector(0, 0, 120);
 		CamLook = B + D * 300;
@@ -153,37 +121,37 @@ void AOTGRound::AddressView(bool bSnap)
 	if (bSnap) { CamPos = CamGoal; CamLookNow = CamLook; }
 }
 
-void AOTGRound::OverviewView()
+void FOTGRoundCamera::OverviewView()
 {
-	if (bMini)
+	if (Round->bMini)
 	{
 		// (the putt-putt: the whole hole - tee, turn and cup - from above behind the tee)
-		const FOTGHole& H = Hole();
+		const FOTGHole& H = Round->Hole();
 		FBox Box(ForceInit);
-		for (const FVector& Q : H.Path) Box += World(OnGround(Q.X, Q.Z));
-		Box += World(Ball);
+		for (const FVector& Q : H.Path) Box += Round->World(Round->OnGround(Q.X, Q.Z));
+		Box += Round->World(Round->Ball);
 		const FVector Mid = Box.GetCenter();
 		const double L = FMath::Max(Box.GetSize().X, Box.GetSize().Y);
-		FVector D = FVector(Mid.X - World(Ball).X, Mid.Y - World(Ball).Y, 0).GetSafeNormal();
-		if (D.IsNearlyZero()) D = FVector(FMath::Sin(Heading), -FMath::Cos(Heading), 0);
+		FVector D = FVector(Mid.X - Round->World(Round->Ball).X, Mid.Y - Round->World(Round->Ball).Y, 0).GetSafeNormal();
+		if (D.IsNearlyZero()) D = FVector(FMath::Sin(Round->Heading), -FMath::Cos(Round->Heading), 0);
 		CamPos = CamGoal = Mid - D * (L * 0.55 + 200) + FVector(0, 0, L * 0.7 + 280);
 		CamLookNow = CamLook = Mid;
 		OverviewLeft = 2.8;
 		return;
 	}
 	// The hole from high behind the tee, looking down at where it's aimed, then down to the ball
-	const FVector B = World(Ball);
-	const FVector D(FMath::Sin(Heading), -FMath::Cos(Heading), 0);
-	const double Ahead = FMath::Min(AimDist, 200.0) * 100;
+	const FVector B = Round->World(Round->Ball);
+	const FVector D(FMath::Sin(Round->Heading), -FMath::Cos(Round->Heading), 0);
+	const double Ahead = FMath::Min(Round->AimDist, 200.0) * 100;
 	CamPos = CamGoal = B - D * 2600 + FVector(0, 0, 1800);
-	CamLookNow = CamLook = World(OnGround(Ball.x + FMath::Sin(Heading) * Ahead / 100, Ball.z + FMath::Cos(Heading) * Ahead / 100));
+	CamLookNow = CamLook = Round->World(Round->OnGround(Round->Ball.x + FMath::Sin(Round->Heading) * Ahead / 100, Round->Ball.z + FMath::Cos(Round->Heading) * Ahead / 100));
 	OverviewLeft = 2.8;
 }
 
-void AOTGRound::UpdateCamera(float Dt)
+void FOTGRoundCamera::UpdateCamera(float Dt)
 {
 	const float K = 1.f - FMath::Exp(-Dt * CamSpeed);
-	if (Phase != EPhase::Flying && CamGoal.Equals(OrbitGoal, 1.0))
+	if (Round->Phase != AOTGRound::EPhase::Flying && CamGoal.Equals(OrbitGoal, 1.0))
 	{
 		// Turning to a new aim behind the ball: round the ball, the shorter way, keeping the
 		// camera's height and distance from it (in a straight line, a big turn cut low across the ball)
@@ -202,18 +170,18 @@ void AOTGRound::UpdateCamera(float Dt)
 	else
 	{
 		CamPos += (CamGoal - CamPos) * K;
-		if (Phase != EPhase::Flying) CamLookNow += (CamLook - CamLookNow) * K;
+		if (Round->Phase != AOTGRound::EPhase::Flying) CamLookNow += (CamLook - CamLookNow) * K;
 	}
 	// (never under the ground)
-	const FVector C = Data->WorldToCourse(CamPos);
-	const double G = Course.HeightAt(C.X, C.Z);
+	const FVector C = Round->Data->WorldToCourse(CamPos);
+	const double G = Round->Course.HeightAt(C.X, C.Z);
 	if (FMath::IsFinite(G))
 	{
-		const double MinZ = Data->CourseToWorld(FVector(C.X, G, C.Z)).Z + 60;
+		const double MinZ = Round->Data->CourseToWorld(FVector(C.X, G, C.Z)).Z + 60;
 		if (CamPos.Z < MinZ) CamPos.Z = MinZ;
 	}
 	// (nor under the water: there's nothing to see down there)
-	if (const AOTGRuntimeCourse* RC = CourseOf(GetWorld()))
+	if (const AOTGRuntimeCourse* RC = CourseOf(Round->GetWorld()))
 		CamPos.Z = FMath::Max(CamPos.Z, RC->WaterTopAt(CamPos) + 60);
 	if (Cam) Cam->SetActorLocationAndRotation(CamPos, (CamLookNow - CamPos).Rotation());
 }

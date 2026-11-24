@@ -1,0 +1,18 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "1.0",
+	"FriendlyName": "OpenTeeGolf Shot Tracer",
+	"Description": "A golf ball's flight drawn as a ribbon facing the camera: a procedural mesh component given the path so far.",
+	"Category": "OpenTeeGolf",
+	"CreatedBy": "OpenTeeGolf contributors",
+	"CanContainContent": false,
+	"EnabledByDefault": true,
+	"Installed": false,
+	"Plugins": [
+		{ "Name": "ProceduralMeshComponent", "Enabled": true }
+	],
+	"Modules": [
+		{ "Name": "OTGShotTracer", "Type": "Runtime", "LoadingPhase": "Default" }
+	]
+}

@@ -12,8 +12,8 @@ public class OpenTeeGolf : ModuleRules
 		// (the project's own plugins: the ball physics and the launch monitors - Plugins/OTGBallPhysics,
 		// Plugins/OTGLaunchMonitor. Public: the round's header uses their types)
 		PublicDependencyModuleNames.AddRange(new string[] { "OTGBallPhysics", "OTGLaunchMonitor" });
-		// (and the small pieces anyone can take: Plugins/OTGUiKit, OTGMinimap, OTGWindIndicator, OTGWeatherSound, OTGGlb)
-		PrivateDependencyModuleNames.AddRange(new string[] { "OTGUiKit", "OTGMinimap", "OTGWindIndicator", "OTGWeatherSound", "OTGGlb" });
+		// (and the small pieces anyone can take: Plugins/OTGUiKit, OTGMinimap, OTGWindIndicator, OTGWeatherSound, OTGGlb, OTGShotTracer)
+		PrivateDependencyModuleNames.AddRange(new string[] { "OTGUiKit", "OTGMinimap", "OTGWindIndicator", "OTGWeatherSound", "OTGGlb", "OTGShotTracer" });
 		// (the course helper's sockets, JSON, the course pictures and meshes)
 		PrivateDependencyModuleNames.AddRange(new string[] { "Sockets", "Networking", "Json", "WebSockets", "ImageWrapper", "MeshDescription", "StaticMeshDescription" });
 		// (the round: the tracer, the HUD)

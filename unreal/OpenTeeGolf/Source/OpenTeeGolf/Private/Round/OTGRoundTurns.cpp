@@ -48,43 +48,43 @@ DEFINE_LOG_CATEGORY_STATIC(LogOTGRound, Log, All);
 // ------------------------------------------------------------------ players taking turns
 
 // Side I plays: its ball, lie and strokes into the round's own, the others' balls where they lie
-void AOTGRound::LoadSide(int32 I)
+void FOTGRoundTurns::LoadSide(int32 I)
 {
 	SideIdx = FMath::Max(0, I);
 	const FOTGSide& S = Game->Sides[SideIdx];
-	Ball = S.Ball; PrevBall = S.PrevBall; Lie = S.Lie; Strokes = S.Strokes;
-	if (bMini && Course.SurfaceAt(Ball.x, Ball.z) == otg::Surface::Green) Lie = otg::Surface::Green;   // (the tee's on the felt)
-	Undo.Reset();
-	PlaceBall(Ball);
+	Round->Ball = S.Ball; Round->PrevBall = S.PrevBall; Round->Lie = S.Lie; Round->Strokes = S.Strokes;
+	if (Round->bMini && Round->Course.SurfaceAt(Round->Ball.x, Round->Ball.z) == otg::Surface::Green) Round->Lie = otg::Surface::Green;   // (the tee's on the felt)
+	Round->Undo.Reset();
+	Round->PlaceBall(Round->Ball);
 	ShowOtherBalls();
 }
 
 // The playing side's ball, lie and strokes back into its own record
-void AOTGRound::SaveSide()
+void FOTGRoundTurns::SaveSide()
 {
 	FOTGSide& S = Game->Sides[SideIdx];
-	S.Ball = Ball; S.PrevBall = PrevBall; S.Lie = Lie; S.Strokes = Strokes;
+	S.Ball = Round->Ball; S.PrevBall = Round->PrevBall; S.Lie = Round->Lie; S.Strokes = Round->Strokes;
 }
 
-void AOTGRound::ShowOtherBalls()
+void FOTGRoundTurns::ShowOtherBalls()
 {
 	for (int32 i = 0; i < OtherBalls.Num(); i++)
 	{
 		const FOTGSide& S = Game->Sides[i];
 		// (not one sharing the spot with this ball - the same tee - where it would hide it)
-		const bool bShow = i != SideIdx && !S.bHoled && Dist(S.Ball, Ball) > 1.0;
+		const bool bShow = i != SideIdx && !S.bHoled && Dist(S.Ball, Round->Ball) > 1.0;
 		OtherBalls[i]->SetVisibility(bShow);
 		if (bShow)
 		{
 			OtherBalls[i]->SetWorldScale3D(FVector(0.0427 * 2));
-			OtherBalls[i]->SetWorldLocation(World(S.Ball) + FVector(0, 0, 2.135 * 2));
+			OtherBalls[i]->SetWorldLocation(Round->World(S.Ball) + FVector(0, 0, 2.135 * 2));
 		}
 	}
 }
 
 // After a shot with several sides: the scramble's next player from the same spot (or the team's
 // best shot once everyone's hit), then whoever's away. False: the same player plays on.
-bool AOTGRound::RoundAfterShot()
+bool FOTGRoundTurns::RoundAfterShot()
 {
 	FOTGSide& Sd = Game->Sides[SideIdx];
 	if (Game->Single())
@@ -93,11 +93,11 @@ bool AOTGRound::RoundAfterShot()
 		Sd.Shots++;
 		return false;
 	}
-	auto D = [this](const otg::V3& B) { return PinDist(B); };
+	auto D = [this](const otg::V3& B) { return Round->PinDist(B); };
 	if (Game->F.Shared == TEXT("scramble"))
 	{
 		FOTGAttempt A;
-		A.Ball = Ball; A.Lie = Lie; A.Strokes = Strokes;
+		A.Ball = Round->Ball; A.Lie = Round->Lie; A.Strokes = Round->Strokes;
 		const TOptional<FOTGAttempt> Best = Game->ScrambleAttempt(Sd, A, D);
 		if (!Best)
 		{
@@ -108,7 +108,7 @@ bool AOTGRound::RoundAfterShot()
 		Sd.PrevBall = Sd.Ball;
 		Sd.Ball = Best->Ball; Sd.Lie = Best->Lie; Sd.Strokes = Best->Strokes;
 		Sd.Shots++;
-		Toast(FString::Printf(TEXT("%s plays %s's shot"), *Sd.Name, *Game->Players[Best->By].Name), 3.f);
+		Round->HudView.Toast(FString::Printf(TEXT("%s plays %s's shot"), *Sd.Name, *Game->Players[Best->By].Name), 3.f);
 	}
 	else
 	{
@@ -122,28 +122,28 @@ bool AOTGRound::RoundAfterShot()
 }
 
 // The next player steps up: their ball, the view behind it, whose turn it is
-void AOTGRound::BeginTurn(int32 I, bool bSameSpot)
+void FOTGRoundTurns::BeginTurn(int32 I, bool bSameSpot)
 {
 	LoadSide(I);
-	Phase = EPhase::Ready;
-	ClearTracer();
-	ResetAim(Strokes > 0);
-	AddressView(false);
-	Banner(Game->SideLabel(SideIdx), bSameSpot ? FString(TEXT("from the same spot")) : FString::Printf(TEXT("%s to the pin  ·  %s"), OnGreen() ? *Putt(DistToPin()) : *Len(DistToPin()), *SurfaceDisplay(Lie)), 2.2f);
-	UpdateHudInfo();
-	TellLaunchMonitor(true);
-	if (PendingShot)
+	Round->Phase = AOTGRound::EPhase::Ready;
+	Round->ClearTracer();
+	Round->ResetAim(Round->Strokes > 0);
+	Round->Camera.AddressView(false);
+	Round->HudView.Banner(Game->SideLabel(SideIdx), bSameSpot ? FString(TEXT("from the same spot")) : FString::Printf(TEXT("%s to the pin  ·  %s"), Round->OnGreen() ? *Round->Putt(Round->DistToPin()) : *Round->Len(Round->DistToPin()), *SurfaceDisplay(Round->Lie)), 2.2f);
+	Round->HudView.UpdateHudInfo();
+	Round->TellLaunchMonitor(true);
+	if (Round->PendingShot)
 	{
-		const FOTGShot S = *PendingShot;
-		PendingShot.Reset();
-		OnShot(S);
+		const FOTGShot S = *Round->PendingShot;
+		Round->PendingShot.Reset();
+		Round->OnShot(S);
 	}
 }
 
 // Each player's round kept with their profile
-void AOTGRound::RecordRound()
+void FOTGRoundTurns::RecordRound()
 {
-	if (Setup_.Picked.IsEmpty()) return;
+	if (Round->Setup_.Picked.IsEmpty()) return;
 	TArray<FOTGPlayerProfile> Profiles = FOTGPlayers::Load();
 	for (const FOTGGamePlayer& P : Game->Players)
 	{
@@ -153,10 +153,10 @@ void AOTGRound::RecordRound()
 		if (!S || !Prof) continue;
 		FOTGPlayedRound R;
 		R.At = FDateTime::Now();
-		R.Course = Data->CourseName;
+		R.Course = Round->Data->CourseName;
 		R.Format = Game->F.Key;
 		for (int32 H = 0; H < S->Scores.Num(); H++)
-			if (S->Scores[H] >= 0) { R.Holes++; R.Strokes += S->Scores[H]; R.Par += Data->Holes[H].Par; }
+			if (S->Scores[H] >= 0) { R.Holes++; R.Strokes += S->Scores[H]; R.Par += Round->Data->Holes[H].Par; }
 		if (R.Holes) Prof->Rounds.Add(R);
 	}
 	FOTGPlayers::Save(Profiles);

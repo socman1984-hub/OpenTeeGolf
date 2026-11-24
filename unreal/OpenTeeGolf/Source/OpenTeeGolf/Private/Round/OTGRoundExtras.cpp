@@ -26,17 +26,17 @@
 // The rain's and wind's sound every frame; in a storm, lightning now and then: the sky light and the
 // clouds (M_Clouds' Flash) leap in two or three flickers, and the thunder follows - a second for
 // every 343 m to the strike, louder the nearer it was
-void AOTGRound::UpdateStorm(float Dt)
+void FOTGRoundScene::UpdateStorm(float Dt)
 {
 	if (!WxSound)
 	{
-		WxSound = NewObject<UOTGWeatherSound>(this);
-		WxAudio = UGameplayStatics::CreateSound2D(this, WxSound, 0.8f, 1.f, 0.f, nullptr, true, false);
+		WxSound = NewObject<UOTGWeatherSound>(Round);
+		WxAudio = UGameplayStatics::CreateSound2D(Round, WxSound, 0.8f, 1.f, 0.f, nullptr, true, false);
 		if (WxAudio) WxAudio->Play();
 	}
-	const double Mm = Weather.RainMm;
+	const double Mm = Round->Weather.RainMm;
 	const float Rain = Mm > 0.05 ? float(FMath::Clamp(0.2 + Mm / 7.0, 0.0, 1.0)) : 0.f;
-	const float Wind = bMini ? 0.f : float(FMath::Clamp((Weather.WindMph + 0.3 * FMath::Max(0.0, Weather.GustMph - Weather.WindMph)) / 35.0, 0.0, 1.0));
+	const float Wind = Round->bMini ? 0.f : float(FMath::Clamp((Round->Weather.WindMph + 0.3 * FMath::Max(0.0, Round->Weather.GustMph - Round->Weather.WindMph)) / 35.0, 0.0, 1.0));
 	WxSound->SetLevels(Rain, Wind);
 	// (under the Meridian sky the lightning's its: OnSkyBolt brings the thunder)
 	if (Sky) return;
@@ -58,7 +58,7 @@ void AOTGRound::UpdateStorm(float Dt)
 	F *= BoltNear;
 	if (BoltAge < 1.5f)
 	{
-		for (TActorIterator<ASkyLight> It(GetWorld()); It; ++It)
+		for (TActorIterator<ASkyLight> It(Round->GetWorld()); It; ++It)
 			if (USkyLightComponent* SL = It->GetLightComponent())
 			{
 				if (SkyNow < 0) SkyNow = SL->Intensity;
@@ -113,12 +113,12 @@ namespace
 	}
 }
 
-void AOTGRound::BlendTo(const FOTGWeather& Next, const FString& Say)
+void FOTGRoundChanging::BlendTo(const FOTGWeather& Next, const FString& Say)
 {
-	WxFrom = Weather;
+	WxFrom = Round->Weather;
 	WxTo = Next;
 	WxBlend = 0.f;
-	if (!Say.IsEmpty()) Toast(Say, 4.f);
+	if (!Say.IsEmpty()) Round->HudView.Toast(Say, 4.f);
 }
 
 // Weather that changes as the round goes on: the "changing" choice moves through its stages - each
@@ -127,21 +127,21 @@ void AOTGRound::BlendTo(const FOTGWeather& Next, const FString& Say)
 // physics plays the weather as it is at each shot.
 static TAutoConsoleVariable<float> CVarWxChangeSpeed(TEXT("OTG.Weather.ChangeSpeed"), 1.f, TEXT("How fast changing weather moves on (a test: 20 for twenty times as fast)"));
 
-void AOTGRound::UpdateChanging(float Dt)
+void FOTGRoundChanging::UpdateChanging(float Dt)
 {
 	Dt *= FMath::Max(0.01f, CVarWxChangeSpeed.GetValueOnGameThread());
-	const bool bChanging = Weather.Key == TEXT("changing");
-	if (!bChanging && !Weather.bLive) return;
+	const bool bChanging = Round->Weather.Key == TEXT("changing");
+	if (!bChanging && !Round->Weather.bLive) return;
 	if (WxBlend < 1.f)
 	{
 		WxBlend = FMath::Min(1.f, WxBlend + Dt / 90.f);
-		Weather = LerpWeather(WxFrom, WxTo, WxBlend);
+		Round->Weather = LerpWeather(WxFrom, WxTo, WxBlend);
 		if ((WxApplyIn -= Dt) <= 0.f || WxBlend >= 1.f)
 		{
 			WxApplyIn = 0.5f;
-			ApplyWeatherToScene();
-			UpdateHudInfo();
-			UpdateWindBox();
+			Round->Scene.ApplyWeatherToScene();
+			Round->HudView.UpdateHudInfo();
+			Round->HudView.UpdateWindBox();
 		}
 		return;
 	}
@@ -152,23 +152,23 @@ void AOTGRound::UpdateChanging(float Dt)
 		WxHold = FMath::FRandRange(180.f, 360.f);
 		// (after the showers: a storm one time in three, otherwise clearing)
 		WxStage = WxStage == 2 ? (FMath::FRand() < 0.33f ? 3 : 4) : WxStage >= 3 ? 4 : (WxStage + 1) % 5;
-		if (WxStage == 4 && Weather.RainMm < 0.05 && Weather.Cloud < 0.5) WxStage = 0;
+		if (WxStage == 4 && Round->Weather.RainMm < 0.05 && Round->Weather.Cloud < 0.5) WxStage = 0;
 		static const TCHAR* Says[] = { TEXT("The sky's clearing"), TEXT("Clouds coming in"), TEXT("Rain on the way"), TEXT("A storm's coming"), TEXT("The rain's easing off") };
-		BlendTo(Stage(WxStage, Weather), Says[WxStage]);
+		BlendTo(Stage(WxStage, Round->Weather), Says[WxStage]);
 		return;
 	}
 	// live: fetched again every 15 minutes
-	if ((WxRefresh += Dt) < 900.f || !Data || (Data->Latitude == 0 && Data->Longitude == 0)) return;
+	if ((WxRefresh += Dt) < 900.f || !Round->Data || (Round->Data->Latitude == 0 && Round->Data->Longitude == 0)) return;
 	WxRefresh = 0.f;
-	TWeakObjectPtr<AOTGRound> Self(this);
-	FOTGWeather::FetchLive(Data->Latitude, Data->Longitude, [Self](bool bOk, const FOTGWeather& W, const FString&) {
-		if (bOk && Self.IsValid()) Self->BlendTo(W, FString());
+	TWeakObjectPtr<AOTGRound> Self(Round);
+	FOTGWeather::FetchLive(Round->Data->Latitude, Round->Data->Longitude, [Self](bool bOk, const FOTGWeather& W, const FString&) {
+		if (bOk && Self.IsValid()) Self->Changing.BlendTo(W, FString());
 	});
 }
 
 // ------------------------------------------------------------------ the free view
 
-void AOTGRound::ToggleFreeView()
+void FOTGRoundCamera::ToggleFreeView()
 {
 	bFreeView = !bFreeView;
 	if (bFreeView)
@@ -177,7 +177,7 @@ void AOTGRound::ToggleFreeView()
 		FreePos = CamPos;
 		FreeRot = (CamLookNow - CamPos).Rotation();
 		FreeRot.Roll = 0;
-		Toast(TEXT("Free view: W A S D to fly, Q / E down and up, hold the right mouse button to look, Shift faster, F to come back"), 5.f);
+		Round->HudView.Toast(TEXT("Free view: W A S D to fly, Q / E down and up, hold the right mouse button to look, Shift faster, F to come back"), 5.f);
 	}
 	else
 	{
@@ -187,25 +187,25 @@ void AOTGRound::ToggleFreeView()
 }
 
 // Move (forward, right, up: -1..1) and look (degrees) this frame
-void AOTGRound::FreeFly(float Dt, const FVector& Move, const FVector2D& Look, bool bFast)
+void FOTGRoundCamera::FreeFly(float Dt, const FVector& Move, const FVector2D& Look, bool bFast)
 {
 	if (!bFreeView) return;
 	FreeRot.Yaw += Look.X;
 	FreeRot.Pitch = FMath::Clamp(FreeRot.Pitch + Look.Y, -85.0, 85.0);
 	const FRotationMatrix R(FreeRot);
 	// (faster the higher it is: a metre a second near the ground, tens of metres up high)
-	const FVector C = Data->WorldToCourse(FreePos);
-	const double G = Course.HeightAt(C.X, C.Z);
-	const double Above = FMath::IsFinite(G) ? FMath::Max(1.0, (FreePos.Z - Data->CourseToWorld(FVector(C.X, G, C.Z)).Z) / 100.0) : 30.0;
+	const FVector C = Round->Data->WorldToCourse(FreePos);
+	const double G = Round->Course.HeightAt(C.X, C.Z);
+	const double Above = FMath::IsFinite(G) ? FMath::Max(1.0, (FreePos.Z - Round->Data->CourseToWorld(FVector(C.X, G, C.Z)).Z) / 100.0) : 30.0;
 	const double Speed = FMath::Clamp(Above * 120.0, 400.0, 9000.0) * (bFast ? 6.0 : 1.0);
 	FreePos += (R.GetUnitAxis(EAxis::X) * Move.X + R.GetUnitAxis(EAxis::Y) * Move.Y + FVector::UpVector * Move.Z) * Speed * Dt;
 	if (FMath::IsFinite(G))
 	{
-		const double MinZ = Data->CourseToWorld(FVector(C.X, G, C.Z)).Z + 40;
+		const double MinZ = Round->Data->CourseToWorld(FVector(C.X, G, C.Z)).Z + 40;
 		if (FreePos.Z < MinZ) FreePos.Z = MinZ;
 	}
 	// (nor under the water: AOTGRuntimeCourse::WaterTopAt)
-	for (TActorIterator<AOTGRuntimeCourse> It(GetWorld()); It; ++It) { FreePos.Z = FMath::Max(FreePos.Z, It->WaterTopAt(FreePos) + 40); break; }
+	for (TActorIterator<AOTGRuntimeCourse> It(Round->GetWorld()); It; ++It) { FreePos.Z = FMath::Max(FreePos.Z, It->WaterTopAt(FreePos) + 40); break; }
 	if (Cam) Cam->SetActorLocationAndRotation(FreePos, FreeRot);
 }
 
@@ -214,20 +214,20 @@ void AOTGRound::FreeFly(float Dt, const FVector& Move, const FVector2D& Look, bo
 // How wet the course is (MPC_Weather's Wet: the ground's material darker and glossier): in rain it
 // soaks in over a minute or so - more in heavier rain - and once it stops dries over several. A
 // round that starts in rain starts wet.
-void AOTGRound::UpdateWet(float Dt)
+void FOTGRoundRain::UpdateWet(float Dt)
 {
-	const float Target = float(FMath::Clamp(Weather.RainMm / 3.0, 0.0, 1.0)) * (Weather.RainMm > 0.05 ? 1.f : 0.f);
+	const float Target = float(FMath::Clamp(Round->Weather.RainMm / 3.0, 0.0, 1.0)) * (Round->Weather.RainMm > 0.05 ? 1.f : 0.f);
 	if (Wet < 0) Wet = Target;
 	else if (Target > Wet) Wet = FMath::Min(Target, Wet + Dt / 60.f);
 	else Wet = FMath::Max(Target, Wet - Dt / 300.f);
-	if (!WeatherMPC) WeatherMPC = LoadObject<UMaterialParameterCollection>(nullptr, TEXT("/Game/OpenTeeGolf/Game/MPC_Weather.MPC_Weather"));
-	if (WeatherMPC)
+	if (!Round->WeatherMPC) Round->WeatherMPC = LoadObject<UMaterialParameterCollection>(nullptr, TEXT("/Game/OpenTeeGolf/Game/MPC_Weather.MPC_Weather"));
+	if (Round->WeatherMPC)
 	{
-		UKismetMaterialLibrary::SetScalarParameterValue(this, WeatherMPC, TEXT("Wet"), Wet);
+		UKismetMaterialLibrary::SetScalarParameterValue(Round, Round->WeatherMPC, TEXT("Wet"), Wet);
 		// (Greensward's grass, the rough: as wet - season, dryness and snow as it grows)
-		if (!GsMPC) GsMPC = LoadObject<UMaterialParameterCollection>(nullptr, TEXT("/Greensward/Materials/MPC_Greensward.MPC_Greensward"));
-		if (GsMPC) UKismetMaterialLibrary::SetVectorParameterValue(this, GsMPC, TEXT("Environment"), FLinearColor(0.f, 0.f, 0.f, Wet));
-		UKismetMaterialLibrary::SetScalarParameterValue(this, WeatherMPC, TEXT("Rain"), Weather.RainMm > 0.05 ? float(FMath::Clamp(0.25 + Weather.RainMm / 6.0, 0.0, 1.0)) : 0.f);
+		if (!Round->GsMPC) Round->GsMPC = LoadObject<UMaterialParameterCollection>(nullptr, TEXT("/Greensward/Materials/MPC_Greensward.MPC_Greensward"));
+		if (Round->GsMPC) UKismetMaterialLibrary::SetVectorParameterValue(Round, Round->GsMPC, TEXT("Environment"), FLinearColor(0.f, 0.f, 0.f, Wet));
+		UKismetMaterialLibrary::SetScalarParameterValue(Round, Round->WeatherMPC, TEXT("Rain"), Round->Weather.RainMm > 0.05 ? float(FMath::Clamp(0.25 + Round->Weather.RainMm / 6.0, 0.0, 1.0)) : 0.f);
 	}
 }
 
@@ -237,9 +237,9 @@ void AOTGRound::UpdateWet(float Dt)
 // camera - paths (little crowns, a fifth of a second each: three streaks fanning up and out, with the
 // rain's own material) and, softer and lower, bunker sand. Grass, greens and rough take the rain
 // without a splash (their wetness is MPC_Weather's).
-void AOTGRound::UpdateRainFar(float Dt, double Mm)
+void FOTGRoundRain::UpdateRainFar(float Dt, double Mm)
 {
-	const bool bOn = Mm > 0.05 && Cam && Data && RainMat;
+	const bool bOn = Mm > 0.05 && Round->Camera.Cam && Round->Data && RainMat;
 	if (!bOn)
 	{
 		if (SplashVerts) { RainMesh->ClearMeshSection(1); SplashVerts = 0; }
@@ -247,22 +247,22 @@ void AOTGRound::UpdateRainFar(float Dt, double Mm)
 		return;
 	}
 	// ---- splashes: as many as the rain is heavy, on the ground ahead (in a fan 3 to 18 m out)
-	const FVector Fwd = Cam->GetActorForwardVector().GetSafeNormal2D();
+	const FVector Fwd = Round->Camera.Cam->GetActorForwardVector().GetSafeNormal2D();
 	SplashCarry += float(FMath::Min(Mm, 10.0) * 70.0 * Dt);
 	while (SplashCarry >= 1.f)
 	{
 		SplashCarry -= 1.f;
 		if (Splashes.Num() >= 500) continue;
 		const double D = 300.0 + FMath::Sqrt(FMath::FRand()) * 1500.0;
-		FVector P = CamPos + Fwd.RotateAngleAxis(FMath::FRandRange(-65.f, 65.f), FVector::UpVector) * D;
-		const FVector C = Data->WorldToCourse(P);
+		FVector P = Round->Camera.CamPos + Fwd.RotateAngleAxis(FMath::FRandRange(-65.f, 65.f), FVector::UpVector) * D;
+		const FVector C = Round->Data->WorldToCourse(P);
 		// (only where a drop would splash: a path's hard top; sand a small low puff; anything grown none)
-		const otg::Surface Su = Course.SurfaceAt(C.X, C.Z);
+		const otg::Surface Su = Round->Course.SurfaceAt(C.X, C.Z);
 		float Size;
 		if (Su == otg::Surface::Path) Size = FMath::FRandRange(0.7f, 1.4f);
 		else if (Su == otg::Surface::Sand) Size = FMath::FRandRange(0.3f, 0.5f);
 		else continue;
-		P.Z = World(otg::V3{ C.X, Course.HeightAt(C.X, C.Z), C.Z }).Z + 0.5;
+		P.Z = Round->World(otg::V3{ C.X, Round->Course.HeightAt(C.X, C.Z), C.Z }).Z + 0.5;
 		Splashes.Add({ P, 0.f, Size });
 	}
 	TArray<FVector> V;
@@ -271,12 +271,12 @@ void AOTGRound::UpdateRainFar(float Dt, double Mm)
 	V.Reserve(Splashes.Num() * 12);
 	for (int32 i = Splashes.Num() - 1; i >= 0; i--)
 	{
-		FSplash& S = Splashes[i];
+		FOTGRoundRain::FSplash& S = Splashes[i];
 		S.Age += Dt;
 		if (S.Age > 0.2f) { Splashes.RemoveAtSwap(i); continue; }
 		const float K = S.Age / 0.2f;
 		const double Up = 6.0 * S.Size * FMath::Sin(PI * FMath::Min(1.f, K * 1.4f)), Out = 4.0 * S.Size * K;
-		const FVector ToCam = (CamPos - S.P).GetSafeNormal();
+		const FVector ToCam = (Round->Camera.CamPos - S.P).GetSafeNormal();
 		for (int32 k = 0; k < 3; k++)
 		{
 			const FVector Dir = FVector(FMath::Cos(k * 2.1 + i), FMath::Sin(k * 2.1 + i), 0);
@@ -301,15 +301,15 @@ void AOTGRound::UpdateRainFar(float Dt, double Mm)
 
 // A cloth flag on the pole: hanging down in calm air, flying out downwind and rippling more the
 // harder it blows (and a little with each gust)
-void AOTGRound::UpdateFlag(float Dt)
+void FOTGRoundFlag::UpdateFlag(float Dt)
 {
-	if (!FlagCloth || !Data) return;
+	if (!FlagCloth || !Round->Data) return;
 	FlagTime += Dt;
 	double Mps, FromDeg;
-	HoleWind(Mps, FromDeg);
+	Round->HoleWind(Mps, FromDeg);
 	const double Mph = Mps / 0.44704;
 	// (gusting: the strength wanders a little)
-	const double Gust = Weather.GustMph > Weather.WindMph ? (Weather.GustMph - Weather.WindMph) * 0.5 * (0.5 + 0.5 * FMath::Sin(FlagTime * 0.7) * FMath::Sin(FlagTime * 1.9)) : 0.0;
+	const double Gust = Round->Weather.GustMph > Round->Weather.WindMph ? (Round->Weather.GustMph - Round->Weather.WindMph) * 0.5 * (0.5 + 0.5 * FMath::Sin(FlagTime * 0.7) * FMath::Sin(FlagTime * 1.9)) : 0.0;
 	const double S = FMath::Clamp((Mph + Gust) / 16.0, 0.0, 1.0);
 	const double F = FMath::DegreesToRadians(FromDeg);
 	// downwind, in the level (course (-sin, -cos) is world (-sin, +cos)); in calm air any way
@@ -317,22 +317,22 @@ void AOTGRound::UpdateFlag(float Dt)
 	const FVector Side = FVector::CrossProduct(FVector::UpVector, Down);
 	// (and the same wind for the trees and grass: their materials read it from MPC_Wind - which way,
 	// m/s with the gusts)
-	if (!WindMPC) WindMPC = LoadObject<UMaterialParameterCollection>(nullptr, TEXT("/Game/OpenTeeGolf/Game/MPC_Wind.MPC_Wind"));
-	if (WindMPC) UKismetMaterialLibrary::SetVectorParameterValue(this, WindMPC, TEXT("Wind"), FLinearColor(Down.X, Down.Y, float((Mph + Gust) * 0.44704), 0.f));
+	if (!Round->WindMPC) Round->WindMPC = LoadObject<UMaterialParameterCollection>(nullptr, TEXT("/Game/OpenTeeGolf/Game/MPC_Wind.MPC_Wind"));
+	if (Round->WindMPC) UKismetMaterialLibrary::SetVectorParameterValue(Round, Round->WindMPC, TEXT("Wind"), FLinearColor(Down.X, Down.Y, float((Mph + Gust) * 0.44704), 0.f));
 	// (and the Megascans grasses': their own collection - which way the wind blows, in degrees, and
 	// how hard; their pace left alone, as ours is: a pace that follows the gusts makes them jump)
-	if (!FabWindMPC) FabWindMPC = LoadObject<UMaterialParameterCollection>(nullptr, TEXT("/Game/Fab/MaterialParameterCollection/QMPC_GlobalFoliageActor.QMPC_GlobalFoliageActor"));
-	if (FabWindMPC)
+	if (!Round->FabWindMPC) Round->FabWindMPC = LoadObject<UMaterialParameterCollection>(nullptr, TEXT("/Game/Fab/MaterialParameterCollection/QMPC_GlobalFoliageActor.QMPC_GlobalFoliageActor"));
+	if (Round->FabWindMPC)
 	{
 		const float K = float(FMath::Clamp((Mph + Gust) * 0.44704 / 12.0, 0.0, 1.0));
-		UKismetMaterialLibrary::SetScalarParameterValue(this, FabWindMPC, TEXT("Wind Direction"), float(FMath::RadiansToDegrees(FMath::Atan2(Down.Y, Down.X))));
-		UKismetMaterialLibrary::SetScalarParameterValue(this, FabWindMPC, TEXT("Wind Strength Plants"), FMath::Lerp(0.25f, 3.0f, K));
+		UKismetMaterialLibrary::SetScalarParameterValue(Round, Round->FabWindMPC, TEXT("Wind Direction"), float(FMath::RadiansToDegrees(FMath::Atan2(Down.Y, Down.X))));
+		UKismetMaterialLibrary::SetScalarParameterValue(Round, Round->FabWindMPC, TEXT("Wind Strength Plants"), FMath::Lerp(0.25f, 3.0f, K));
 	}
 	const double Droop = FMath::DegreesToRadians(FMath::Lerp(82.0, 12.0, S));
 	const FVector Along = Down * FMath::Cos(Droop) - FVector::UpVector * FMath::Sin(Droop);
 	const FVector Hang = FVector::CrossProduct(Side, Along).GetSafeNormal(); // (the flag's own "down": along the pole when it flies)
-	const FVector Top = World(Pin()) + FVector(0, 0, FlagTopCm);
-	const double L = bMini ? 34 : 55, H = bMini ? 22 : 36;   // cm
+	const FVector Top = Round->World(Round->Pin()) + FVector(0, 0, Round->FlagTopCm);
+	const double L = Round->bMini ? 34 : 55, H = Round->bMini ? 22 : 36;   // cm
 	const int32 NU = 12, NV = 6;
 	const double Amp = FMath::Lerp(1.5, 9.0, S), Freq = FMath::Lerp(2.0, 7.5, S);
 	// (the ripples' progress, added up a frame at a time: time x a pace that follows the gusts
@@ -394,7 +394,7 @@ void AOTGRound::UpdateFlag(float Dt)
 	if (!bFlagMade)
 	{
 		FlagCloth->CreateMeshSection_LinearColor(0, V, Tri, N, UV, TArray<FLinearColor>(), TArray<FProcMeshTangent>(), false);
-		FlagCloth->SetMaterial(0, FlagMat);
+		FlagCloth->SetMaterial(0, Round->FlagMat);
 		bFlagMade = true;
 	}
 	else FlagCloth->UpdateMeshSection_LinearColor(0, V, N, UV, TArray<FLinearColor>(), TArray<FProcMeshTangent>());
@@ -444,8 +444,8 @@ void AOTGRound::ShowTree(const FString& Kind)
 	// (from the side you're on, far enough back to see it whole)
 	const FVector Dir = (Base - From).GetSafeNormal2D();
 	const double Yaw = FMath::RadiansToDegrees(FMath::Atan2(Dir.Y, Dir.X));
-	if (Kind == TEXT("rock")) FreeLookAt(Base + FVector(0, 0, H * 0.3), FMath::Max(700.0, H * 4.0), FMath::Max(150.0, H * 0.8), Yaw);   // (a rock: closer, a little above it)
-	else FreeLookAt(Base + FVector(0, 0, H * 0.5), FMath::Max(2000.0, H * 2.6), H * 0.15, Yaw);
+	if (Kind == TEXT("rock")) Camera.FreeLookAt(Base + FVector(0, 0, H * 0.3), FMath::Max(700.0, H * 4.0), FMath::Max(150.0, H * 0.8), Yaw);   // (a rock: closer, a little above it)
+	else Camera.FreeLookAt(Base + FVector(0, 0, H * 0.5), FMath::Max(2000.0, H * 2.6), H * 0.15, Yaw);
 }
 
 void AOTGRound::ShowGrass(const FString& Kind)
@@ -455,11 +455,11 @@ void AOTGRound::ShowGrass(const FString& Kind)
 	APlayerController* PC = GetWorld() ? GetWorld()->GetFirstPlayerController() : nullptr;
 	const FVector From = PC && PC->PlayerCameraManager ? PC->PlayerCameraManager->GetCameraLocation() : FVector::ZeroVector;
 	FVector At;
-	if (!C || !C->FindGrass(Kind, From, At)) { Toast(TEXT("None of it grows near here"), 3.f); return; }
+	if (!C || !C->FindGrass(Kind, From, At)) { HudView.Toast(TEXT("None of it grows near here"), 3.f); return; }
 	// (from the side you're on, low down at a few metres: as you'd see it walking up to it)
 	const FVector Dir = (At - From).GetSafeNormal2D();
-	const double Yaw = Dir.IsNearlyZero() ? FreeRot.Yaw : FMath::RadiansToDegrees(FMath::Atan2(Dir.Y, Dir.X));
-	FreeLookAt(At + FVector(0, 0, 30), 650, 170, Yaw);
+	const double Yaw = Dir.IsNearlyZero() ? Camera.FreeRot.Yaw : FMath::RadiansToDegrees(FMath::Atan2(Dir.Y, Dir.X));
+	Camera.FreeLookAt(At + FVector(0, 0, 30), 650, 170, Yaw);
 }
 
 bool AOTGRound::DesignClick(const FVector& Origin, const FVector& Dir)
@@ -495,10 +495,10 @@ void AOTGRound::SetDesignTool(int32 Tool)
 
 void AOTGRound::WeatherChanged()
 {
-	WxBlend = 1.f;   // (the player's change: any change under way stops)
-	ApplyWeatherToScene();
-	UpdateHudInfo();
-	UpdateWindBox();
+	Changing.WxBlend = 1.f;   // (the player's change: any change under way stops)
+	Scene.ApplyWeatherToScene();
+	HudView.UpdateHudInfo();
+	HudView.UpdateWindBox();
 }
 
 void AOTGRound::SetWeatherKey(const FString& Key)
@@ -531,7 +531,7 @@ void AOTGRound::SetTemp(double C) { Weather.TempC = C; WeatherChanged(); }
 void AOTGRound::SetSunHour(double Hour)
 {
 	SunHour = Hour < 0 ? -1.0 : FMath::Clamp(Hour, 5.5, 19.5);
-	ApplyLook();
+	Scene.ApplyLook();
 	WeatherChanged();   // (the weather's dimming works from the look's light)
 }
 
@@ -566,10 +566,10 @@ double AOTGRound::WindFromRelative() const
 // game draws it: a crown of spray for half a second, then three rings spreading over the surface and
 // fading, as a stone dropped in a pond. M_Rain (see-through, unlit: UV.y its opacity, the soft edges
 // across UV.x), whiter. OTG.Look.Ripple splashes in front of the camera (testing).
-void AOTGRound::AddRipple(const FVector& WorldAt)
+void FOTGRoundWaterFx::AddRipple(const FVector& WorldAt)
 {
 	FVector P = WorldAt;
-	for (TActorIterator<AOTGRuntimeCourse> It(GetWorld()); It; ++It)
+	for (TActorIterator<AOTGRuntimeCourse> It(Round->GetWorld()); It; ++It)
 	{
 		const double Top = It->WaterTopAt(P);
 		if (Top > -1e9) P.Z = Top + 2.0;
@@ -589,13 +589,13 @@ namespace
 	constexpr int32 RainRingMax = 400;
 }
 
-void AOTGRound::SpawnRainRings(float Dt)
+void FOTGRoundWaterFx::SpawnRainRings(float Dt)
 {
-	const double Mm = Weather.RainMm;
-	APlayerController* PC = GetWorld() ? GetWorld()->GetFirstPlayerController() : nullptr;
+	const double Mm = Round->Weather.RainMm;
+	APlayerController* PC = Round->GetWorld() ? Round->GetWorld()->GetFirstPlayerController() : nullptr;
 	if (Mm <= 0.05 || !PC || !PC->PlayerCameraManager) { RainRingCarry = 0; return; }
 	AOTGRuntimeCourse* Built = nullptr;
-	for (TActorIterator<AOTGRuntimeCourse> It(GetWorld()); It; ++It) { Built = *It; break; }
+	for (TActorIterator<AOTGRuntimeCourse> It(Round->GetWorld()); It; ++It) { Built = *It; break; }
 	if (!Built) return;
 	const FVector Eye = PC->PlayerCameraManager->GetCameraLocation();
 	const double Yaw = PC->PlayerCameraManager->GetCameraRotation().Yaw;
@@ -612,7 +612,7 @@ void AOTGRound::SpawnRainRings(float Dt)
 		const FVector At = Eye + FVector(FMath::Cos(A), FMath::Sin(A), 0) * Dist;
 		const double Top = Built->OpenWaterAt(At);
 		if (Top < -1e9 || Top > Eye.Z) continue;
-		FRainRing R;
+		FOTGRoundWaterFx::FRainRing R;
 		R.P = FVector(At.X, At.Y, Top + 1.0);
 		R.Size = FMath::FRandRange(0.7f, 1.3f);
 		R.Width = float(FMath::Max(0.6, FVector::Dist(Eye, R.P) * 0.0012));
@@ -620,14 +620,14 @@ void AOTGRound::SpawnRainRings(float Dt)
 	}
 }
 
-void AOTGRound::UpdateRipples(float Dt)
+void FOTGRoundWaterFx::UpdateRipples(float Dt)
 {
 	SpawnRainRings(Dt);
 	if (!Ripples.Num() && !RainRings.Num() && !RippleMesh) return;
 	if (!RippleMesh)
 	{
-		RippleMesh = NewObject<UProceduralMeshComponent>(this);
-		RippleMesh->SetupAttachment(RootComponent);
+		RippleMesh = NewObject<UProceduralMeshComponent>(Round);
+		RippleMesh->SetupAttachment(Round->RootComponent);
 		RippleMesh->SetUsingAbsoluteLocation(true);
 		RippleMesh->SetUsingAbsoluteRotation(true);
 		RippleMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
@@ -637,12 +637,12 @@ void AOTGRound::UpdateRipples(float Dt)
 		RippleMesh->SetWorldLocationAndRotation(FVector::ZeroVector, FRotator::ZeroRotator);
 		if (UMaterialInterface* M = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/OpenTeeGolf/Game/M_Rain.M_Rain")))
 		{
-			RippleMat = UMaterialInstanceDynamic::Create(M, this);
+			RippleMat = UMaterialInstanceDynamic::Create(M, Round);
 			RippleMat->SetVectorParameterValue(TEXT("Tint"), FLinearColor(0.7f, 0.76f, 0.8f, 1));
 			RippleMat->SetScalarParameterValue(TEXT("Opacity"), 0.3f);
 			// (the rain's rings, their own: much darker - unlit, in the dim light of a rainy day the
 			// camera's exposure made them chalk-white whatever their opacity)
-			RainRingMat = UMaterialInstanceDynamic::Create(M, this);
+			RainRingMat = UMaterialInstanceDynamic::Create(M, Round);
 			RainRingMat->SetVectorParameterValue(TEXT("Tint"), FLinearColor(0.16f, 0.18f, 0.2f, 1));
 			RainRingMat->SetScalarParameterValue(TEXT("Opacity"), 0.3f);
 		}
@@ -657,7 +657,7 @@ void AOTGRound::UpdateRipples(float Dt)
 	};
 	for (int32 i = Ripples.Num() - 1; i >= 0; i--)
 	{
-		FRipple& R = Ripples[i];
+		FOTGRoundWaterFx::FRipple& R = Ripples[i];
 		R.Age += Dt;
 		if (R.Age > Life) { Ripples.RemoveAtSwap(i); continue; }
 		// the rings: each a band 12 cm wide, spreading at 70 cm/s, a quarter second after the last
@@ -677,10 +677,10 @@ void AOTGRound::UpdateRipples(float Dt)
 			}
 		}
 		// the spray: a crown of streaks up and out, falling back
-		if (R.Age < SprayTime && Cam)
+		if (R.Age < SprayTime && Round->Camera.Cam)
 		{
 			const float K = R.Age / SprayTime;
-			const FVector ToCam = (CamPos - R.P).GetSafeNormal();
+			const FVector ToCam = (Round->Camera.CamPos - R.P).GetSafeNormal();
 			for (int32 k = 0; k < 10; k++)
 			{
 				const FVector Dir(FMath::Cos(k * 0.63 + i), FMath::Sin(k * 0.63 + i), 0);
@@ -702,7 +702,7 @@ void AOTGRound::UpdateRipples(float Dt)
 	// the rain's rings (section 1): an outer ring and, a moment behind it, a fainter one inside
 	for (int32 i = RainRings.Num() - 1; i >= 0; i--)
 	{
-		FRainRing& R = RainRings[i];
+		FOTGRoundWaterFx::FRainRing& R = RainRings[i];
 		R.Age += Dt;
 		if (R.Age > RainRingLife) { RainRings.RemoveAtSwap(i); continue; }
 		for (int32 k = 0; k < 2; k++)

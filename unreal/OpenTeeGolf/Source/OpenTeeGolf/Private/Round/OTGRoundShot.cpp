@@ -51,7 +51,7 @@ void AOTGRound::OnShot(const FOTGShot& Shot)
 {
 	if (bPaused)
 	{
-		Toast(TEXT("Paused: the shot wasn't played"));
+		HudView.Toast(TEXT("Paused: the shot wasn't played"));
 		return;
 	}
 	// A swing while the last ball is still moving: finish that one at once, then play this one
@@ -61,12 +61,12 @@ void AOTGRound::OnShot(const FOTGShot& Shot)
 		PendingShot = Shot;
 		if (Phase == EPhase::Flying) AnimT = 1e9;
 		else PhaseTimer = 0;
-		Toast(TEXT("New shot: skipping to where the last ball stopped"));
+		HudView.Toast(TEXT("New shot: skipping to where the last ball stopped"));
 		return;
 	}
 	if (Phase != EPhase::Ready)
 	{
-		Toast(TEXT("Hole finished: Enter for the next one"));
+		HudView.Toast(TEXT("Hole finished: Enter for the next one"));
 		return;
 	}
 	LastShot = Shot;
@@ -121,22 +121,22 @@ void AOTGRound::OnShot(const FOTGShot& Shot)
 	Phase = EPhase::Flying;
 	AnimT = 0;
 	bCarryShown = false;
-	ShotFrom = World(Ball);
+	Camera.ShotFrom = World(Ball);
 	ClearTracer();
 	AimMesh->SetVisibility(false);
 	TellLaunchMonitor(false);
-	ShowShotData(false);
+	HudView.ShowShotData(false);
 	if (Lie != otg::Surface::Tee && Fx.speed < 1)
-		Toast(FString::Printf(TEXT("From the %s: -%d%% ball speed, -%d%% spin"), *SurfaceDisplay(Lie).ToLower(), FMath::RoundToInt((1 - Fx.speed) * 100), FMath::RoundToInt((1 - Fx.spin) * 100)), 3.f);
-	UpdateHudInfo();
+		HudView.Toast(FString::Printf(TEXT("From the %s: -%d%% ball speed, -%d%% spin"), *SurfaceDisplay(Lie).ToLower(), FMath::RoundToInt((1 - Fx.speed) * 100), FMath::RoundToInt((1 - Fx.spin) * 100)), 3.f);
+	HudView.UpdateHudInfo();
 }
 
 void AOTGRound::FinishShot()
 {
-	if (bRange) return RangeShotDone();
+	if (bRange) return RangeMode.RangeShotDone();
 	const otg::Surface Surface = Course.SurfaceAt(Res.rest.x, Res.rest.z);
 	// (into the water: a splash and rings where it went in)
-	if (Res.result == "water" || Surface == otg::Surface::Water) AddRipple(World(Res.rest));
+	if (Res.result == "water" || Surface == otg::Surface::Water) WaterFx.AddRipple(World(Res.rest));
 	FString Title, Small;
 	if (Res.result == "holed")
 	{
@@ -180,25 +180,25 @@ void AOTGRound::FinishShot()
 			ReliefNote = TEXT("Free relief from the cart path");
 		}
 	}
-	if (!Title.IsEmpty()) Banner(Title, Small, 2.6f);
+	if (!Title.IsEmpty()) HudView.Banner(Title, Small, 2.6f);
 	else
 	{
 		const otg::Surface Landed = Res.hasCarryPoint ? Course.SurfaceAt(Res.carryPoint.x, Res.carryPoint.z) : otg::Surface::None;
 		auto Has = [&](const char* K) { for (const std::string& H : Res.treeHits) if (H == K) return true; return false; };
 		const FString Tree = Has("pole") ? TEXT("Off the flagstick! ") : Has("building") ? TEXT("Off the building! ") : Has("trunk") ? TEXT("Off the trunk! ")
 			: Has("branch") ? TEXT("Hit a branch! ") : Has("leaves") ? TEXT("Clipped the leaves. ") : TEXT("");
-		if (bMini) { if (Has("blade")) Toast(TEXT("Blocked by the windmill!"), 2.5f); }
-		else if (!ReliefNote.IsEmpty()) Toast(FString::Printf(TEXT("%s%s: dropped in the %s"), *Tree, *ReliefNote, *SurfaceDisplay(Lie).ToLower()), 4.f);
-		else if (Landed != otg::Surface::None && Landed != Lie) Toast(FString::Printf(TEXT("%sLanded: %s, finished: %s"), *Tree, *SurfaceDisplay(Landed), *SurfaceDisplay(Lie)), 3.5f);
-		else Toast(FString::Printf(TEXT("%sIn the %s"), *Tree, *SurfaceDisplay(Lie).ToLower()), Tree.IsEmpty() ? 2.5f : 3.5f);
+		if (bMini) { if (Has("blade")) HudView.Toast(TEXT("Blocked by the windmill!"), 2.5f); }
+		else if (!ReliefNote.IsEmpty()) HudView.Toast(FString::Printf(TEXT("%s%s: dropped in the %s"), *Tree, *ReliefNote, *SurfaceDisplay(Lie).ToLower()), 4.f);
+		else if (Landed != otg::Surface::None && Landed != Lie) HudView.Toast(FString::Printf(TEXT("%sLanded: %s, finished: %s"), *Tree, *SurfaceDisplay(Landed), *SurfaceDisplay(Lie)), 3.5f);
+		else HudView.Toast(FString::Printf(TEXT("%sIn the %s"), *Tree, *SurfaceDisplay(Lie).ToLower()), Tree.IsEmpty() ? 2.5f : 3.5f);
 		ReliefNote.Reset();
 	}
 	PlaceBall(Ball);
-	ShowShotData(true);
+	HudView.ShowShotData(true);
 	if (Strokes >= MaxStrokes()) return HoleOut(true, TEXT("Maximum strokes reached: picked up"));
 	Phase = EPhase::Resting;
 	PhaseTimer = PendingShot ? 0.0 : Title.IsEmpty() ? 1.6 : 2.4;
-	UpdateHudInfo();
+	HudView.UpdateHudInfo();
 }
 
 void AOTGRound::NextShot()
@@ -206,8 +206,8 @@ void AOTGRound::NextShot()
 	Phase = EPhase::Ready;
 	if (OnGreen()) ClearTracer();
 	ResetAim(true);
-	AddressView(false);
-	UpdateHudInfo();
+	Camera.AddressView(false);
+	HudView.UpdateHudInfo();
 	TellLaunchMonitor(true);
 	if (PendingShot)
 	{
@@ -286,53 +286,53 @@ void AOTGRound::HoleOut(bool bPickedUp, const FString& Note)
 	const FOTGHole& H = Hole();
 	PendingShot.Reset();
 	const int32 Total = bPickedUp ? MaxStrokes() : Strokes;
-	FOTGSide& Sd = Game->Sides[SideIdx];
+	FOTGSide& Sd = Turns.Game->Sides[Turns.SideIdx];
 	Sd.Attempts.Reset();
 	Strokes = Total;
-	SaveSide();
-	Game->HoleOut(Sd, Total, bPickedUp);
+	Turns.SaveSide();
+	Turns.Game->HoleOut(Sd, Total, bPickedUp);
 	Sd.Ball = Pin();
 	const FString ToPar = Total == H.Par ? TEXT("E") : FString::Printf(TEXT("%+d"), Total - H.Par);
-	const FString Who = Game->Single() ? FString() : Sd.Name + TEXT(": ");
+	const FString Who = Turns.Game->Single() ? FString() : Sd.Name + TEXT(": ");
 	const FString Title = Who + (bPickedUp ? FString(TEXT("Picked up")) : ScoreName(Total, H.Par));
 	FString Small = FString::Printf(TEXT("Hole %d: %d (%s)%s"), H.Number, Total, *ToPar, Note.IsEmpty() ? TEXT("") : *(TEXT("  ·  ") + Note));
 	UE_LOG(LogOTGRound, Display, TEXT("Hole %d: %s%d (%s)"), H.Number, *Who, Total, *ToPar);
 	AimMesh->SetVisibility(false);
 	// Someone else still to finish the hole: their turn next
-	const int32 Next = Game->Next([this](const otg::V3& B) { return PinDist(B); });
+	const int32 Next = Turns.Game->Next([this](const otg::V3& B) { return PinDist(B); });
 	if (Next >= 0)
 	{
 		Phase = EPhase::Between;
-		NextSide = Next;
+		Turns.NextSide = Next;
 		PhaseTimer = 2.4;
-		Banner(Title, Small, 2.6f);
+		HudView.Banner(Title, Small, 2.6f);
 		TellLaunchMonitor(false);
-		UpdateHudInfo();
+		HudView.UpdateHudInfo();
 		return;
 	}
 	// everyone's in
-	Game->EndHole();
+	Turns.Game->EndHole();
 	Phase = EPhase::Holed;
-	if (!Game->Single())
+	if (!Turns.Game->Single())
 	{
-		const FString News = Game->HoleNews(HoleIndex);
+		const FString News = Turns.Game->HoleNews(HoleIndex);
 		if (!News.IsEmpty()) Small += TEXT("\n") + News;
 		UE_LOG(LogOTGRound, Display, TEXT("%s"), *News);
 	}
-	Banner(Title, Small, 3.8f);
+	HudView.Banner(Title, Small, 3.8f);
 	TellLaunchMonitor(false);
 	PhaseTimer = 2.6;
 	bScorecardAuto = true;
-	UpdateHudInfo();
+	HudView.UpdateHudInfo();
 }
 
 void AOTGRound::NextHole()
 {
-	ShowScorecard(false);
+	HudView.ShowScorecard(false);
 	if (HoleIndex + 1 < LastHole) return StartHole(HoleIndex + 1);
 	Phase = EPhase::Done;
-	RecordRound();
-	ShowScorecard(true);
+	Turns.RecordRound();
+	HudView.ShowScorecard(true);
 	TellLaunchMonitor(false);
 	UE_LOG(LogOTGRound, Display, TEXT("Round complete"));
 }

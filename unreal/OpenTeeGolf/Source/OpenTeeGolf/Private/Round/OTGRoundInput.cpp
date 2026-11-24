@@ -52,23 +52,23 @@ void AOTGRound::AimBy(double Degrees)
 	if (Phase != EPhase::Ready) return;
 	Heading += FMath::DegreesToRadians(Degrees);
 	ShowAim();
-	AddressView(false);
+	Camera.AddressView(false);
 }
 
 void AOTGRound::ChangeClub(int32 Step)
 {
-	if (bRange && Phase == EPhase::Resting) NewBall();   // (the range: a new ball for the new club)
+	if (bRange && Phase == EPhase::Resting) RangeMode.NewBall();   // (the range: a new ball for the new club)
 	if (Phase != EPhase::Ready) return;
-	if (bMini) { Toast(TEXT("Putt-putt: putter only"), 1.2f); return; }
+	if (bMini) { HudView.Toast(TEXT("Putt-putt: putter only"), 1.2f); return; }
 	const int32 I = FMath::Clamp(ClubIndex(Club) - Step, 0, NumClubs - (bRange ? 2 : 1));   // (no putter on the range)
 	bClubPicked = true;
 	SetClub(Clubs[I].Code);
-	Toast(Clubs[I].Name, 1.2f);
+	HudView.Toast(Clubs[I].Name, 1.2f);
 	if (bRange)
 	{
-		AimDist = ClubCarryM();
+		AimDist = RangeMode.ClubCarryM();
 		ShowAim();
-		UpdateRange();
+		RangeMode.UpdateRange();
 	}
 }
 
@@ -77,10 +77,10 @@ void AOTGRound::TestShot()
 	// A strike as a launch monitor would send it: the club's typical one, or for a wedge (or a putt)
 	// one sized to the distance, a little off line (only on the player's turn: it's made for their
 	// club and distance)
-	if (bRange && Phase == EPhase::Resting && !bPaused) NewBall();   // (the range: a new ball, and hit it)
+	if (bRange && Phase == EPhase::Resting && !bPaused) RangeMode.NewBall();   // (the range: a new ball, and hit it)
 	if (Phase != EPhase::Ready || bPaused)
 	{
-		Toast(TEXT("Test shot: wait for your turn"), 1.5f);
+		HudView.Toast(TEXT("Test shot: wait for your turn"), 1.5f);
 		return;
 	}
 	const FClub& C = Clubs[ClubIndex(Club)];
@@ -111,7 +111,7 @@ void AOTGRound::TestShot()
 void AOTGRound::Continue()
 {
 	if (Phase == EPhase::Flying) AnimT = 1e9;
-	else if (bRange && Phase == EPhase::Resting) NewBall();
+	else if (bRange && Phase == EPhase::Resting) RangeMode.NewBall();
 	else if (Phase == EPhase::Holed) NextHole();
 	else if (Phase == EPhase::Done) QuitToMenu();
 }
@@ -127,9 +127,9 @@ void AOTGRound::DropNearPin(double Yards)
 	ClearTracer();
 	PlaceBall(Ball);
 	ResetAim(true);
-	AddressView(true);
-	UpdateHudInfo();
-	Toast(FString::Printf(TEXT("(testing) dropped %s from the pin, %s"), *Len(M), *SurfaceDisplay(Lie).ToLower()));
+	Camera.AddressView(true);
+	HudView.UpdateHudInfo();
+	HudView.Toast(FString::Printf(TEXT("(testing) dropped %s from the pin, %s"), *Len(M), *SurfaceDisplay(Lie).ToLower()));
 }
 
 void AOTGRound::SurfaceTest()
@@ -210,7 +210,7 @@ void AOTGRound::AimAt(double X, double Z)
 	Heading = HeadingTo(Ball, X, Z);
 	AimDist = D;
 	ShowAim();
-	AddressView(false);
+	Camera.AddressView(false);
 }
 
 // Where a line (world space, from the camera through the cursor) first meets the ground: marched
@@ -262,12 +262,12 @@ FVector AOTGRound::PinWorld() const
 	return World(Pin());
 }
 
-void AOTGRound::FreeLookAt(const FVector& Target, double Dist, double Height, double YawDeg)
+void FOTGRoundCamera::FreeLookAt(const FVector& Target, double Dist, double Height, double YawDeg)
 {
 	if (!bFreeView) ToggleFreeView();
 	const double Y = FMath::DegreesToRadians(YawDeg);
 	FreePos = Target - FVector(FMath::Cos(Y), FMath::Sin(Y), 0) * Dist + FVector(0, 0, Height);
-	if (const AOTGRuntimeCourse* RC = CourseOf(GetWorld()))
+	if (const AOTGRuntimeCourse* RC = CourseOf(Round->GetWorld()))
 		FreePos.Z = FMath::Max(FreePos.Z, RC->WaterTopAt(FreePos) + 60);
 	FreeRot = (Target - FreePos).Rotation();
 	if (Cam) Cam->SetActorLocationAndRotation(FreePos, FreeRot);
@@ -286,25 +286,25 @@ void AOTGRound::ToggleShotSettings()
 void AOTGRound::ToggleScorecard()
 {
 	// (the range has no card: Tab hides and shows its numbers)
-	if (bRange && RangePanel)
+	if (bRange && RangeMode.RangePanel)
 	{
-		RangePanel->SetVisibility(RangePanel->GetVisibility() == EVisibility::Collapsed ? EVisibility::SelfHitTestInvisible : EVisibility::Collapsed);
+		RangeMode.RangePanel->SetVisibility(RangeMode.RangePanel->GetVisibility() == EVisibility::Collapsed ? EVisibility::SelfHitTestInvisible : EVisibility::Collapsed);
 		return;
 	}
-	ShowScorecard(!bScorecard);
+	HudView.ShowScorecard(!bScorecard);
 }
 
 void AOTGRound::Mulligan()
 {
-	if (bRange) return NewBall();
+	if (bRange) return RangeMode.NewBall();
 	if (!Undo || Phase != EPhase::Ready) return;
 	Ball = Undo->Ball; Strokes = Undo->Strokes; Lie = Undo->Lie; Heading = Undo->Heading;
 	Undo.Reset();
 	ClearTracer();
 	PlaceBall(Ball);
 	ShowAim();
-	AddressView(true);
-	UpdateHudInfo();
-	Toast(TEXT("Mulligan: replay the shot"));
+	Camera.AddressView(true);
+	HudView.UpdateHudInfo();
+	HudView.Toast(TEXT("Mulligan: replay the shot"));
 	TellLaunchMonitor(true);
 }

@@ -6,6 +6,7 @@
 // OTGRoundExtras.cpp, OTGSky.cpp, and the console commands: OTGRoundCommands.cpp.
 
 #include "Round/OTGRound.h"
+#include "Tracer/OTGShotTracerComponent.h"
 #include "World/OTGRuntimeCourse.h"
 #include "App/OTGHelperSubsystem.h"
 #include "Round/OTGMiniGolf.h"
@@ -51,6 +52,7 @@ DEFINE_LOG_CATEGORY_STATIC(LogOTGRound, Log, All);
 
 AOTGRound::AOTGRound()
 {
+	Turns.Round = Camera.Round = HudView.Round = Scene.Round = Changing.Round = RainFx.Round = WaterFx.Round = Flag.Round = SlopeGrid.Round = RangeMode.Round = this;
 	PrimaryActorTick.bCanEverTick = true;
 	RootComponent = CreateDefaultSubobject<USceneComponent>(TEXT("Root"));
 	static ConstructorHelpers::FObjectFinder<UStaticMesh> Sphere(TEXT("/Engine/BasicShapes/Sphere.Sphere"));
@@ -79,31 +81,53 @@ AOTGRound::AOTGRound()
 	AimStick = MakeMesh(TEXT("AimStick"), Cylinder.Object, true);
 	AimStickTop = MakeMesh(TEXT("AimStickTop"), Cylinder.Object, false);
 	CupMesh = MakeMesh(TEXT("Cup"), Cylinder.Object, false);
-	GridMesh = CreateDefaultSubobject<UProceduralMeshComponent>(TEXT("SlopeGrid"));
-	GridMesh->SetupAttachment(RootComponent);
-	GridMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-	GridMesh->SetCastShadow(false);
-	GridMesh->bVisibleInRayTracing = false;
-	GridDots = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("SlopeDots"));
-	GridDots->SetupAttachment(RootComponent);
-	GridDots->SetStaticMesh(Sphere.Object);
-	GridDots->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-	GridDots->SetCastShadow(false);
-	GridDots->bVisibleInRayTracing = false;
-	GridDots->SetMobility(EComponentMobility::Movable);
-	TracerMesh = CreateDefaultSubobject<UProceduralMeshComponent>(TEXT("Tracer"));
+	SlopeGrid.GridMesh = CreateDefaultSubobject<UProceduralMeshComponent>(TEXT("SlopeGrid"));
+	SlopeGrid.GridMesh->SetupAttachment(RootComponent);
+	SlopeGrid.GridMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	SlopeGrid.GridMesh->SetCastShadow(false);
+	SlopeGrid.GridMesh->bVisibleInRayTracing = false;
+	SlopeGrid.GridDots = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("SlopeDots"));
+	SlopeGrid.GridDots->SetupAttachment(RootComponent);
+	SlopeGrid.GridDots->SetStaticMesh(Sphere.Object);
+	SlopeGrid.GridDots->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	SlopeGrid.GridDots->SetCastShadow(false);
+	SlopeGrid.GridDots->bVisibleInRayTracing = false;
+	SlopeGrid.GridDots->SetMobility(EComponentMobility::Movable);
+	TracerMesh = CreateDefaultSubobject<UOTGShotTracerComponent>(TEXT("Tracer"));
 	TracerMesh->SetupAttachment(RootComponent);
 	TracerMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	TracerMesh->SetCastShadow(false);
 	TracerMesh->bUseAsyncCooking = true;
-	FlagCloth = CreateDefaultSubobject<UProceduralMeshComponent>(TEXT("FlagCloth"));
-	FlagCloth->SetupAttachment(RootComponent);
-	FlagCloth->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-	RainMesh = CreateDefaultSubobject<UProceduralMeshComponent>(TEXT("Rain"));
-	RainMesh->SetupAttachment(RootComponent);
-	RainMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-	RainMesh->SetCastShadow(false);
+	Flag.FlagCloth = CreateDefaultSubobject<UProceduralMeshComponent>(TEXT("FlagCloth"));
+	Flag.FlagCloth->SetupAttachment(RootComponent);
+	Flag.FlagCloth->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	RainFx.RainMesh = CreateDefaultSubobject<UProceduralMeshComponent>(TEXT("Rain"));
+	RainFx.RainMesh->SetupAttachment(RootComponent);
+	RainFx.RainMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	RainFx.RainMesh->SetCastShadow(false);
 }
+
+void AOTGRound::AddReferencedObjects(UObject* InThis, FReferenceCollector& Collector)
+{
+	Super::AddReferencedObjects(InThis, Collector);
+	AOTGRound* R = CastChecked<AOTGRound>(InThis);
+	R->Turns.AddReferencedObjects(Collector);
+	R->Camera.AddReferencedObjects(Collector);
+	R->Scene.AddReferencedObjects(Collector);
+	R->RainFx.AddReferencedObjects(Collector);
+	R->WaterFx.AddReferencedObjects(Collector);
+	R->Flag.AddReferencedObjects(Collector);
+	R->SlopeGrid.AddReferencedObjects(Collector);
+	R->RangeMode.AddReferencedObjects(Collector);
+}
+
+void FOTGRoundTurns::AddReferencedObjects(FReferenceCollector& Collector) { Collector.AddReferencedObjects(OtherBalls); }
+void FOTGRoundCamera::AddReferencedObjects(FReferenceCollector& Collector) { Collector.AddReferencedObject(Cam); }
+void FOTGRoundRain::AddReferencedObjects(FReferenceCollector& Collector) { Collector.AddReferencedObject(RainMesh); Collector.AddReferencedObject(RainMat); }
+void FOTGRoundWaterFx::AddReferencedObjects(FReferenceCollector& Collector) { Collector.AddReferencedObject(RainRingMat); Collector.AddReferencedObject(RippleMesh); Collector.AddReferencedObject(RippleMat); }
+void FOTGRoundFlag::AddReferencedObjects(FReferenceCollector& Collector) { Collector.AddReferencedObject(FlagCloth); }
+void FOTGRoundSlopeGrid::AddReferencedObjects(FReferenceCollector& Collector) { Collector.AddReferencedObject(GridMesh); Collector.AddReferencedObject(GridDots); Collector.AddReferencedObjects(GridMats); }
+void FOTGRoundRangeMode::AddReferencedObjects(FReferenceCollector& Collector) { Collector.AddReferencedObject(RangeProps); Collector.AddReferencedObject(RangeDots); Collector.AddReferencedObject(RangeDotMat); }
 
 // ------------------------------------------------------------------ setting up
 
@@ -124,7 +148,7 @@ void AOTGRound::Setup(UOTGCourseData* InData, const FOTGRoundSetup& InSetup)
 	{
 		// (calm, no slope grid, a short flag)
 		Setup_.Weather = TEXT("calm");
-		bGridOn = false;
+		SlopeGrid.bGridOn = false;
 		FlagTopCm = 105;
 	}
 	Data->FillPlayCourse(Course);
@@ -167,7 +191,7 @@ void AOTGRound::Setup(UOTGCourseData* InData, const FOTGRoundSetup& InSetup)
 	}
 	TArray<FOTGHoleInfo> HoleInfo;
 	for (const FOTGHole& H : Data->Holes) HoleInfo.Add(FOTGHoleInfo{ H.Par, H.Index });
-	Game = MakeUnique<FOTGGame>(Players, Setup_.Format, Setup_.bHandicaps, HoleInfo);
+	Turns.Game = MakeUnique<FOTGGame>(Players, Setup_.Format, Setup_.bHandicaps, HoleInfo);
 	const int32 First = FMath::Clamp(Setup_.StartHole - 1, 0, FMath::Max(0, Data->Holes.Num() - 1));
 	LastHole = Setup_.Holes == 9 ? FMath::Min(First + 9, Data->Holes.Num()) : Data->Holes.Num();
 
@@ -186,8 +210,8 @@ void AOTGRound::Setup(UOTGCourseData* InData, const FOTGRoundSetup& InSetup)
 	BallMat = Mat(BallMesh, FLinearColor(0.85f, 0.85f, 0.85f));
 	// (the other sides' balls, in their colours)
 	UStaticMesh* SphereMesh = BallMesh->GetStaticMesh();
-	if (!Game->Single())
-		for (int32 i = 0; i < Game->Sides.Num(); i++)
+	if (!Turns.Game->Single())
+		for (int32 i = 0; i < Turns.Game->Sides.Num(); i++)
 		{
 			UStaticMeshComponent* C = NewObject<UStaticMeshComponent>(this);
 			C->SetStaticMesh(SphereMesh);
@@ -195,9 +219,9 @@ void AOTGRound::Setup(UOTGCourseData* InData, const FOTGRoundSetup& InSetup)
 			C->SetMobility(EComponentMobility::Movable);
 			C->SetupAttachment(RootComponent);
 			C->RegisterComponent();
-			Mat(C, Game->Sides[i].Colour);
+			Mat(C, Turns.Game->Sides[i].Colour);
 			C->SetVisibility(false);
-			OtherBalls.Add(C);
+			Turns.OtherBalls.Add(C);
 		}
 	AimMat = Mat(AimMesh, FLinearColor(1.f, 0.78f, 0.15f));
 	PinMat = Mat(PinMesh, FLinearColor(0.9f, 0.9f, 0.85f));
@@ -211,16 +235,17 @@ void AOTGRound::Setup(UOTGCourseData* InData, const FOTGRoundSetup& InSetup)
 	// (the slope grid's colours: flat white, then yellow, orange and red at 3% and over - as the web
 	// version's; and its dots white)
 	for (const FLinearColor& C : { FLinearColor(0.95f, 0.95f, 0.92f), FLinearColor(1.f, 0.9f, 0.2f), FLinearColor(1.f, 0.55f, 0.12f), FLinearColor(0.95f, 0.18f, 0.1f) })
-		GridMats.Add(Mat(nullptr, C));
-	GridDots->SetMaterial(0, Mat(nullptr, FLinearColor(1.f, 1.f, 1.f)));
+		SlopeGrid.GridMats.Add(Mat(nullptr, C));
+	SlopeGrid.GridDots->SetMaterial(0, Mat(nullptr, FLinearColor(1.f, 1.f, 1.f)));
 	TracerMesh->SetMaterial(0, TracerMat);
+	TracerMesh->RibbonMaterial = TracerMat;
 
 	// The camera
 	APlayerController* PC = GetWorld()->GetFirstPlayerController();
-	Cam = GetWorld()->SpawnActor<ACameraActor>();
-	Cam->GetCameraComponent()->SetConstraintAspectRatio(false);
-	Cam->GetCameraComponent()->SetFieldOfView(60);
-	if (PC) PC->SetViewTarget(Cam);
+	Camera.Cam = GetWorld()->SpawnActor<ACameraActor>();
+	Camera.Cam->GetCameraComponent()->SetConstraintAspectRatio(false);
+	Camera.Cam->GetCameraComponent()->SetFieldOfView(60);
+	if (PC) PC->SetViewTarget(Camera.Cam);
 
 	// The HUD
 	if (GEngine && GEngine->GameViewport)
@@ -266,8 +291,8 @@ void AOTGRound::Setup(UOTGCourseData* InData, const FOTGRoundSetup& InSetup)
 		// (the driving range: its panel where the minimap is, and its keys)
 		if (bRange)
 		{
-			RangePanel = SNew(SOTGRangePanel);
-			Hud->SetPractice(RangePanel.ToSharedRef(), TEXT("Click the ground to aim     Left / Right: aim     Up / Down: club     T: test shot panel     Space: quick test shot     Enter / Backspace: new ball     Tab: hide the numbers     D: shot data     F: free view     L: weather and time of day     P: frame rate     Esc: menu"));
+			RangeMode.RangePanel = SNew(SOTGRangePanel);
+			Hud->SetPractice(RangeMode.RangePanel.ToSharedRef(), TEXT("Click the ground to aim     Left / Right: aim     Up / Down: club     T: test shot panel     Space: quick test shot     Enter / Backspace: new ball     Tab: hide the numbers     D: shot data     F: free view     L: weather and time of day     P: frame rate     Esc: menu"));
 		}
 		// (the course's name over the hole's)
 		else Hud->SetCourseName(bMini ? FString(TEXT("Putt-putt")) : !Data->CourseName.IsEmpty() ? Data->CourseName : Data->CourseId.Replace(TEXT("_"), TEXT(" ")));
@@ -276,22 +301,22 @@ void AOTGRound::Setup(UOTGCourseData* InData, const FOTGRoundSetup& InSetup)
 	// shots stopped
 	if (bRange)
 	{
-		RangeProps = GetWorld()->SpawnActor<AOTGRangeProps>();
-		if (RangeProps) RangeProps->Build(Data);
-		RangeDots = NewObject<UInstancedStaticMeshComponent>(this);
-		RangeDots->SetStaticMesh(CupMesh->GetStaticMesh());
-		RangeDots->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-		RangeDots->SetCastShadow(false);
-		RangeDots->SetMobility(EComponentMobility::Movable);
-		RangeDots->SetupAttachment(RootComponent);
-		RangeDots->RegisterComponent();
-		RangeDotMat = Mat(RangeDots, FLinearColor(1.f, 0.7f, 0.1f));
+		RangeMode.RangeProps = GetWorld()->SpawnActor<AOTGRangeProps>();
+		if (RangeMode.RangeProps) RangeMode.RangeProps->Build(Data);
+		RangeMode.RangeDots = NewObject<UInstancedStaticMeshComponent>(this);
+		RangeMode.RangeDots->SetStaticMesh(CupMesh->GetStaticMesh());
+		RangeMode.RangeDots->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		RangeMode.RangeDots->SetCastShadow(false);
+		RangeMode.RangeDots->SetMobility(EComponentMobility::Movable);
+		RangeMode.RangeDots->SetupAttachment(RootComponent);
+		RangeMode.RangeDots->RegisterComponent();
+		RangeMode.RangeDotMat = Mat(RangeMode.RangeDots, FLinearColor(1.f, 0.7f, 0.1f));
 	}
 	UMaterialInterface* Rain = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/OpenTeeGolf/Game/M_Rain.M_Rain"));
 	if (Rain)
 	{
-		RainMat = UMaterialInstanceDynamic::Create(Rain, this);
-		RainMesh->SetMaterial(0, RainMat);
+		RainFx.RainMat = UMaterialInstanceDynamic::Create(Rain, this);
+		RainFx.RainMesh->SetMaterial(0, RainFx.RainMat);
 	}
 	else UE_LOG(LogOTGRound, Warning, TEXT("No rain material (unreal/make_assets.ps1 makes it)"));
 
@@ -303,9 +328,9 @@ void AOTGRound::Setup(UOTGCourseData* InData, const FOTGRoundSetup& InSetup)
 	if (UOTGHelperSubsystem* HS = GetGameInstance()->GetSubsystem<UOTGHelperSubsystem>())
 		HS->OnJobDone.AddWeakLambda(this, [this](const FOTGHelperJob& J) {
 			if (J.Name.IsEmpty()) return;
-			if (J.State == TEXT("done") && J.Kind == TEXT("export")) Toast(J.Name + TEXT(" is ready: play it from the menu"), 6.f);
-			else if (J.State == TEXT("done") && J.bNeedsReview) Toast(J.Name + TEXT(" is built: its holes need looking over in the editor"), 6.f);
-			else if (J.State == TEXT("failed")) Toast(J.Name + TEXT(": building it didn't work (see New course)"), 6.f);
+			if (J.State == TEXT("done") && J.Kind == TEXT("export")) HudView.Toast(J.Name + TEXT(" is ready: play it from the menu"), 6.f);
+			else if (J.State == TEXT("done") && J.bNeedsReview) HudView.Toast(J.Name + TEXT(" is built: its holes need looking over in the editor"), 6.f);
+			else if (J.State == TEXT("failed")) HudView.Toast(J.Name + TEXT(": building it didn't work (see New course)"), 6.f);
 		});
 
 	// (-roundexec="<s>:<console command>|...": commands at those times after the round starts, for
@@ -321,10 +346,10 @@ void AOTGRound::Setup(UOTGCourseData* InData, const FOTGRoundSetup& InSetup)
 			if (I.Split(TEXT(":"), &At, &Command)) ExecAt.Emplace(FCString::Atod(*At), Command.TrimStartAndEnd());
 		}
 	}
-	ApplyLook();
+	Scene.ApplyLook();
 	SetupWeather();
 	UE_LOG(LogOTGRound, Display, TEXT("Round on %s: %d holes, %d trunks and buildings to hit; %s, %d side(s), %s tees, %s pins"), *Data->CourseName, Data->Holes.Num(), int32(Collider.Count()),
-		*Game->F.Name, Game->Sides.Num(), *TeeName, *PinName);
+		*Turns.Game->F.Name, Turns.Game->Sides.Num(), *TeeName, *PinName);
 	StartHole(First);
 }
 
@@ -417,16 +442,16 @@ void AOTGRound::StartHole(int32 Index)
 	HoleIndex = Index;
 	const FOTGHole& H = Hole();
 	// every side on its tee (a player's own tees, or the round's), the honour first
-	Game->StartHole(Index, [&](const FOTGSide& S) {
-		const FString Own = S.Members.Num() == 1 ? Game->Players[S.Members[0]].Tee : FString();
+	Turns.Game->StartHole(Index, [&](const FOTGSide& S) {
+		const FString Own = S.Members.Num() == 1 ? Turns.Game->Players[S.Members[0]].Tee : FString();
 		return TeeOf(H, Own);
 	});
-	LoadSide(Game->Next([this](const otg::V3& B) { return PinDist(B); }));
+	Turns.LoadSide(Turns.Game->Next([this](const otg::V3& B) { return PinDist(B); }));
 	PendingShot.Reset();
 	bHasRes = false;
 	Phase = EPhase::Ready;
 	ClearTracer();
-	ShowScorecard(false);
+	HudView.ShowScorecard(false);
 	if (Hud) Hud->SetShotData(FString(), FString());
 	// the flag, and a marker on the tee
 	const otg::V3 P = Pin();
@@ -448,7 +473,7 @@ void AOTGRound::StartHole(int32 Index)
 	TeeHeadMesh->SetVisibility(!bMini);
 	ResetAim(false);
 	PlaceBall(Ball);
-	OverviewView();
+	Camera.OverviewView();
 	double LenM = Dist(Ball, P);
 	if (bMini && H.Path.Num() > 1)
 	{
@@ -457,12 +482,12 @@ void AOTGRound::StartHole(int32 Index)
 	}
 	if (bRange)
 	{
-		Banner(TEXT("Driving range"), TEXT("Targets at 50, 100, 150, 200 and 250 yards"), 3.f);
-		UpdateRange();
+		HudView.Banner(TEXT("Driving range"), TEXT("Targets at 50, 100, 150, 200 and 250 yards"), 3.f);
+		RangeMode.UpdateRange();
 	}
-	else Banner(H.Name.IsEmpty() ? FString::Printf(TEXT("Hole %d"), H.Number) : FString::Printf(TEXT("Hole %d  ·  %s"), H.Number, *H.Name), FString::Printf(TEXT("Par %d  ·  %s%s"), H.Par, *HoleLen(LenM),
-		Game->Single() ? TEXT("") : *FString::Printf(TEXT("  ·  %s to play"), *Game->SideLabel(SideIdx))), 3.f);
-	UpdateHudInfo();
+	else HudView.Banner(H.Name.IsEmpty() ? FString::Printf(TEXT("Hole %d"), H.Number) : FString::Printf(TEXT("Hole %d  ·  %s"), H.Number, *H.Name), FString::Printf(TEXT("Par %d  ·  %s%s"), H.Par, *HoleLen(LenM),
+		Turns.Game->Single() ? TEXT("") : *FString::Printf(TEXT("  ·  %s to play"), *Turns.Game->SideLabel(Turns.SideIdx))), 3.f);
+	HudView.UpdateHudInfo();
 	TellLaunchMonitor(true);
 	UE_LOG(LogOTGRound, Display, TEXT("Hole %d, par %d, %s"), H.Number, H.Par, *HoleLen(LenM));
 }
@@ -472,7 +497,7 @@ void AOTGRound::ResetAim(bool bToPin)
 	// (the range: the aim stays where the player turned it, at the club's carry)
 	if (bRange)
 	{
-		AimDist = ClubCarryM();
+		AimDist = RangeMode.ClubCarryM();
 		SetClub(Club);
 		ShowAim();
 		return;
@@ -528,7 +553,7 @@ void AOTGRound::AutoClub()
 void AOTGRound::SetClub(const FString& Code)
 {
 	Club = Code;
-	UpdateHudInfo();
+	HudView.UpdateHudInfo();
 	TellLaunchMonitor(Phase == EPhase::Ready);
 }
 
@@ -537,7 +562,7 @@ void AOTGRound::TellLaunchMonitor(bool bTurn)
 	if (!Data) return;
 	if (UOTGLaunchMonitorSubsystem* LM = GetGameInstance()->GetSubsystem<UOTGLaunchMonitorSubsystem>())
 	{
-		const bool bLeft = Game && Game->Sides.IsValidIndex(SideIdx) ? Game->Players[Game->Hitter(Game->Sides[SideIdx])].bLeftHanded : false;
+		const bool bLeft = Turns.Game && Turns.Game->Sides.IsValidIndex(Turns.SideIdx) ? Turns.Game->Players[Turns.Game->Hitter(Turns.Game->Sides[Turns.SideIdx])].bLeftHanded : false;
 		LM->SetPlayer(Club, (bRange ? AimDist : DistToPin()) * M_TO_YD, bLeft);
 		LM->SetTurn(bTurn);
 	}
@@ -547,7 +572,7 @@ void AOTGRound::TellLaunchMonitor(bool bTurn)
 
 void AOTGRound::Tick(float Dt)
 {
-	UpdateSlopeGrid(Dt);
+	SlopeGrid.UpdateSlopeGrid(Dt);
 	// the aim: a yardage stick standing on the spot - white, its top yellow - sized by how far it is
 	// from the camera so it reads the same on screen near or far (true size it'd vanish at 250 m)
 	{
@@ -557,7 +582,7 @@ void AOTGRound::Tick(float Dt)
 		if (bShow)
 		{
 			const FVector At = AimMesh->GetComponentLocation() - FVector(0, 0, 3);
-			const double H = FMath::Max(120.0, FVector::Dist(CamPos, At) * 0.03);   // cm
+			const double H = FMath::Max(120.0, FVector::Dist(Camera.CamPos, At) * 0.03);   // cm
 			const double Wd = H * 0.02;
 			AimStick->SetWorldLocation(At + FVector(0, 0, H * 0.4));
 			AimStick->SetWorldScale3D(FVector(Wd / 100, Wd / 100, H * 0.8 / 100));
@@ -568,7 +593,7 @@ void AOTGRound::Tick(float Dt)
 	Super::Tick(Dt);
 	if (!Data) return;
 	RoundTime += Dt;
-	UpdatePinTag();
+	HudView.UpdatePinTag();
 	for (int32 i = 0; i < ExecAt.Num();)
 	{
 		if (RoundTime < ExecAt[i].Key) { i++; continue; }
@@ -598,39 +623,39 @@ void AOTGRound::Tick(float Dt)
 		if (Res.hasCarryPoint && AnimT >= Res.carryPoint.t && !bCarryShown)
 		{
 			bCarryShown = true;
-			ShowShotData(false);
+			HudView.ShowShotData(false);
 		}
 		// the camera: behind the ball as it sets off, then following it
 		const FVector B = BallMesh->GetComponentLocation();
-		const FVector Flat(B.X - ShotFrom.X, B.Y - ShotFrom.Y, 0);
+		const FVector Flat(B.X - Camera.ShotFrom.X, B.Y - Camera.ShotFrom.Y, 0);
 		const bool bPutt = LastShot.VLA < 6 && Undo && Undo->Lie == otg::Surface::Green;
 		if (bMini)
 		{
 			// (the putt-putt: up behind the ball, looking down the hole, following it round)
 			const FVector Pw = World(Pin());
-			const FVector Dh = FVector(Pw.X - ShotFrom.X, Pw.Y - ShotFrom.Y, 0).GetSafeNormal();
-			CamGoal = B - Dh * 330 + FVector(0, 0, 300);
-			CamSpeed = 2.f;
+			const FVector Dh = FVector(Pw.X - Camera.ShotFrom.X, Pw.Y - Camera.ShotFrom.Y, 0).GetSafeNormal();
+			Camera.CamGoal = B - Dh * 330 + FVector(0, 0, 300);
+			Camera.CamSpeed = 2.f;
 		}
 		else if (Flat.Size() > 300)
 		{
 			const FVector U = Flat.GetSafeNormal();
-			CamGoal = B - U * (bPutt ? 450 : 1400) + FVector(0, 0, FMath::Max(B.Z, ShotFrom.Z) - B.Z + (bPutt ? 160 : 450));
-			CamSpeed = 3.f;
+			Camera.CamGoal = B - U * (bPutt ? 450 : 1400) + FVector(0, 0, FMath::Max(B.Z, Camera.ShotFrom.Z) - B.Z + (bPutt ? 160 : 450));
+			Camera.CamSpeed = 3.f;
 		}
-		CamLook = B;
-		CamLookNow = B;
+		Camera.CamLook = B;
+		Camera.CamLookNow = B;
 		if (N >= int32(Pts.size())) FinishShot();
 	}
 	else if (Phase == EPhase::Resting)
 	{
 		PhaseTimer -= Dt;
-		if (PhaseTimer <= 0) { if (bRange) NewBall(); else if (!RoundAfterShot()) NextShot(); }
+		if (PhaseTimer <= 0) { if (bRange) RangeMode.NewBall(); else if (!Turns.RoundAfterShot()) NextShot(); }
 	}
 	else if (Phase == EPhase::Between)
 	{
 		PhaseTimer -= Dt;
-		if (PhaseTimer <= 0) BeginTurn(NextSide, false);
+		if (PhaseTimer <= 0) Turns.BeginTurn(Turns.NextSide, false);
 	}
 	else if (Phase == EPhase::Holed)
 	{
@@ -638,37 +663,37 @@ void AOTGRound::Tick(float Dt)
 		if (bScorecardAuto && PhaseTimer <= 0)
 		{
 			bScorecardAuto = false;
-			ShowScorecard(true);
+			HudView.ShowScorecard(true);
 			PhaseTimer = 8.0; // (then the next hole, or Enter sooner)
 		}
 		else if (!bScorecardAuto && PhaseTimer <= 0) NextHole();
 	}
-	if (OverviewLeft > 0)
+	if (Camera.OverviewLeft > 0)
 	{
-		OverviewLeft -= Dt;
-		if (OverviewLeft <= 0 && Phase == EPhase::Ready) AddressView(false);
+		Camera.OverviewLeft -= Dt;
+		if (Camera.OverviewLeft <= 0 && Phase == EPhase::Ready) Camera.AddressView(false);
 	}
 	// (a look setting changed: again)
 	{
-		if (LookStampNow() != LookStamp) { ApplyLook(); ApplyWeatherToScene(); }
+		if (Scene.LookStampNow() != Scene.LookStamp) { Scene.ApplyLook(); Scene.ApplyWeatherToScene(); }
 	}
-	if (!bFreeView) UpdateCamera(Dt);   // (the free view moves it itself: FreeFly)
-	UpdateFlag(Dt);
-	if (RangeProps)
+	if (!Camera.bFreeView) Camera.UpdateCamera(Dt);   // (the free view moves it itself: FreeFly)
+	Flag.UpdateFlag(Dt);
+	if (RangeMode.RangeProps)
 	{
 		double Mps, FromDeg;
 		HoleWind(Mps, FromDeg);
 		const double F = FMath::DegreesToRadians(FromDeg);
-		RangeProps->SetWind(Mps > 0.05 ? FVector(-FMath::Sin(F), FMath::Cos(F), 0) : FVector(1, 0, 0), Mps / 0.44704 / 16.0);
+		RangeMode.RangeProps->SetWind(Mps > 0.05 ? FVector(-FMath::Sin(F), FMath::Cos(F), 0) : FVector(1, 0, 0), Mps / 0.44704 / 16.0);
 	}
-	UpdateMap();
-	UpdateChanging(Dt);
-	UpdateRain(Dt);
-	UpdateWet(Dt);
-	UpdateStorm(Dt);
+	HudView.UpdateMap();
+	Changing.UpdateChanging(Dt);
+	RainFx.UpdateRain(Dt);
+	RainFx.UpdateWet(Dt);
+	Scene.UpdateStorm(Dt);
 	// the ball a little bigger the further off it is while it flies, so it can be followed against the
 	// sky; on the ground, its true size (blown up four times at 30 m it looked like a beach ball by the pin)
-	const float CamDist = FVector::Dist(CamPos, BallMesh->GetComponentLocation());
+	const float CamDist = FVector::Dist(Camera.CamPos, BallMesh->GetComponentLocation());
 	const float K = Phase == EPhase::Flying ? FMath::Clamp(CamDist / 2500.f, 1.f, 6.f) : 1.f;
 	BallMesh->SetWorldScale3D(FVector(0.0427 * K));
 	BallMesh->SetWorldLocation(BallWorld(BallShown)); // (sitting on the ground at its new size)

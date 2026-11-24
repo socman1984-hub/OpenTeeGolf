@@ -24,6 +24,7 @@
 #include "Round/OTGWeather.h"
 #include "Round/OTGRange.h"
 #include "Physics/OTGPlayCourse.h"
+#include "Round/OTGRoundParts.h"
 #include "OTGRound.generated.h"
 
 class UOTGCourseData;
@@ -32,6 +33,7 @@ class UProceduralMeshComponent;
 class UMaterialInstanceDynamic;
 class ACameraActor;
 class SOTGHud;
+class UOTGShotTracerComponent;
 
 UCLASS()
 class OPENTEEGOLF_API AOTGRound : public AActor
@@ -40,6 +42,8 @@ class OPENTEEGOLF_API AOTGRound : public AActor
 
 public:
 	AOTGRound();
+	// (the parts' objects, kept from the garbage collector: they aren't UPROPERTYs)
+	static void AddReferencedObjects(UObject* InThis, FReferenceCollector& Collector);
 	void Setup(UOTGCourseData* InData, const FOTGRoundSetup& InSetup);
 
 	virtual void Tick(float Dt) override;
@@ -61,12 +65,12 @@ public:
 	void ToggleShotPanel();
 	void ToggleShotSettings();        // (D: which shot numbers show, and where)
 	// the free view (F): fly round the course
-	void ToggleFreeView();
+	void ToggleFreeView() { Camera.ToggleFreeView(); }
 	// The slope grid on the green (the G key): on unless turned off
-	void ToggleSlopeGrid() { bGridOn = !bGridOn; GridFor = FVector::ZeroVector; }
-	bool IsFreeView() const { return bFreeView; }
-	void FreeFly(float Dt, const FVector& Move, const FVector2D& Look, bool bFast);
-	void FreeLookAt(const FVector& Target, double Dist, double Height, double YawDeg);   // (testing)
+	void ToggleSlopeGrid() { SlopeGrid.ToggleSlopeGrid(); }
+	bool IsFreeView() const { return Camera.bFreeView; }
+	void FreeFly(float Dt, const FVector& Move, const FVector2D& Look, bool bFast) { Camera.FreeFly(Dt, Move, Look, bFast); }
+	void FreeLookAt(const FVector& Target, double Dist, double Height, double YawDeg) { Camera.FreeLookAt(Target, Dist, Height, YawDeg); }   // (testing)
 	FVector PinWorld() const;
 	void TogglePerf();                 // (P: frame rate and timings)
 	// the weather panel (L): the weather changed as you play
@@ -108,10 +112,36 @@ public:
 
 	// ---- the driving range
 	bool IsRange() const { return bRange; }
-	void NewBall();                    // (the range: a new ball on the mat now)
+	void NewBall() { RangeMode.NewBall(); }   // (the range: a new ball on the mat now)
+
+
+	// a ball into water: a splash, then rings spreading over the surface (FOTGRoundWaterFx)
+	void AddRipple(const FVector& WorldAt) { WaterFx.AddRipple(WorldAt); }
 
 private:
 	enum class EPhase : uint8 { Ready, Flying, Resting, Between, Holed, Done };
+
+	// (the parts reach the round's state - and one another - through it: OTGRoundParts.h)
+	friend struct FOTGRoundTurns;
+	friend struct FOTGRoundCamera;
+	friend struct FOTGRoundHud;
+	friend struct FOTGRoundScene;
+	friend struct FOTGRoundChanging;
+	friend struct FOTGRoundRain;
+	friend struct FOTGRoundWaterFx;
+	friend struct FOTGRoundFlag;
+	friend struct FOTGRoundSlopeGrid;
+	friend struct FOTGRoundRangeMode;
+	FOTGRoundTurns Turns;
+	FOTGRoundCamera Camera;
+	FOTGRoundHud HudView;
+	FOTGRoundScene Scene;
+	FOTGRoundChanging Changing;
+	FOTGRoundRain RainFx;
+	FOTGRoundWaterFx WaterFx;
+	FOTGRoundFlag Flag;
+	FOTGRoundSlopeGrid SlopeGrid;
+	FOTGRoundRangeMode RangeMode;
 
 	// the golf
 	void StartHole(int32 Index);
@@ -120,31 +150,16 @@ private:
 	void SetClub(const FString& Code);
 	void FinishShot();
 	void NextShot();
-	// players taking turns (main.js loadSide, saveSide, roundAfterShot, beginTurn)
-	void LoadSide(int32 I);
-	void SaveSide();
-	bool RoundAfterShot();
-	void BeginTurn(int32 I, bool bSameSpot);
-	void RecordRound();
-	void ShowOtherBalls();
 	double PinDist(const otg::V3& B) const;
 	// the weather (main.js setupWeather, wind, shotWind)
 	void SetupWeather();
-	void ApplyWeatherToScene();
-	void ApplyLook();                   // (the course's colour and light: OTG.Look.* console variables)
-	uint32 LookStampNow() const;        // (the look's settings, the hole and the hour, hashed: ApplyLook again when it changes)
 	void HoleWind(double& Mps, double& FromDeg) const;
 	FString WindText() const;
-	void UpdateMap();
-	void UpdateWindBox();
-	void UpdateRain(float Dt);
-	void UpdateFlag(float Dt);
 	void WeatherChanged();
 	void HoleOut(bool bPickedUp, const FString& Note);
 	void NextHole();
 	bool WaterDrop(otg::V3& Out) const;
 	bool PathRelief(const otg::V3& Ball, otg::V3& Out) const;
-
 	const struct FOTGHole& Hole() const;
 	otg::V3 Pin() const;
 	otg::V3 TeeOf(const struct FOTGHole& H, const FString& Tee) const;
@@ -161,15 +176,6 @@ private:
 	void ShowAim();
 	void UpdateTracer(int32 Upto, const FVector& Head);
 	void ClearTracer();
-	void AddressView(bool bSnap);
-	void OverviewView();
-	void UpdateCamera(float Dt);
-	void UpdateHudInfo();
-	void UpdatePinTag();               // (the pin's yardage and height over the flag, each frame)
-	void ShowShotData(bool bWithResult);
-	void Banner(const FString& Title, const FString& Small, float Seconds = 3.f);
-	void Toast(const FString& Text, float Seconds = 2.5f);
-	void ShowScorecard(bool bShow);
 	void TellLaunchMonitor(bool bTurn);
 	FString Len(double M) const;       // yards
 	FString Putt(double M) const;      // feet
@@ -192,74 +198,18 @@ private:
 	UPROPERTY() TObjectPtr<class UMaterialParameterCollection> FabWindMPC;   // (the Megascans plants' wind)
 	UPROPERTY() TObjectPtr<class UMaterialParameterCollection> WeatherMPC;   // (MPC_Weather: Wet, Rain)
 	UPROPERTY() TObjectPtr<class UMaterialParameterCollection> GsMPC;        // (MPC_Greensward: its grass's wetness)
-	// the rain's splashes on hard ground near the camera (far rain is the height fog's)
-	struct FSplash { FVector P; float Age = 0, Size = 1; };
-	TArray<FSplash> Splashes;
-	float SplashCarry = 0;
-	int32 SplashVerts = 0;
-	void UpdateRainFar(float Dt, double Mm);
-	// a ball into water: a splash, then rings spreading over the surface (OTGRoundExtras.cpp)
-	struct FRipple { FVector P; float Age = 0; };
-	TArray<FRipple> Ripples;
-	// rain on the water: small rings where the drops land, more the harder it rains
-	struct FRainRing { FVector P; float Age = 0; float Size = 1; float Width = 1; };
-	TArray<FRainRing> RainRings;
-	float RainRingCarry = 0;
-	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> RainRingMat;
-	UPROPERTY() TObjectPtr<class UProceduralMeshComponent> RippleMesh;
-	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> RippleMat;
-public:
-	void AddRipple(const FVector& WorldAt);
-private:
-	void UpdateRipples(float Dt);
-	void SpawnRainRings(float Dt);
-	// a storm's lightning, and the weather's sound (UOTGWeatherSound: rain, wind, thunder)
-	UPROPERTY() TObjectPtr<class UOTGWeatherSound> WxSound;
-	UPROPERTY() TObjectPtr<class UAudioComponent> WxAudio;
-	float NextBolt = 5.f, BoltAge = 99.f, BoltNear = 0.f;
-	float SkyNow = -1.f;   // (the sky light as the weather set it: a flash lifts it for a moment)
-	void UpdateStorm(float Dt);
-	// the sky, the time of day and the weather's look: one Meridian Sky actor (the plugin) in place of
-	// the level's sun, sky, sky light, fog and clouds, driven from the round's weather and SunHour
-	// (OTGSky.cpp). -oldsky on the command line: the level's own sky, as before
-	UPROPERTY() TObjectPtr<class AMeridianSkyActor> Sky;
-	bool bSkyTried = false;
-	bool EnsureSky();                   // (true: the Meridian sky's in charge - spawned the first time)
-	void ApplySky();                    // (the look and the weather on it: from ApplyLook and ApplyWeatherToScene)
-	UFUNCTION() void OnSkyBolt(FVector Location, float DistanceMeters);   // (its lightning: our thunder)
-	TWeakObjectPtr<class UExponentialHeightFogComponent> LevelFog;   // (kept: the level's haze, not Meridian's)
-	// changing weather ("changing": showers come and go; live: fetched again every 15 minutes) -
-	// from one state to the next over a minute and a half, each held a few minutes
-	FOTGWeather WxFrom, WxTo;
-	float WxBlend = 1.f, WxHold = 0.f, WxRefresh = 0.f, WxApplyIn = 0.f;
-	int32 WxStage = 0;
-	void UpdateChanging(float Dt);
-	void BlendTo(const FOTGWeather& Next, const FString& Say);
-	float Wet = -1.f;   // (0 dry .. 1 soaked: rises in rain, dries slowly; -1 until the round's weather is set)
-	void UpdateWet(float Dt);
+	// (the Meridian sky's lightning: our thunder - FOTGRoundScene binds it)
+	UFUNCTION() void OnSkyBolt(FVector Location, float DistanceMeters);
 	UPROPERTY() TObjectPtr<UStaticMeshComponent> TeeMesh;      // (the tee's peg...)
 	UPROPERTY() TObjectPtr<UStaticMeshComponent> TeeHeadMesh;  // (...and its cup)
 	UPROPERTY() TObjectPtr<UStaticMeshComponent> CupMesh;
-	UPROPERTY() TObjectPtr<UProceduralMeshComponent> TracerMesh;
-	// the slope grid: lines draped over the green coloured by its slope, dots sliding downhill
-	UPROPERTY() TObjectPtr<UProceduralMeshComponent> GridMesh;
-	UPROPERTY() TObjectPtr<class UInstancedStaticMeshComponent> GridDots;
-	UPROPERTY() TArray<TObjectPtr<UMaterialInstanceDynamic>> GridMats;
-	struct FGridDot { double X, Z, Dx, Dz, Pct, Phase; };
-	TArray<FGridDot> Dots;
-	double GridSpacing = 1.0;
-	bool bGridOn = true;
-	FVector GridFor = FVector::ZeroVector;   // (the ball and pin it was drawn for: drawn again if either moves)
-	void UpdateSlopeGrid(float Dt);
-	void BuildSlopeGrid();
-	void HideSlopeGrid();
+	// (the ball's flight drawn as a ribbon: Plugins/OTGShotTracer)
+	UPROPERTY() TObjectPtr<UOTGShotTracerComponent> TracerMesh;
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> BallMat;
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> AimMat;
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> TracerMat;
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> PinMat;
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> FlagMat;
-	UPROPERTY() TObjectPtr<ACameraActor> Cam;
-	UPROPERTY() TArray<TObjectPtr<UStaticMeshComponent>> OtherBalls; // (one per side)
 	TSharedPtr<SOTGHud> Hud;
 	FDelegateHandle ShotHandle;
 
@@ -271,35 +221,14 @@ private:
 	EPhase Phase = EPhase::Ready;
 	int32 HoleIndex = 0, Strokes = 0;
 	FOTGRoundSetup Setup_;
-	TUniquePtr<FOTGGame> Game;
-	int32 SideIdx = 0, NextSide = 0, LastHole = 0;  // (LastHole: one past the last to play)
+	int32 LastHole = 0;  // (one past the last to play)
 	bool bPaused = false;
 	FOTGWeather Weather;
 	TArray<double> WindRel;             // (custom wind: its direction relative to each hole)
-	float BaseFogDensity = -1, BaseSun = -1, BaseCoverage = -1, BaseDensity = -1, BaseRayleigh = -1, BaseMie = -1, BaseSkyLight = -1;
-	FLinearColor BaseSkyLum = FLinearColor(-1, -1, -1);   // (the sky's own brightness, greyed under cloud)
-	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> CloudMat;
-	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> OwnCloudMat;   // (M_Clouds)
-	UPROPERTY() TObjectPtr<class APostProcessVolume> LookVolume;
-	float OrigSun = -1, OrigMie = -1, OrigRayleigh = -1, OrigFog = -1, OrigSky = -1;
-	FRotator OrigSunRot = FRotator::ZeroRotator;
-	FLinearColor OrigSunColour = FLinearColor::White;
-	uint32 LookStamp = 0;
-	FVector OrbitCentre = FVector::ZeroVector, OrbitGoal = FVector(1e30);   // (the address view: AddressView, UpdateCamera)
 	double SunHour = -1;
 	void SunAt(double Hour, double& ElevDeg, double& AzDeg) const;
-	UPROPERTY() TObjectPtr<UProceduralMeshComponent> RainMesh;
-	UPROPERTY() TObjectPtr<UProceduralMeshComponent> FlagCloth;
-	double FlagTime = 0;
-	double FlagPhase = 0;   // (the flag's ripples, radians: added up a frame at a time)
-	bool bFlagMade = false;
-	bool bFreeView = false;
 	bool bWeatherFromCommandLine = false;
-	FVector FreePos = FVector::ZeroVector;
-	FRotator FreeRot = FRotator::ZeroRotator;
-	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> RainMat;
-	TArray<FVector> RainDrops;
-	int32 RainVerts = 0;
+
 	otg::V3 Ball, PrevBall, BallShown;  // (BallShown: where it's drawn, its contact point)
 	otg::Surface Lie = otg::Surface::Tee;
 	double Heading = 0, AimDist = 100;  // radians (0 = north, + toward east), metres
@@ -315,29 +244,12 @@ private:
 	otg::ShotResult Res;
 	bool bHasRes = false, bCarryShown = false;
 	double AnimT = 0;
-	TArray<FVector> TracerPts;
 	double PhaseTimer = 0;              // (Resting, Holed: seconds left)
 	bool bScorecard = false, bScorecardAuto = false;
 	FString ReliefNote;
-
-	// the camera
-	FVector CamGoal = FVector::ZeroVector, CamLook = FVector::ZeroVector, CamPos = FVector::ZeroVector, CamLookNow = FVector::ZeroVector;
-	FVector ShotFrom = FVector::ZeroVector;
-	double OverviewLeft = 0;
-	float CamSpeed = 3.f;
-
 	double RoundTime = 0;
 	TArray<TPair<double, FString>> ExecAt;
 
-	// the driving range
+	// the driving range (FOTGRoundRangeMode)
 	bool bRange = false;
-	TArray<FOTGRangeShot> RangeShots;
-	TSharedPtr<class SOTGRangePanel> RangePanel;
-	UPROPERTY() TObjectPtr<class AOTGRangeProps> RangeProps;
-	UPROPERTY() TObjectPtr<class UInstancedStaticMeshComponent> RangeDots;   // (where the club's last shots stopped)
-	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> RangeDotMat;
-	int32 RangeBalls = 0;
-	double ClubCarryM() const;
-	void RangeShotDone();
-	void UpdateRange();
 };

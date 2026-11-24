@@ -60,7 +60,7 @@ namespace
 	}
 }
 
-bool AOTGRound::EnsureSky()
+bool FOTGRoundScene::EnsureSky()
 {
 	if (Sky) return true;
 	if (bSkyTried) return false;
@@ -70,7 +70,7 @@ bool AOTGRound::EnsureSky()
 		UE_LOG(LogOTGSky, Display, TEXT("Sky: the level's own (-oldsky)"));
 		return false;
 	}
-	UWorld* W = GetWorld();
+	UWorld* W = Round->GetWorld();
 	if (!W) return false;
 	// (the level's: its strengths kept - the look multiplies them, as it did - and its shadows' and
 	// sky capture's settings, so the new sky costs what it did; then it goes)
@@ -122,9 +122,9 @@ bool AOTGRound::EnsureSky()
 	Sky->bAnimateTimeOfDay = false;         // (the round sets the hour)
 	Sky->bLimitExposure = false;            // (no night: the game's own exposure, as before)
 	Sky->bRealWorldSimulation = true;
-	const bool bPlace = Data && (Data->Latitude != 0 || Data->Longitude != 0);
-	Sky->Latitude = bPlace ? float(Data->Latitude) : 40.f;
-	Sky->Longitude = bPlace ? float(Data->Longitude) : 0.f;
+	const bool bPlace = Round->Data && (Round->Data->Latitude != 0 || Round->Data->Longitude != 0);
+	Sky->Latitude = bPlace ? float(Round->Data->Latitude) : 40.f;
+	Sky->Longitude = bPlace ? float(Round->Data->Longitude) : 0.f;
 	Sky->UtcOffsetHours = Sky->Longitude / 15.f;   // (the clock is the sun's time there: SunHour 12 is noon)
 	Sky->SetDate(FDateTime::Now().GetYear(), 6, 21);   // (midsummer, as SunAt has it)
 	Sky->LightningDistanceRange = FVector2D(600.f, 9000.f);
@@ -132,7 +132,7 @@ bool AOTGRound::EnsureSky()
 	// fell as bright white rods, and darkened the ground in streaks in a storm)
 	Sky->RainSystem.Reset();
 	Sky->CloudySkyLightBoost = 1.5f;
-	Sky->OnLightningStrike.AddDynamic(this, &AOTGRound::OnSkyBolt);
+	Sky->OnLightningStrike.AddDynamic(Round, &AOTGRound::OnSkyBolt);
 	if (LevelFog.IsValid())
 		if (UExponentialHeightFogComponent* MF = Part<UExponentialHeightFogComponent>(Sky, TEXT("HeightFog"))) MF->SetVisibility(false);
 	// (what it costs, kept to what the level's sky cost: no moonlight - the game has no night, and a
@@ -174,15 +174,15 @@ bool AOTGRound::EnsureSky()
 	return true;
 }
 
-void AOTGRound::ApplySky()
+void FOTGRoundScene::ApplySky()
 {
 	if (!Sky) return;
 	// ---- the time of day
 	const float Pitch = Cv(TEXT("OTG.Look.SunPitch"), -42.f), Side = Cv(TEXT("OTG.Look.SunSide"), 40.f);
-	if (SunHour >= 0)
+	if (Round->SunHour >= 0)
 	{
 		Sky->NorthYaw = -90.f;   // (north: the level's -Y)
-		Sky->SetTimeOfDay(float(SunHour));
+		Sky->SetTimeOfDay(float(Round->SunHour));
 	}
 	else
 	{
@@ -196,10 +196,10 @@ void AOTGRound::ApplySky()
 		const FMeridianCelestialState C = At(Hour);
 		// (the light travelling down the hole, a little from one side, as ApplyLook had it)
 		double Yaw = OrigSunRot.Yaw;
-		if (Side < 900 && Data && Data->Holes.IsValidIndex(HoleIndex))
+		if (Side < 900 && Round->Data && Round->Data->Holes.IsValidIndex(Round->HoleIndex))
 		{
-			const FOTGHole& H = Hole();
-			const otg::V3 T = TeeOf(H, TeeName);
+			const FOTGHole& H = Round->Hole();
+			const otg::V3 T = Round->TeeOf(H, Round->TeeName);
 			const double Hd = FMath::Atan2(H.GreenCenter.X - T.x, H.GreenCenter.Z - T.z);
 			Yaw = FMath::RadiansToDegrees(FMath::Atan2(-FMath::Cos(Hd), FMath::Sin(Hd))) + Side;
 		}
@@ -208,8 +208,8 @@ void AOTGRound::ApplySky()
 	}
 
 	// ---- the weather (as ApplyWeatherToScene had it: rain is overcast whatever the cloud says)
-	const double Mm = Weather.RainMm;
-	const double Cloudy = Mm > 0.05 ? FMath::Max(Weather.Cloud, 0.92) : Weather.Cloud;
+	const double Mm = Round->Weather.RainMm;
+	const double Cloudy = Mm > 0.05 ? FMath::Max(Round->Weather.Cloud, 0.92) : Round->Weather.Cloud;
 	const float Storm = float(FMath::Clamp((Mm - 0.05) / 6.0, 0.0, 1.0));
 	const float Over = float(FMath::SmoothStep(0.45, 0.95, Cloudy));
 	const float Dim = float(FMath::SmoothStep(0.3, 0.95, Cloudy));
@@ -220,11 +220,11 @@ void AOTGRound::ApplySky()
 	// distance - no sheet of it standing at one distance)
 	const double RainHaze = Mm > 0.05 ? 0.06 + 0.1 * Storm : 0.0;
 	// (Meridian squares its fogginess: the root keeps our fog as thick as it was)
-	S.Fogginess = FMath::Sqrt(float(FMath::Min(1.0, Weather.Fog + RainHaze)));
+	S.Fogginess = FMath::Sqrt(float(FMath::Min(1.0, Round->Weather.Fog + RainHaze)));
 	S.Rain = Mm > 0.05 ? float(FMath::Clamp(0.2 + Mm / 7.0, 0.0, 1.0)) : 0.f;
 	S.Snow = 0.f;
 	double Mps = 0, FromDeg = 0;
-	HoleWind(Mps, FromDeg);
+	Round->HoleWind(Mps, FromDeg);
 	S.WindSpeed = float(FMath::Max(Mps, 0.5));
 	S.LightningRate = Mm >= 5.0 ? 4.f : 0.f;   // (a storm's: one every 6 to 22 s, as ours were)
 	// (where it blows to, in the level: X east, Y south)
@@ -237,7 +237,7 @@ void AOTGRound::ApplySky()
 	Sky->SkyLightIntensity = OrigSky * Cv(TEXT("OTG.Look.Sky"), 1.3f) * FMath::Lerp(1.f, 0.85f, Over);
 	Sky->FogDensityRange.X = OrigFog * Cv(TEXT("OTG.Look.Fog"), 0.5f) * CVarSkyFog.GetValueOnGameThread();
 	if (UExponentialHeightFogComponent* LF = LevelFog.Get())
-		LF->SetFogDensity(FMath::Lerp(OrigFog * Cv(TEXT("OTG.Look.Fog"), 0.5f), 0.25f, float(FMath::Min(1.0, Weather.Fog + RainHaze))));
+		LF->SetFogDensity(FMath::Lerp(OrigFog * Cv(TEXT("OTG.Look.Fog"), 0.5f), 0.25f, float(FMath::Min(1.0, Round->Weather.Fog + RainHaze))));
 	Sky->CloudySkyLightBoost = CVarSkyBoost.GetValueOnGameThread();
 	if (UDirectionalLightComponent* Sun = Part<UDirectionalLightComponent>(Sky, TEXT("SunLight")))
 	{
@@ -249,7 +249,7 @@ void AOTGRound::ApplySky()
 	Sky->UpdateSky();
 	if (USkyLightComponent* SL = Part<USkyLightComponent>(Sky, TEXT("SkyLight"))) if (!SL->bRealTimeCapture) SL->RecaptureSky();
 	// (the rain's streaks far off grey under a dark sky; rain and storms are darker days)
-	if (RainMat) RainMat->SetVectorParameterValue(TEXT("Tint"), FMath::Lerp(FLinearColor(0.75f, 0.78f, 0.82f), FLinearColor(0.58f, 0.61f, 0.66f), Dim));
+	if (Round->RainFx.RainMat) Round->RainFx.RainMat->SetVectorParameterValue(TEXT("Tint"), FMath::Lerp(FLinearColor(0.75f, 0.78f, 0.82f), FLinearColor(0.58f, 0.61f, 0.66f), Dim));
 	if (LookVolume)
 	{
 		const float Gloom = float(FMath::Clamp((Mm - 0.05) / 7.0, 0.0, 1.0));
@@ -262,5 +262,15 @@ void AOTGRound::OnSkyBolt(FVector Location, float DistanceMeters)
 {
 	// (the thunder: a second for every 343 m, louder the nearer)
 	const float Km = FMath::Max(DistanceMeters / 1000.f, 0.05f);
-	if (WxSound) WxSound->Thunder(DistanceMeters / 343.f, FMath::Clamp(1.6f / Km, 0.15f, 1.f));
+	if (Scene.WxSound) Scene.WxSound->Thunder(DistanceMeters / 343.f, FMath::Clamp(1.6f / Km, 0.15f, 1.f));
+}
+
+void FOTGRoundScene::AddReferencedObjects(FReferenceCollector& Collector)
+{
+	Collector.AddReferencedObject(CloudMat);
+	Collector.AddReferencedObject(OwnCloudMat);
+	Collector.AddReferencedObject(LookVolume);
+	Collector.AddReferencedObject(Sky);
+	Collector.AddReferencedObject(WxSound);
+	Collector.AddReferencedObject(WxAudio);
 }

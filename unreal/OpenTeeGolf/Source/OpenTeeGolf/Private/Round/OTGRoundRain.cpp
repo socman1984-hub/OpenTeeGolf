@@ -46,26 +46,26 @@ DEFINE_LOG_CATEGORY_STATIC(LogOTGRound, Log, All);
 #include "Round/OTGRoundShared.h"
 
 // Rain: streaks round the camera, falling and blown with the wind (M_Rain: make_game_assets.py)
-void AOTGRound::UpdateRain(float Dt)
+void FOTGRoundRain::UpdateRain(float Dt)
 {
-	const double Mm = Weather.RainMm;
+	const double Mm = Round->Weather.RainMm;
 	UpdateRainFar(Dt, Mm);
-	UpdateRipples(Dt);
-	if (Mm <= 0.05 || !RainMat || !Cam)
+	Round->WaterFx.UpdateRipples(Dt);
+	if (Mm <= 0.05 || !RainMat || !Round->Camera.Cam)
 	{
 		if (RainVerts) { RainMesh->ClearAllMeshSections(); RainVerts = 0; RainDrops.Reset(); }
 		return;
 	}
 	const int32 N = FMath::Clamp(int32(900 + Mm * 450), 900, 4500);
 	const FVector Half(2200, 2200, 1300);
-	const FVector C = CamPos;
+	const FVector C = Round->Camera.CamPos;
 	if (RainDrops.Num() != N)
 	{
 		RainDrops.SetNum(N);
 		for (FVector& D : RainDrops) D = C + FVector(FMath::FRandRange(-Half.X, Half.X), FMath::FRandRange(-Half.Y, Half.Y), FMath::FRandRange(-400, Half.Z));
 	}
 	double Mps, FromDeg;
-	HoleWind(Mps, FromDeg);
+	Round->HoleWind(Mps, FromDeg);
 	const double F = FMath::DegreesToRadians(FromDeg);
 	// (blowing away from where it comes from: course (-sin, -cos) is world (-sin, +cos))
 	const FVector V(-FMath::Sin(F) * Mps * 60, FMath::Cos(F) * Mps * 60, -950);

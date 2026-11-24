@@ -79,30 +79,30 @@ static TAutoConsoleVariable<float> CVarWxSoft(TEXT("OTG.Weather.Soft"), 20.f, TE
 // ------------------------------------------------------------------ the look
 
 // (every look and weather setting, the hole and the time of day, hashed: changed, the look's applied again)
-uint32 AOTGRound::LookStampNow() const
+uint32 FOTGRoundScene::LookStampNow() const
 {
 	uint32 Stamp = 0;
 	for (const auto* V : { &CVarLookExposure, &CVarLookSaturation, &CVarLookContrast, &CVarLookTemp, &CVarLookSun, &CVarLookSunWarm, &CVarLookSunPitch, &CVarLookSunSide, &CVarLookHaze, &CVarLookFog, &CVarLookVignette, &CVarLookTreeLift, &CVarLookShadows, &CVarLookSky, &CVarLookSunSoft, &CVarLookSlopeBias, &CVarWxCover, &CVarWxDensity, &CVarWxGrey, &CVarWxSun, &CVarWxSoft, &CVarWxMaskAt, &CVarWxRainDark, &CVarWxCloudFill, &CVarWxSunOwn })
 		Stamp = HashCombine(Stamp, GetTypeHash(V->GetValueOnGameThread()));
-	return HashCombine(HashCombine(HashCombine(Stamp, GetTypeHash(CVarWxOwnClouds.GetValueOnGameThread())), GetTypeHash(HoleIndex)), GetTypeHash(SunHour));
+	return HashCombine(HashCombine(HashCombine(Stamp, GetTypeHash(CVarWxOwnClouds.GetValueOnGameThread())), GetTypeHash(Round->HoleIndex)), GetTypeHash(Round->SunHour));
 }
 
 // A clear summer day as golf games show one: the level's sun stronger, warmer and higher, less haze
 // (a deeper blue), and the picture graded richer - more saturated and contrasty, a little warm,
 // exposed a touch darker so the greens aren't washed out. The weather then works from this.
-void AOTGRound::ApplyLook()
+void FOTGRoundScene::ApplyLook()
 {
 	LookStamp = LookStampNow();
 	// (the time of day: the sun's height and bearing then, and how much day there is - the sun and
 	// sky dimming through dawn and dusk)
 	double Elev = 45, Az = 180;
-	const bool bTimed = SunHour >= 0;
-	if (bTimed) SunAt(SunHour, Elev, Az);
+	const bool bTimed = Round->SunHour >= 0;
+	if (bTimed) Round->SunAt(Round->SunHour, Elev, Az);
 	const float SunDay = bTimed ? float(FMath::SmoothStep(-3.0, 8.0, Elev)) : 1.f;
 	const float SkyDay = bTimed ? FMath::Max(0.04f, float(FMath::SmoothStep(-10.0, 10.0, Elev))) : 1.f;
 	if (!LookVolume)
 	{
-		LookVolume = GetWorld()->SpawnActor<APostProcessVolume>();
+		LookVolume = Round->GetWorld()->SpawnActor<APostProcessVolume>();
 		LookVolume->bUnbound = true;
 		LookVolume->Priority = 10;
 	}
@@ -130,7 +130,7 @@ void AOTGRound::ApplyLook()
 		ApplySky();
 		return;
 	}
-	for (TActorIterator<ADirectionalLight> It(GetWorld()); It; ++It)
+	for (TActorIterator<ADirectionalLight> It(Round->GetWorld()); It; ++It)
 	{
 		UDirectionalLightComponent* L = Cast<UDirectionalLightComponent>(It->GetLightComponent());
 		if (!L) continue;
@@ -153,10 +153,10 @@ void AOTGRound::ApplyLook()
 		}
 		const float Pitch = CVarLookSunPitch.GetValueOnGameThread(), Side = CVarLookSunSide.GetValueOnGameThread();
 		double Yaw = OrigSunRot.Yaw;
-		if (Side < 900 && Data && Data->Holes.IsValidIndex(HoleIndex))
+		if (Side < 900 && Round->Data && Round->Data->Holes.IsValidIndex(Round->HoleIndex))
 		{
-			const FOTGHole& H = Hole();
-			const otg::V3 T = TeeOf(H, TeeName);
+			const FOTGHole& H = Round->Hole();
+			const otg::V3 T = Round->TeeOf(H, Round->TeeName);
 			const double Hd = HeadingTo(T, H.GreenCenter.X, H.GreenCenter.Z);
 			Yaw = FMath::RadiansToDegrees(FMath::Atan2(-FMath::Cos(Hd), FMath::Sin(Hd))) + Side; // (the light travelling down the hole)
 		}
@@ -165,7 +165,7 @@ void AOTGRound::ApplyLook()
 	}
 	for (TObjectIterator<USkyAtmosphereComponent> It; It; ++It)
 	{
-		if (It->GetWorld() != GetWorld()) continue;
+		if (It->GetWorld() != Round->GetWorld()) continue;
 		if (OrigMie < 0) { OrigMie = It->MieScatteringScale; OrigRayleigh = It->RayleighScatteringScale; }
 		It->SetMieScatteringScale(OrigMie * CVarLookHaze.GetValueOnGameThread());
 		// (the level's own blue back: the weather greys it from this, not from what it greyed last
@@ -173,7 +173,7 @@ void AOTGRound::ApplyLook()
 		It->SetRayleighScatteringScale(OrigRayleigh);
 		break;
 	}
-	for (TActorIterator<ASkyLight> It(GetWorld()); It; ++It)
+	for (TActorIterator<ASkyLight> It(Round->GetWorld()); It; ++It)
 	{
 		USkyLightComponent* SL = It->GetLightComponent();
 		if (!SL) continue;
@@ -182,7 +182,7 @@ void AOTGRound::ApplyLook()
 		if (!SL->bRealTimeCapture) SL->RecaptureSky();   // (the sky's own colour at this hour)
 		break;
 	}
-	for (TActorIterator<AExponentialHeightFog> It(GetWorld()); It; ++It)
+	for (TActorIterator<AExponentialHeightFog> It(Round->GetWorld()); It; ++It)
 	{
 		UExponentialHeightFogComponent* F = It->GetComponent();
 		if (!F) continue;
@@ -214,7 +214,7 @@ void AOTGRound::SetupWeather()
 	{
 		// (breezy until the course's real weather arrives, or if it can't)
 		Weather = FOTGWeather::Preset(TEXT("breezy"));
-		if (Data->Latitude == 0 && Data->Longitude == 0) Toast(TEXT("This course has no location: breezy weather"), 4.f);
+		if (Data->Latitude == 0 && Data->Longitude == 0) HudView.Toast(TEXT("This course has no location: breezy weather"), 4.f);
 		else
 		{
 			TWeakObjectPtr<AOTGRound> Self(this);
@@ -223,30 +223,30 @@ void AOTGRound::SetupWeather()
 				if (!R) return;
 				if (!bOk)
 				{
-					R->Toast(FString::Printf(TEXT("Live weather unavailable (%s): breezy"), *Why), 4.f);
+					R->HudView.Toast(FString::Printf(TEXT("Live weather unavailable (%s): breezy"), *Why), 4.f);
 					return;
 				}
 				R->Weather = W;
-				R->ApplyWeatherToScene();
-				R->UpdateHudInfo();
-				R->Toast(FString::Printf(TEXT("Weather at the course: %s, %.0f\u00B0C, wind %.0f mph"), *W.Label, W.TempC, W.WindMph), 4.f);
+				R->Scene.ApplyWeatherToScene();
+				R->HudView.UpdateHudInfo();
+				R->HudView.Toast(FString::Printf(TEXT("Weather at the course: %s, %.0f\u00B0C, wind %.0f mph"), *W.Label, W.TempC, W.WindMph), 4.f);
 			});
 		}
 	}
-	ApplyWeatherToScene();
+	Scene.ApplyWeatherToScene();
 	UE_LOG(LogOTGRound, Display, TEXT("Weather: %s, wind %.0f mph (gusts %.0f), %.0f C"), *Weather.Label, Weather.WindMph, Weather.GustMph, Weather.TempC);
 }
 
 // Fog thickens the level's height fog (rain a little too); cloud dims the sun and covers the sky;
 // a storm darkens the clouds
-void AOTGRound::ApplyWeatherToScene()
+void FOTGRoundScene::ApplyWeatherToScene()
 {
 	if (EnsureSky())
 	{
 		ApplySky();
 		return;
 	}
-	for (TActorIterator<AVolumetricCloud> It(GetWorld()); It; ++It)
+	for (TActorIterator<AVolumetricCloud> It(Round->GetWorld()); It; ++It)
 	{
 		UVolumetricCloudComponent* VC = It->FindComponentByClass<UVolumetricCloudComponent>();
 		if (!VC) continue;
@@ -257,14 +257,14 @@ void AOTGRound::ApplyWeatherToScene()
 			if (!OwnCloudMat)
 				if (UMaterialInterface* M = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/OpenTeeGolf/Game/M_Clouds.M_Clouds")))
 				{
-					OwnCloudMat = UMaterialInstanceDynamic::Create(M, this);
+					OwnCloudMat = UMaterialInstanceDynamic::Create(M, Round);
 					UE_LOG(LogOTGRound, Display, TEXT("Clouds: our own (the layer %.1f km up, %.1f km thick)"), VC->LayerBottomAltitude, VC->LayerHeight);
 				}
 			if (OwnCloudMat)
 			{
 				if (VC->GetMaterial() != OwnCloudMat) VC->SetMaterial(OwnCloudMat);
-				const double Cloudy = Weather.RainMm > 0.05 ? FMath::Max(Weather.Cloud, 0.92) : Weather.Cloud;
-				const float Storm = float(FMath::Clamp((Weather.RainMm - 0.05) / 6.0, 0.0, 1.0));
+				const double Cloudy = Round->Weather.RainMm > 0.05 ? FMath::Max(Round->Weather.Cloud, 0.92) : Round->Weather.Cloud;
+				const float Storm = float(FMath::Clamp((Round->Weather.RainMm - 0.05) / 6.0, 0.0, 1.0));
 				// (the layer: the material works in the same metres)
 				if (CVarWxCloudLayer.GetValueOnGameThread() > 0)
 				{
@@ -280,7 +280,7 @@ void AOTGRound::ApplyWeatherToScene()
 				OwnCloudMat->SetVectorParameterValue(TEXT("Albedo"), FMath::Lerp(FLinearColor(0.93f, 0.93f, 0.95f), FLinearColor(0.32f, 0.34f, 0.38f), Storm > 0 ? 0.45f + 0.55f * Storm : 0.f));
 				// (the wind up there: the hole's wind, in the world, faster aloft - and never quite still)
 				double Mps = 0, FromDeg = 0;
-				HoleWind(Mps, FromDeg);
+				Round->HoleWind(Mps, FromDeg);
 				const double F = FMath::DegreesToRadians(FromDeg), Aloft = FMath::Max(3.0, Mps * 2.5);
 				OwnCloudMat->SetScalarParameterValue(TEXT("WindX"), float(-FMath::Sin(F) * Aloft));
 				OwnCloudMat->SetScalarParameterValue(TEXT("WindY"), float(FMath::Cos(F) * Aloft));
@@ -293,11 +293,11 @@ void AOTGRound::ApplyWeatherToScene()
 			if (!Base) break;
 			Base->GetScalarParameterValue(FHashedMaterialParameterInfo(TEXT("Cloud_GlobalCoverage")), BaseCoverage);
 			Base->GetScalarParameterValue(FHashedMaterialParameterInfo(TEXT("Cloud_GlobalDensity")), BaseDensity);
-			CloudMat = UMaterialInstanceDynamic::Create(Base, this);
+			CloudMat = UMaterialInstanceDynamic::Create(Base, Round);
 			VC->SetMaterial(CloudMat);
 			UE_LOG(LogOTGRound, Display, TEXT("Clouds: coverage %.2f, density %.2f in the level"), BaseCoverage, BaseDensity);
 		}
-		const float Cl = float(Weather.Cloud);
+		const float Cl = float(Round->Weather.Cloud);
 		// (coverage is an offset: the level's own about right for a fair day's few clouds)
 		CloudMat->SetScalarParameterValue(TEXT("Cloud_GlobalCoverage"), BaseCoverage + FMath::Lerp(-0.25f, CVarWxCover.GetValueOnGameThread(), Cl));
 		CloudMat->SetScalarParameterValue(TEXT("Cloud_GlobalDensity"), BaseDensity * FMath::Lerp(0.8f, CVarWxDensity.GetValueOnGameThread(), Cl));
@@ -315,30 +315,30 @@ void AOTGRound::ApplyWeatherToScene()
 		{
 			static FLinearColor Albedo0(-1, -1, -1);
 			if (Albedo0.R < 0 && !CloudMat->GetVectorParameterValue(FHashedMaterialParameterInfo(TEXT("Cloud_AlbedoColor")), Albedo0)) Albedo0 = FLinearColor::White;
-			const float Dark = Weather.RainMm >= 5 ? 1.f : Weather.RainMm > 0.05 ? CVarWxRainDark.GetValueOnGameThread() : 0.f;
+			const float Dark = Round->Weather.RainMm >= 5 ? 1.f : Round->Weather.RainMm > 0.05 ? CVarWxRainDark.GetValueOnGameThread() : 0.f;
 			CloudMat->SetVectorParameterValue(TEXT("Cloud_AlbedoColor"), FMath::Lerp(Albedo0, FLinearColor(0.3f, 0.32f, 0.35f), Dark));
 			CloudMat->SetScalarParameterValue(TEXT("StormClouds"), 0.f);
 		}
 		break;
 	}
-	for (TActorIterator<AExponentialHeightFog> It(GetWorld()); It; ++It)
+	for (TActorIterator<AExponentialHeightFog> It(Round->GetWorld()); It; ++It)
 	{
 		UExponentialHeightFogComponent* F = It->GetComponent();
 		if (!F) continue;
 		if (BaseFogDensity < 0) BaseFogDensity = F->FogDensity;
-		F->SetFogDensity(FMath::Lerp(BaseFogDensity, 0.25f, float(FMath::Min(1.0, Weather.Fog + (Weather.RainMm > 0.05 ? 0.06 : 0.0)))));
+		F->SetFogDensity(FMath::Lerp(BaseFogDensity, 0.25f, float(FMath::Min(1.0, Round->Weather.Fog + (Round->Weather.RainMm > 0.05 ? 0.06 : 0.0)))));
 		break;
 	}
 	// an overcast sky: grey rather than blue - more haze (white), the blue taken out of what the sky
 	// gives - and the sun behind the cloud: hardly any direct light, its shadows faint and soft, the
 	// sky's light doing the lighting (rain: overcast whatever the cloud says)
-	const double Cloudy = Weather.RainMm > 0.05 ? FMath::Max(Weather.Cloud, 0.9) : Weather.Cloud;
+	const double Cloudy = Round->Weather.RainMm > 0.05 ? FMath::Max(Round->Weather.Cloud, 0.9) : Round->Weather.Cloud;
 	const float Over = float(FMath::SmoothStep(0.45, 0.95, Cloudy));
 	const float Dim = float(FMath::SmoothStep(0.3, 0.95, Cloudy));
 	const float Grey = Over * CVarWxGrey.GetValueOnGameThread();
 	for (TObjectIterator<USkyAtmosphereComponent> It; It; ++It)
 	{
-		if (It->GetWorld() != GetWorld()) continue;
+		if (It->GetWorld() != Round->GetWorld()) continue;
 		if (BaseRayleigh < 0) { BaseRayleigh = It->RayleighScatteringScale; BaseMie = It->MieScatteringScale; }
 		if (BaseSkyLum.R < 0) BaseSkyLum = It->SkyLuminanceFactor;
 		It->SetRayleighScatteringScale(BaseRayleigh * FMath::Lerp(1.f, 0.6f, Over));
@@ -347,7 +347,7 @@ void AOTGRound::ApplyWeatherToScene()
 		It->SetSkyLuminanceFactor(BaseSkyLum * FMath::Lerp(FLinearColor::White, FLinearColor(0.95f, 0.72f, 0.42f), Grey));
 		break;
 	}
-	for (TActorIterator<ASkyLight> It(GetWorld()); It; ++It)
+	for (TActorIterator<ASkyLight> It(Round->GetWorld()); It; ++It)
 	{
 		USkyLightComponent* SL = It->GetLightComponent();
 		if (!SL) continue;
@@ -356,7 +356,7 @@ void AOTGRound::ApplyWeatherToScene()
 		SL->SetIntensity(SkyNow);
 		break;
 	}
-	for (TActorIterator<ADirectionalLight> It(GetWorld()); It; ++It)
+	for (TActorIterator<ADirectionalLight> It(Round->GetWorld()); It; ++It)
 	{
 		UDirectionalLightComponent* L = Cast<UDirectionalLightComponent>(It->GetLightComponent());
 		if (!L) continue;
@@ -375,12 +375,12 @@ void AOTGRound::ApplyWeatherToScene()
 		break;
 	}
 	// (the rain's streaks: grey-white under a dark sky, not glowing)
-	if (RainMat) RainMat->SetVectorParameterValue(TEXT("Tint"), FMath::Lerp(FLinearColor(0.75f, 0.78f, 0.82f), FLinearColor(0.58f, 0.61f, 0.66f), Dim));
+	if (Round->RainFx.RainMat) Round->RainFx.RainMat->SetVectorParameterValue(TEXT("Tint"), FMath::Lerp(FLinearColor(0.75f, 0.78f, 0.82f), FLinearColor(0.58f, 0.61f, 0.66f), Dim));
 	// (rain and storms are darker days: the eye's exposure doesn't lift them back to a bright one)
 	if (LookVolume)
 	{
-		const float Gloom = float(FMath::Clamp((Weather.RainMm - 0.05) / 7.0, 0.0, 1.0));
-		LookVolume->Settings.AutoExposureBias = CVarLookExposure.GetValueOnGameThread() - (Weather.RainMm > 0.05 ? 0.3f + 0.9f * Gloom : 0.f) - 0.25f * Over;
+		const float Gloom = float(FMath::Clamp((Round->Weather.RainMm - 0.05) / 7.0, 0.0, 1.0));
+		LookVolume->Settings.AutoExposureBias = CVarLookExposure.GetValueOnGameThread() - (Round->Weather.RainMm > 0.05 ? 0.3f + 0.9f * Gloom : 0.f) - 0.25f * Over;
 	}
 }
 

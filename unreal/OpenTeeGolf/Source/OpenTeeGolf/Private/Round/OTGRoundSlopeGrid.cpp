@@ -51,27 +51,27 @@ DEFINE_LOG_CATEGORY_STATIC(LogOTGRound, Log, All);
 // the putt about a metre apart, each coloured by the slope under it (white flat, under 1%; yellow
 // about 2%; orange; red 3% and more), and at every crossing two dots - one on each line - sliding
 // downhill along it, faster the steeper that way is, still where it's flat
-void AOTGRound::UpdateSlopeGrid(float Dt)
+void FOTGRoundSlopeGrid::UpdateSlopeGrid(float Dt)
 {
-	const bool bWant = bGridOn && Phase == EPhase::Ready && OnGreen() && !bFreeView;
+	const bool bWant = bGridOn && Round->Phase == AOTGRound::EPhase::Ready && Round->OnGreen() && !Round->Camera.bFreeView;
 	if (!bWant) { HideSlopeGrid(); return; }
-	const otg::V3 P = Pin();
-	const FVector Key(Ball.x + Ball.z * 1e-3, P.x + P.z * 1e-3, 1);
+	const otg::V3 P = Round->Pin();
+	const FVector Key(Round->Ball.x + Round->Ball.z * 1e-3, P.x + P.z * 1e-3, 1);
 	if (!GridFor.Equals(Key, 1e-4)) { GridFor = Key; BuildSlopeGrid(); }
 	TArray<FTransform> T;
 	T.Reserve(Dots.Num());
-	for (FGridDot& D : Dots)
+	for (FOTGRoundSlopeGrid::FGridDot& D : Dots)
 	{
 		if (D.Pct > 0) D.Phase = FMath::Fmod(D.Phase + Dt * (0.08 + D.Pct * 0.5), 1.0);
 		const double Travel = D.Pct > 0 ? D.Phase * GridSpacing : 0;
 		const double X = D.X + D.Dx * Travel, Z = D.Z + D.Dz * Travel;
-		T.Add(FTransform(FQuat::Identity, World(otg::V3{ X, Course.HeightAt(X, Z) + 0.02, Z }), FVector(0.028)));
+		T.Add(FTransform(FQuat::Identity, Round->World(otg::V3{ X, Round->Course.HeightAt(X, Z) + 0.02, Z }), FVector(0.028)));
 	}
 	if (GridDots->GetInstanceCount() == T.Num()) GridDots->BatchUpdateInstancesTransforms(0, T, true, true, true);
 	else { GridDots->ClearInstances(); GridDots->AddInstances(T, false, true); }
 }
 
-void AOTGRound::HideSlopeGrid()
+void FOTGRoundSlopeGrid::HideSlopeGrid()
 {
 	if (GridFor.IsZero() && !GridMesh->GetNumSections()) return;
 	GridFor = FVector::ZeroVector;
@@ -80,24 +80,24 @@ void AOTGRound::HideSlopeGrid()
 	Dots.Reset();
 }
 
-void AOTGRound::BuildSlopeGrid()
+void FOTGRoundSlopeGrid::BuildSlopeGrid()
 {
 	GridMesh->ClearAllMeshSections();
 	GridDots->ClearInstances();
 	Dots.Reset();
-	const otg::V3 P = Pin();
-	const double dx = P.x - Ball.x, dz = P.z - Ball.z, Dist = FMath::Max(FMath::Sqrt(dx * dx + dz * dz), 1e-3);
+	const otg::V3 P = Round->Pin();
+	const double dx = P.x - Round->Ball.x, dz = P.z - Round->Ball.z, Dist = FMath::Max(FMath::Sqrt(dx * dx + dz * dz), 1e-3);
 	const double Fx = dx / Dist, Fz = dz / Dist, Rx = Fz, Rz = -Fx;   // along the putt, across it
 	const double Half = FMath::Min(16.0, FMath::Max(5.0, Dist * 0.6 + 3));
-	const double Cx = (Ball.x + P.x) / 2, Cz = (Ball.z + P.z) / 2;
+	const double Cx = (Round->Ball.x + P.x) / 2, Cz = (Round->Ball.z + P.z) / 2;
 	GridSpacing = FMath::Min(1.2, FMath::Max(0.6, Half * 2 / 18));
 	const double Sp = GridSpacing;
-	auto OnGreenAt = [&](double X, double Z) { const otg::Surface S = Course.SurfaceAt(X, Z); return S == otg::Surface::Green || S == otg::Surface::Fringe; };
+	auto OnGreenAt = [&](double X, double Z) { const otg::Surface S = Round->Course.SurfaceAt(X, Z); return S == otg::Surface::Green || S == otg::Surface::Fringe; };
 	// (the slope: % and its downhill way, from the heights a few cm either side)
 	auto SlopeAt = [&](double X, double Z, double& Gx, double& Gz) {
 		const double e = 0.25;
-		Gx = -(Course.HeightAt(X + e, Z) - Course.HeightAt(X - e, Z)) / (2 * e);
-		Gz = -(Course.HeightAt(X, Z + e) - Course.HeightAt(X, Z - e)) / (2 * e);
+		Gx = -(Round->Course.HeightAt(X + e, Z) - Round->Course.HeightAt(X - e, Z)) / (2 * e);
+		Gz = -(Round->Course.HeightAt(X, Z + e) - Round->Course.HeightAt(X, Z - e)) / (2 * e);
 		return FMath::Sqrt(Gx * Gx + Gz * Gz) * 100.0;
 	};
 	auto Band = [](double Pct) { const double t = FMath::Min(1.0, Pct / 3.0); return t < 0.33 ? 0 : t < 0.6 ? 1 : t < 0.85 ? 2 : 3; };
@@ -117,8 +117,8 @@ void AOTGRound::BuildSlopeGrid()
 			{
 				const double X = Ox + Ax * s, Z = Oz + Az * s;
 				if (!OnGreenAt(X, Z)) { bPrev = false; continue; }
-				const double Y = Course.HeightAt(X, Z) + 0.012;
-				const FVector L = World(otg::V3{ X - Bx * W, Y, Z - Bz * W }), R = World(otg::V3{ X + Bx * W, Y, Z + Bz * W });
+				const double Y = Round->Course.HeightAt(X, Z) + 0.012;
+				const FVector L = Round->World(otg::V3{ X - Bx * W, Y, Z - Bz * W }), R = Round->World(otg::V3{ X + Bx * W, Y, Z + Bz * W });
 				if (bPrev)
 				{
 					double gx, gz;
