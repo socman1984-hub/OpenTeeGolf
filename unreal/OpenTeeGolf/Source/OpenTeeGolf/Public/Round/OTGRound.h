@@ -132,6 +132,7 @@ private:
 	void SetupWeather();
 	void ApplyWeatherToScene();
 	void ApplyLook();                   // (the course's colour and light: OTG.Look.* console variables)
+	uint32 LookStampNow() const;        // (the look's settings, the hole and the hour, hashed: ApplyLook again when it changes)
 	void HoleWind(double& Mps, double& FromDeg) const;
 	FString WindText() const;
 	void UpdateMap();
