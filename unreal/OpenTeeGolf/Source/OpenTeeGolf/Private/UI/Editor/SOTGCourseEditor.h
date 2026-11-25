@@ -19,6 +19,7 @@
 #include "Widgets/SCompoundWidget.h"
 #include "Course/OTGCourseSource.h"
 #include "World/OTGTreeDesign.h"
+#include "World/OTGBiomes.h"
 #include "UI/Editor/SOTGEditCanvas.h"
 #include "UI/Editor/SOTGMowSwatch.h"
 
@@ -44,7 +45,7 @@ public:
 	int32 HoleI = 0;
 	int32 SelShape = INDEX_NONE, SelTree = INDEX_NONE, SelFound = INDEX_NONE, SelRemoved = INDEX_NONE, SelBuilding = INDEX_NONE;
 	TArray<int32> SelMany;                 // (found trees, picked together)
-	enum class EMode : uint8 { None, Draw, Place, AddTree, Cut, Paint, Erase };
+	enum class EMode : uint8 { None, Draw, Place, AddTree, Cut, Paint, Erase, Forest };
 	EMode Mode = EMode::None;
 	FString ModeKind, ModeKey;             // (Draw: the shape's kind; Place: tee/aim/green/pin and which)
 	TArray<FVector2D> DrawPts;
@@ -60,6 +61,18 @@ public:
 	FOTGTreeDesign Design;           // (the course's trees_design.json, in the game's folder)
 	FString GameDir;
 	void DesignUndo(int32 FoundI);   // (the designer's change to this tree taken back, and saved)
+	// The course's forests (Design.Forests) and grass biomes (biomes.json), both in the game's folder
+	// and saved there as they change - the game reads them as it builds the course. The library's
+	// biomes and forests (the studio's: OTGBiomes.h) to give them.
+	FOTGCourseBiomes Biomes;
+	TArray<FOTGBiome> LibBiomes;
+	TArray<FOTGForestPreset> LibForests;
+	int32 SelForest = INDEX_NONE, SelArea = INDEX_NONE;
+	FString AreaBiome;               // (the biome a new area's drawn with)
+	void MarkForest(const FVector2D& P);   // (the group of found trees round P, as one forest)
+	void SaveForests(const FString& Say);
+	void SaveBiomes(const FString& Say);
+	int32 CurrentTab() const { return Tab; }
 	struct FBuilding { TArray<FVector2D> Pts; FString Name, Kind, Key; double Area = 0; };
 	TArray<FBuilding> Buildings;
 	// the map's picture: the aerial photo over [X0, X0 + SizeM] x [Z1 - SizeM, Z1], or the ground's shading
@@ -110,6 +123,8 @@ private:
 	TSharedRef<SWidget> PlantPanel();
 	TSharedRef<SWidget> GrassPanel();
 	TSharedRef<SWidget> BuildingPanel();
+	TSharedRef<SWidget> ForestPanel();
+	TSharedRef<SWidget> BiomePanel();
 	void AutoPins(FOTGSourceHole& H);
 	void StartReview();
 	void ShowReview();
@@ -140,4 +155,5 @@ private:
 	// (-editortest=<id>: the editor open, a screenshot; -editortestfix: a hole's par of 10 or more set to 4, saved, quit)
 	int32 TestStep = 0;
 	double TestAt = 0;
+	bool bForestTested = false;   // (-editortestforest=X,Z[,preset] [-editortestbiome=<biome>]: a forest marked there, an area of that biome round it)
 };

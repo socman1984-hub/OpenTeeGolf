@@ -7,6 +7,7 @@
 #include "Course/OTGCourseData.h"
 #include "Glb/OTGGlb.h"
 #include "World/OTGGrass.h"
+#include "World/OTGBiomes.h"
 #include "Camera/PlayerCameraManager.h"
 #include "GameFramework/PlayerController.h"
 #include "Engine/World.h"
@@ -130,8 +131,8 @@ TMap<FString, TArray<TPair<UStaticMesh*, UMaterialInterface*>>> FOTGCourseTurf::
 		}
 		else
 		{
-			UStaticMesh* Mesh = Find<UStaticMesh>(TEXT("SM_Turf_") + K.Name);
-			UMaterialInterface* Base = Load<UMaterialInterface>(TEXT("M_Turf_") + K.Name);
+			UStaticMesh* Mesh = Find<UStaticMesh>(TEXT("SM_Turf_") + K.BaseName());
+			UMaterialInterface* Base = Load<UMaterialInterface>(TEXT("M_Turf_") + K.BaseName());
 			if (!Mesh || !Base) { UE_LOG(LogOTGRuntimeCourse, Warning, TEXT("Grass %s: not in the game's content"), *K.Name); }
 			else
 			{
@@ -148,13 +149,49 @@ TMap<FString, TArray<TPair<UStaticMesh*, UMaterialInterface*>>> FOTGCourseTurf::
 	return Have;
 }
 
+TArray<otg::FGrassKind>& FOTGCourseTurf::Own()
+{
+	if (!OwnKindsP.IsValid()) OwnKindsP = MakeShared<TArray<otg::FGrassKind>>();
+	return *OwnKindsP;
+}
+
+TArray<otg::FGrassKind> FOTGCourseTurf::Grown() const
+{
+	static const TArray<otg::FGrassKind> None;
+	const TArray<otg::FGrassKind>& O = OwnKindsP.IsValid() ? *OwnKindsP : None;
+	return Biomes.IsValid() ? Biomes->Grow(O) : O;
+}
+
+void FOTGCourseTurf::BuildGrassFrom(const TArray<otg::FGrassKind>& Kinds)
+{
+	Own() = Kinds;
+	otg::FGrass::Derive(Own());
+	Biomes.Reset();
+	if (Grass.IsValid()) { SetGrassKinds(Own()); return; }
+	Grass = MakeShared<otg::FGrass>();
+	Grass->Init(Course, Course->Data, Course->MaskPixels, Course->LandCm, Own(), GrassMeshes(Own()));
+	Grass->SetSwaps(GrassSwaps);
+	TintGrass();
+}
+
 void FOTGCourseTurf::BuildGrass()
 {
-	const TArray<otg::FGrassKind> Kinds = otg::FGrass::LoadKinds(Course->Data->ExportDir);
+	Own() = otg::FGrass::LoadKinds(Course->Data->ExportDir);
+	// (and the course's grass biomes: the tall grass as its biome has it, areas with their own)
+	Biomes = MakeShared<FOTGCourseBiomes>(FOTGCourseBiomes::Load(Course->Data->ExportDir));
+	const TArray<otg::FGrassKind> Kinds = Grown();
 	const TMap<FString, TArray<TPair<UStaticMesh*, UMaterialInterface*>>> Have = GrassMeshes(Kinds);
 	Grass = MakeShared<otg::FGrass>();
 	Grass->Init(Course, Course->Data, Course->MaskPixels, Course->LandCm, Kinds, Have);
 	Grass->SetSwaps(GrassSwaps);
+	if (Biomes->Areas.Num())
+	{
+		const int32 Size = FMath::Clamp(int32(Course->LandCm / 200.0), 64, 2048);
+		Grass->SetBiomeMap(Biomes->Raster(Course->Data, Course->LandCm, Size), Size);
+		UE_LOG(LogOTGRuntimeCourse, Display, TEXT("Grass biomes: the tall grass %s, %d areas (%s)"), Biomes->Default.IsEmpty() ? TEXT("the course's own") : *Biomes->Default,
+			Biomes->Areas.Num(), *FString::Join(Biomes->AreaBiomes(), TEXT(", ")));
+	}
+	else if (!Biomes->Default.IsEmpty()) UE_LOG(LogOTGRuntimeCourse, Display, TEXT("Grass biomes: the tall grass %s"), *Biomes->Default);
 	TintGrass();
 	int32 On = 0;
 	for (const otg::FGrassKind& K : Kinds) On += K.bOn ? 1 : 0;
@@ -233,14 +270,15 @@ namespace
 const TArray<otg::FGrassKind>& FOTGCourseTurf::GrassKinds() const
 {
 	static const TArray<otg::FGrassKind> None;
-	return Grass.IsValid() ? Grass->Kinds() : None;
+	return OwnKindsP.IsValid() ? *OwnKindsP : None;
 }
 
 void FOTGCourseTurf::SetGrassKinds(const TArray<otg::FGrassKind>& Kinds)
 {
 	if (!Grass.IsValid()) return;
-	TArray<otg::FGrassKind> K = Kinds;
-	otg::FGrass::Derive(K);
+	Own() = Kinds;
+	otg::FGrass::Derive(Own());
+	const TArray<otg::FGrassKind> K = Grown();
 	Grass->SetKinds(K, GrassMeshes(K));
 	Grass->SetSwaps(GrassSwaps);
 	TintGrass();
@@ -252,6 +290,8 @@ void FOTGCourseTurf::SetGrassColours(const TArray<otg::FGrassKind>& Kinds)
 	TArray<otg::FGrassKind> K = Kinds;
 	for (otg::FGrassKind& G : K) G.ClampColour();
 	otg::FGrass::Derive(K);
+	for (otg::FGrassKind& O : Own())
+		if (const otg::FGrassKind* N = K.FindByPredicate([&](const otg::FGrassKind& X) { return X.Name == O.Name; })) { O.Hue = N->Hue; O.Sat = N->Sat; O.Bright = N->Bright; }
 	Grass->SetColours(K);
 	TintGrass();
 }
@@ -310,7 +350,7 @@ void FOTGCourseTurf::TintGrass()
 					// (Greensward's: its root and tip in the palette's colour for its cut, lifted to read as
 					// light as our blades would - its dense blades shade each other - turned as the designer
 					// turned the kind)
-					const FString S = otg::Palette::SurfaceOf(K.Name);
+					const FString S = otg::Palette::SurfaceOf(K.BaseName());
 					const FLinearColor Tn = K.TintFor(TurfGreen) * (S.IsEmpty() ? FLinearColor::White : otg::Palette::Factor(S) * CVarPalMat.GetValueOnGameThread());
 					M->SetVectorParameterValue(TEXT("RootColour"), T.Base * Tn);
 					M->SetVectorParameterValue(TEXT("TipColour"), T.BaseThrough * Tn);
@@ -318,7 +358,7 @@ void FOTGCourseTurf::TintGrass()
 				}
 				if (!T.bFab)
 				{
-					const FString S = otg::Palette::SurfaceOf(K.Name);
+					const FString S = otg::Palette::SurfaceOf(K.BaseName());
 					const float Cut1 = K.Name == TEXT("cut1") ? CVarPalCut1.GetValueOnGameThread() : 1.f;
 					const FLinearColor Trim = S == TEXT("rough") ? FLinearColor(CVarPalRoughRed.GetValueOnGameThread(), 1.f, 1.f) : FLinearColor::White;
 					M->SetVectorParameterValue(TEXT("Tint"), K.TintFor(TurfGreen) * (S.IsEmpty() ? FLinearColor::White : otg::Palette::Factor(S) * Cut1 * Trim));
@@ -350,7 +390,7 @@ bool FOTGCourseTurf::SaveGrassKinds(FString* Where) const
 {
 	if (!Grass.IsValid() || !Course->Data) return false;
 	if (Where) *Where = FPaths::Combine(Course->Data->ExportDir, TEXT("grass.json"));
-	return otg::FGrass::SaveKinds(Course->Data->ExportDir, Grass->Kinds());
+	return otg::FGrass::SaveKinds(Course->Data->ExportDir, GrassKinds());
 }
 
 TArray<FString> FOTGCourseTurf::GrassPlants() const

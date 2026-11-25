@@ -6,6 +6,7 @@
 #include "Round/OTGMiniGolf.h"
 #include "UI/Builder/SOTGCourseBuilder.h"
 #include "UI/Editor/SOTGCourseEditor.h"
+#include "UI/Builder/SOTGStudio.h"
 
 #include "Engine/Engine.h"
 #include "Engine/GameInstance.h"
@@ -120,6 +121,9 @@ void SOTGMainMenu::Construct(const FArguments&)
 	// (testing, even in a Shipping build, which has no console: -buildertest opens New course)
 	FString BuilderTest;
 	if (FParse::Value(FCommandLine::Get(), TEXT("buildertest="), BuilderTest)) Page = EPage::Build;
+	// (-studio=biomes|forests[:<name>]: the studio, open on it)
+	FString StudioArg;
+	if (FParse::Value(FCommandLine::Get(), TEXT("studio="), StudioArg)) { Page = EPage::Studio; bStudioForests = StudioArg.StartsWith(TEXT("forests")); }
 	// (-menuplayers: opens on the Players page)
 	if (FParse::Param(FCommandLine::Get(), TEXT("menuplayers")))
 	{
@@ -152,14 +156,17 @@ void SOTGMainMenu::Construct(const FArguments&)
 	[
 		SNew(SOverlay)
 		// the chosen course from the air, behind everything, darkened
+		// (not over the studio's preview plot: it's drawn in the level behind)
 		+ SOverlay::Slot()
 		[
-			SNew(SBorder).BorderImage(FCoreStyle::Get().GetBrush("WhiteBrush")).BorderBackgroundColor(FLinearColor(0.02f, 0.04f, 0.03f, 1.f)).Padding(0)
+			SNew(SBorder).Visibility_Lambda([this]() { return Page == EPage::Studio ? EVisibility::Collapsed : EVisibility::Visible; })
+			.BorderImage(FCoreStyle::Get().GetBrush("WhiteBrush")).BorderBackgroundColor(FLinearColor(0.02f, 0.04f, 0.03f, 1.f)).Padding(0)
 			[
 				SNew(SScaleBox).Stretch(EStretch::ScaleToFill)[SAssignNew(Backdrop, SImage).ColorAndOpacity(FLinearColor(0.30f, 0.34f, 0.31f, 1.f))]
 			]
 		]
-		+ SOverlay::Slot()[SNew(SBorder).BorderImage(FCoreStyle::Get().GetBrush("WhiteBrush")).BorderBackgroundColor(FLinearColor(0.01f, 0.02f, 0.015f, 0.62f))]
+		+ SOverlay::Slot()[SNew(SBorder).Visibility_Lambda([this]() { return Page == EPage::Studio ? EVisibility::Collapsed : EVisibility::Visible; })
+			.BorderImage(FCoreStyle::Get().GetBrush("WhiteBrush")).BorderBackgroundColor(FLinearColor(0.01f, 0.02f, 0.015f, 0.62f))]
 		+ SOverlay::Slot().Padding(FMargin(40, 22, 40, 16))
 		[
 			SNew(SVerticalBox)
@@ -271,7 +278,7 @@ void SOTGMainMenu::Rebuild()
 	for (const auto& T : Pages)
 	{
 		const EPage P = T.Value;
-		const bool bOn = Page == P || (P == EPage::Build && Page == EPage::Edit);
+		const bool bOn = Page == P || (P == EPage::Build && (Page == EPage::Edit || Page == EPage::Studio));
 		Tabs->AddSlot().AutoWidth().Padding(0, 0, 4, 0)
 		[
 			SNew(SButton).ButtonStyle(&TabStyle()).ContentPadding(FMargin(14, 8, 14, 0))
@@ -287,6 +294,8 @@ void SOTGMainMenu::Rebuild()
 		];
 	}
 	if (TabBar) TabBar->SetContent(Tabs);
+	// (the studio's preview plot goes when it's left)
+	if (Page != EPage::Studio && Studio.IsValid()) { Body->SetContent(SNullWidget::NullWidget); Studio.Reset(); }
 	if (Backdrop) Backdrop->SetImage(Setup.CourseId.IsEmpty() ? nullptr : PhotoOf(Setup.CourseId, EPhoto::Backdrop));
 	if (Page == EPage::Play)
 	{
@@ -313,10 +322,20 @@ void SOTGMainMenu::Rebuild()
 				Rebuild();
 			};
 			Builder->OnEdit = [this](const FString& Id) { OpenEditor(Id); };
+			Builder->OnStudio = [this](bool bForests) { OpenStudio(bForests); };
 		}
 		Body->SetContent(Builder.ToSharedRef());
 	}
 	else if (Page == EPage::Edit && Editor.IsValid()) Body->SetContent(Editor.ToSharedRef());
+	else if (Page == EPage::Studio)
+	{
+		if (!Studio.IsValid())
+		{
+			SAssignNew(Studio, SOTGStudio, bStudioForests);
+			Studio->OnClose = [this]() { Page = EPage::Build; Rebuild(); };
+		}
+		Body->SetContent(Studio.ToSharedRef());
+	}
 	else Body->SetContent(SNew(SScrollBox) + SScrollBox::Slot()[Box(SNew(SOTGLaunchMonitorPanel), FMargin(20, 16), Solid)]);
 }
 
@@ -349,8 +368,16 @@ void SOTGMainMenu::OpenEditor(const FString& Id)
 	Rebuild();
 }
 
+void SOTGMainMenu::OpenStudio(bool bForests)
+{
+	bStudioForests = bForests;
+	Page = EPage::Studio;
+	Rebuild();
+}
+
 void SOTGMainMenu::ShowPage(const FString& Name)
 {
+	if (Name == TEXT("biomes") || Name == TEXT("forests")) { OpenStudio(Name == TEXT("forests")); return; }
 	Page = Name == TEXT("players") ? EPage::Players : Name == TEXT("lm") ? EPage::LaunchMonitor : Name == TEXT("settings") ? EPage::Settings : Name == TEXT("build") ? EPage::Build : Name == TEXT("practice") ? EPage::Practice : Name == TEXT("news") ? EPage::WhatsNew : EPage::Play;
 	if (Page == EPage::Players) { Draft = Profiles; ConfirmRemove = -1; }
 	Rebuild();

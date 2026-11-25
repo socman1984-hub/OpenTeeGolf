@@ -49,6 +49,10 @@ namespace otg
 		bool bMown = false;            // a mown cut's own blades (make_turf.py: green, collar, fairway): on its own surface, not kept off it
 		float BandM = 0;               // (the first cut: grows only this many metres out from a fairway's, tee's or collar's outline)
 		float CellM = 16;              // (its cells, m a side: bigger for the far-reaching kinds, fewer components)
+		// (a grass biome's kind - OTGBiomes.h: it grows only where the course's biome map has this biome,
+		// 0 the course's own tall grass; -1 anywhere its surface is. Its name then "<kind>@<biome>")
+		int32 Biome = -1;
+		FString BaseName() const { int32 At; return Name.FindChar(TEXT('@'), At) ? Name.Left(At) : Name; }
 		// Greensward's grass mats (the plugin's /Greensward/Mats/SM_GS_<name>: 50 cm square Nanite turf),
 		// tiled on a grid TileCm a side, drawn with its static grass material in this kind's colours
 		// (OTGRuntimeCourse GrassMeshes); none: our own patch. -oldgrass: none anywhere
@@ -106,6 +110,14 @@ namespace otg
 		static void Derive(TArray<FGrassKind>& Kinds);
 		// A Megascans plant (its folder under Content/Fab/Megascans/Plants) as a kind of tall grass
 		static FGrassKind PlantKind(const FString& Folder);
+		// (a kind as grass.json has it, and read back over Out's kind of that name - or added, a plant -
+		// as LoadKinds does: false if it names nothing the game has)
+		static TSharedRef<class FJsonObject> KindToJson(const FGrassKind& K);
+		static bool ApplyKindJson(TArray<FGrassKind>& Out, const TSharedPtr<class FJsonObject>& O, double Version = 2);
+		// Which grass biome grows where (OTGBiomes.h FOTGCourseBiomes::Raster): Size x Size cells over the
+		// land, each a biome's number (0 the course's own tall grass). Kinds with a Biome grow only in
+		// their own; none set: every kind everywhere its surface is
+		void SetBiomeMap(TArray<uint8> Map, int32 Size);
 
 	private:
 		struct FCellKey { int32 Kind, X, Y; bool operator==(const FCellKey& O) const { return Kind == O.Kind && X == O.X && Y == O.Y; } };
@@ -117,6 +129,9 @@ namespace otg
 		// (how likely a patch of the kind is at X, Y - the level's cm from the origin - before its random keep)
 		float Chance(const FGrassKind& K, double X, double Y) const;
 		float DeepRamp(float W, double X, double Y) const;
+		int32 BiomeAt(double X, double Y) const;
+		TArray<uint8> BiomeMap;
+		int32 BiomeSize = 0;
 		TMap<UMaterialInterface*, UMaterialInterface*> Swaps;
 		float Mask(const FString& Name, double X, double Y) const;
 		double GroundZ(double X, double Y, FVector* OutNormal) const;

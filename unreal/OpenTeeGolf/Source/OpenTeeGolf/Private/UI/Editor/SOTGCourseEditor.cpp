@@ -137,6 +137,7 @@ void SOTGCourseEditor::LoadExtras()
 		// (and what the game's tree designer did to them: taken out ones crossed, added ones there too)
 		GameDir = Dir;
 		Design = FOTGTreeDesign::Load(Dir);
+		Biomes = FOTGCourseBiomes::Load(Dir);
 		if (UOTGCourseData* D = C->LoadCourse(Id))
 		{
 			for (const FOTGTreeShape& T : D->Trees)
@@ -322,6 +323,35 @@ EActiveTimerReturnType SOTGCourseEditor::Pulse(double Time, float Dt)
 			&& FVector2D(Canvas->Cx, Canvas->Cz) != FVector2D(FCString::Atod(*At.Left(At.Find(TEXT(",")))), FCString::Atod(*At.Mid(At.Find(TEXT(",")) + 1))))
 		{
 			Canvas->Cx = FCString::Atod(*At.Left(At.Find(TEXT(",")))); Canvas->Cz = FCString::Atod(*At.Mid(At.Find(TEXT(",")) + 1)); Changed(); TestAt = FPlatformTime::Seconds() + 1;
+		}
+		else if (FString Fo; TestStep == 1 && !bForestTested && FParse::Value(FCommandLine::Get(), TEXT("editortestforest="), Fo, false))
+		{
+			bForestTested = true;
+			TArray<FString> A;
+			Fo.Replace(TEXT("+"), TEXT(" ")).ParseIntoArray(A, TEXT(","));
+			const FVector2D Mark = A.Num() >= 2 ? FVector2D(FCString::Atod(*A[0]), FCString::Atod(*A[1])) : FVector2D::ZeroVector;
+			MarkForest(Mark);
+			if (Design.Forests.IsValidIndex(SelForest))
+			{
+				FOTGForest& F = Design.Forests[SelForest];
+				const TArray<FOTGForestPreset> Lib = OTGLibrary::Forests();
+				if (A.Num() >= 3)
+					if (const FOTGForestPreset* P = Lib.FindByPredicate([&](const FOTGForestPreset& X) { return X.Name == A[2]; })) { F.Preset = *P; F.bFill = true; }
+				F.Amount = 1.5f;
+				SaveForests(TEXT("editortest: forest"));
+			}
+			FString Bi;
+			if (FParse::Value(FCommandLine::Get(), TEXT("editortestbiome="), Bi, false))
+				if (const FOTGBiome* B = OTGLibrary::FindIn(LibBiomes = OTGLibrary::Biomes(), Bi.Replace(TEXT("+"), TEXT(" "))))
+				{
+					Biomes.Use(*B);
+					Biomes.Areas.Add({ B->Name, { Mark + FVector2D(-70, -70), Mark + FVector2D(70, -70), Mark + FVector2D(70, 70), Mark + FVector2D(-70, 70) } });
+					SaveBiomes(TEXT("editortest: biome area"));
+				}
+			UE_LOG(LogTemp, Display, TEXT("editortest: %d forests, %d biome areas; %s"), Design.Forests.Num(), Biomes.Areas.Num(), *Status);
+			Canvas->Cx = Mark.X; Canvas->Cz = Mark.Y; Canvas->Scale = 1.6; Tab = 2;
+			Changed();
+			TestAt = FPlatformTime::Seconds() + 2;
 		}
 		else if (TestStep == 1 && FParse::Param(FCommandLine::Get(), TEXT("editortestlook")) && !bColourSpecies) { bColourSpecies = true; Canvas->Scale = 2.5; Changed(); TestAt = FPlatformTime::Seconds() + 2; }
 		else if (TestStep == 1) { Shot(TEXT("editor_open")); TestStep = 2; TestAt = FPlatformTime::Seconds() + 2; }

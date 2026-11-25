@@ -212,6 +212,35 @@ Everything the golf needs runs inside the game, in C++.
   active timer, not Tick (made while drawing, they're drawn once unmeasured). `-ExecCmds="OTG.Menu.Edit
   <id>" -editortest=<id> [-editortestfix | -editortestall]` (a par of 10+ set to 4 / each tool's
   change, two undone) saves and quits, with `Saved/Screenshots/editor_*.png`.
+- Grass biomes and forest presets (the studio: New course > Grass biomes / Forests, `SOTGStudio`;
+  `OTGBiomes.h`): a grass biome (`FOTGBiome`) is a named mix of the tall grass's kinds (the game's
+  grasses, Megascans and KiteDemo plants: on or off, how many, height and its spread, patches,
+  cover, colour); a forest preset (`FOTGForestPreset`, `OTGTreeDesign.h`) is species with shares
+  and models, a height range, trees a hectare and the biome under them. Both are kept in the
+  library, `Documents\OpenTeeGolf\Library\Biomes` and `\Forests` (a .json each; five biomes and four
+  forests made the first time it's opened). The studio shows the one being made on a plot of its
+  own as it changes (`AOTGPreviewStage`: in the menu's level, the course's own code -
+  `AOTGRuntimeCourse::BuildPreview`, a 64 m square of flat ground, a round of tall grass in it,
+  `PreviewGrass`, `PreviewForest` - under a sun, sky, sky light and haze of its own; the menu's
+  backdrop hidden; drag to turn round it, the wheel to come closer). Rough kinds aren't offered: the
+  rough stays one even colour. `-studio=biomes|forests[:<name>]` opens it; `OTG.Studio.Pick <name>`,
+  `OTG.Studio.Set <kind> on|density|height|cover <v>`, `OTG.Studio.Add <plant>`, `OTG.Studio.Forests 0|1`.
+- A course's biomes and forests (the course editor's Tall grass and Trees tabs, kept in the course's
+  folder - the game reads them when it builds the course, no export needed). Biomes
+  (`FOTGCourseBiomes`, `biomes.json`): the biome all its tall grass is (none: the course's own, as the
+  grass designer has it), and areas drawn with their own; the biomes it uses are copied in. The grass
+  grows the course's kinds (`FOTGCourseTurf::OwnKinds`, what the grass designer edits) with each
+  area's biome's as `<kind>@<n>` (`FGrassKind::Biome`): `otg::FGrass::SetBiomeMap`, a grid of 2 m
+  cells over the land, keeps each biome's kinds to its areas (their edges ragged by a metre or two).
+  Forests (`FOTGForest` in `trees_design.json`'s `forests`): Mark a forest (a click: the found
+  trees joined within 16 m to the nearest one, outlined round them - their 4 m cells' edge walked,
+  simplified, its corners cut) or Draw a forest; each with How many (x0-3 of what's mapped), Their
+  size, Its trees (their own, or a preset: each tree's species and model from its shares by where it
+  stands) and Planted out (to the preset's trees a hectare x How many, on a jittered grid clear of
+  the trees there, off the mown grass, sand, paths and water: up to 30000).
+  `UOTGCourseData::ForEachDesignedTree` applies them, so the ball meets the trees as drawn.
+  `-editortestforest=X,Z[,<preset>] [-editortestbiome=<biome>]` (with `-editortest=<id>`) marks a
+  forest there and draws an area of that biome round it (140 m square), saved for the game.
 - Finding and building a course (the menu's New course page, `SOTGCourseBuilder`, phase 3): a world
   map (`SOTGWorldMap`: OpenStreetMap or Esri's aerial photos, tiles fetched and kept on disk by the
   helper, `/api/helper/tile`), the world's mapped courses as dots (`/api/builder/world`, paged while

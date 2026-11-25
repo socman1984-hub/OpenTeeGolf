@@ -214,16 +214,41 @@ void UOTGCourseData::ForEachDesignedTree(TFunctionRef<void(int32, double, double
 		const S Sf = S(SurfaceCodeAt(X, Z));
 		return Sf != S::Water && Sf != S::Green && Sf != S::Fringe && Sf != S::Fairway && Sf != S::Tee && Sf != S::FirstCut && Sf != S::Path && Sf != S::Sand;
 	};
+	const TArray<FOTGForest>& Forests = TreeDesign.Forests;
+	// (where the trees in each forest to be planted out stand, a 4 m grid of them: the planting keeps
+	// clear of them)
+	TArray<TMultiMap<FIntPoint, FVector2D>> InForest;
+	InForest.SetNum(Forests.Num());
+	FOTGTreeEdit Own;   // (a tree's edit as its forest has it: its species and model from the preset)
+	auto Emit = [&](int32 Src, double X, double Z, float Scale, const FOTGTreeEdit* E, const FOTGForest* F) {
+		if (F)
+		{
+			const int32 Fi = int32(F - Forests.GetData());
+			InForest[Fi].Add(FIntPoint(FMath::FloorToInt32(X / 4), FMath::FloorToInt32(Z / 4)), FVector2D(X, Z));
+			if (const FOTGForestSpecies* Sp = F->Preset.PickAt(X, Z))
+			{
+				// (the forest's species and model, unless the tree was given its own in the designer)
+				Own = E ? *E : FOTGTreeEdit();
+				Own.X = X; Own.Z = Z;
+				if (Own.Kind.IsEmpty()) Own.Kind = Sp->Kind;
+				if (Own.Model.IsEmpty() && Sp->Model != TEXT("auto")) Own.Model = Sp->Model;
+				Fn(Src, X, Z, GroundAt(X, Z), Scale * (E ? E->Size : 1.f), &Own);
+				return;
+			}
+		}
+		Fn(Src, X, Z, GroundAt(X, Z), Scale * (E ? E->Size : 1.f), E);
+	};
 	for (int32 i = 0; i < Trees.Num(); i++)
 	{
 		const FOTGTreeShape& S = Trees[i];
-		const int32 N = TreeDesign.Copies(S.Kind, S.X, S.Z);
-		const float Size = TreeDesign.SizeOf(S.Kind);
+		const FOTGForest* F = Forests.Num() ? TreeDesign.ForestAt(S.X, S.Z) : nullptr;
+		const int32 N = TreeDesign.Copies(S.Kind, S.X, S.Z, F ? F->Amount : 1.f);
+		const float Size = TreeDesign.SizeOf(S.Kind) * (F ? F->Size : 1.f);
 		// (each one as it was picked and changed, if it was: taken out, or a size of its own)
 		auto One = [&](double X, double Z, float Scale) {
 			const FOTGTreeEdit* E = TreeDesign.Trees.Num() ? TreeDesign.TreeEditAt(X, Z) : nullptr;
 			if (E && E->bRemoved) return;
-			Fn(i, X, Z, GroundAt(X, Z), Scale * (E ? E->Size : 1.f), E);
+			Emit(i, X, Z, Scale, E, F);
 		};
 		if (N >= 1) One(S.X, S.Z, Size);
 		// (more: grown round it, off the mown grass, sand, paths and water, a little smaller or larger)
@@ -234,6 +259,45 @@ void UOTGCourseData::ForEachDesignedTree(TFunctionRef<void(int32, double, double
 			if (!Free(P.X, P.Y)) continue;
 			One(P.X, P.Y, Size * float(0.8 + 0.35 * FOTGTreeDesign::Hash01(P.X, P.Y, 5)));
 		}
+	}
+	// the forests planted out to their preset's spacing (x their amount) where they have fewer: on a
+	// jittered grid, clear of the trees there, each from the preset (Src -1, as an added tree - its
+	// own edit if it was picked since)
+	constexpr int32 MaxPlanted = 30000;
+	int32 Planted = 0;
+	for (int32 f = 0; f < Forests.Num() && Planted < MaxPlanted; f++)
+	{
+		const FOTGForest& F = Forests[f];
+		if (!F.bFill || !F.Preset.IsSet() || F.Amount <= 0) continue;
+		const double Spacing = 100.0 / FMath::Sqrt(FMath::Max(1.0, double(F.Preset.PerHa) * F.Amount));
+		const FBox2D B = F.Bounds();
+		const double Clear = Spacing * 0.7;
+		for (double Z = B.Min.Y + Spacing * 0.5; Z < B.Max.Y && Planted < MaxPlanted; Z += Spacing)
+			for (double X = B.Min.X + Spacing * 0.5; X < B.Max.X && Planted < MaxPlanted; X += Spacing)
+			{
+				const double PX = X + (FOTGTreeDesign::Hash01(X, Z, 41) - 0.5) * Spacing * 0.8, PZ = Z + (FOTGTreeDesign::Hash01(X, Z, 43) - 0.5) * Spacing * 0.8;
+				if (TreeDesign.ForestAt(PX, PZ) != &F || !Free(PX, PZ)) continue;
+				bool bNear = false;
+				const FIntPoint C(FMath::FloorToInt32(PX / 4), FMath::FloorToInt32(PZ / 4));
+				const int32 Reach = FMath::CeilToInt32(Clear / 4);
+				for (int32 dz = -Reach; dz <= Reach && !bNear; dz++)
+					for (int32 dx = -Reach; dx <= Reach && !bNear; dx++)
+						for (auto It = InForest[f].CreateConstKeyIterator(C + FIntPoint(dx, dz)); It; ++It)
+							if (FVector2D::DistSquared(It.Value(), FVector2D(PX, PZ)) < Clear * Clear) { bNear = true; break; }
+				if (bNear) continue;
+				const FOTGForestSpecies* Sp = F.Preset.PickAt(PX, PZ);
+				if (!Sp) continue;
+				const FOTGTreeEdit* E = TreeDesign.Trees.Num() ? TreeDesign.TreeEditAt(PX, PZ) : nullptr;
+				if (E && E->bRemoved) continue;
+				FOTGTreeEdit Plant = E ? *E : FOTGTreeEdit();
+				Plant.X = PX; Plant.Z = PZ;
+				if (Plant.Kind.IsEmpty()) Plant.Kind = Sp->Kind;
+				if (Plant.Model.IsEmpty() && Sp->Model != TEXT("auto")) Plant.Model = Sp->Model;
+				if (!E || !E->bAdded) Plant.Height = F.Preset.HeightAt(PX, PZ);
+				Plant.Size = (E ? E->Size : 1.f) * F.Size * TreeDesign.SizeOf(Plant.Kind);
+				Fn(-1, PX, PZ, GroundAt(PX, PZ), 1.f, &Plant);
+				Planted++;
+			}
 	}
 	for (const FOTGTreeEdit& E : TreeDesign.Trees)
 		if (E.bAdded && !E.bRemoved) Fn(-1, E.X, E.Z, GroundAt(E.X, E.Z), 1.f, &E);

@@ -197,6 +197,27 @@ FOTGTreeDesign FOTGTreeDesign::Load(const FString& Dir)
 			if (O->TryGetStringField(TEXT("model"), E.Model) && !RockModels().Contains(E.Model)) E.Model.Empty();
 			D.Rocks.Add(E);
 		}
+	if (J->TryGetArrayField(TEXT("forests"), List))
+		for (const TSharedPtr<FJsonValue>& V : *List)
+		{
+			const TSharedPtr<FJsonObject> O = V.IsValid() ? V->AsObject() : nullptr;
+			const TArray<TSharedPtr<FJsonValue>>* Pts = nullptr;
+			if (!O.IsValid() || !O->TryGetArrayField(TEXT("pts"), Pts)) continue;
+			FOTGForest F;
+			for (const TSharedPtr<FJsonValue>& P : *Pts)
+			{
+				const TArray<TSharedPtr<FJsonValue>>* XZ = nullptr;
+				if (P.IsValid() && P->TryGetArray(XZ) && XZ->Num() >= 2) F.Pts.Add(FVector2D((*XZ)[0]->AsNumber(), (*XZ)[1]->AsNumber()));
+			}
+			if (F.Pts.Num() < 3) continue;
+			O->TryGetStringField(TEXT("name"), F.Name);
+			const TSharedPtr<FJsonObject>* P = nullptr;
+			if (O->TryGetObjectField(TEXT("preset"), P)) FOTGForestPreset::FromJson(*P, F.Preset);
+			Num(O, TEXT("amount"), F.Amount, FOTGForest::AmountLo, FOTGForest::AmountHi);
+			Num(O, TEXT("size"), F.Size, FOTGForest::SizeLo, FOTGForest::SizeHi);
+			O->TryGetBoolField(TEXT("fill"), F.bFill);
+			D.Forests.Add(MoveTemp(F));
+		}
 	return D;
 }
 
@@ -257,6 +278,25 @@ bool FOTGTreeDesign::Save(const FString& Dir) const
 		}
 		J->SetArrayField(TEXT("rockEdits"), List);
 	}
+	if (Forests.Num())
+	{
+		TArray<TSharedPtr<FJsonValue>> List;
+		for (const FOTGForest& F : Forests)
+		{
+			const TSharedRef<FJsonObject> O = MakeShared<FJsonObject>();
+			O->SetStringField(TEXT("name"), F.Name);
+			TArray<TSharedPtr<FJsonValue>> Pts;
+			for (const FVector2D& P : F.Pts)
+				Pts.Add(MakeShared<FJsonValueArray>(TArray<TSharedPtr<FJsonValue>>{ MakeShared<FJsonValueNumber>(FMath::RoundToDouble(P.X * 100) / 100), MakeShared<FJsonValueNumber>(FMath::RoundToDouble(P.Y * 100) / 100) }));
+			O->SetArrayField(TEXT("pts"), Pts);
+			O->SetObjectField(TEXT("preset"), F.Preset.ToJson());
+			O->SetNumberField(TEXT("amount"), F.Amount);
+			O->SetNumberField(TEXT("size"), F.Size);
+			O->SetBoolField(TEXT("fill"), F.bFill);
+			List.Add(MakeShared<FJsonValueObject>(O));
+		}
+		J->SetArrayField(TEXT("forests"), List);
+	}
 	FString Text;
 	FJsonSerializer::Serialize(J, TJsonWriterFactory<>::Create(&Text));
 	return FFileHelper::SaveStringToFile(Text, *FPaths::Combine(Dir, File), FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
@@ -264,7 +304,7 @@ bool FOTGTreeDesign::Save(const FString& Dir) const
 
 bool FOTGTreeDesign::IsDefault() const
 {
-	if (AllSize != 1.f || AllDensity != 1.f || !bRocks || RockSize != 1.f || RockDensity != 1.f || !RockModel.IsEmpty() || Trees.Num() || Rocks.Num()) return false;
+	if (AllSize != 1.f || AllDensity != 1.f || !bRocks || RockSize != 1.f || RockDensity != 1.f || !RockModel.IsEmpty() || Trees.Num() || Rocks.Num() || Forests.Num()) return false;
 	for (const auto& KV : Species) if (KV.Value.Model != TEXT("auto") || KV.Value.Size != 1.f || KV.Value.Density != 1.f) return false;
 	return true;
 }
@@ -283,9 +323,9 @@ double FOTGTreeDesign::Hash01(double X, double Z, int32 Salt)
 	return (H & 0xffffff) / double(0x1000000);
 }
 
-int32 FOTGTreeDesign::Copies(const FString& Kind, double X, double Z) const
+int32 FOTGTreeDesign::Copies(const FString& Kind, double X, double Z, float Times) const
 {
-	const float D = FMath::Max(0.f, AllDensity * For(Kind).Density);
+	const float D = FMath::Max(0.f, AllDensity * For(Kind).Density * Times);
 	const int32 Whole = FMath::FloorToInt32(D);
 	return Whole + (Hash01(X, Z, 17) < D - Whole ? 1 : 0);
 }
@@ -295,6 +335,102 @@ FVector2D FOTGTreeDesign::CopyAt(double X, double Z, int32 I, double R)
 	const double A = Hash01(X, Z, 31 + I) * 2 * PI;
 	const double D = FMath::Max(3.0, R) * (1.1 + 0.9 * Hash01(X, Z, 57 + I));
 	return FVector2D(X + FMath::Cos(A) * D, Z + FMath::Sin(A) * D);
+}
+
+const FOTGForest* FOTGTreeDesign::ForestAt(double X, double Z) const
+{
+	for (int32 i = Forests.Num() - 1; i >= 0; i--) if (Forests[i].Contains(X, Z)) return &Forests[i];
+	return nullptr;
+}
+
+bool FOTGForest::Contains(double X, double Z) const
+{
+	if (Pts.Num() < 3) return false;
+	bool bIn = false;
+	for (int32 i = 0, j = Pts.Num() - 1; i < Pts.Num(); j = i++)
+		if ((Pts[i].Y > Z) != (Pts[j].Y > Z) && X < (Pts[j].X - Pts[i].X) * (Z - Pts[i].Y) / (Pts[j].Y - Pts[i].Y) + Pts[i].X) bIn = !bIn;
+	return bIn;
+}
+
+FBox2D FOTGForest::Bounds() const
+{
+	FBox2D B(ForceInit);
+	for (const FVector2D& P : Pts) B += P;
+	return B;
+}
+
+double FOTGForest::AreaM2() const
+{
+	double A = 0;
+	for (int32 i = 0, j = Pts.Num() - 1; i < Pts.Num(); j = i++) A += (Pts[j].X + Pts[i].X) * (Pts[j].Y - Pts[i].Y);
+	return FMath::Abs(A) * 0.5;
+}
+
+const FOTGForestSpecies* FOTGForestPreset::PickAt(double X, double Z) const
+{
+	float Total = 0;
+	for (const FOTGForestSpecies& S : Species) if (!S.Kind.IsEmpty()) Total += FMath::Max(0.f, S.Share);
+	if (Total <= 0) return nullptr;
+	float R = float(FOTGTreeDesign::Hash01(X, Z, 73)) * Total;
+	for (const FOTGForestSpecies& S : Species)
+	{
+		if (S.Kind.IsEmpty() || S.Share <= 0) continue;
+		R -= S.Share;
+		if (R <= 0) return &S;
+	}
+	return Species.FindByPredicate([](const FOTGForestSpecies& S) { return !S.Kind.IsEmpty() && S.Share > 0; });
+}
+
+float FOTGForestPreset::HeightAt(double X, double Z) const
+{
+	return FMath::Lerp(FMath::Min(HeightLo, HeightHi), FMath::Max(HeightLo, HeightHi), float(FOTGTreeDesign::Hash01(X, Z, 79)));
+}
+
+TSharedRef<FJsonObject> FOTGForestPreset::ToJson() const
+{
+	const TSharedRef<FJsonObject> O = MakeShared<FJsonObject>();
+	O->SetStringField(TEXT("name"), Name);
+	TArray<TSharedPtr<FJsonValue>> L;
+	for (const FOTGForestSpecies& S : Species)
+	{
+		const TSharedRef<FJsonObject> E = MakeShared<FJsonObject>();
+		E->SetStringField(TEXT("kind"), S.Kind);
+		E->SetNumberField(TEXT("share"), S.Share);
+		if (!S.Model.IsEmpty() && S.Model != TEXT("auto")) E->SetStringField(TEXT("model"), S.Model);
+		L.Add(MakeShared<FJsonValueObject>(E));
+	}
+	O->SetArrayField(TEXT("species"), L);
+	O->SetNumberField(TEXT("heightLo"), HeightLo);
+	O->SetNumberField(TEXT("heightHi"), HeightHi);
+	O->SetNumberField(TEXT("perHa"), PerHa);
+	if (!Under.IsEmpty()) O->SetStringField(TEXT("under"), Under);
+	return O;
+}
+
+bool FOTGForestPreset::FromJson(const TSharedPtr<FJsonObject>& O, FOTGForestPreset& Out)
+{
+	if (!O.IsValid()) return false;
+	FOTGForestPreset P;
+	O->TryGetStringField(TEXT("name"), P.Name);
+	const TArray<TSharedPtr<FJsonValue>>* L = nullptr;
+	if (O->TryGetArrayField(TEXT("species"), L))
+		for (const TSharedPtr<FJsonValue>& V : *L)
+		{
+			const TSharedPtr<FJsonObject> E = V.IsValid() ? V->AsObject() : nullptr;
+			FOTGForestSpecies S;
+			if (!E.IsValid() || !E->TryGetStringField(TEXT("kind"), S.Kind) || !FOTGTreeDesign::AllSpecies().Contains(S.Kind)) continue;
+			double D;
+			if (E->TryGetNumberField(TEXT("share"), D) && FMath::IsFinite(D)) S.Share = FMath::Clamp(float(D), 0.f, 10.f);
+			if (E->TryGetStringField(TEXT("model"), S.Model) && !FOTGTreeDesign::Models().Contains(S.Model)) S.Model.Empty();
+			P.Species.Add(S);
+		}
+	auto Num = [&](const TCHAR* F, float& Val, float Lo, float Hi) { double D; if (O->TryGetNumberField(F, D) && FMath::IsFinite(D)) Val = FMath::Clamp(float(D), Lo, Hi); };
+	Num(TEXT("heightLo"), P.HeightLo, HeightMin, HeightMax);
+	Num(TEXT("heightHi"), P.HeightHi, HeightMin, HeightMax);
+	Num(TEXT("perHa"), P.PerHa, PerHaLo, PerHaHi);
+	O->TryGetStringField(TEXT("under"), P.Under);
+	Out = MoveTemp(P);
+	return true;
 }
 
 bool FOTGTreeDesign::KeepRock(double X, double Z) const

@@ -128,6 +128,25 @@ double otg::FGrass::GroundZ(double X, double Y, FVector* OutNormal) const
 	return FMath::Lerp(FMath::Lerp(H00, H10, FU), FMath::Lerp(H01, H11, FU), FV);
 }
 
+void otg::FGrass::SetBiomeMap(TArray<uint8> Map, int32 Size)
+{
+	BiomeMap = MoveTemp(Map);
+	BiomeSize = BiomeMap.Num() == Size * Size ? Size : 0;
+	Clear();   // (grown again as the map has it)
+}
+
+// (the biome at a level position: its cell, the line between two a little ragged - a metre or two of
+// noise - so an area's edge isn't ruled)
+int32 otg::FGrass::BiomeAt(double X, double Y) const
+{
+	if (BiomeSize <= 0 || Land <= 0) return 0;
+	const double J = 180.0;
+	const double JX = (Noise(X / 100.0, Y / 100.0, 3.0, 811) - 0.5) * 2 * J, JY = (Noise(X / 100.0, Y / 100.0, 3.0, 977) - 0.5) * 2 * J;
+	const int32 I = FMath::Clamp(FMath::FloorToInt32((X + JX) / Land * BiomeSize), 0, BiomeSize - 1);
+	const int32 K = FMath::Clamp(FMath::FloorToInt32((Y + JY) / Land * BiomeSize), 0, BiomeSize - 1);
+	return BiomeMap[K * BiomeSize + I];
+}
+
 // (0 at the deep rough's outline to 1 its DeepRampM in, ragged with noise: its mats' density and height)
 float otg::FGrass::DeepRamp(float W, double X, double Y) const
 {
@@ -150,6 +169,8 @@ float otg::FGrass::Chance(const FGrassKind& K, double X, double Y) const
 	if (K.IsGreensward() && K.Masks.Contains(TEXT("native")))
 		P *= DeepRamp(W, X, Y);
 	if (P <= 0) return 0.f;
+	// (a grass biome's kind: only in its own biome's areas - OTGBiomes.h)
+	if (K.Biome >= 0 && BiomeSize > 0 && BiomeAt(X, Y) != K.Biome) return 0.f;
 	P *= FMath::Clamp((0.45f - Mask(TEXT("water"), X, Y)) * 10.f, 0.f, 1.f);
 	P *= FMath::Clamp((0.85f - Mask(TEXT("path"), X, Y)) * 2.f, 0.f, 1.f);
 	P *= FMath::Clamp((0.85f - Mask(TEXT("road"), X, Y)) * 2.f, 0.f, 1.f);   // (roads and car parks: layer_road.png)
@@ -178,7 +199,7 @@ float otg::FGrass::Chance(const FGrassKind& K, double X, double Y) const
 	if (K.PatchM > 0)
 	{
 		// (value noise bunches round the middle: spread out to the rock texture's range)
-		const double N = FMath::Clamp(0.5 + (Noise(X / 100.0, Y / 100.0, K.PatchM, K.Name.StartsWith(TEXT("native")) ? 77 : int32(GetTypeHash(K.Name.Replace(TEXT("_far"), TEXT(""))) % 997) + 31) - 0.5) * 1.8, 0.0, 1.0);
+		const double N = FMath::Clamp(0.5 + (Noise(X / 100.0, Y / 100.0, K.PatchM, K.BaseName().StartsWith(TEXT("native")) ? 77 : int32(GetTypeHash(K.BaseName().Replace(TEXT("_far"), TEXT(""))) % 997) + 31) - 0.5) * 1.8, 0.0, 1.0);
 		const double L = 0.27 + 0.19 * N;
 		float F = FMath::SmoothStep(K.PatchLo, K.PatchHi, float(L));
 		P *= K.bInvert ? 1.f - F : F;

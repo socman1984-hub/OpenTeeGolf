@@ -111,7 +111,7 @@ void AOTGRuntimeCourse::BuildInSteps(UOTGCourseData* D, TFunction<void(float, co
 // game, the first time the round set the wind) has no place in it, and the first material reading
 // it brings the game down ("Failed to find parameter collection buffer" - M_Turf_rough, the tall
 // grass). In the editor they're loaded already, so it never showed there.
-static void EnsureWindCollections(UWorld* W)
+void AOTGRuntimeCourse::EnsureWindCollections(UWorld* W)
 {
 	if (!W) return;
 	for (const TCHAR* Path : { TEXT("/Game/OpenTeeGolf/Game/MPC_Wind.MPC_Wind"), TEXT("/Game/Fab/MaterialParameterCollection/QMPC_GlobalFoliageActor.QMPC_GlobalFoliageActor") })

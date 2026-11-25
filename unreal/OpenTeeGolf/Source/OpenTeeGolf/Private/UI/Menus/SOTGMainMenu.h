@@ -43,7 +43,7 @@ public:
 	void SetPracticeMode(const FString& Name, TFunction<void()> Open);
 
 private:
-	enum class EPage : uint8 { Play, Practice, Build, Edit, Players, LaunchMonitor, Settings, WhatsNew };
+	enum class EPage : uint8 { Play, Practice, Build, Edit, Studio, Players, LaunchMonitor, Settings, WhatsNew };
 	void Rebuild();
 	// What's new: each version's changes (WHATS_NEW.md, next to OpenTeeGolf.exe: unreal/release in the repo)
 	TSharedRef<SWidget> WhatsNewPage();
@@ -76,6 +76,9 @@ private:
 	TSharedPtr<SBox> Body;
 	TSharedPtr<class SOTGCourseBuilder> Builder;   // (made once: it keeps its map and searches)
 	TSharedPtr<class SOTGCourseEditor> Editor;     // (the course being edited)
+	TSharedPtr<class SOTGStudio> Studio;           // (the grass biomes and forests, with its preview plot: made each time it's opened)
+	bool bStudioForests = false;
+	void OpenStudio(bool bForests);
 	void OpenEditor(const FString& Id);
 	TSharedRef<SWidget> EditLink(const struct FOTGCourseInfo* Info);
 public:

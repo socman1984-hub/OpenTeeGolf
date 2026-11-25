@@ -237,6 +237,14 @@ struct FOTGCourseTurf
 	TMap<FString, TArray<FGrassTint>> GrassTints;
 	TMap<UMaterialInterface*, UMaterialInterface*> GrassSwaps;
 	TSharedPtr<class otg::FGrass> Grass;
+	// (the course's own kinds, as the grass designer has them - grass.json; what grows is these with
+	// the course's grass biomes - biomes.json, OTGBiomes.h: Regrow)
+	TSharedPtr<TArray<otg::FGrassKind>> OwnKindsP;   // (a pointer: the kinds are only declared here)
+	TArray<otg::FGrassKind>& Own();
+	TSharedPtr<struct FOTGCourseBiomes> Biomes;
+	TArray<otg::FGrassKind> Grown() const;
+	// (the studio's preview: these kinds, no grass.json or biomes.json)
+	void BuildGrassFrom(const TArray<otg::FGrassKind>& Kinds);
 	TArray<TObjectPtr<UMaterialInstanceDynamic>> TurfMats;
 	TArray<TObjectPtr<UStaticMesh>> TurfMeshes;   // (kept loaded: the grass makes cells of them as the camera moves)
 };

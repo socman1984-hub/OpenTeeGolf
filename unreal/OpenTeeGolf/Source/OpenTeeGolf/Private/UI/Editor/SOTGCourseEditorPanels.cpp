@@ -55,8 +55,8 @@ void SOTGCourseEditor::Rebuild()
 	{
 	case 0: Add(HolePanel()); break;
 	case 1: Add(ShapePanel()); break;
-	case 2: Add(TreePanel()); break;
-	case 3: Add(GrassPanel()); break;
+	case 2: Add(ForestPanel()); Add(TreePanel()); break;
+	case 3: Add(BiomePanel()); Add(GrassPanel()); break;
 	case 4: Add(CoursePanel()); break;
 	case 5: Add(PlantPanel()); break;
 	default: Add(BuildingPanel()); break;
@@ -79,6 +79,7 @@ TSharedRef<SWidget> SOTGCourseEditor::TopBar()
 		case EMode::Cut: return FString::Printf(TEXT("Remove trees: click or drag over them (%.0f m wide)  (Esc when done)"), CutR * 2);
 		case EMode::Paint: return FString::Printf(TEXT("Paint tall grass: hold the button and drag (%.0f m wide); right-drag moves the map  (Esc when done)"), BrushR * 2);
 		case EMode::Erase: return FString::Printf(TEXT("Rub tall grass out: hold the button and drag (%.0f m wide)  (Esc when done)"), BrushR * 2);
+		case EMode::Forest: return TEXT("Click inside a group of trees: they're marked as one forest  (Esc to cancel)");
 		default: return Status;
 		}
 	};
@@ -471,6 +472,127 @@ TSharedRef<SWidget> SOTGCourseEditor::GrassPanel()
 	];
 	V->AddSlot().AutoHeight()[Note(FString::Printf(TEXT("%d strokes (amber: painted, grey: rubbed out), on top of the tall grass the game finds in the aerial photo. Rubbed-out grass plays as ordinary rough."), Src.TallGrass.Num()))];
 	return Section(TEXT("Tall grass"), V);
+}
+
+// The course's forests: a group of trees marked (a click) or drawn round, then thickened or thinned,
+// made bigger or smaller, or given a forest from the studio - its species, planted out to its spacing
+TSharedRef<SWidget> SOTGCourseEditor::ForestPanel()
+{
+	TSharedRef<SVerticalBox> V = SNew(SVerticalBox);
+	if (GameDir.IsEmpty())
+	{
+		V->AddSlot().AutoHeight()[Note(TEXT("Forests are kept with the course in the game: put it there first (Save and put in the game)."))];
+		return Section(TEXT("Forests"), V);
+	}
+	if (!LibForests.Num()) LibForests = OTGLibrary::Forests();
+	V->AddSlot().AutoHeight().Padding(0, 0, 0, 2)
+	[
+		SNew(SHorizontalBox)
+		+ SHorizontalBox::Slot().AutoWidth().Padding(0, 0, 6, 0)[Button(TEXT("Mark a forest"), [this]() { SetMode(Mode == EMode::Forest ? EMode::None : EMode::Forest); }, 12, Mode == EMode::Forest)]
+		+ SHorizontalBox::Slot().AutoWidth()[Button(TEXT("Draw a forest"), [this]() { const bool bOn = Mode == EMode::Draw && ModeKind == TEXT("forest"); SetMode(bOn ? EMode::None : EMode::Draw, TEXT("forest")); }, 12, Mode == EMode::Draw && ModeKind == TEXT("forest"))]
+	];
+	V->AddSlot().AutoHeight()[Note(TEXT("Mark: click inside a group of trees and they become one forest. Then make it thicker or thinner, its trees bigger or smaller, or give it a forest made in New course > Forests."))];
+	TSharedRef<SWrapBox> List = SNew(SWrapBox).UseAllottedSize(true);
+	for (int32 i = 0; i < Design.Forests.Num(); i++)
+		List->AddSlot().Padding(0, 0, 4, 4)[Button(Design.Forests[i].Name, [this, i]() { ClearPick(); SelForest = i; Changed(); }, 12, i == SelForest)];
+	if (Design.Forests.Num()) V->AddSlot().AutoHeight().Padding(0, 6, 0, 0)[List];
+	if (Design.Forests.IsValidIndex(SelForest))
+	{
+		const int32 I = SelForest;
+		const FOTGForest& F = Design.Forests[I];
+		int32 N = 0;
+		for (const FFound& T : Found) N += F.Contains(T.P.X, T.P.Y) ? 1 : 0;
+		V->AddSlot().AutoHeight().Padding(0, 6, 0, 2)[Text(FString::Printf(TEXT("%s: %d trees as mapped, %.1f ha"), *F.Name, N, F.AreaM2() / 10000.0), 13, Gold, "Bold")];
+		// its trees: their own, or a forest's from the library
+		TArray<FString> Presets = { FString() };
+		for (const FOTGForestPreset& P : LibForests) Presets.Add(P.Name);
+		V->AddSlot().AutoHeight().Padding(0, 2)[Row(TEXT("Its trees"), Button(F.Preset.IsSet() ? F.Preset.Name : FString(TEXT("Their own (as mapped)")), [this, I, Presets]() {
+			FOTGForest& G = Design.Forests[I];
+			const FString Next = Presets[(Presets.IndexOfByKey(G.Preset.IsSet() ? G.Preset.Name : FString()) + 1) % Presets.Num()];
+			const FOTGForestPreset* P = LibForests.FindByPredicate([&](const FOTGForestPreset& X) { return X.Name == Next; });
+			G.Preset = P ? *P : FOTGForestPreset();
+			SaveForests(P ? FString::Printf(TEXT("%s: %s"), *G.Name, *P->Name) : FString::Printf(TEXT("%s: its own trees"), *G.Name));
+		}, 12))];
+		auto Slide = [&](const FString& Label, float Lo, float Hi, float FOTGForest::* Field, TFunction<FString(float)> Fmt) {
+			V->AddSlot().AutoHeight().Padding(0, 2)[Row(Label, SNew(SHorizontalBox)
+				+ SHorizontalBox::Slot().FillWidth(1).VAlign(VAlign_Center)
+				[
+					SNew(SSlider)
+					.Value_Lambda([this, I, Lo, Hi, Field]() { return Design.Forests.IsValidIndex(I) ? (Design.Forests[I].*Field - Lo) / (Hi - Lo) : 0.f; })
+					.OnValueChanged_Lambda([this, I, Lo, Hi, Field](float X) { if (Design.Forests.IsValidIndex(I)) Design.Forests[I].*Field = FMath::RoundToFloat((Lo + (Hi - Lo) * X) * 20) / 20; })
+					.OnMouseCaptureEnd_Lambda([this, I]() { if (Design.Forests.IsValidIndex(I)) SaveForests(Design.Forests[I].Name + TEXT(" changed")); })
+				]
+				+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(6, 0, 0, 0)
+				[SNew(SBox).WidthOverride(90)[SNew(STextBlock).Font(Font(11, "Bold")).ColorAndOpacity(Ink).Text_Lambda([this, I, Field, Fmt]() { return FText::FromString(Design.Forests.IsValidIndex(I) ? Fmt(Design.Forests[I].*Field) : FString()); })]])];
+		};
+		Slide(TEXT("How many"), FOTGForest::AmountLo, FOTGForest::AmountHi, &FOTGForest::Amount, [](float X) { return FMath::IsNearlyEqual(X, 1.f) ? FString(TEXT("as mapped")) : X <= 0 ? FString(TEXT("none")) : FString::Printf(TEXT("x %.2g"), X); });
+		Slide(TEXT("Their size"), FOTGForest::SizeLo, FOTGForest::SizeHi, &FOTGForest::Size, [](float X) { return FString::Printf(TEXT("%d%%"), FMath::RoundToInt(X * 100)); });
+		if (F.Preset.IsSet())
+			V->AddSlot().AutoHeight().Padding(0, 2)[Row(TEXT("Planted out"), Button(F.bFill ? FString::Printf(TEXT("Yes: %d a hectare"), FMath::RoundToInt(F.Preset.PerHa * F.Amount)) : FString(TEXT("No: the trees there only")), [this, I]() {
+				Design.Forests[I].bFill = !Design.Forests[I].bFill;
+				SaveForests(Design.Forests[I].bFill ? TEXT("Planted out to its spacing") : TEXT("Not planted out"));
+			}, 12, F.bFill))];
+		V->AddSlot().AutoHeight().Padding(0, 4, 0, 0)[Button(TEXT("Delete this forest"), [this, I]() {
+			Design.Forests.RemoveAt(I);
+			SelForest = INDEX_NONE;
+			SaveForests(TEXT("Forest deleted (its trees as they were)"));
+		}, 12)];
+		V->AddSlot().AutoHeight()[Note(TEXT("The game draws it as it is here the next time the course is played: no export needed. The ball meets its trees."))];
+	}
+	return Section(TEXT("Forests"), V);
+}
+
+// The course's grass biomes: its tall grass's, and areas drawn with their own (the studio's: New
+// course > Grass biomes). The rough is left as it is: one even colour
+TSharedRef<SWidget> SOTGCourseEditor::BiomePanel()
+{
+	TSharedRef<SVerticalBox> V = SNew(SVerticalBox);
+	if (GameDir.IsEmpty())
+	{
+		V->AddSlot().AutoHeight()[Note(TEXT("Grass biomes are kept with the course in the game: put it there first (Save and put in the game)."))];
+		return Section(TEXT("Grass biomes"), V);
+	}
+	if (!LibBiomes.Num()) LibBiomes = OTGLibrary::Biomes();
+	TArray<FString> Names = { FString() };
+	for (const FOTGBiome& B : LibBiomes) Names.Add(B.Name);
+	if (AreaBiome.IsEmpty() && LibBiomes.Num()) AreaBiome = LibBiomes[0].Name;
+	V->AddSlot().AutoHeight().Padding(0, 2)[Row(TEXT("All its tall grass"), Button(Biomes.Default.IsEmpty() ? FString(TEXT("The course's own")) : Biomes.Default, [this, Names]() {
+		Biomes.Default = Names[(Names.IndexOfByKey(Biomes.Default) + 1) % Names.Num()];
+		if (const FOTGBiome* B = OTGLibrary::FindIn(LibBiomes, Biomes.Default)) Biomes.Use(*B);
+		SaveBiomes(Biomes.Default.IsEmpty() ? FString(TEXT("The tall grass: the course's own")) : TEXT("The tall grass: ") + Biomes.Default);
+	}, 12))];
+	V->AddSlot().AutoHeight().Padding(0, 4, 0, 2)
+	[
+		SNew(SHorizontalBox)
+		+ SHorizontalBox::Slot().AutoWidth().Padding(0, 0, 6, 0)[Button(TEXT("Draw an area"), [this]() { const bool bOn = Mode == EMode::Draw && ModeKind == TEXT("biome"); SetMode(bOn ? EMode::None : EMode::Draw, TEXT("biome")); }, 12, Mode == EMode::Draw && ModeKind == TEXT("biome"))]
+		+ SHorizontalBox::Slot().AutoWidth()[Button(AreaBiome.IsEmpty() ? FString(TEXT("(no biomes yet)")) : AreaBiome, [this, Names]() {
+			TArray<FString> L = Names; L.RemoveAt(0);
+			if (L.Num()) AreaBiome = L[(L.IndexOfByKey(AreaBiome) + 1) % L.Num()];
+			Changed();
+		}, 12)]
+	];
+	V->AddSlot().AutoHeight()[Note(TEXT("An area grows its biome's grasses instead (where there's tall grass in it). The biomes are made in New course > Grass biomes, with a preview; the rough stays one even colour."))];
+	TSharedRef<SWrapBox> List = SNew(SWrapBox).UseAllottedSize(true);
+	for (int32 i = 0; i < Biomes.Areas.Num(); i++)
+		List->AddSlot().Padding(0, 0, 4, 4)[Button(FString::Printf(TEXT("%d. %s"), i + 1, *Biomes.Areas[i].Biome), [this, i]() { ClearPick(); SelArea = i; Changed(); }, 12, i == SelArea)];
+	if (Biomes.Areas.Num()) V->AddSlot().AutoHeight().Padding(0, 6, 0, 0)[List];
+	if (Biomes.Areas.IsValidIndex(SelArea))
+	{
+		const int32 I = SelArea;
+		V->AddSlot().AutoHeight().Padding(0, 2)[Row(TEXT("Its biome"), Button(Biomes.Areas[I].Biome, [this, I, Names]() {
+			TArray<FString> L = Names; L.RemoveAt(0);
+			if (!L.Num()) return;
+			const FString Next = L[(L.IndexOfByKey(Biomes.Areas[I].Biome) + 1) % L.Num()];
+			if (const FOTGBiome* B = OTGLibrary::FindIn(LibBiomes, Next)) { Biomes.Use(*B); Biomes.Areas[I].Biome = Next; }
+			SaveBiomes(TEXT("Area: ") + Next);
+		}, 12))];
+		V->AddSlot().AutoHeight().Padding(0, 4, 0, 0)[Button(TEXT("Delete this area"), [this, I]() {
+			Biomes.Areas.RemoveAt(I);
+			SelArea = INDEX_NONE;
+			SaveBiomes(TEXT("Area deleted"));
+		}, 12)];
+	}
+	return Section(TEXT("Grass biomes"), V);
 }
 
 TSharedRef<SWidget> SOTGCourseEditor::BuildingPanel()

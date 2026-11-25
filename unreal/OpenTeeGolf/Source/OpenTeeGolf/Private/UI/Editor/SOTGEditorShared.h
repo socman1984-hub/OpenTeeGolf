@@ -47,6 +47,8 @@ namespace
 		if (K == TEXT("penalty")) return TEXT("Penalty area");
 		if (K == TEXT("oob")) return TEXT("Out of bounds");
 		if (K == TEXT("trees")) return TEXT("Tree area");
+		if (K == TEXT("forest")) return TEXT("Forest");
+		if (K == TEXT("biome")) return TEXT("Grass biome area");
 		return K;
 	}
 	const TArray<TPair<FString, FString>>& BuildingTypes()

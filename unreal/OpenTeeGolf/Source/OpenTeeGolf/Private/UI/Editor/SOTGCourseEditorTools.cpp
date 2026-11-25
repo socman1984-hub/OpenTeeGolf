@@ -73,7 +73,7 @@ void SOTGCourseEditor::Changed()
 
 void SOTGCourseEditor::ClearPick()
 {
-	SelShape = SelTree = SelFound = SelRemoved = SelBuilding = INDEX_NONE;
+	SelShape = SelTree = SelFound = SelRemoved = SelBuilding = SelForest = SelArea = INDEX_NONE;
 	SelMany.Reset();
 }
 
@@ -94,6 +94,31 @@ void SOTGCourseEditor::FinishDraw()
 	TArray<FVector2D> P;
 	for (const FVector2D& Q : DrawPts) if (!P.Num() || FVector2D::Distance(P.Last(), Q) > 0.3) P.Add(Q);
 	if (P.Num() < 3) { Status = TEXT("A shape needs at least 3 points"); Changed(); return; }
+	// (a forest, or an area of the tall grass with a biome of its own: kept in the game's folder)
+	if (ModeKind == TEXT("forest"))
+	{
+		FOTGForest F;
+		F.Name = FString::Printf(TEXT("Forest %d"), Design.Forests.Num() + 1);
+		F.Pts = P;
+		Design.Forests.Add(F);
+		ClearPick();
+		SelForest = Design.Forests.Num() - 1;
+		SetMode(EMode::None);
+		SaveForests(TEXT("Forest drawn"));
+		return;
+	}
+	if (ModeKind == TEXT("biome"))
+	{
+		const FOTGBiome* B = OTGLibrary::FindIn(LibBiomes, AreaBiome);
+		if (!B) { Status = TEXT("Pick a biome for it first"); Changed(); return; }
+		Biomes.Use(*B);
+		Biomes.Areas.Add({ B->Name, P });
+		ClearPick();
+		SelArea = Biomes.Areas.Num() - 1;
+		SetMode(EMode::None);
+		SaveBiomes(FString::Printf(TEXT("%s area drawn"), *B->Name));
+		return;
+	}
 	Change();
 	// (only one boundary)
 	if (ModeKind == TEXT("oob")) Src.Shapes.RemoveAll([](const FOTGSourceShape& S) { return S.Kind == TEXT("oob"); });
@@ -179,6 +204,151 @@ void SOTGCourseEditor::RestoreRemoved()
 	Src.RemovedTrees.RemoveAt(SelRemoved);
 	ClearPick();
 	Changed();
+}
+
+void SOTGCourseEditor::SaveForests(const FString& Say)
+{
+	if (GameDir.IsEmpty()) { Status = TEXT("Put the course in the game first: forests are kept with it"); Changed(); return; }
+	Status = Design.Save(GameDir) ? Say + TEXT(" (saved for the game)") : FString(TEXT("Couldn't save the forests"));
+	// (the game reads the course afresh next time it's played)
+	if (UGameInstance* G = GI()) if (UOTGCourseSubsystem* C = G->GetSubsystem<UOTGCourseSubsystem>()) C->LastExport = nullptr;
+	Changed();
+}
+
+void SOTGCourseEditor::SaveBiomes(const FString& Say)
+{
+	if (GameDir.IsEmpty()) { Status = TEXT("Put the course in the game first: its grass biomes are kept with it"); Changed(); return; }
+	const int32 Was = SelArea;
+	Biomes.Tidy();
+	if (!Biomes.Areas.IsValidIndex(Was)) SelArea = INDEX_NONE;
+	Status = Biomes.Save(GameDir) ? Say + TEXT(" (saved for the game)") : FString(TEXT("Couldn't save the grass biomes"));
+	if (UGameInstance* G = GI()) if (UOTGCourseSubsystem* C = G->GetSubsystem<UOTGCourseSubsystem>()) C->LastExport = nullptr;
+	Changed();
+}
+
+// A forest marked by a click: the found trees joined to the nearest one (each within 16 m of
+// another), round them an outline (their hull, 5 m out)
+void SOTGCourseEditor::MarkForest(const FVector2D& P)
+{
+	if (GameDir.IsEmpty() || !Found.Num()) { Status = TEXT("The trees show once the course is in the game: put it there first, or draw a forest"); Changed(); return; }
+	constexpr double Link = 16, Reach = 25;
+	int32 Seed = INDEX_NONE;
+	double Best = Reach;
+	for (int32 i = 0; i < Found.Num(); i++) { const double D = FVector2D::Distance(Found[i].P, P); if (D < Best) { Best = D; Seed = i; } }
+	if (Seed == INDEX_NONE) { Status = TEXT("No trees there: click inside a group of them"); Changed(); return; }
+	TMultiMap<FIntPoint, int32> Grid;
+	auto Cell = [&](const FVector2D& Q) { return FIntPoint(FMath::FloorToInt32(Q.X / Link), FMath::FloorToInt32(Q.Y / Link)); };
+	for (int32 i = 0; i < Found.Num(); i++) Grid.Add(Cell(Found[i].P), i);
+	TArray<bool> Seen;
+	Seen.SetNumZeroed(Found.Num());
+	TArray<int32> In = { Seed };
+	Seen[Seed] = true;
+	for (int32 n = 0; n < In.Num(); n++)
+	{
+		const FVector2D Q = Found[In[n]].P;
+		const FIntPoint C = Cell(Q);
+		for (int32 dz = -1; dz <= 1; dz++)
+			for (int32 dx = -1; dx <= 1; dx++)
+				for (auto It = Grid.CreateConstKeyIterator(C + FIntPoint(dx, dz)); It; ++It)
+					if (!Seen[It.Value()] && FVector2D::Distance(Found[It.Value()].P, Q) <= Link) { Seen[It.Value()] = true; In.Add(It.Value()); }
+	}
+	if (In.Num() < 4) { Status = FString::Printf(TEXT("Only %d trees there: a forest is a group of them (or draw one round them)"), In.Num()); Changed(); return; }
+	// (round them: a grid of 4 m cells, those within 8 m of one of its trees in; the outline of that
+	// - its cells' outer edges walked round, the longest loop - smoothed of its steps)
+	constexpr double CellM = 4, Crown = 8;
+	FBox2D Box(ForceInit);
+	for (int32 i : In) Box += Found[i].P;
+	Box = Box.ExpandBy(Crown + CellM * 2);
+	const int32 GW = FMath::CeilToInt32(Box.GetSize().X / CellM), GH = FMath::CeilToInt32(Box.GetSize().Y / CellM);
+	TArray<uint8> Occ;
+	Occ.SetNumZeroed(GW * GH);
+	const int32 R = FMath::CeilToInt32(Crown / CellM);
+	for (int32 i : In)
+	{
+		const int32 CI = FMath::FloorToInt32((Found[i].P.X - Box.Min.X) / CellM), CJ = FMath::FloorToInt32((Found[i].P.Y - Box.Min.Y) / CellM);
+		for (int32 dj = -R; dj <= R; dj++)
+			for (int32 di = -R; di <= R; di++)
+			{
+				const int32 I2 = CI + di, J2 = CJ + dj;
+				if (I2 < 0 || J2 < 0 || I2 >= GW || J2 >= GH) continue;
+				const FVector2D C(Box.Min.X + (I2 + 0.5) * CellM, Box.Min.Y + (J2 + 0.5) * CellM);
+				if (FVector2D::Distance(C, Found[i].P) <= Crown) Occ[J2 * GW + I2] = 1;
+			}
+	}
+	auto IsIn = [&](int32 I2, int32 J2) { return I2 >= 0 && J2 >= 0 && I2 < GW && J2 < GH && Occ[J2 * GW + I2]; };
+	// (each in cell's edges on an out one, going round it anticlockwise: from a corner to the next)
+	TMultiMap<FIntPoint, FIntPoint> Next;
+	for (int32 J2 = 0; J2 < GH; J2++)
+		for (int32 I2 = 0; I2 < GW; I2++)
+		{
+			if (!IsIn(I2, J2)) continue;
+			if (!IsIn(I2, J2 - 1)) Next.Add(FIntPoint(I2, J2), FIntPoint(I2 + 1, J2));
+			if (!IsIn(I2 + 1, J2)) Next.Add(FIntPoint(I2 + 1, J2), FIntPoint(I2 + 1, J2 + 1));
+			if (!IsIn(I2, J2 + 1)) Next.Add(FIntPoint(I2 + 1, J2 + 1), FIntPoint(I2, J2 + 1));
+			if (!IsIn(I2 - 1, J2)) Next.Add(FIntPoint(I2, J2 + 1), FIntPoint(I2, J2));
+		}
+	TArray<FIntPoint> Outer;
+	while (Next.Num())
+	{
+		TArray<FIntPoint> Loop;
+		FIntPoint At = Next.CreateConstIterator().Key();
+		const FIntPoint Start = At;
+		for (int32 Guard = 0; Guard < 200000; Guard++)
+		{
+			FIntPoint* To = Next.Find(At);
+			if (!To) break;
+			const FIntPoint T = *To;
+			Next.RemoveSingle(At, T);
+			Loop.Add(At);
+			At = T;
+			if (At == Start) break;
+		}
+		if (Loop.Num() > Outer.Num()) Outer = MoveTemp(Loop);
+	}
+	// (to metres; the stairs' corners dropped where the line runs on, then points under 3 m off the line through their neighbours)
+	TArray<FVector2D> Hull;
+	for (const FIntPoint& Q : Outer) Hull.Add(FVector2D(Box.Min.X + Q.X * CellM, Box.Min.Y + Q.Y * CellM));
+	TFunction<void(int32, int32, TArray<bool>&)> Keep = [&](int32 A, int32 B, TArray<bool>& K) {
+		double Far = 0; int32 FarI = INDEX_NONE;
+		const FVector2D D = Hull[B] - Hull[A];
+		for (int32 k = A + 1; k < B; k++)
+		{
+			const double Off = D.IsNearlyZero() ? FVector2D::Distance(Hull[k], Hull[A]) : FMath::Abs(FVector2D::CrossProduct(D, Hull[k] - Hull[A])) / D.Size();
+			if (Off > Far) { Far = Off; FarI = k; }
+		}
+		if (FarI != INDEX_NONE && Far > 4.0) { K[FarI] = true; Keep(A, FarI, K); Keep(FarI, B, K); }
+	};
+	if (Hull.Num() > 8)
+	{
+		const FVector2D First = Hull[0];   // (a copy: Add from its own element asserts)
+		Hull.Add(First);
+		TArray<bool> K;
+		K.SetNumZeroed(Hull.Num());
+		K[0] = K.Last() = true;
+		const int32 Mid = Hull.Num() / 2;
+		K[Mid] = true;
+		Keep(0, Mid, K);
+		Keep(Mid, Hull.Num() - 1, K);
+		TArray<FVector2D> Kept;
+		for (int32 k = 0; k < Hull.Num() - 1; k++) if (K[k]) Kept.Add(Hull[k]);
+		// (and its corners cut, once: a quarter of the way along each side from either end)
+		Hull.Reset();
+		for (int32 k = 0; k < Kept.Num(); k++)
+		{
+			const FVector2D A = Kept[k], B = Kept[(k + 1) % Kept.Num()];
+			Hull.Add(A * 0.75 + B * 0.25);
+			Hull.Add(A * 0.25 + B * 0.75);
+		}
+	}
+	if (Hull.Num() < 3) { Status = TEXT("Couldn't draw round those trees: draw the forest instead"); Changed(); return; }
+	FOTGForest F;
+	F.Name = FString::Printf(TEXT("Forest %d"), Design.Forests.Num() + 1);
+	F.Pts = Hull;
+	Design.Forests.Add(F);
+	ClearPick();
+	SelForest = Design.Forests.Num() - 1;
+	SetMode(EMode::None);
+	SaveForests(FString::Printf(TEXT("A forest of %d trees marked"), In.Num()));
 }
 
 void SOTGCourseEditor::DesignUndo(int32 FoundI)

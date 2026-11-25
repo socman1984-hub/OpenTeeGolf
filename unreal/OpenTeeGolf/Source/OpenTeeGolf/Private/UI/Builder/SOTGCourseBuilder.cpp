@@ -117,6 +117,14 @@ void SOTGCourseBuilder::Construct(const FArguments&)
 			SAssignNew(Side, SBox).WidthOverride(440)
 			[
 				SNew(SVerticalBox)
+				// the grass biomes and forests the course editor gives a course (SOTGStudio)
+				+ SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 6)
+				[
+					Box(SNew(SHorizontalBox)
+						+ SHorizontalBox::Slot().FillWidth(1).VAlign(VAlign_Center)[Text(TEXT("Grass and trees for your courses"), 13, Soft)]
+						+ SHorizontalBox::Slot().AutoWidth().Padding(6, 0, 0, 0)[Button(TEXT("Grass biomes"), [this]() { if (OnStudio) OnStudio(false); }, 12)]
+						+ SHorizontalBox::Slot().AutoWidth().Padding(4, 0, 0, 0)[Button(TEXT("Forests"), [this]() { if (OnStudio) OnStudio(true); }, 12)], FMargin(12, 8), Solid)
+				]
 				+ SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 6)
 				[
 					Box(SNew(SVerticalBox)

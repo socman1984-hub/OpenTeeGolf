@@ -113,7 +113,18 @@ shapes (greens, fairways, bunkers, tees, water, penalty areas, the boundary, tre
 tall grass, buildings and the course's looks, on its aerial photo; "Save and update the game"
 puts most changes in the game in seconds (the holes, greens, fairways, tees, bunkers, trees and
 tall grass); "Put in the game (full)" gets it all ready again, water and the rest (5-20 minutes,
-in the queue). Hover over a button for what it does. "Courses you've built" exports one again, brings it up to date from
+in the queue). Hover over a button for what it does.
+
+Grass biomes and forests: New course > Grass biomes (or Forests) is a studio where you put grasses
+together into a "biome" - which tall grasses and wildflowers, how many, how tall, in what patches,
+what colour - or trees into a forest - which species and how many of each, drawn as which model,
+how tall, how close, and the grass under them. A plot beside it shows it as you change it (drag to
+look round, the wheel to come closer). Save keeps it for every course (Documents\OpenTeeGolf\
+Library). Then in the course editor: Tall grass > Grass biomes gives all a course's tall grass one,
+or areas you draw their own (the rough stays as it is); Trees > Forests - Mark a forest (click inside
+a group of trees) or Draw one, then make it thicker or thinner (up to three times as many), its
+trees bigger or smaller, or give it a forest from the studio (its species, planted out to its
+spacing). They're in the game the next time the course is played: no export needed. "Courses you've built" exports one again, brings it up to date from
 OpenStreetMap, or deletes it. Built courses go in Documents\OpenTeeGolf\Courses, their
 sources in Documents\OpenTeeGolf\CourseSources. The first time a course is opened the game builds
 it (a loading screen shows how far along it is: under a minute for most courses). Courses exported

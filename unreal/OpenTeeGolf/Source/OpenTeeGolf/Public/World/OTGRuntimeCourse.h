@@ -105,6 +105,15 @@ public:
 	// The picked one marked on the course (a gold ring round it, a gold marker above): called each
 	// frame while it's picked - not called for a moment, the marks go
 	void MarkPicked(const FOTGPicked& P) { Trees.MarkPicked(P); }
+	// The studio's preview plot (AOTGPreviewStage, OTGCoursePreview.cpp): built with no export folder -
+	// flat ground SizeM a side with this actor in the middle, a round of tall grass in short rough -
+	// then grown with these kinds, and planted with this forest preset (none: no trees)
+	void BuildPreview(double SizeM);
+	void PreviewGrass(const TArray<otg::FGrassKind>& Kinds);
+	void PreviewForest(const FOTGForestPreset* Preset);
+	// (the wind's parameter collections in a level before any grass or tree material reading them draws)
+	static void EnsureWindCollections(UWorld* W);
+
 	// (a point in the level, cm, as course metres x z / as the level's metres a rock is keyed by)
 	FVector2D CourseXZ(const FVector& World) const;
 	FVector2D RockXY(const FVector& World) const;

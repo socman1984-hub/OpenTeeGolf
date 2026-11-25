@@ -275,6 +275,21 @@ namespace
 		}
 		return O;
 	}
+
+	// (a biome's kind under its own name: "fescue@2" saved as "fescue")
+	otg::FGrassKind BaseKind(const otg::FGrassKind& K)
+	{
+		otg::FGrassKind B = K;
+		B.Name = K.BaseName();
+		if (!B.FarOf.IsEmpty()) { int32 At; if (B.FarOf.FindChar(TEXT('@'), At)) B.FarOf = B.FarOf.Left(At); }
+		B.Biome = -1;
+		return B;
+	}
+}
+
+TSharedRef<FJsonObject> otg::FGrass::KindToJson(const FGrassKind& K)
+{
+	return KindJson(BaseKind(K));
 }
 
 TArray<otg::FGrassKind> otg::FGrass::LoadKinds(const FString& Dir)
@@ -290,23 +305,28 @@ TArray<otg::FGrassKind> otg::FGrass::LoadKinds(const FString& Dir)
 	// off - it grows only where the designer has turned it on since)
 	double Version = 1;
 	J->TryGetNumberField(TEXT("version"), Version);
-	for (const TSharedPtr<FJsonValue>& V : *List)
+	for (const TSharedPtr<FJsonValue>& V : *List) ApplyKindJson(Out, V.IsValid() ? V->AsObject() : nullptr, Version);
+	Derive(Out);
+	return Out;
+}
+
+bool otg::FGrass::ApplyKindJson(TArray<FGrassKind>& Out, const TSharedPtr<FJsonObject>& O, double Version)
+{
 	{
-		const TSharedPtr<FJsonObject> O = V.IsValid() ? V->AsObject() : nullptr;
 		FString Name;
-		if (!O.IsValid() || !O->TryGetStringField(TEXT("name"), Name)) continue;
+		if (!O.IsValid() || !O->TryGetStringField(TEXT("name"), Name)) return false;
 		FGrassKind* K = Out.FindByPredicate([&](const FGrassKind& X) { return X.Name == Name; });
 		if (!K)
 		{
 			// (a Megascans plant added in the designer)
 			const TArray<TSharedPtr<FJsonValue>>* Fab = nullptr;
-			if (!Name.StartsWith(TEXT("fab_")) || !O->TryGetArrayField(TEXT("fab"), Fab) || !Fab->Num()) continue;
+			if (!Name.StartsWith(TEXT("fab_")) || !O->TryGetArrayField(TEXT("fab"), Fab) || !Fab->Num()) return false;
 			FGrassKind A = PlantKind((*Fab)[0]->AsString());
 			A.Name = Name;
 			O->TryGetStringField(TEXT("label"), A.Label);
 			K = &Out.Add_GetRef(A);
 		}
-		if (!K->FarOf.IsEmpty()) continue;   // (follows its near kind)
+		if (!K->FarOf.IsEmpty()) return true;   // (follows its near kind)
 		if (Version >= 2 || Name != TEXT("heather")) O->TryGetBoolField(TEXT("on"), K->bOn);
 		FString Surface;
 		// (the rough stays one even colour: only kinds in its colours grow on it)
@@ -336,8 +356,7 @@ TArray<otg::FGrassKind> otg::FGrass::LoadKinds(const FString& Dir)
 		if (K->ScaleHi < K->ScaleLo) Swap(K->ScaleLo, K->ScaleHi);
 		if (K->PatchM > 0 && K->PatchHi < K->PatchLo + 0.01f) K->PatchHi = K->PatchLo + 0.01f;
 	}
-	Derive(Out);
-	return Out;
+	return true;
 }
 
 bool otg::FGrass::SaveKinds(const FString& Dir, const TArray<FGrassKind>& Kinds)
@@ -345,7 +364,7 @@ bool otg::FGrass::SaveKinds(const FString& Dir, const TArray<FGrassKind>& Kinds)
 	const TSharedRef<FJsonObject> J = MakeShared<FJsonObject>();
 	J->SetNumberField(TEXT("version"), 2);
 	TArray<TSharedPtr<FJsonValue>> List;
-	for (const FGrassKind& K : Kinds) if (K.FarOf.IsEmpty()) List.Add(MakeShared<FJsonValueObject>(KindJson(K)));
+	for (const FGrassKind& K : Kinds) if (K.FarOf.IsEmpty() && K.Biome <= 0) List.Add(MakeShared<FJsonValueObject>(KindJson(BaseKind(K))));
 	J->SetArrayField(TEXT("kinds"), List);
 	FString Text;
 	FJsonSerializer::Serialize(J, TJsonWriterFactory<>::Create(&Text));

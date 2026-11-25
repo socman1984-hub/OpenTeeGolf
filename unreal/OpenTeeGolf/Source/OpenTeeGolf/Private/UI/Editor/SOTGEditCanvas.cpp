@@ -293,6 +293,31 @@ int32 SOTGEditCanvas::OnPaint(const FPaintArgs&, const FGeometry& G, const FSlat
 		}
 	}
 	L += 5;
+	// the grass biomes' areas (each biome its own colour) and the forests (green outlines), the picked
+	// one brighter
+	if (Ed->bShowGrass)
+		for (int32 a = 0; a < Ed->Biomes.Areas.Num(); a++)
+		{
+			const FOTGBiomeArea& A = Ed->Biomes.Areas[a];
+			const FLinearColor C = FLinearColor::MakeFromHSV8(uint8(GetTypeHash(A.Biome) % 255), 150, 230);
+			PolyFill(Out, L, G, A.Pts, FLinearColor(C.R, C.G, C.B, a == Ed->SelArea ? 0.32f : 0.18f));
+			PolyLine(Out, L + 1, G, A.Pts, FLinearColor(C.R, C.G, C.B, 0.9f), a == Ed->SelArea ? 2.5f : 1.2f, true);
+			FVector2D Mid = FVector2D::ZeroVector;
+			for (const FVector2D& Q : A.Pts) Mid += Q;
+			Label(Out, L + 2, G, ToScreen(Mid / FMath::Max(1, A.Pts.Num())), A.Biome, FLinearColor::White);
+		}
+	if (Ed->bShowTrees)
+		for (int32 f = 0; f < Ed->Design.Forests.Num(); f++)
+		{
+			const FOTGForest& F = Ed->Design.Forests[f];
+			const bool bOn = f == Ed->SelForest;
+			// (its outline only: a forest's is rarely convex, and the fill's a fan from its first corner)
+			PolyLine(Out, L + 1, G, F.Pts, bOn ? FLinearColor(1, 0.85f, 0.2f, 1) : FLinearColor(0.35f, 1.f, 0.45f, 0.9f), bOn ? 2.5f : 1.5f, true);
+			FVector2D Mid = FVector2D::ZeroVector;
+			for (const FVector2D& Q : F.Pts) Mid += Q;
+			Label(Out, L + 2, G, ToScreen(Mid / FMath::Max(1, F.Pts.Num())), F.Preset.IsSet() ? F.Name + TEXT(": ") + F.Preset.Name : F.Name, FLinearColor::White);
+		}
+	L += 3;
 	// the holes: each one's line, the one being edited with its tees, aim points, green and pins
 	for (int32 h = 0; h < S.Holes.Num(); h++)
 	{
@@ -354,6 +379,7 @@ FReply SOTGEditCanvas::OnMouseButtonDown(const FGeometry& G, const FPointerEvent
 	{
 	case EM::Draw: Ed->DrawPts.Add(W); Drag = EDrag::None; return Reply;
 	case EM::Place: Ed->PlacePoint(W); Drag = EDrag::None; return Reply;
+	case EM::Forest: Ed->MarkForest(W); Drag = EDrag::None; return Reply;
 	case EM::AddTree:
 	{
 		Ed->Change();
@@ -503,6 +529,11 @@ FReply SOTGEditCanvas::OnMouseButtonUp(const FGeometry& G, const FPointerEvent& 
 		}
 		if (!bHit && Ed->bShowBuildings)
 			for (int32 b = 0; b < Ed->Buildings.Num(); b++) if (InPoly(Ed->Buildings[b].Pts, W)) { Ed->SelBuilding = b; bHit = true; break; }
+		// (a forest on the trees' tab, a grass biome's area on the tall grass's)
+		if (!bHit && Ed->CurrentTab() == 2)
+			for (int32 f = Ed->Design.Forests.Num() - 1; f >= 0 && !bHit; f--) if (InPoly(Ed->Design.Forests[f].Pts, W)) { Ed->SelForest = f; bHit = true; }
+		if (!bHit && Ed->CurrentTab() == 3)
+			for (int32 a = Ed->Biomes.Areas.Num() - 1; a >= 0 && !bHit; a--) if (InPoly(Ed->Biomes.Areas[a].Pts, W)) { Ed->SelArea = a; bHit = true; }
 		if (!bHit)
 		{
 			// (the shape on top: the boundary only near its line)

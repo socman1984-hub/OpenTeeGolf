@@ -50,6 +50,48 @@ struct FOTGRockEdit
 	static constexpr float SizeLo = 0.3f, SizeHi = 4.f;
 };
 
+// A forest's make-up - a forest preset, made in the studio (SOTGStudio) and kept in the library
+// (OTGBiomes.h OTGLibrary): its species, each with its share and the model it's drawn with, how tall,
+// how close they stand, and the grass biome under them
+struct FOTGForestSpecies
+{
+	FString Kind;                   // (a species: FOTGTreeDesign::AllSpecies)
+	float Share = 1.f;              // (against the others': 0..10)
+	FString Model;                  // (drawn as this: Models(); empty or auto: the game's choice)
+};
+
+struct FOTGForestPreset
+{
+	FString Name;
+	TArray<FOTGForestSpecies> Species;
+	float HeightLo = 12.f, HeightHi = 22.f;   // m
+	float PerHa = 300.f;                      // trees a hectare, where a forest is planted to it
+	FString Under;                            // (the grass biome under them, by name: none, the course's)
+	static constexpr float PerHaLo = 20, PerHaHi = 1200, HeightMin = 2, HeightMax = 40;
+	bool IsSet() const { return Species.ContainsByPredicate([](const FOTGForestSpecies& S) { return S.Share > 0 && !S.Kind.IsEmpty(); }); }
+	// (the species a tree at X, Z is, by the shares - the same every time; null if none set)
+	const FOTGForestSpecies* PickAt(double X, double Z) const;
+	float HeightAt(double X, double Z) const;
+	TSharedRef<class FJsonObject> ToJson() const;
+	static bool FromJson(const TSharedPtr<class FJsonObject>& O, FOTGForestPreset& Out);
+};
+
+// A forest on the course: trees inside an outline (course metres) taken together - as many as
+// mapped or more or fewer (Amount), larger or smaller, and as the preset has them (their species
+// and models; empty: their own). bFill plants it out to the preset's spacing where it has fewer.
+struct FOTGForest
+{
+	FString Name;
+	TArray<FVector2D> Pts;
+	FOTGForestPreset Preset;        // (a copy: the course keeps it as picked, the library may change)
+	float Amount = 1.f, Size = 1.f;
+	bool bFill = false;
+	static constexpr float AmountLo = 0, AmountHi = 3, SizeLo = 0.5f, SizeHi = 2.f;
+	bool Contains(double X, double Z) const;
+	FBox2D Bounds() const;
+	double AreaM2() const;
+};
+
 struct OPENTEEGOLF_API FOTGTreeDesign
 {
 	TMap<FString, FOTGSpeciesLook> Species;
@@ -59,6 +101,8 @@ struct OPENTEEGOLF_API FOTGTreeDesign
 	FString RockModel;                                         // (the rocks' look: RockModels; empty: the game's stones)
 	TArray<FOTGTreeEdit> Trees;                                // (one at a time: picked, changed, added)
 	TArray<FOTGRockEdit> Rocks;
+	TArray<FOTGForest> Forests;                                // (the course editor's: OTGCourseData ForEachDesignedTree)
+	const FOTGForest* ForestAt(double X, double Z) const;      // (the last drawn that holds it)
 
 	// The edit of the tree or rock standing at (X, Z), if it has one (to 15 cm)
 	const FOTGTreeEdit* TreeEditAt(double X, double Z) const;
@@ -83,7 +127,7 @@ struct OPENTEEGOLF_API FOTGTreeDesign
 	FOTGSpeciesLook For(const FString& Kind) const;
 	float SizeOf(const FString& Kind) const { return AllSize * For(Kind).Size; }
 	// How many of a tree at (X, Z) (course metres): 0 (taken out), 1, or more
-	int32 Copies(const FString& Kind, double X, double Z) const;
+	int32 Copies(const FString& Kind, double X, double Z, float Times = 1.f) const;
 	// Where copy I (1, 2 ...) of a tree stands, R metres its crown's radius: round it, clear of its crown
 	static FVector2D CopyAt(double X, double Z, int32 I, double R);
 	// A rock at (X, Z): kept, and its size

@@ -36,6 +36,7 @@ public:
 	EActiveTimerReturnType Pulse(double Time, float Dt);
 	TFunction<void(const FString& CourseId)> OnReady;   // (a course built and exported: play it)
 	TFunction<void(const FString& CourseId)> OnEdit;    // (a built course to edit)
+	TFunction<void(bool bForests)> OnStudio;            // (the grass biomes and forests: SOTGStudio)
 	void Refresh() { LoadBuilt(); }
 
 private:

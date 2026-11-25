@@ -24,7 +24,9 @@ reports their objects to the garbage collector (`AddReferencedObjects`).
 | File | What it is |
 |---|---|
 | `OTGGrass.h`, `OTGGrass.cpp`, `OTGGrassKinds.cpp` | `otg::FGrass`: grass streamed round the camera in cells, placed off the game thread. Its kinds are the game's own blades, Megascans plants and Greensward mats. |
-| `OTGTreeDesign.h` | `FOTGTreeDesign`: the tree designer's changes, saved per course. |
+| `OTGTreeDesign.h` | `FOTGTreeDesign`: the tree designer's changes, saved per course; forest presets and a course's forests. |
+| `OTGBiomes.h`, `OTGBiomes.cpp` | Grass biomes and forest presets, the library they're kept in (Documents\OpenTeeGolf\Library), and a course's biomes (`biomes.json`). |
+| `OTGPreviewStage.h`, `OTGPreviewStage.cpp`, `OTGCoursePreview.cpp` | The studio's live preview: a plot built by the course's own code in the menu's level, with its own sun, sky and camera. |
 | `OTGPalette.h` | The turf's palette: one green, each cut set apart by its lightness. |
 | `OTGKiteDemo.h` | The KiteDemo pack's pieces the game uses. |
 | `OTGTurfBake.cpp` | `AOTGRuntimeCourse::BakeTurf`: the grass photographed into turf textures (a tool). |
