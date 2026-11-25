@@ -4,6 +4,13 @@ The newest version first. The game shows this on its What's new page. make_relea
 OpenTeeGolf.exe, and publish_release.py puts each version's part on its GitHub release.
 A version's heading is "## <version> - <date>", and its changes are "- " lines under it.
 
+## 0.25.0 - 25 November 2026
+- Grass biomes: in New course > Grass biomes, mix the tall grasses, wildflowers, heather and ferns into your own "biome" (how many of each, how tall, in what patches, what colour) and see it grow on a preview plot as you change it. Five come ready made: heathland, wildflower meadow, links dunes, woodland floor and the game's own tall grass.
+- Forests: in New course > Forests, mix tree species into a forest (how many of each, drawn as which model, how tall, how close, and the grass under them), with a live preview. Four come ready made.
+- Your biomes and forests are kept for every course, in Documents\OpenTeeGolf\Library.
+- In the course editor, give a course's tall grass a biome, or draw areas with their own (the rough stays one even colour).
+- In the course editor, click inside a group of trees to mark it as a forest (or draw one), then make it thicker or thinner, its trees bigger or smaller, or give it one of your forests. It's in the game the next time you play the course: no rebuild needed.
+
 ## 0.24.0 - 20 November 2026
 - Creeks are full of water right to their ends: no more dry dirt where a creek meets a pond, and the creek joins the pond at its level.
 - A pond that sits above a creek is held back by a grassy bank instead of its water hanging in the air.

@@ -8,6 +8,10 @@
 # game builds them when they're opened - and adds the Garmin R10 and Square Golf bridge programs, a
 # README for players and the notices.
 # The version is the web version's (package.json).
+#
+#   -SkipWorldCourses: leave lib/world-courses.json.gz as it is (its refresh asks OpenStreetMap's
+#   servers about the whole world, area by area: when they're slow it can take hours)
+param([switch]$SkipWorldCourses)
 
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
@@ -59,9 +63,13 @@ foreach ($b in @(@('10over', 'v0.2.0'), @('allsquare', 'v0.2.0'))) {
 
 # ---- the world's golf courses for the course builder's map (lib/world-courses.json.gz): brought up
 # to date from OpenStreetMap (tiles fetched in the last month come from data\cache)
-Push-Location $Root
-try { node scripts/world-courses.js | Select-Object -Last 1 } finally { Pop-Location }
-if ($LASTEXITCODE -ne 0) { throw 'Updating the world course list failed.' }
+if ($SkipWorldCourses) { Write-Host 'The world course list left as it is (-SkipWorldCourses)' }
+else
+{
+  Push-Location $Root
+  try { node scripts/world-courses.js | Select-Object -Last 1 } finally { Pop-Location }
+  if ($LASTEXITCODE -ne 0) { throw 'Updating the world course list failed.' }
+}
 
 # ---- the course helper (Helper\: the web version's server and its Node.js, run hidden by the game
 # to find, build and export courses: UOTGHelperSubsystem, lib/helper.js); not its launch monitor
