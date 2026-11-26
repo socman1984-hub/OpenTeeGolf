@@ -8,8 +8,9 @@
 #include "OTGLaunchMonitorTypes.generated.h"
 
 // How shots arrive: FS Golf through OpenConnect (the OpenConnect listener always runs), the Mevo+
-// directly over its Wi-Fi, a Garmin R10 or Square Golf through their bridge programs, or any Flight
-// Relay Protocol device
+// directly over its Wi-Fi, a Garmin R10 or Square Golf through their bridge programs, any Flight
+// Relay Protocol device, or rēlā (docs.rela.golf: a connector for many launch monitors, sending to
+// the OpenConnect listener as it would to GSPro)
 UENUM(BlueprintType)
 enum class EOTGConnection : uint8
 {
@@ -18,6 +19,7 @@ enum class EOTGConnection : uint8
 	R10 UMETA(DisplayName = "Garmin R10"),
 	Square UMETA(DisplayName = "Square Golf"),
 	Frp UMETA(DisplayName = "Flight Relay Protocol device"),
+	Rela UMETA(DisplayName = "rela (GSPro output, OpenConnect)"),
 };
 
 USTRUCT(BlueprintType)

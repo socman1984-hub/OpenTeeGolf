@@ -32,12 +32,13 @@ namespace
 		case EOTGConnection::R10: return TEXT("r10");
 		case EOTGConnection::Square: return TEXT("square");
 		case EOTGConnection::Frp: return TEXT("frp");
+		case EOTGConnection::Rela: return TEXT("rela");
 		default: return TEXT("fsgolf");
 		}
 	}
 	bool KindOf(const FString& S, EOTGConnection& Out)
 	{
-		for (EOTGConnection K : { EOTGConnection::FSGolf, EOTGConnection::Direct, EOTGConnection::R10, EOTGConnection::Square, EOTGConnection::Frp })
+		for (EOTGConnection K : { EOTGConnection::FSGolf, EOTGConnection::Direct, EOTGConnection::R10, EOTGConnection::Square, EOTGConnection::Frp, EOTGConnection::Rela })
 			if (S.Equals(KindName(K), ESearchCase::IgnoreCase)) { Out = K; return true; }
 		return false;
 	}
@@ -442,13 +443,14 @@ void UOTGLaunchMonitorSubsystem::Compose()
 	const FOTGLMDeviceState Oc = OcOut ? OcOut->Read() : FOTGLMDeviceState();
 	S.PortError = Oc.PortError;
 	const FOTGLMDeviceState D = DevOut ? DevOut->Read() : FOTGLMDeviceState();
-	if (Connection == EOTGConnection::FSGolf)
+	// (FS Golf and rēlā both send to the OpenConnect listener: rēlā as to GSPro)
+	if (Connection == EOTGConnection::FSGolf || Connection == EOTGConnection::Rela)
 	{
 		S.bConnected = Oc.bConnected;
 		S.bReady = Oc.bConnected && Oc.Ready == 1;
 		S.Device = Oc.Device;
 		S.State = Oc.State;
-		S.Text = !Oc.PortError.IsEmpty() ? Oc.PortError : !Oc.bConnected ? FString::Printf(TEXT("Waiting for FS Golf on port %d"), OpenConnectPort) : S.bReady ? TEXT("ready") : TEXT("connected, not ready");
+		S.Text = !Oc.PortError.IsEmpty() ? Oc.PortError : !Oc.bConnected ? FString::Printf(TEXT("Waiting for %s on port %d"), Connection == EOTGConnection::Rela ? TEXT("rēlā") : TEXT("FS Golf"), OpenConnectPort) : S.bReady ? TEXT("ready") : TEXT("connected, not ready");
 	}
 	else if (bDeviceOff)
 	{

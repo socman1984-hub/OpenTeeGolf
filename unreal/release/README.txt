@@ -53,6 +53,9 @@ Mevo+ directly         Close FS Golf, join this PC to the Mevo+'s own Wi-Fi (FS 
 Garmin R10             Pair the R10 in Windows Bluetooth settings first. The game runs its bridge
                        program (bridges\tenover-frp...) itself.
 Square Golf            Turn it on; the game runs its bridge program (bridges\allsquare-frp...).
+rela                   rela (docs.rela.golf) connects many launch monitors (SkyTrak, GC2, FlightScope,
+                       Nova, Mevo+, R10, Square ...). In rela choose GSPro as the simulator and, in
+                       Settings > Simulator Connection, this PC (127.0.0.1) and port 921.
 Other (FRP)            Any launch monitor that speaks the Flight Relay Protocol: enter its address.
 
 The status turns green when the launch monitor is ready. No launch monitor? Press T on the course
