@@ -63,5 +63,5 @@ namespace otg::mevo
 	// angles already final, spin the radar's first estimate (a total, no axis)
 	struct FLaunch { int32 Shot = 0; double LaunchSpeed = 0, Carry = 0, Elevation = 0, Azimuth = 0; int32 Spin = 0; };
 	bool DecodeLaunch(const TArray<uint8>& P, FLaunch& Out);
-	FOTGBallData EarlyBallData(const FLaunch& L); // (spin all backspin, no club data)
+	FOTGBallData EarlyBallData(const FLaunch& L); // (spin all backspin, scaled down to nearer the final; no club data)
 }

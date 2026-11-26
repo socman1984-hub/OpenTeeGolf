@@ -37,7 +37,8 @@ const d4 = Buffer.from(('9C 00 00 01 00 00 43 00 00 00 FF FF EE 00 00 7C 00 97 C
 const early = earlyBallData(decodeLaunch(e8)), final = toBallData(decodeFlight(d4), null, null);
 check(early && Math.abs(early.Speed - final.Speed) < 0.01 && Math.abs(early.VLA - final.VLA) < 0.01 && Math.abs(early.HLA - final.HLA) < 0.01,
   `early launch result: ${early?.Speed.toFixed(1)} mph, ${early?.VLA.toFixed(1)}°, ${early?.HLA.toFixed(1)}° - the same as the full result`);
-check(early.TotalSpin === 6075 && Math.round(final.BackSpin) === 2540, `early spin estimate ${early.TotalSpin} rpm (the full result's: ${Math.round(final.TotalSpin)})`);
+check(decodeLaunch(e8).spin === 6075 && early.TotalSpin === 2734 && Math.round(final.BackSpin) === 2540,
+  `early spin estimate ${decodeLaunch(e8).spin} rpm, started at ${early.TotalSpin} (the full result's: ${Math.round(final.TotalSpin)})`);
 
 // ---- 2. A simulated Mevo+ (test/fake-mevo.js)
 const { server, seen } = fakeMevo();

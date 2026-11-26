@@ -202,7 +202,10 @@ namespace otg::mevo
 
 	FOTGBallData EarlyBallData(const FLaunch& L)
 	{
-		const double Spin = L.Spin > 0 && L.Spin < 16000 ? double(L.Spin) : 0.0;
+		// (the early spin estimate runs high: on five real shots the full result's spin was 0.42-0.49
+		// of it, so it's scaled to start the ball nearer its final flight - lib/mevo.js EARLY_SPIN_SCALE)
+		constexpr double EarlySpinScale = 0.45;
+		const double Spin = L.Spin > 0 && L.Spin < 16000 ? FMath::RoundToDouble(L.Spin * EarlySpinScale) : 0.0;
 		FOTGBallData B;
 		B.Speed = L.LaunchSpeed * 2.23694;
 		B.VLA = L.Elevation;

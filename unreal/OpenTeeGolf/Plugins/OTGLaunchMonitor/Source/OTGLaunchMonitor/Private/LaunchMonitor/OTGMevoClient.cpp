@@ -342,7 +342,7 @@ void FOTGMevoClient::OnFrame(const FMevoFrame& M)
 			const FOTGBallData Ball = EarlyBallData(L);
 			FOTGShot S = OTGToShot(Ball, TEXT("mevo"), DeviceName(), Shot->Id);
 			S.bEarly = true;
-			Log(FString::Printf(TEXT("Mevo+: early launch result %.1f mph, launch %.1f, direction %.1f, spin estimate %d"), *Ball.Speed, *Ball.VLA, *Ball.HLA, FMath::RoundToInt(*Ball.TotalSpin)));
+			Log(FString::Printf(TEXT("Mevo+: early launch result %.1f mph, launch %.1f, direction %.1f, spin estimate %d (starting with %d)"), *Ball.Speed, *Ball.VLA, *Ball.HLA, L.Spin, FMath::RoundToInt(*Ball.TotalSpin)));
 			Out->Shot(S);
 		}
 	}
