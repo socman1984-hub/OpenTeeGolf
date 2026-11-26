@@ -49,9 +49,22 @@ struct FOTGLMOutbox
 		Shots.Reset();
 		return Out;
 	}
+	// (Mevo+ fast shots: the full result of a shot sent early)
+	void ShotUpdate(const FOTGShot& S)
+	{
+		FScopeLock L(&Lock);
+		Updates.Add(S);
+	}
+	TArray<FOTGShot> TakeShotUpdates()
+	{
+		FScopeLock L(&Lock);
+		TArray<FOTGShot> Out = MoveTemp(Updates);
+		Updates.Reset();
+		return Out;
+	}
 
 private:
 	FCriticalSection Lock;
 	FOTGLMDeviceState State;
-	TArray<FOTGShot> Shots;
+	TArray<FOTGShot> Shots, Updates;
 };

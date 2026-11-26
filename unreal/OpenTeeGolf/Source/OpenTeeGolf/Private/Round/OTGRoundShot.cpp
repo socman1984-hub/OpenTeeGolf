@@ -113,6 +113,11 @@ void AOTGRound::OnShot(const FOTGShot& Shot)
 	const double T0 = FPlatformTime::Seconds();
 	Res = otg::SimulateShot(Course, Ball, Play, O);
 	bHasRes = true;
+	// (kept for a Mevo+ fast shot's full result: OnShotUpdate)
+	LastOpts = O;
+	LastFxSpeed = Fx.speed;
+	LastFxSpin = Fx.spin;
+	BlendT0 = -1;
 	UE_LOG(LogOTGRound, Display, TEXT("Shot from %s: %s -> %s, carry %.1f m, total %.1f m (%.0f ms)"), *SurfaceDisplay(Lie), *OTGShotLine(Shot),
 		UTF8_TO_TCHAR(Res.result.c_str()), Res.carry, Res.total, (FPlatformTime::Seconds() - T0) * 1000);
 	Undo = FUndo{ Ball, Strokes, Lie, Heading };
@@ -129,6 +134,53 @@ void AOTGRound::OnShot(const FOTGShot& Shot)
 	if (Lie != otg::Surface::Tee && Fx.speed < 1)
 		HudView.Toast(FString::Printf(TEXT("From the %s: -%d%% ball speed, -%d%% spin"), *SurfaceDisplay(Lie).ToLower(), FMath::RoundToInt((1 - Fx.speed) * 100), FMath::RoundToInt((1 - Fx.spin) * 100)), 3.f);
 	HudView.UpdateHudInfo();
+}
+
+void AOTGRound::OnShotUpdate(const FOTGShot& Shot)
+{
+	// (the early result is still waiting to be played: play this one instead)
+	if (PendingShot && PendingShot->bEarly && PendingShot->ShotNumber == Shot.ShotNumber)
+	{
+		PendingShot = Shot;
+		return;
+	}
+	// (the early result wasn't played - it came while the game wasn't ready, say): this one is the shot
+	if (!bHasRes || !LastShot.bEarly || LastShot.ShotNumber != Shot.ShotNumber) return OnShot(Shot);
+	LastShot = Shot;
+	if (Phase != EPhase::Flying)
+	{
+		// (already finished: only the numbers shown change)
+		HudView.ShowShotData(true);
+		return;
+	}
+	auto At = [this](const otg::ShotResult& R) {
+		const std::vector<otg::PathPoint>& Pts = R.points;
+		int32 N = 0;
+		while (N < int32(Pts.size()) && Pts[N].t <= AnimT) N++;
+		if (N < int32(Pts.size()) && N > 0)
+		{
+			const otg::PathPoint& A = Pts[N - 1];
+			const otg::PathPoint& B = Pts[N];
+			const double F = (AnimT - A.t) / FMath::Max(1e-6, B.t - A.t);
+			return otg::V3{ A.x + (B.x - A.x) * F, A.y + (B.y - A.y) * F, A.z + (B.z - A.z) * F };
+		}
+		if (N > 0) return otg::V3{ Pts.back().x, Pts.back().y, Pts.back().z };
+		return R.rest;
+	};
+	otg::Shot Play;
+	Play.speedMph = Shot.SpeedMph * LastFxSpeed;
+	Play.vla = bMini ? FMath::Min(Shot.VLA, 4.0) : Shot.VLA;
+	Play.hla = Shot.HLA;
+	Play.backSpin = Shot.BackSpin * LastFxSpin;
+	Play.sideSpin = Shot.SideSpin * LastFxSpin;
+	const otg::V3 Was = At(Res);
+	Res = otg::SimulateShot(Course, PrevBall, Play, LastOpts);
+	const otg::V3 Now = At(Res);
+	BlendOffset = otg::V3{ Was.x - Now.x, Was.y - Now.y, Was.z - Now.z };
+	BlendT0 = AnimT;
+	if (Res.hasCarryPoint && AnimT < Res.carryPoint.t) bCarryShown = false;
+	UE_LOG(LogOTGRound, Display, TEXT("Shot corrected by the full result: %s -> %s, carry %.1f m, total %.1f m"), *OTGShotLine(Shot), UTF8_TO_TCHAR(Res.result.c_str()), Res.carry, Res.total);
+	HudView.ShowShotData(false);
 }
 
 void AOTGRound::FinishShot()

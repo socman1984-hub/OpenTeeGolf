@@ -47,6 +47,10 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "OpenTeeGolf") FOTGShotEvent OnShot;
 	UPROPERTY(BlueprintAssignable, Category = "OpenTeeGolf") FOTGLMStatusEvent OnStatus;
 	TMulticastDelegate<void(const FOTGShot&)> OnShotNative;
+	// Mevo+ fast shots: the full result of a shot that came through OnShot early (bEarly), the same
+	// ShotNumber; the game flies that shot again with it
+	UPROPERTY(BlueprintAssignable, Category = "OpenTeeGolf") FOTGShotEvent OnShotUpdate;
+	TMulticastDelegate<void(const FOTGShot&)> OnShotUpdateNative;
 
 	UFUNCTION(BlueprintCallable, Category = "OpenTeeGolf") FOTGLaunchMonitorStatus GetStatus() const { return Status; }
 

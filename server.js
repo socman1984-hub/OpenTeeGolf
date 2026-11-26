@@ -414,11 +414,19 @@ function startMevo() {
     battery: s.battery ?? null,
     direct: { state: s.state, text: DIRECT_TEXT[s.state] || s.state, error: s.error || null, mode: s.mode },
   }));
-  mevo.on('shot', (ball) => {
-    const shot = toShot({ DeviceID: lmState.device || 'Mevo+', BallData: ball, ClubData: ball.ClubData }, 'mevo');
-    console.log(`Shot (direct): ${shot.speedMph.toFixed(1)} mph, VLA ${shot.vla.toFixed(1)}, HLA ${shot.hla.toFixed(1)}, spin ${Math.round(shot.totalSpin)} rpm, axis ${shot.spinAxis.toFixed(1)}`);
+  mevo.on('shot', (ball, meta = {}) => {
+    const shot = toShot({ DeviceID: lmState.device || 'Mevo+', ShotNumber: meta.id, BallData: ball, ClubData: ball.ClubData }, 'mevo');
+    // (fast shots: the early launch result, to start the ball at once; a 'shot-update' follows)
+    if (meta.early) shot.early = true;
+    console.log(`Shot (direct${meta.early ? ', early' : ''}): ${shot.speedMph.toFixed(1)} mph, VLA ${shot.vla.toFixed(1)}, HLA ${shot.hla.toFixed(1)}, spin ${Math.round(shot.totalSpin)} rpm, axis ${shot.spinAxis.toFixed(1)}`);
     setLm({ lastShotAt: shot.at });
     broadcast('shot', shot);
+  });
+  // The full result of a shot already sent early: the game corrects the ball's flight with it
+  mevo.on('shot-update', (ball, meta = {}) => {
+    const shot = toShot({ DeviceID: lmState.device || 'Mevo+', ShotNumber: meta.id, BallData: ball, ClubData: ball.ClubData }, 'mevo');
+    console.log(`Shot (direct, final): ${shot.speedMph.toFixed(1)} mph, VLA ${shot.vla.toFixed(1)}, HLA ${shot.hla.toFixed(1)}, spin ${Math.round(shot.totalSpin)} rpm, axis ${shot.spinAxis.toFixed(1)}`);
+    broadcast('shot-update', shot);
   });
   mevo.start();
 }
@@ -974,6 +982,7 @@ const httpServer = http.createServer(async (req, res) => {
         distanceM: num(b.distanceM, 1.5, 6, d.distanceM), surfaceIn: num(b.surfaceIn, 0, 10, d.surfaceIn),
         teeHeightIn: num(b.teeHeightIn, 0, 4, d.teeHeightIn), tiltTarget: num(b.tiltTarget, -10, 25, d.tiltTarget), ballType: b.ballType ? 1 : 0,
         trackPct: num(b.trackPct, 0.6, 1, d.trackPct), mode: ['auto', 'full', 'outdoor'].includes(b.mode) ? b.mode : 'auto',
+        fast: !!b.fast,
       };
       if (typeof b.armOnTurn === 'boolean') settings.lm.armOnTurn = b.armOnTurn;
       saveSettings();

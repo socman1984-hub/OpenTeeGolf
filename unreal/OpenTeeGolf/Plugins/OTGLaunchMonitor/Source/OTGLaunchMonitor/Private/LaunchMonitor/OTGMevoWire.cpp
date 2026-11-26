@@ -183,4 +183,32 @@ namespace otg::mevo
 		}
 		return B;
 	}
+
+	// (layout found by comparing it with the 0xD4 of the same shot: speed at 7, carry 13, elevation 22,
+	// azimuth 25, spin 34)
+	bool DecodeLaunch(const TArray<uint8>& P, FLaunch& Out)
+	{
+		if (P.Num() < 37) return false;
+		auto K = [&](int32 O) { return Int24(P, O) / 1000.0; };
+		Out.Shot = Int24(P, 1);
+		Out.LaunchSpeed = K(7);
+		Out.Carry = K(13);
+		Out.Elevation = K(22);
+		Out.Azimuth = K(25);
+		Out.Spin = Int24(P, 34);
+		// (a reading that doesn't make sense isn't used: the full result follows anyway)
+		return Out.LaunchSpeed > 1 && Out.LaunchSpeed < 110 && FMath::Abs(Out.Elevation) <= 85 && FMath::Abs(Out.Azimuth) <= 60;
+	}
+
+	FOTGBallData EarlyBallData(const FLaunch& L)
+	{
+		const double Spin = L.Spin > 0 && L.Spin < 16000 ? double(L.Spin) : 0.0;
+		FOTGBallData B;
+		B.Speed = L.LaunchSpeed * 2.23694;
+		B.VLA = L.Elevation;
+		B.HLA = -L.Azimuth;
+		B.BackSpin = Spin; B.SideSpin = 0.0; B.TotalSpin = Spin; B.SpinAxis = 0.0;
+		B.CarryYd = L.Carry * 1.09361;
+		return B;
+	}
 }

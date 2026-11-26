@@ -122,6 +122,7 @@ void UOTGLaunchMonitorSubsystem::LoadSettings()
 		GConfig->GetInt(Section, TEXT("BallType"), MevoSetup.BallType, GGameUserSettingsIni);
 		GConfig->GetDouble(Section, TEXT("TrackPct"), MevoSetup.TrackPct, GGameUserSettingsIni);
 		GConfig->GetString(Section, TEXT("Mode"), MevoSetup.Mode, GGameUserSettingsIni);
+		GConfig->GetBool(Section, TEXT("Fast"), MevoSetup.bFast, GGameUserSettingsIni);
 	}
 	// (for this run only)
 	const TCHAR* Cmd = FCommandLine::Get();
@@ -156,6 +157,7 @@ void UOTGLaunchMonitorSubsystem::SaveSettings()
 		GConfig->SetInt(Section, TEXT("BallType"), MevoSetup.BallType, GGameUserSettingsIni);
 		GConfig->SetDouble(Section, TEXT("TrackPct"), MevoSetup.TrackPct, GGameUserSettingsIni);
 		GConfig->SetString(Section, TEXT("Mode"), *MevoSetup.Mode, GGameUserSettingsIni);
+		GConfig->SetBool(Section, TEXT("Fast"), MevoSetup.bFast, GGameUserSettingsIni);
 	}
 	GConfig->Flush(false, GGameUserSettingsIni);
 }
@@ -421,7 +423,7 @@ void UOTGLaunchMonitorSubsystem::InjectShot(double SpeedMph, double VLA, double 
 void UOTGLaunchMonitorSubsystem::Deliver(const FOTGShot& Shot)
 {
 	Status.LastShotAt = Shot.At;
-	UE_LOG(LogOTGLM, Display, TEXT("Shot (%s%s): %s"), *Shot.Source, Shot.ShotNumber >= 0 ? *FString::Printf(TEXT(" #%d"), Shot.ShotNumber) : TEXT(""), *OTGShotLine(Shot));
+	UE_LOG(LogOTGLM, Display, TEXT("Shot (%s%s%s): %s"), *Shot.Source, Shot.ShotNumber >= 0 ? *FString::Printf(TEXT(" #%d"), Shot.ShotNumber) : TEXT(""), Shot.bEarly ? TEXT(", early") : TEXT(""), *OTGShotLine(Shot));
 	// (every number, for tests)
 	UE_LOG(LogOTGLM, Log, TEXT("OTGSHOT {\"source\":\"%s\",\"device\":\"%s\",\"shotNumber\":%d,\"speedMph\":%s,\"vla\":%s,\"hla\":%s,\"backSpin\":%s,\"sideSpin\":%s,\"totalSpin\":%s,\"spinAxis\":%s,\"carryYd\":%s,\"clubSpeedMph\":%s}"),
 		*Shot.Source, *Shot.Device.Replace(TEXT("\""), TEXT("'")), Shot.ShotNumber, *Num(Shot.SpeedMph), *Num(Shot.VLA), *Num(Shot.HLA), *Num(Shot.BackSpin), *Num(Shot.SideSpin),
@@ -496,6 +498,13 @@ bool UOTGLaunchMonitorSubsystem::Tick(float)
 	// Shots from OpenConnect always count (whatever the connection), as in the web version
 	if (OcOut) for (const FOTGShot& S : OcOut->TakeShots()) Deliver(S);
 	if (DevOut) for (const FOTGShot& S : DevOut->TakeShots()) Deliver(S);
+	if (DevOut)
+		for (const FOTGShot& S : DevOut->TakeShotUpdates())
+		{
+			UE_LOG(LogOTGLM, Display, TEXT("Shot update (%s #%d, full result): %s"), *S.Source, S.ShotNumber, *OTGShotLine(S));
+			OnShotUpdateNative.Broadcast(S);
+			OnShotUpdate.Broadcast(S);
+		}
 	Compose();
 	for (int32 i = 0; i < ExecAt.Num();)
 	{

@@ -21,7 +21,7 @@ namespace otg::mevo
 			CAL_DATA_REQ = 0xd2, CAL_DATA_RESP = 0xd3, CAL_PARAM_REQ = 0xd0, CAL_PARAM_RESP = 0xd1, TIME_SYNC = 0x9b,
 			CAM_CONFIG = 0x82, CAM_CONFIG_REQ = 0x83, NET_CONFIG = 0xde, CONFIG_ACK = 0x95, CONFIG_NACK = 0x94, MODE_SET = 0xa5,
 			MODE_ACK = 0xb1, AVR_CONFIG_CMD = 0xb0, TXT = 0xe3, SHOT_TEXT = 0xe5, FLIGHT = 0xd4, CLUB = 0xed, SPIN = 0xef,
-			SHOT_DATA_ACK = 0x69, SHOT_RESULT_REQ = 0x6d, CAM_STATE = 0x81, RADAR_CAL = 0xa4;
+			SHOT_DATA_ACK = 0x69, SHOT_RESULT_REQ = 0x6d, CAM_STATE = 0x81, RADAR_CAL = 0xa4, LAUNCH = 0xe8;
 	}
 
 	// Detection modes (commsIndex): what ironsight's own bridge uses for each shot type
@@ -58,4 +58,10 @@ namespace otg::mevo
 
 	// Combined into OpenConnect-style ball data (mph, degrees, rpm; HLA and side spin + = right)
 	FOTGBallData ToBallData(const FFlight& Flight, const FSpin* Spin, const FClub* Club);
+
+	// 0xE8 early launch result (lib/mevo.js decodeLaunch), ~0.2 s after the ball trigger: speed and
+	// angles already final, spin the radar's first estimate (a total, no axis)
+	struct FLaunch { int32 Shot = 0; double LaunchSpeed = 0, Carry = 0, Elevation = 0, Azimuth = 0; int32 Spin = 0; };
+	bool DecodeLaunch(const TArray<uint8>& P, FLaunch& Out);
+	FOTGBallData EarlyBallData(const FLaunch& L); // (spin all backspin, no club data)
 }

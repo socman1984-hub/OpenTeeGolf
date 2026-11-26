@@ -1521,13 +1521,9 @@ function onShot(shot) {
   }
   showShotData(shot, null);
   const lieFx = LIE_EFFECT[S.lie] || LIE_EFFECT.rough;
-  const play = {
-    ...shot,
-    speedMph: shot.speedMph * lieFx.speed,
-    backSpin: shot.backSpin * lieFx.spin,
-    sideSpin: shot.sideSpin * lieFx.spin,
-  };
-  const res = simulateShot(S.course, S.ball, play, {
+  // (kept, so a Mevo+ fast shot's final numbers can fly the same shot again: onShotUpdate)
+  const from = { ...S.ball };
+  const opts = {
     heading: S.heading,
     altitudeM: S.course.altitudeM,
     wind: (S.shotWind = shotWind()),
@@ -1540,13 +1536,20 @@ function onShot(shot) {
     trees: scene.trees,
     collider: S.collider,
     movers: S.spot?.movers?.(S.practice.clock),
-  });
+  };
+  const simFor = (sh) => simulateShot(S.course, from, {
+    ...sh,
+    speedMph: sh.speedMph * lieFx.speed,
+    backSpin: sh.backSpin * lieFx.spin,
+    sideSpin: sh.sideSpin * lieFx.spin,
+  }, opts);
+  const res = simFor(shot);
   if (practiceKind() === 'targets') S.practice.aimed = S.hole;
   S.undo = { ball: { ...S.ball }, strokes: S.strokes, lie: S.lie, heading: S.heading };
   S.prevBall = { ...S.ball };
   S.strokes++;
   S.phase = 'flying';
-  S.lastShot = { shot, res };
+  S.lastShot = { shot, res, simFor };
   S.anim = { res, t: 0 };
   if (practiceKind() === 'blast') S.spot.startShot();
   scene.spinTilt = res.spinTilt || 0;
@@ -1580,7 +1583,13 @@ function tick(dt) {
   const pts = a.res.points;
   let n = pts.findIndex((p) => p.t > a.t);
   if (n === -1) n = pts.length;
-  const p = pts[Math.max(0, n - 1)];
+  let p = pts[Math.max(0, n - 1)];
+  // (a fast shot corrected in flight: the ball eases from where it was onto the corrected path)
+  if (a.blend) {
+    const k = 1 - (a.t - a.blend.t0) / 0.6;
+    if (k > 0) p = { ...p, x: p.x + a.blend.dx * k, y: p.y + a.blend.dy * k, z: p.z + a.blend.dz * k };
+    else a.blend = null;
+  }
   scene.setBall(p);
   scene.setTrail(pts, n);
   // (boom range: anything the ball passed through on its way goes off)
@@ -1597,6 +1606,41 @@ function tick(dt) {
   if (n >= pts.length) {
     if (a.res.result === 'water') scene.splash(p.x, p.z);
     finishShot(a.res);
+  }
+}
+
+// Mevo+ fast shots: the ball was started from the radar's early launch result; this is the same
+// shot's full result (final spin, club data) about 1.6 s later. The flight is worked out again from
+// the same start with it and the ball eases onto the new path.
+function onShotUpdate(shot) {
+  const last = S.lastShot;
+  if (S.pendingShot?.early && S.pendingShot.shotNumber === shot.shotNumber) { S.pendingShot = shot; return; }
+  // (the early result wasn't played - it came while the game wasn't ready, say): this one is the shot
+  if (!last?.shot.early || last.shot.shotNumber !== shot.shotNumber) return onShot(shot);
+  last.shot = shot;
+  const a = S.anim;
+  if (S.phase !== 'flying' || !a || a.res !== last.res || !last.simFor) {
+    // (already finished: only the numbers shown change)
+    if (S.phase === 'result' && last.res) showShotData(shot, last.res);
+    return;
+  }
+  const res = last.simFor(shot);
+  const at = (r) => {
+    let n = r.points.findIndex((q) => q.t > a.t);
+    if (n === -1) n = r.points.length;
+    return r.points[Math.max(0, n - 1)];
+  };
+  const was = at(a.res), now = at(res);
+  if (was && now) a.blend = { dx: was.x - now.x, dy: was.y - now.y, dz: was.z - now.z, t0: a.t };
+  a.res = res;
+  last.res = res;
+  if (res.carryPoint && a.t < res.carryPoint.t) a.carryShown = false;
+  showShotData(shot, a.carryShown ? { ...res, total: null } : null);
+  // (the camera heads for the new landing spot)
+  const f = scene._flight, land = res.carryPoint || res.rest;
+  if (scene.mode === 'follow' && f && land) {
+    f.landing.set(land.x, land.y, land.z);
+    if (f.rest && res.rest) f.rest.set(res.rest.x, res.rest.y, res.rest.z);
   }
 }
 
@@ -2361,6 +2405,10 @@ function connectEvents() {
     const shot = JSON.parse(e.data);
     if (S.phase === 'menu') return;
     onShot(shot);
+  });
+  es.addEventListener('shot-update', (e) => {
+    if (S.phase === 'menu') return;
+    onShotUpdate(JSON.parse(e.data));
   });
   es.addEventListener('progress', (e) => loader.serverEvent(JSON.parse(e.data)));
   es.addEventListener('net', (e) => loader.netEvent(JSON.parse(e.data)));

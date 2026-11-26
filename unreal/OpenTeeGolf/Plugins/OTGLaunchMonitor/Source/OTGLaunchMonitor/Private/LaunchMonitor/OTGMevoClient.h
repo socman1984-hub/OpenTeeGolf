@@ -100,7 +100,10 @@ private:
 		TOptional<otg::mevo::FClub> Club;
 		TOptional<otg::mevo::FSpin> Spin;
 		bool bDone = false, bFinishing = false;
+		bool bEarly = false; // (fast shots: the early launch result has gone to the game)
+		int32 Id = 0;        // (the shot's number: the early result and the full one share it)
 	};
+	FString DeviceName();
 	TOptional<FShot> Shot;
 	bool bFinishPending = false, bPendingModeChange = false;
 	double TriggerDeadline = 0, FlightDeadline = 0;

@@ -43,7 +43,10 @@ Mevo+ directly         Close FS Golf, join this PC to the Mevo+'s own Wi-Fi (FS 
                        your setup: the distance from the Mevo+ to the ball, the mat height, the tee
                        height. "Arm only on my turn" keeps it quiet between shots. Start live
                        view shows the Mevo+ camera's picture (armed or not) with a box to put
-                       the ball in; it can take 10-30 s to start.
+                       the ball in; it can take 10-30 s to start. "Fast shots" starts full
+                       swings about 0.2 s after impact (instead of about 2 s) from the Mevo+'s
+                       first reading; the spin is corrected in flight when its full reading
+                       arrives.
 Garmin R10             Pair the R10 in Windows Bluetooth settings first. The game runs its bridge
                        program (bridges\tenover-frp...) itself.
 Square Golf            Turn it on; the game runs its bridge program (bridges\allsquare-frp...).

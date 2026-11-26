@@ -195,6 +195,14 @@ void SOTGLaunchMonitorPanel::Rebuild()
 			.OnCheckStateChanged_Lambda([this](ECheckBoxState S) { bArmOnTurn = S == ECheckBoxState::Checked; if (UOTGLaunchMonitorSubsystem* X = LM()) X->SetArmOnTurn(bArmOnTurn); })
 			[Text(TEXT("Arm only on my turn (stays quiet between shots)"), 14, Ink)]
 		];
+		V->AddSlot().AutoHeight().Padding(0, 4, 0, 0)
+		[
+			SNew(SCheckBox).IsChecked_Lambda([this]() { return Draft.bFast ? ECheckBoxState::Checked : ECheckBoxState::Unchecked; })
+			.OnCheckStateChanged_Lambda([this](ECheckBoxState S) { Draft.bFast = S == ECheckBoxState::Checked; })
+			[Text(TEXT("Fast shots (full swings start ~0.2 s after impact, not ~2 s)"), 14, Ink)]
+		];
+		V->AddSlot().AutoHeight().Padding(24, 0, 0, 4)[SNew(STextBlock).Text(FText::FromString(TEXT("From the Mevo+'s first reading: speed and angles are final, spin is a first estimate, corrected in flight when the full reading arrives. Chips and putts wait for the full reading. Save the setup to apply.")))
+			.Font(Font(12)).ColorAndOpacity(Soft).AutoWrapText(true)];
 		V->AddSlot().AutoHeight().Padding(0, 4)[Button(TEXT("Save the setup"), [this]() { if (UOTGLaunchMonitorSubsystem* X = LM()) X->SetMevoSetup(Draft); }, 14)];
 	}
 	V->AddSlot().AutoHeight().Padding(0, 10, 0, 0)

@@ -322,7 +322,10 @@ void AOTGRound::Setup(UOTGCourseData* InData, const FOTGRoundSetup& InSetup)
 
 	// Shots
 	if (UOTGLaunchMonitorSubsystem* LM = GetGameInstance()->GetSubsystem<UOTGLaunchMonitorSubsystem>())
+	{
 		ShotHandle = LM->OnShotNative.AddUObject(this, &AOTGRound::OnShot);
+		ShotUpdateHandle = LM->OnShotUpdateNative.AddUObject(this, &AOTGRound::OnShotUpdate);
+	}
 
 	// Courses built in the background (the New course page's queue): told here when one is ready
 	if (UOTGHelperSubsystem* HS = GetGameInstance()->GetSubsystem<UOTGHelperSubsystem>())
@@ -359,6 +362,7 @@ void AOTGRound::EndPlay(const EEndPlayReason::Type Reason)
 		if (UOTGLaunchMonitorSubsystem* LM = GI->GetSubsystem<UOTGLaunchMonitorSubsystem>())
 		{
 			LM->OnShotNative.Remove(ShotHandle);
+			LM->OnShotUpdateNative.Remove(ShotUpdateHandle);
 			LM->SetTurn(false);
 		}
 	if (Hud && GEngine && GEngine->GameViewport) GEngine->GameViewport->RemoveViewportWidgetContent(Hud.ToSharedRef());
@@ -618,6 +622,13 @@ void AOTGRound::Tick(float Dt)
 			P = otg::V3{ A.x + (B.x - A.x) * F, A.y + (B.y - A.y) * F, A.z + (B.z - A.z) * F };
 		}
 		else if (N > 0) P = otg::V3{ Pts.back().x, Pts.back().y, Pts.back().z };
+		// (a fast shot corrected in flight: the ball eases from where it was onto the corrected path)
+		if (BlendT0 >= 0)
+		{
+			const double K = 1 - (AnimT - BlendT0) / 0.6;
+			if (K > 0) P = otg::V3{ P.x + BlendOffset.x * K, P.y + BlendOffset.y * K, P.z + BlendOffset.z * K };
+			else BlendT0 = -1;
+		}
 		PlaceBall(P);
 		UpdateTracer(N, World(P));
 		if (Res.hasCarryPoint && AnimT >= Res.carryPoint.t && !bCarryShown)

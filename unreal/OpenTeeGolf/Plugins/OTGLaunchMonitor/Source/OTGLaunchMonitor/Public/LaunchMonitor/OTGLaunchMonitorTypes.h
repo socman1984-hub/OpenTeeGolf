@@ -53,6 +53,9 @@ struct FOTGShot
 	UPROPERTY(BlueprintReadOnly, Category = "OpenTeeGolf") double LmCarryYd = -1;  // the device's own carry (-1: none)
 	UPROPERTY(BlueprintReadOnly, Category = "OpenTeeGolf") FOTGClubData Club;
 	UPROPERTY(BlueprintReadOnly, Category = "OpenTeeGolf") FDateTime At;
+	// Mevo+ fast shots: the radar's early launch result (speed and angles final, spin a first
+	// estimate). The same shot (ShotNumber) comes again through OnShotUpdate with the full result.
+	UPROPERTY(BlueprintReadOnly, Category = "OpenTeeGolf") bool bEarly = false;
 };
 
 // The Mevo+ setup the player can change (what FS Golf asks for when you set it up)
@@ -67,6 +70,9 @@ struct FOTGMevoSetup
 	UPROPERTY(BlueprintReadWrite, Category = "OpenTeeGolf") int32 BallType = 0;        // 0 standard, 1 RCT
 	UPROPERTY(BlueprintReadWrite, Category = "OpenTeeGolf") double TrackPct = 1.0;     // minimum ball-tracking share (0.6-1)
 	UPROPERTY(BlueprintReadWrite, Category = "OpenTeeGolf") FString Mode = TEXT("auto"); // auto (by club), or force full / outdoor
+	// Fast shots: full swings start from the radar's early launch result (~0.2 s after impact, not ~2 s),
+	// corrected in flight by the full result (not sent to the radar)
+	UPROPERTY(BlueprintReadWrite, Category = "OpenTeeGolf") bool bFast = false;
 };
 
 USTRUCT(BlueprintType)

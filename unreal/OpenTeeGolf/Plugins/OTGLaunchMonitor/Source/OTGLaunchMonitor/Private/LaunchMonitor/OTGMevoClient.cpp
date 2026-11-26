@@ -331,6 +331,21 @@ void FOTGMevoClient::OnFrame(const FMevoFrame& M)
 			if (M.Type == T::FLIGHT && Shot->Flight) FlightDeadline = Now() + 2.5;
 		}
 	}
+	// Fast shots: the early launch result goes to the game at once (full swing only: a chip or putt is
+	// over before the full result could correct it); the full result follows as a shot update
+	if (M.Type == T::LAUNCH && bUsingSetup && Using.bFast && (Mode == TEXT("full") || Mode == TEXT("outdoor")) && Shot && !Shot->bEarly && !Shot->bDone)
+	{
+		FLaunch L;
+		if (DecodeLaunch(P, L))
+		{
+			Shot->bEarly = true;
+			const FOTGBallData Ball = EarlyBallData(L);
+			FOTGShot S = OTGToShot(Ball, TEXT("mevo"), DeviceName(), Shot->Id);
+			S.bEarly = true;
+			Log(FString::Printf(TEXT("Mevo+: early launch result %.1f mph, launch %.1f, direction %.1f, spin estimate %d"), *Ball.Speed, *Ball.VLA, *Ball.HLA, FMath::RoundToInt(*Ball.TotalSpin)));
+			Out->Shot(S);
+		}
+	}
 	// Shot progress arrives as shot text (0xE5); some firmware may use plain text (0xE3)
 	if (M.Type == T::SHOT_TEXT) OnShotText(Text(P));
 	else if (M.Type == T::TXT)
@@ -711,9 +726,16 @@ bool FOTGMevoClient::Keepalive()
 
 // ------------------------------------------------------------------ shots
 
+FString FOTGMevoClient::DeviceName()
+{
+	const FOTGLMDeviceState D = Out->Read();
+	return D.Model.IsEmpty() ? FString(TEXT("Mevo+")) : (D.Model + TEXT(" ") + D.Ssid).TrimEnd();
+}
+
 void FOTGMevoClient::StartShot()
 {
 	Shot.Emplace();
+	Shot->Id = ++ShotCount;
 	bArmed = false;
 	bFinishPending = false;
 	FlightDeadline = 0;
@@ -732,7 +754,7 @@ void FOTGMevoClient::OnShotText(const FString& S)
 	else if (S.Contains(TEXT("PROCESSED")))
 	{
 		if (Shot && Shot->bFinishing) return;
-		if (!Shot) { Shot.Emplace(); TriggerDeadline = Now() + 30; }
+		if (!Shot) { Shot.Emplace(); Shot->Id = ++ShotCount; TriggerDeadline = Now() + 30; }
 		Shot->bFinishing = true;
 		FlightDeadline = 0;
 		bFinishPending = true;
@@ -753,17 +775,16 @@ bool FOTGMevoClient::FinishShot()
 	if (Shot->Flight)
 	{
 		const FOTGBallData Ball = ToBallData(*Shot->Flight, Shot->Spin.GetPtrOrNull(), Shot->Club.GetPtrOrNull());
-		FString Device;
-		const FOTGLMDeviceState Now_ = Out->Read();
-		Device = Now_.Model.IsEmpty() ? TEXT("Mevo+") : (Now_.Model + TEXT(" ") + Now_.Ssid).TrimEnd();
-		FOTGShot S = OTGToShot(Ball, TEXT("mevo"), Device, ++ShotCount);
+		FOTGShot S = OTGToShot(Ball, TEXT("mevo"), DeviceName(), Shot->Id);
 		Log(FString::Printf(TEXT("Mevo+: shot %.1f mph, launch %.1f, direction %.1f, spin %d"), *Ball.Speed, *Ball.VLA, *Ball.HLA, FMath::RoundToInt(*Ball.TotalSpin)));
 		// Held: the game arms it again when it's the player's turn
 		{
 			FScopeLock L(&Ctl);
 			if (bHoldAfterShot) bWantDisarmed = true;
 		}
-		Out->Shot(S);
+		// (after an early result, this is its correction: the same shot, final spin and club data)
+		if (Shot->bEarly) Out->ShotUpdate(S);
+		else Out->Shot(S);
 	}
 	else Log(TEXT("Mevo+: shot without a usable flight result (miss-hit?)"));
 	Send(BUS_AVR, T::SHOT_DATA_ACK);

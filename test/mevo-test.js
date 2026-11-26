@@ -2,7 +2,7 @@
 // device that answers the handshake, arms, fires a shot, and re-arms.
 // Usage: node test/mevo-test.js
 import {
-  BUS, MODES, encodeFrame, parseFrame, FrameReader, readFloat40, writeFloat40, toBallData, decodeFlight, MevoClient,
+  BUS, MODES, encodeFrame, parseFrame, FrameReader, readFloat40, writeFloat40, toBallData, decodeFlight, decodeLaunch, earlyBallData, MevoClient,
 } from '../lib/mevo.js';
 import { fakeMevo, flightPayload } from './fake-mevo.js';
 
@@ -29,6 +29,15 @@ const reader = new FrameReader();
 const two = Buffer.concat([encodeFrame(0x10, 0xe3, [0x41]), encodeFrame(0x10, 0xe3, [0x42])]);
 const got = [...reader.push(two.subarray(0, 5)), ...reader.push(two.subarray(5))];
 check(got.length === 2 && got[1].payload[0] === 0x42, 'frames split across TCP packets are reassembled');
+
+// The early launch result (0xE8) and the full flight result (0xD4) of the same real shot (a Mevo+,
+// 7-iron indoors): speed and angles agree; the early spin is the radar's first estimate
+const e8 = Buffer.from(('5D 00 00 01 00 00 00 00 97 C1 00 0F 46 01 79 5B 00 2C 7D 00 10 1F 00 3F 09 00 09 47 00 23 75 00 00 00 00 17 BB 00 00 00 00 00 35 00 00 00 01 A4 D7 00 00 00 3D 09 04 F6 AC 1B 01 6E BB FF E6 C8 FF F8 90 11 F0 32 FC 80 2C FF 7E 09 00 0F 0D 00 34 3A 02 87 F4 FF 9D 2A 00 0F 1F FF FE F7').replace(/ /g, ''), 'hex');
+const d4 = Buffer.from(('9C 00 00 01 00 00 43 00 00 00 FF FF EE 00 00 7C 00 97 C1 00 09 47 00 3F 09 01 71 DF 00 0D 70 00 24 80 01 71 6B 00 00 00 00 12 47 00 09 EC 00 00 9D 00 00 00 00 00 4F 00 00 47 FF F6 A3 00 53 AC FF D6 74 00 04 8C 00 23 75 00 00 00 00 00 00 00 00 00 00 00 00 00 6C B9 00 05 9B 00 03 D7 00 4D AF 01 0B 6F 00 04 17 00 4B 34 00 0A 08 01 A3 7F 00 00 00 3D 08 FE F8 FD BE 00 DE A4 FF F2 67 FF F8 96 11 AD 61 FB 20 7E FF D3 0A 00 07 5C 00 34 0F 02 88 7A FF DC 1E 00 02 F7 FF FF E3').replace(/ /g, ''), 'hex');
+const early = earlyBallData(decodeLaunch(e8)), final = toBallData(decodeFlight(d4), null, null);
+check(early && Math.abs(early.Speed - final.Speed) < 0.01 && Math.abs(early.VLA - final.VLA) < 0.01 && Math.abs(early.HLA - final.HLA) < 0.01,
+  `early launch result: ${early?.Speed.toFixed(1)} mph, ${early?.VLA.toFixed(1)}°, ${early?.HLA.toFixed(1)}° - the same as the full result`);
+check(early.TotalSpin === 6075 && Math.round(final.BackSpin) === 2540, `early spin estimate ${early.TotalSpin} rpm (the full result's: ${Math.round(final.TotalSpin)})`);
 
 // ---- 2. A simulated Mevo+ (test/fake-mevo.js)
 const { server, seen } = fakeMevo();

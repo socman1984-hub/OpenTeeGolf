@@ -109,6 +109,9 @@ public:
 
 	// ---- shots
 	void OnShot(const FOTGShot& Shot);
+	// Mevo+ fast shots: the full result of the shot started early - flown again from the same start
+	// with it, the ball easing onto the new path (main.js onShotUpdate)
+	void OnShotUpdate(const FOTGShot& Shot);
 
 	// ---- the driving range
 	bool IsRange() const { return bRange; }
@@ -211,7 +214,7 @@ private:
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> PinMat;
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> FlagMat;
 	TSharedPtr<SOTGHud> Hud;
-	FDelegateHandle ShotHandle;
+	FDelegateHandle ShotHandle, ShotUpdateHandle;
 
 	otg::PlayCourse Course;
 	otg::PlayTrees Trees;
@@ -244,6 +247,12 @@ private:
 	otg::ShotResult Res;
 	bool bHasRes = false, bCarryShown = false;
 	double AnimT = 0;
+	// (what the shot was flown with, so a fast shot's full result can fly it again; and the ease
+	// from where the ball was onto the corrected path)
+	otg::ShotOptions LastOpts;
+	double LastFxSpeed = 1, LastFxSpin = 1;
+	otg::V3 BlendOffset;
+	double BlendT0 = -1;
 	double PhaseTimer = 0;              // (Resting, Holed: seconds left)
 	bool bScorecard = false, bScorecardAuto = false;
 	FString ReliefNote;

@@ -132,12 +132,14 @@ function fillSetup(st) {
   $('s-track').value = st.trackPct;
   $('s-mode').value = st.mode;
   $('s-turn').checked = st.armOnTurn !== false;
+  $('s-fast').checked = !!st.fast;
 }
 $('setup').onsubmit = async (e) => {
   e.preventDefault();
   const body = {
     distanceM: +$('s-dist').value * FT, surfaceIn: +$('s-surface').value, teeHeightIn: +$('s-tee').value, tiltTarget: +$('s-target').value,
     ballType: +$('s-ball').value, trackPct: +$('s-track').value, mode: $('s-mode').value, armOnTurn: $('s-turn').checked,
+    fast: $('s-fast').checked,
   };
   $('save').disabled = true;
   $('save-msg').textContent = state === 'ready' ? 'Sending to the Mevo+ and re-arming…' : 'Saving…';
