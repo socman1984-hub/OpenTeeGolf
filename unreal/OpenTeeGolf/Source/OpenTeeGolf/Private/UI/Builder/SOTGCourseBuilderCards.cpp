@@ -24,6 +24,7 @@
 #include "Widgets/Layout/SScrollBox.h"
 #include "Widgets/SBoxPanel.h"
 #include "Widgets/SOverlay.h"
+#include "Widgets/Notifications/SProgressBar.h"
 
 using namespace otg::ui;
 
@@ -137,14 +138,43 @@ TSharedRef<SWidget> SOTGCourseBuilder::PickedCard()
 		V->AddSlot().AutoHeight().Padding(0, 8, 0, 0)[Text(B && B->bInGame ? TEXT("Built, and in the game.") : TEXT("Built (not in the game yet)."), 13, Green)];
 		TSharedRef<SHorizontalBox> Btns = SNew(SHorizontalBox);
 		const FString Id = M.BuiltId;
+		// (a course in the game is changed from the Play page - pick it, Edit this course - not here)
 		if (B && B->bInGame) Btns->AddSlot().AutoWidth().Padding(0, 0, 6, 0)[Button(TEXT("Play it"), [this, Id]() { if (OnReady) OnReady(Id); }, 13, true)];
-		if (!bBusy) Btns->AddSlot().AutoWidth().Padding(0, 0, 6, 0)[Button(TEXT("Edit"), [this, Id]() { if (OnEdit) OnEdit(Id); }, 13)];
-		if (!bBusy) Btns->AddSlot().AutoWidth().Padding(0, 0, 6, 0)[Button(B && B->bInGame ? TEXT("Export again") : TEXT("Put it in the game"), [this, Id]() { if (UOTGHelperSubsystem* H2 = Helper()) H2->Export(Id); Rebuild(); }, 13, !(B && B->bInGame))];
+		else if (!bBusy)
+		{
+			Btns->AddSlot().AutoWidth().Padding(0, 0, 6, 0)[Button(TEXT("Put it in the game"), [this, Id]() { if (UOTGHelperSubsystem* H2 = Helper()) H2->Export(Id); Rebuild(); }, 13, true)];
+			Btns->AddSlot().AutoWidth().Padding(0, 0, 6, 0)[Button(TEXT("Look over its holes"), [this, Id]() { if (OnEdit) OnEdit(Id); }, 13)];
+		}
 		V->AddSlot().AutoHeight().Padding(0, 6, 0, 0)[Btns];
+		if (B && B->bInGame) V->AddSlot().AutoHeight().Padding(0, 6, 0, 0)[SNew(STextBlock).Font(Font(11)).ColorAndOpacity(Soft).WrapTextAt(400)
+			.Text(FText::FromString(TEXT("To change it, pick it on the Play page and choose Edit this course.")))];
 		if (Queued) V->AddSlot().AutoHeight().Padding(0, 6, 0, 0)[Text(TEXT("In the queue: ") + Queued->Message, 12, Soft)];
 		return Box(V, FMargin(12, 10), Solid);
 	}
-	if (bChecking) V->AddSlot().AutoHeight().Padding(0, 8, 0, 0)[Text(TEXT("Looking at what's mapped there…"), 13, Soft)];
+	// what's mapped there: looked at when asked (OpenStreetMap, through the helper: from a few seconds
+	// to a minute when its servers are busy), a moving bar and the seconds while it looks
+	if (!bChecking && !bCheckFailed && !Checked.IsValid())
+	{
+		V->AddSlot().AutoHeight().Padding(0, 10, 0, 0)
+		[
+			SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot().AutoWidth().Padding(0, 0, 6, 0)[Button(TEXT("See what's mapped there"), [this]() { Status.Empty(); Check(); }, 14, true)]
+			+ SHorizontalBox::Slot().AutoWidth()[bBusy ? StaticCastSharedRef<SWidget>(SNullWidget::NullWidget) : StaticCastSharedRef<SWidget>(Button(TEXT("Build without looking"), [this]() { StartBuild(); }, 13))]
+		];
+		V->AddSlot().AutoHeight().Padding(0, 6, 0, 0)[SNew(STextBlock).Font(Font(11)).ColorAndOpacity(Soft).WrapTextAt(400)
+			.Text(FText::FromString(TEXT("Asks OpenStreetMap what it has of this course (holes, greens, fairways, bunkers, water, trees) and which set of holes to build, before you build it.")))];
+	}
+	if (bChecking)
+	{
+		V->AddSlot().AutoHeight().Padding(0, 10, 0, 4)[Text(TEXT("Looking at what's mapped there…"), 13, Ink)];
+		V->AddSlot().AutoHeight()[SNew(SBox).HeightOverride(10)[SNew(SProgressBar).FillColorAndOpacity(FLinearColor(0.3f, 0.75f, 0.4f, 1.f))]];   // (no percent: it moves to and fro)
+		V->AddSlot().AutoHeight().Padding(0, 4, 0, 0)[SNew(STextBlock).Font(Font(11)).ColorAndOpacity(Soft).WrapTextAt(400)
+			.Text_Lambda([this]() {
+				const int32 S = FMath::FloorToInt32(FPlatformTime::Seconds() - CheckStarted);
+				return FText::FromString(FString::Printf(TEXT("%d s · asking OpenStreetMap for the course's holes, greens, fairways, bunkers, water and trees%s"), S,
+					S >= 20 ? TEXT(" (its servers are slow at times: it tries the next one)") : TEXT(" (usually 5 to 20 s)")));
+			})];
+	}
 	if (bCheckFailed && !Checked.IsValid())
 	{
 		// (OpenStreetMap busy: again, or build without seeing what's mapped)
@@ -194,57 +224,6 @@ TSharedRef<SWidget> SOTGCourseBuilder::PickedCard()
 	return Box(V, FMargin(12, 10), Solid);
 }
 
-TSharedRef<SWidget> SOTGCourseBuilder::BuiltList()
-{
-	// (the game's courses the helper didn't build - made with the web version: listed too, so this
-	// list and the Play page's agree, but there's nothing here to edit them from)
-	TArray<FOTGCourseInfo> Elsewhere;
-	if (UGameInstance* G = GI()) if (UOTGCourseSubsystem* C = G->GetSubsystem<UOTGCourseSubsystem>())
-		for (const FOTGCourseInfo& I : C->ListCourses())
-			if (!I.ExportDir.IsEmpty() && !Built.ContainsByPredicate([&](const FBuilt& B) { return B.Id == I.Id; })) Elsewhere.Add(I);
-	if (!Built.Num() && !Elsewhere.Num()) return SNullWidget::NullWidget;
-	UOTGHelperSubsystem* H = Helper();
-	TSharedRef<SVerticalBox> V = SNew(SVerticalBox);
-	V->AddSlot().AutoHeight().Padding(0, 0, 0, 4)[Text(TEXT("Your courses"), 15, Gold, "Bold")];
-	for (const FBuilt& B : Built)
-	{
-		const FString Id = B.Id;
-		// (its name on a line of its own, whole; under it where it stands, and what can be done)
-		V->AddSlot().AutoHeight().Padding(0, 6, 0, 0)[SNew(STextBlock).Text(FText::FromString(B.Name)).Font(Font(13, "Bold")).ColorAndOpacity(Ink).AutoWrapText(true)];
-		TSharedRef<SHorizontalBox> Row = SNew(SHorizontalBox);
-		Row->AddSlot().FillWidth(1).VAlign(VAlign_Center)[Text(B.bInGame ? TEXT("in the game") : TEXT("not in the game yet"), 11, B.bInGame ? Green : Soft)];
-		if (H && H->ActiveFor(Id)) Row->AddSlot().AutoWidth().VAlign(VAlign_Center).Padding(4, 0, 0, 0)[Text(TEXT("in the queue"), 11, Soft)];
-		else
-		{
-			Row->AddSlot().AutoWidth().VAlign(VAlign_Center).Padding(4, 0, 0, 0)[Button(TEXT("Edit"), [this, Id]() { if (OnEdit) OnEdit(Id); }, 11)];
-			Row->AddSlot().AutoWidth().VAlign(VAlign_Center).Padding(4, 0, 0, 0)[Button(B.bInGame ? TEXT("Export again") : TEXT("Export"), [this, Id]() { if (UOTGHelperSubsystem* H2 = Helper()) H2->Export(Id); Rebuild(); }, 11)];
-			Row->AddSlot().AutoWidth().VAlign(VAlign_Center).Padding(4, 0, 0, 0)[Button(TEXT("Update"), [this, Id]() { if (UOTGHelperSubsystem* H2 = Helper()) H2->Update(Id); Rebuild(); }, 11)];
-			Row->AddSlot().AutoWidth().VAlign(VAlign_Center).Padding(4, 0, 0, 0)[Button(ConfirmDelete == Id ? TEXT("Sure? Delete") : TEXT("Delete"), [this, Id]() {
-				if (ConfirmDelete != Id) { ConfirmDelete = Id; Rebuild(); return; }
-				ConfirmDelete.Empty();
-				// (the course's source: what the game has of it, in its courses folder, stays)
-				if (UOTGHelperSubsystem* H2 = Helper())
-				{
-					TWeakPtr<SOTGCourseBuilder> Weak = SharedThis(this);
-					H2->Request(TEXT("DELETE"), TEXT("/api/courses/") + Id, FString(), [Weak](int32, TSharedPtr<FJsonValue>, const FString&) { if (TSharedPtr<SOTGCourseBuilder> S = Weak.Pin()) S->LoadBuilt(); });
-				}
-			}, 11, ConfirmDelete == Id)];
-		}
-		V->AddSlot().AutoHeight().Padding(0, 2, 0, 2)[Row];
-	}
-	Elsewhere.Sort([](const FOTGCourseInfo& A, const FOTGCourseInfo& B) { return A.Name < B.Name; });
-	for (const FOTGCourseInfo& I : Elsewhere)
-		V->AddSlot().AutoHeight().Padding(0, 3)
-		[
-			SNew(SVerticalBox).ToolTipText(FText::FromString(TEXT("In the game, but made with the web version: what it was built from isn't in Documents\\OpenTeeGolf\\CourseSources, so it can't be edited or updated here. Build it again here to edit it in the game.")))
-			+ SVerticalBox::Slot().AutoHeight()[Text(I.Name, 13, Ink, "Bold")]
-			+ SVerticalBox::Slot().AutoHeight()[Text(TEXT("in the game · made with the web version"), 11, Soft)]
-		];
-	V->AddSlot().AutoHeight().Padding(0, 4, 0, 0)[SNew(STextBlock).Font(Font(11)).ColorAndOpacity(Soft).WrapTextAt(400)
-		.Text(FText::FromString(TEXT("Edit a course here or from the Play page. Export again after editing it. Update fetches its map data afresh (your trees, grass and looks are kept). Delete removes what it was built from; the game keeps what it has.")))];
-	return Box(V, FMargin(12, 10), Solid);
-}
-
 void SOTGCourseBuilder::Rebuild()
 {
 	if (!Lower.IsValid()) return;
@@ -273,7 +252,6 @@ void SOTGCourseBuilder::Rebuild()
 	TSharedRef<SVerticalBox> Rest = SNew(SVerticalBox);
 	Rest->AddSlot().AutoHeight().Padding(0, 0, 0, 6)[PickedCard()];
 	Rest->AddSlot().AutoHeight().Padding(0, 0, 0, 6)[JobCard()];
-	Rest->AddSlot().AutoHeight()[BuiltList()];
 	V->AddSlot().FillHeight(1)[SNew(SScrollBox) + SScrollBox::Slot()[Rest]];
 	Lower->SetContent(V);
 }

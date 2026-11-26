@@ -1,4 +1,4 @@
-// The studio (the menu's New course > Biomes and forests): grass biomes and forest presets made and
+// The studio (the menu's Course builder > Biomes and forests): grass biomes and forest presets made and
 // kept for every course (OTGBiomes.h: the library), each shown as it's changed on a plot of its own
 // beside the panel (AOTGPreviewStage: the course's own grass and trees, in the menu's level - drag
 // to look round it, the wheel to come closer).
@@ -28,7 +28,7 @@ public:
 
 	void Construct(const FArguments& Args, bool bForests);
 	virtual ~SOTGStudio();
-	TFunction<void()> OnClose;   // (back to New course)
+	TFunction<void()> OnClose;   // (back to the Course builder)
 
 	// (testing: -studio=biomes|forests[:<name>], OTG.Studio.*)
 	void ShowForests(bool bOn);
@@ -41,6 +41,10 @@ public:
 	virtual FReply OnMouseButtonUp(const FGeometry& G, const FPointerEvent& E) override;
 	virtual FReply OnMouseMove(const FGeometry& G, const FPointerEvent& E) override;
 	virtual FReply OnMouseWheel(const FGeometry& G, const FPointerEvent& E) override;
+	virtual bool SupportsKeyboardFocus() const override { return true; }
+	virtual FReply OnKeyDown(const FGeometry& G, const FKeyEvent& E) override;
+	virtual FReply OnKeyUp(const FGeometry& G, const FKeyEvent& E) override;
+	virtual void OnFocusLost(const FFocusEvent& E) override { Held.Reset(); }
 
 private:
 	bool bForests = false;
@@ -55,6 +59,11 @@ private:
 	bool bDirty = true;
 	double AppliedAt = 0;
 	bool bDragging = false;
+	bool bLooking = false;           // (the right button held: the free view turned where it stands)
+	TSet<FKey> Held;                 // (W A S D, Q E, Shift held: the free view flown)
+	TSet<FString> OpenKinds;         // (the kinds whose sliders are showing: each folded to a line until opened)
+	TSharedPtr<class SScrollBox> ListScroll;
+	bool bScrollTop = true;          // (another biome or forest: its list from the top; else kept where it was)
 	TArray<FString> PlantList;       // (the Megascans and KiteDemo plants the game has)
 	TArray<TSharedPtr<FString>> PlantOpts, SpeciesOpts;
 	TSharedPtr<FString> PlantPick, SpeciesPick;

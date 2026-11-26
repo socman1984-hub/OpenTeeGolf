@@ -13,6 +13,9 @@
 #include "HAL/IConsoleManager.h"
 #include "Misc/CommandLine.h"
 #include "Misc/Parse.h"
+#include "Widgets/Input/SCheckBox.h"
+#include "Widgets/Input/SButton.h"
+#include "Styling/CoreStyle.h"
 #include "Widgets/Input/SComboBox.h"
 #include "Widgets/Input/SEditableTextBox.h"
 #include "Widgets/Input/SSlider.h"
@@ -106,7 +109,7 @@ void SOTGStudio::Construct(const FArguments& Args, bool bInForests)
 		[
 			Box(SNew(STextBlock).Font(Font(11)).ColorAndOpacity(Soft).Text_Lambda([this]() {
 				const AOTGPreviewStage* S = Stage.Get();
-				return FText::FromString(FString::Printf(TEXT("Drag to look round  ·  wheel to come closer  ·  %d patches of grass%s"),
+				return FText::FromString(FString::Printf(TEXT("Drag to turn round  ·  wheel to come closer  ·  W A S D to fly, Q / E down and up, right button to look, Shift faster  ·  %d patches of grass%s"),
 					S ? S->GrassCount() : 0, bForests && S ? *FString::Printf(TEXT(", %d trees"), S->TreeCount()) : TEXT("")));
 			}), FMargin(10, 5))
 		]
@@ -141,6 +144,7 @@ void SOTGStudio::Pick(const FString& Name)
 
 void SOTGStudio::Load(const FString& Name)
 {
+	bScrollTop = true;
 	if (bForests)
 	{
 		const FOTGForestPreset* P = Forests.FindByPredicate([&](const FOTGForestPreset& X) { return X.Name == Name; });
@@ -164,6 +168,7 @@ void SOTGStudio::Load(const FString& Name)
 
 void SOTGStudio::New()
 {
+	bScrollTop = true;
 	if (bForests)
 	{
 		TArray<FString> Names;
@@ -244,33 +249,84 @@ void SOTGStudio::Tick(const FGeometry& Geometry, const double Time, const float 
 	SCompoundWidget::Tick(Geometry, Time, Dt);
 	// (grown again as it changes: at most every fifth of a second while a slider's dragged)
 	if (bDirty && FPlatformTime::Seconds() - AppliedAt > 0.2) Apply();
+	// (testing, -studiotest: the list folded, then its first kind opened and turned off, then the free
+	// view flown low over the grass - each photographed (Saved/Screenshots/studio_*.png) - and quit)
+	if (FParse::Param(FCommandLine::Get(), TEXT("studiotest")) && Stage.IsValid())
+	{
+		static int32 Step = 0;
+		static double At = FPlatformTime::Seconds() + 20;
+		auto Shot = [](const TCHAR* N) { if (GEngine) GEngine->Exec(nullptr, *FString::Printf(TEXT("OTG.Shot %s"), N)); };
+		if (FPlatformTime::Seconds() >= At)
+		{
+			At = FPlatformTime::Seconds() + 4;
+			if (Step == 0) Shot(TEXT("studio_folded"));
+			else if (Step == 1 && Biome.Kinds.Num()) { OpenKinds.Add(Biome.Kinds[0].Name); Biome.Kinds[0].bOn = false; Changed(); Rebuild(); }
+			else if (Step == 2) Shot(TEXT("studio_opened"));
+			else if (Step == 3) { Stage->Look(0, 30); Stage->Fly(FVector(0, 0, -5000)); }
+			else if (Step == 4) Shot(TEXT("studio_low"));
+			else if (Step == 5) FPlatformMisc::RequestExit(false, TEXT("studiotest"));
+			Step++;
+		}
+	}
+	// the free view flown with the keys (faster with Shift, and for a forest)
+	if (Held.Num() && Stage.IsValid())
+	{
+		const FVector Dir((Held.Contains(EKeys::W) ? 1 : 0) - (Held.Contains(EKeys::S) ? 1 : 0), (Held.Contains(EKeys::D) ? 1 : 0) - (Held.Contains(EKeys::A) ? 1 : 0),
+			(Held.Contains(EKeys::E) ? 1 : 0) - (Held.Contains(EKeys::Q) ? 1 : 0));
+		const float Speed = (bForests ? 1500.f : 500.f) * (Held.Contains(EKeys::LeftShift) || Held.Contains(EKeys::RightShift) ? 3.f : 1.f);
+		if (!Dir.IsNearlyZero()) Stage->Fly(Dir.GetSafeNormal() * Speed * Dt);
+	}
 }
 
 FReply SOTGStudio::OnMouseButtonDown(const FGeometry& G, const FPointerEvent& E)
 {
 	if (G.AbsoluteToLocal(E.GetScreenSpacePosition()).X < 600) return FReply::Unhandled();
-	bDragging = true;
-	return FReply::Handled().CaptureMouse(SharedThis(this));
+	// (left: turned round the plot; right: the free view, looking where it stands. Either way the keys
+	// fly it from here on: the studio takes the keyboard)
+	bLooking = E.GetEffectingButton() == EKeys::RightMouseButton;
+	bDragging = !bLooking;
+	return FReply::Handled().CaptureMouse(SharedThis(this)).SetUserFocus(SharedThis(this), EFocusCause::Mouse);
 }
 
 FReply SOTGStudio::OnMouseButtonUp(const FGeometry& G, const FPointerEvent& E)
 {
-	if (!bDragging) return FReply::Unhandled();
-	bDragging = false;
+	if (!bDragging && !bLooking) return FReply::Unhandled();
+	bDragging = bLooking = false;
 	return FReply::Handled().ReleaseMouseCapture();
 }
 
 FReply SOTGStudio::OnMouseMove(const FGeometry& G, const FPointerEvent& E)
 {
-	if (!bDragging || !Stage.IsValid()) return FReply::Unhandled();
-	Stage->Orbit(E.GetCursorDelta().X * 0.3f, -E.GetCursorDelta().Y * 0.2f);
+	if (!Stage.IsValid() || (!bDragging && !bLooking)) return FReply::Unhandled();
+	if (bLooking) Stage->Look(E.GetCursorDelta().X * 0.25f, -E.GetCursorDelta().Y * 0.2f);
+	else Stage->Orbit(E.GetCursorDelta().X * 0.3f, -E.GetCursorDelta().Y * 0.2f);
+	return FReply::Handled();
+}
+
+static bool FlyKey(const FKey& K)
+{
+	return K == EKeys::W || K == EKeys::A || K == EKeys::S || K == EKeys::D || K == EKeys::Q || K == EKeys::E || K == EKeys::LeftShift || K == EKeys::RightShift;
+}
+
+FReply SOTGStudio::OnKeyDown(const FGeometry& G, const FKeyEvent& E)
+{
+	if (!FlyKey(E.GetKey())) return FReply::Unhandled();
+	Held.Add(E.GetKey());
+	return FReply::Handled();
+}
+
+FReply SOTGStudio::OnKeyUp(const FGeometry& G, const FKeyEvent& E)
+{
+	if (!FlyKey(E.GetKey())) return FReply::Unhandled();
+	Held.Remove(E.GetKey());
 	return FReply::Handled();
 }
 
 FReply SOTGStudio::OnMouseWheel(const FGeometry& G, const FPointerEvent& E)
 {
 	if (G.AbsoluteToLocal(E.GetScreenSpacePosition()).X < 600 || !Stage.IsValid()) return FReply::Unhandled();
-	Stage->Zoom(E.GetWheelDelta() > 0 ? 0.85f : 1.18f);
+	if (Stage->IsFree()) Stage->Fly(FVector(E.GetWheelDelta() > 0 ? 150.f : -150.f, 0, 0));   // (the free view: on and back)
+	else Stage->Zoom(E.GetWheelDelta() > 0 ? 0.85f : 1.18f);
 	return FReply::Handled();
 }
 
@@ -279,7 +335,7 @@ FReply SOTGStudio::OnMouseWheel(const FGeometry& G, const FPointerEvent& E)
 void SOTGStudio::Rebuild()
 {
 	TSharedRef<SVerticalBox> V = SNew(SVerticalBox);
-	// grass biomes or forests; back to New course
+	// grass biomes or forests; back to the Course builder
 	V->AddSlot().AutoHeight().Padding(0, 0, 0, 6)
 	[
 		SNew(SHorizontalBox)
@@ -327,8 +383,11 @@ void SOTGStudio::Rebuild()
 		}, 12)]
 	];
 	if (!Status.IsEmpty()) V->AddSlot().AutoHeight().Padding(0, 4, 0, 0)[SNew(STextBlock).Font(Font(11)).ColorAndOpacity(bUnsaved ? Gold : Soft).AutoWrapText(true).Text(FText::FromString(Status))];
-	V->AddSlot().FillHeight(1).Padding(0, 8, 0, 0)[SNew(SScrollBox) + SScrollBox::Slot()[bForests ? ForestPanel() : BiomePanel()]];
+	const float WasAt = ListScroll.IsValid() && !bScrollTop ? ListScroll->GetScrollOffset() : 0.f;
+	bScrollTop = false;
+	V->AddSlot().FillHeight(1).Padding(0, 8, 0, 0)[SAssignNew(ListScroll, SScrollBox) + SScrollBox::Slot()[bForests ? ForestPanel() : BiomePanel()]];
 	Panel->SetContent(Box(V, FMargin(14, 12), Solid));
+	ListScroll->SetScrollOffset(WasAt);   // (where it was: a change doesn't send the list back to the top)
 }
 
 TSharedRef<SWidget> SOTGStudio::KindRow(int32 I)
@@ -337,13 +396,37 @@ TSharedRef<SWidget> SOTGStudio::KindRow(int32 I)
 	const otg::FGrassKind* D = otg::FGrass::DefaultKinds().FindByPredicate([&](const otg::FGrassKind& X) { return X.Name == K.Name; });
 	const otg::FGrassKind Base = D ? *D : otg::FGrass::PlantKind(K.Fab.Num() ? K.Fab[0] : FString());
 	TSharedRef<SVerticalBox> V = SNew(SVerticalBox);
+	// its line: growing or not (a checkbox), its name - click to open its sliders - and, folded, how
+	// many and how tall
+	const FString KindName = K.Name;
+	const bool bOpen = OpenKinds.Contains(KindName);
+	auto Fold = [this, KindName]() { if (!OpenKinds.Remove(KindName)) OpenKinds.Add(KindName); Rebuild(); return FReply::Handled(); };
 	TSharedRef<SHorizontalBox> Head = SNew(SHorizontalBox);
-	Head->AddSlot().AutoWidth().VAlign(VAlign_Center).Padding(0, 0, 8, 0)[Button(K.bOn ? TEXT("On") : TEXT("Off"), [this, I]() { Biome.Kinds[I].bOn = !Biome.Kinds[I].bOn; Changed(); Rebuild(); }, 12, K.bOn)];
-	Head->AddSlot().FillWidth(1).VAlign(VAlign_Center)[Text(K.Label.IsEmpty() ? K.Name : K.Label, 14, K.bOn ? Ink : Soft, K.bOn ? "Bold" : "Regular")];
+	Head->AddSlot().AutoWidth().VAlign(VAlign_Center).Padding(0, 0, 8, 0)
+	[
+		SNew(SCheckBox)
+		.IsChecked_Lambda([this, I]() { return Biome.Kinds.IsValidIndex(I) && Biome.Kinds[I].bOn ? ECheckBoxState::Checked : ECheckBoxState::Unchecked; })
+		.OnCheckStateChanged_Lambda([this, I](ECheckBoxState C) { if (Biome.Kinds.IsValidIndex(I)) { Biome.Kinds[I].bOn = C == ECheckBoxState::Checked; Changed(); Rebuild(); } })
+	];
+	Head->AddSlot().AutoWidth().VAlign(VAlign_Center).Padding(0, 0, 6, 0)
+	[
+		SNew(SButton).ButtonStyle(FCoreStyle::Get(), "NoBorder").OnClicked_Lambda(Fold)
+		[Text(bOpen ? TEXT("\u2212") : TEXT("+"), 16, Soft, "Bold")]
+	];
+	Head->AddSlot().FillWidth(1).VAlign(VAlign_Center)
+	[
+		SNew(SButton).ButtonStyle(FCoreStyle::Get(), "NoBorder").OnClicked_Lambda(Fold)
+		[
+			SNew(SVerticalBox)
+			+ SVerticalBox::Slot().AutoHeight()[Text(K.Label.IsEmpty() ? K.Name : K.Label, 14, K.bOn ? Ink : Soft, K.bOn ? "Bold" : "Regular")]
+			+ SVerticalBox::Slot().AutoHeight()[bOpen ? StaticCastSharedRef<SWidget>(SNullWidget::NullWidget)
+				: StaticCastSharedRef<SWidget>(Text(FString::Printf(TEXT("%d per 100 m²  ·  height %d%%"), FMath::RoundToInt(K.Density), FMath::RoundToInt(100 * Mid(K) / FMath::Max(0.01f, Mid(Base)))), 11, Soft))]
+		]
+	];
 	if (K.Name.StartsWith(TEXT("fab_")))
 		Head->AddSlot().AutoWidth().VAlign(VAlign_Center)[Button(TEXT("Remove"), [this, I]() { Biome.Kinds.RemoveAt(I); Changed(); Rebuild(); }, 11)];
-	V->AddSlot().AutoHeight().Padding(0, 6, 0, 2)[Head];
-	if (!K.bOn) return V;
+	V->AddSlot().AutoHeight().Padding(0, 4, 0, 2)[Head];
+	if (!bOpen) return V;
 	auto Add = [&](TSharedRef<SWidget> W) { V->AddSlot().AutoHeight().Padding(18, 2, 0, 0)[W]; };
 	auto Get = [this, I](TFunction<float(const otg::FGrassKind&)> F) { return [this, I, F]() { return Biome.Kinds.IsValidIndex(I) ? F(Biome.Kinds[I]) : 0.f; }; };
 	auto Put = [this, I](TFunction<void(otg::FGrassKind&, float)> F) { return [this, I, F](float X) { if (Biome.Kinds.IsValidIndex(I)) { F(Biome.Kinds[I], X); Changed(); } }; };
@@ -379,14 +462,18 @@ TSharedRef<SWidget> SOTGStudio::KindRow(int32 I)
 TSharedRef<SWidget> SOTGStudio::BiomePanel()
 {
 	TSharedRef<SVerticalBox> L = SNew(SVerticalBox);
-	L->AddSlot().AutoHeight()[Text(FString::Printf(TEXT("%d kinds growing"), Biome.Growing()), 12, Gold, "Bold")];
-	// those growing first, then the rest
-	for (int32 Pass = 0; Pass < 2; Pass++)
-	{
-		if (Pass == 1) L->AddSlot().AutoHeight().Padding(0, 12, 0, 0)[Text(TEXT("Not growing"), 13, Soft, "Bold")];
-		for (int32 i = 0; i < Biome.Kinds.Num(); i++)
-			if (Biome.Kinds[i].FarOf.IsEmpty() && Biome.Kinds[i].bOn == (Pass == 0)) L->AddSlot().AutoHeight()[KindRow(i)];
-	}
+	// (all in one order, which ticking one on or off doesn't change; each folded to a line until opened)
+	int32 Shown = 0;
+	for (const otg::FGrassKind& K : Biome.Kinds) if (K.FarOf.IsEmpty()) Shown++;
+	L->AddSlot().AutoHeight()
+	[
+		SNew(SHorizontalBox)
+		+ SHorizontalBox::Slot().FillWidth(1).VAlign(VAlign_Center)[Text(FString::Printf(TEXT("%d of %d kinds growing"), Biome.Growing(), Shown), 12, Gold, "Bold")]
+		+ SHorizontalBox::Slot().AutoWidth().Padding(4, 0, 0, 0)[Button(TEXT("Open all"), [this]() { for (const otg::FGrassKind& K : Biome.Kinds) OpenKinds.Add(K.Name); Rebuild(); }, 11)]
+		+ SHorizontalBox::Slot().AutoWidth().Padding(4, 0, 0, 0)[Button(TEXT("Fold all"), [this]() { OpenKinds.Reset(); Rebuild(); }, 11)]
+	];
+	for (int32 i = 0; i < Biome.Kinds.Num(); i++)
+		if (Biome.Kinds[i].FarOf.IsEmpty()) L->AddSlot().AutoHeight()[KindRow(i)];
 	// a Megascans or KiteDemo plant added
 	TArray<TSharedPtr<FString>> Left;
 	for (const TSharedPtr<FString>& P : PlantOpts)

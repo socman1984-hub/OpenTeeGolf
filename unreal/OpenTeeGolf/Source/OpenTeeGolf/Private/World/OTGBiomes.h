@@ -1,7 +1,7 @@
 // Grass biomes and forest presets, and the library they're kept in.
 //
 //  - A grass biome (FOTGBiome): a named mix of the tall grass's kinds - which grow, how many, how
-//    tall, in what patches, what colour - made in the studio (SOTGStudio: the menu's New course >
+//    tall, in what patches, what colour - made in the studio (SOTGStudio: the menu's Course builder >
 //    Biomes and forests, with a live preview) from any of the game's grasses, Megascans and KiteDemo
 //    plants. Only the tall grass (the deep rough, heather, meadows): the rough stays one even colour.
 //  - A forest preset (FOTGForestPreset, OTGTreeDesign.h): a mix of species, how tall, how close.

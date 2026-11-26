@@ -2,7 +2,7 @@
 //
 //  - SOTGMainMenu (the start level): Play (the courses - searched by name or place, sorted by name,
 //    recently played or newest - and for the one picked the tees, pins, where to start, 18 or 9
-//    holes, the weather, who's playing and the game), Practice (driving range, putt-putt), New course (find a real course on the map and build it:
+//    holes, the weather, who's playing and the game), Practice (driving range, putt-putt), Course builder (find a real course on the map and build it:
 //    SOTGCourseBuilder), Players (the profiles: name, colour, handicap, hand, tees), Launch monitor
 //    (SOTGLaunchMonitorPanel.h), Settings and What's new (each version's changes); and a button to
 //    join the Discord
@@ -85,6 +85,7 @@ public:
 	void EditCourse(const FString& Id) { OpenEditor(Id); }
 private:
 	EPage Page = EPage::Play;
+	EPage EditBack = EPage::Play;   // (the page the editor was opened from, and goes back to)
 	TArray<FOTGCourseInfo> CourseList;
 	FOTGRoundSetup Setup;
 	TArray<FOTGPlayerProfile> Profiles, Draft;

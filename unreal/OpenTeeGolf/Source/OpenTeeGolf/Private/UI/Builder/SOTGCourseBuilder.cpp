@@ -120,10 +120,15 @@ void SOTGCourseBuilder::Construct(const FArguments&)
 				// the grass biomes and forests the course editor gives a course (SOTGStudio)
 				+ SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 6)
 				[
-					Box(SNew(SHorizontalBox)
-						+ SHorizontalBox::Slot().FillWidth(1).VAlign(VAlign_Center)[Text(TEXT("Grass and trees for your courses"), 13, Soft)]
-						+ SHorizontalBox::Slot().AutoWidth().Padding(6, 0, 0, 0)[Button(TEXT("Grass biomes"), [this]() { if (OnStudio) OnStudio(false); }, 12)]
-						+ SHorizontalBox::Slot().AutoWidth().Padding(4, 0, 0, 0)[Button(TEXT("Forests"), [this]() { if (OnStudio) OnStudio(true); }, 12)], FMargin(12, 8), Solid)
+					// (the words above the buttons: beside them a narrow column cut them off)
+					Box(SNew(SVerticalBox)
+						+ SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 6)[Text(TEXT("Grass and trees for your courses"), 13, Soft)]
+						+ SVerticalBox::Slot().AutoHeight()
+						[
+							SNew(SHorizontalBox)
+							+ SHorizontalBox::Slot().AutoWidth()[Button(TEXT("Grass biomes"), [this]() { if (OnStudio) OnStudio(false); }, 12)]
+							+ SHorizontalBox::Slot().AutoWidth().Padding(4, 0, 0, 0)[Button(TEXT("Forests"), [this]() { if (OnStudio) OnStudio(true); }, 12)]
+						], FMargin(12, 8), Solid)
 				]
 				+ SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 6)
 				[
@@ -192,7 +197,7 @@ EActiveTimerReturnType SOTGCourseBuilder::Pulse(double Time, float Dt)
 		else if (TestStep == 23) { Map->FlyTo(39.33, -84.43, 10); TestStep = 24; TestAt = FPlatformTime::Seconds() + 10; }
 		else if (TestStep == 24) { Shot(TEXT("builder_near")); TestStep = 9; TestAt = FPlatformTime::Seconds() + 3; }
 		else if (TestStep == 1) { SearchBox->SetText(FText::FromString(TestQuery)); Search(); TestStep = 2; TestAt = FPlatformTime::Seconds() + 1; }
-		else if (TestStep == 2 && Found.Num()) { Pick(Found[0], true); TestStep = 3; TestAt = FPlatformTime::Seconds() + 25; }
+		else if (TestStep == 2 && Found.Num()) { Pick(Found[0], true); if (Courses.IsValidIndex(Picked) && Courses[Picked].BuiltId.IsEmpty()) Check(); TestStep = 3; TestAt = FPlatformTime::Seconds() + 25; }
 		else if (TestStep == 2 && !Status.StartsWith(TEXT("Searching")) && FPlatformTime::Seconds() > TestAt + 60) { UE_LOG(LogTemp, Warning, TEXT("buildertest: nothing found")); Quit(); TestStep = 0; }
 		else if (TestStep == 3 && !bChecking) { Shot(TEXT("builder_picked")); TestStep = bTestBuild ? 4 : 9; TestAt = FPlatformTime::Seconds() + 3; }
 		else if (TestStep == 4)
@@ -376,8 +381,8 @@ void SOTGCourseBuilder::Pick(int32 I, bool bFly)
 				}
 			});
 		}
+	// (what's mapped there is looked at when asked: PickedCard's button)
 	Rebuild();
-	if (M.BuiltId.IsEmpty()) Check();
 }
 
 void SOTGCourseBuilder::Check()
@@ -386,6 +391,7 @@ void SOTGCourseBuilder::Check()
 	if (!H || !Courses.IsValidIndex(Picked)) return;
 	bChecking = true;
 	bCheckFailed = false;
+	CheckStarted = FPlatformTime::Seconds();
 	const int32 I = Picked;
 	TWeakPtr<SOTGCourseBuilder> Weak = SharedThis(this);
 	H->Check(Courses[I].OsmType, Courses[I].OsmId, [Weak, I](int32 Code, TSharedPtr<FJsonValue> J, const FString& Body) {

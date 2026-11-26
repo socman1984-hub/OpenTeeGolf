@@ -1,4 +1,4 @@
-// Making a course in the game (the menu's "New course" page), as the web version's course builder
+// Making a course in the game (the menu's "Course builder" page), as the web version's course builder
 // does it, through the course helper (UOTGHelperSubsystem):
 //
 //  - SOTGWorldMap: a map of the world to find a course on - OpenStreetMap's map or the aerial
@@ -7,8 +7,8 @@
 //  - SOTGCourseBuilder: the map, a search, and the course picked: what's mapped there (holes, greens,
 //    fairways ...; which set of holes on a club with more than one), its name, then Build - the map
 //    data, heights and aerial photos downloaded and the course built, then exported to the game's
-//    courses folder - with how far it is; then Play. Below: the courses built, to export again
-//    (after editing), bring up to date from OpenStreetMap, or delete.
+//    courses folder - with how far it is; then Play. A course already in the game is edited or
+//    brought up to date from the Play page (SOTGMainMenu::EditLink), not here.
 //
 // ragma once
 
@@ -44,7 +44,6 @@ private:
 	void Rebuild();
 	TSharedRef<SWidget> PickedCard();
 	TSharedRef<SWidget> JobCard();
-	TSharedRef<SWidget> BuiltList();
 	void Pick(int32 I, bool bFly);
 	// (one of the map key's switches: its dot and name, ticked when shown; a click turns it off or on)
 	TSharedRef<SWidget> KeySwitch(const FString& Label, const FSlateBrush* Dot, float DotSize, bool SOTGWorldMap::* Flag);
@@ -72,11 +71,11 @@ private:
 	// the course picked: what's mapped there
 	TSharedPtr<FJsonObject> Checked;
 	bool bChecking = false, bCheckFailed = false;
+	double CheckStarted = 0;   // (when the look at what's mapped began: the seconds shown with its bar)
 	FString Group;
 	// the courses built (the helper's), and the ones the game has
 	struct FBuilt { FString Id, Name, Location; int64 OsmId = 0; bool bInGame = false; };
 	TArray<FBuilt> Built;
-	FString ConfirmDelete;
 	// a build going on: export it when it's done
 	FString ReadyId;
 	FDelegateHandle JobHandle;

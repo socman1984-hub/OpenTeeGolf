@@ -327,13 +327,13 @@ void AOTGRound::Setup(UOTGCourseData* InData, const FOTGRoundSetup& InSetup)
 		ShotUpdateHandle = LM->OnShotUpdateNative.AddUObject(this, &AOTGRound::OnShotUpdate);
 	}
 
-	// Courses built in the background (the New course page's queue): told here when one is ready
+	// Courses built in the background (the Course builder page's queue): told here when one is ready
 	if (UOTGHelperSubsystem* HS = GetGameInstance()->GetSubsystem<UOTGHelperSubsystem>())
 		HS->OnJobDone.AddWeakLambda(this, [this](const FOTGHelperJob& J) {
 			if (J.Name.IsEmpty()) return;
 			if (J.State == TEXT("done") && J.Kind == TEXT("export")) HudView.Toast(J.Name + TEXT(" is ready: play it from the menu"), 6.f);
 			else if (J.State == TEXT("done") && J.bNeedsReview) HudView.Toast(J.Name + TEXT(" is built: its holes need looking over in the editor"), 6.f);
-			else if (J.State == TEXT("failed")) HudView.Toast(J.Name + TEXT(": building it didn't work (see New course)"), 6.f);
+			else if (J.State == TEXT("failed")) HudView.Toast(J.Name + TEXT(": building it didn't work (see Course builder)"), 6.f);
 		});
 
 	// (-roundexec="<s>:<console command>|...": commands at those times after the round starts, for

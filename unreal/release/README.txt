@@ -28,7 +28,7 @@ Play            Pick the course from the list on the left: type in the search bo
                 skins, best ball, scramble, alternate shot) and whether handicaps count. The bar
                 at the bottom sums it up: "Start the round".
 Practice        A driving range and a putt-putt course.
-New course      Find a real course on the world map and build it (see Courses, below).
+Course builder Find a real course on the world map and build it (see Courses, below).
 Players         Each player's name, colour, handicap, hand and own tees. Their finished rounds are
                 kept with them.
 Launch monitor  How your shots arrive, its status, and the Mevo+ setup (below).
@@ -108,7 +108,7 @@ in Explorer's address bar to open it); a new version of the game keeps them.
 
 Courses
 -------
-The game comes with no courses: you make your own on the New course page. Search for a course
+The game comes with no courses: you make your own on the Course builder page. Search for a course
 by name or town, or drag and zoom the map (the map or the aerial photos) and click its dot - every
 golf course mapped in OpenStreetMap is one; gold ones you've built. The game shows what's mapped
 there (and, at a club with more than one course, asks which holes), then Build downloads the map
@@ -123,7 +123,7 @@ puts most changes in the game in seconds (the holes, greens, fairways, tees, bun
 tall grass); "Put in the game (full)" gets it all ready again, water and the rest (5-20 minutes,
 in the queue). Hover over a button for what it does.
 
-Grass biomes and forests: New course > Grass biomes (or Forests) is a studio where you put grasses
+Grass biomes and forests: Course builder > Grass biomes (or Forests) is a studio where you put grasses
 together into a "biome" - which tall grasses and wildflowers, how many, how tall, in what patches,
 what colour - or trees into a forest - which species and how many of each, drawn as which model,
 how tall, how close, and the grass under them. A plot beside it shows it as you change it (drag to

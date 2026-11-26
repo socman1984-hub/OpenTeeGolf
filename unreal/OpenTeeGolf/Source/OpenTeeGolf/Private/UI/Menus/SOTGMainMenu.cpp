@@ -118,7 +118,7 @@ void SOTGMainMenu::Construct(const FArguments&)
 	Setup.Picked.RemoveAll([&](const FString& Id) { return !Profiles.ContainsByPredicate([&](const FOTGPlayerProfile& P) { return P.Id == Id; }); });
 	if (UOTGCourseSubsystem* C = Courses()) CourseList = C->ListCourses();
 	if (CourseList.Num() && !CourseList.ContainsByPredicate([&](const FOTGCourseInfo& I) { return I.Id == Setup.CourseId; })) Setup.CourseId = CourseList[0].Id;
-	// (testing, even in a Shipping build, which has no console: -buildertest opens New course)
+	// (testing, even in a Shipping build, which has no console: -buildertest opens the Course builder)
 	FString BuilderTest;
 	if (FParse::Value(FCommandLine::Get(), TEXT("buildertest="), BuilderTest)) Page = EPage::Build;
 	// (-studio=biomes|forests[:<name>]: the studio, open on it)
@@ -274,11 +274,11 @@ void SOTGMainMenu::Rebuild()
 {
 	// the tabs, the page shown lit
 	TSharedRef<SHorizontalBox> Tabs = SNew(SHorizontalBox);
-	const TPair<FString, EPage> Pages[] = { { TEXT("Play"), EPage::Play }, { TEXT("Practice"), EPage::Practice }, { TEXT("New course"), EPage::Build }, { TEXT("Players"), EPage::Players }, { TEXT("Launch monitor"), EPage::LaunchMonitor }, { TEXT("Settings"), EPage::Settings }, { TEXT("What's new"), EPage::WhatsNew } };
+	const TPair<FString, EPage> Pages[] = { { TEXT("Play"), EPage::Play }, { TEXT("Practice"), EPage::Practice }, { TEXT("Course builder"), EPage::Build }, { TEXT("Players"), EPage::Players }, { TEXT("Launch monitor"), EPage::LaunchMonitor }, { TEXT("Settings"), EPage::Settings }, { TEXT("What's new"), EPage::WhatsNew } };
 	for (const auto& T : Pages)
 	{
 		const EPage P = T.Value;
-		const bool bOn = Page == P || (P == EPage::Build && (Page == EPage::Edit || Page == EPage::Studio));
+		const bool bOn = Page == P || (P == EPage::Build && Page == EPage::Studio) || (P == EditBack && Page == EPage::Edit);
 		Tabs->AddSlot().AutoWidth().Padding(0, 0, 4, 0)
 		[
 			SNew(SButton).ButtonStyle(&TabStyle()).ContentPadding(FMargin(14, 8, 14, 0))
@@ -348,7 +348,17 @@ TSharedRef<SWidget> SOTGMainMenu::EditLink(const FOTGCourseInfo* Info)
 	if (H && H->HasSource(Info->Id))
 	{
 		const FString Id = Info->Id;
-		return Ghost(TEXT("Edit this course"), [this, Id]() { OpenEditor(Id); }, 13);
+		// (and fetching its map data afresh: the helper's queue, shown on the Course builder page;
+		// its trees, grass and looks are kept)
+		const bool bQueued = H->ActiveFor(Id) != nullptr;
+		return SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot().AutoWidth()[Ghost(TEXT("Edit this course"), [this, Id]() { OpenEditor(Id); }, 13)]
+			+ SHorizontalBox::Slot().AutoWidth().Padding(8, 0, 0, 0).VAlign(VAlign_Center)
+			[
+				bQueued ? StaticCastSharedRef<SWidget>(Para(TEXT("Updating (see the Course builder)"), 12, Dim))
+					: StaticCastSharedRef<SWidget>(SNew(SBox).ToolTipText(FText::FromString(TEXT("Fetch its OpenStreetMap data, heights and photos again, then put it in the game again. Your trees, grass and looks are kept.")))
+						[Ghost(TEXT("Update its map data"), [this, Id]() { if (UGameInstance* G2 = GameInstance()) if (UOTGHelperSubsystem* H2 = G2->GetSubsystem<UOTGHelperSubsystem>()) H2->Update(Id); Rebuild(); }, 13)])
+			];
 	}
 	return SNew(SBox).ToolTipText(FText::FromString(TEXT("The editor works from what a course was built from (its OpenStreetMap data and photos), kept in Documents\\OpenTeeGolf\\CourseSources. Courses built in the game are there; this one was made elsewhere (the web version).")))
 		[Para(TEXT("Made with the web version: edit it there"), 12, Dim)];
@@ -360,10 +370,11 @@ void SOTGMainMenu::OpenEditor(const FString& Id)
 	Editor->OnClose = [this](bool bExported) {
 		if (bExported) if (UOTGCourseSubsystem* S = Courses()) CourseList = S->ListCourses();
 		if (Builder.IsValid()) Builder->Refresh();
-		Page = EPage::Build;
+		Page = EditBack;
 		Editor.Reset();
 		Rebuild();
 	};
+	if (Page != EPage::Edit) EditBack = Page;
 	Page = EPage::Edit;
 	Rebuild();
 }

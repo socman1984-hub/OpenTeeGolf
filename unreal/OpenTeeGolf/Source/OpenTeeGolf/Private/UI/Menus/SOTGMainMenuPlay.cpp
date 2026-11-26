@@ -107,7 +107,7 @@ void SOTGMainMenu::FillCourseList()
 		CourseCount->SetText(FText::FromString(Shown.Num() == CourseList.Num() ? FString::FromInt(CourseList.Num()) : FString::Printf(TEXT("%d of %d"), Shown.Num(), CourseList.Num())));
 	if (!CourseList.Num())
 	{
-		CourseRows->AddSlot().AutoHeight().Padding(4, 8)[Para(TEXT("No courses yet. Build one on the New course page, or put exported courses in the courses folder."), 14)];
+		CourseRows->AddSlot().AutoHeight().Padding(4, 8)[Para(TEXT("No courses yet. Build one on the Course builder page, or put exported courses in the courses folder."), 14)];
 		return;
 	}
 	if (!Shown.Num())
@@ -336,7 +336,7 @@ TSharedRef<SWidget> SOTGMainMenu::PlayPage()
 			]
 		];
 	}
-	else RoundRows->AddSlot().AutoHeight()[Para(TEXT("This course didn't load: try Refresh, or build it again on the New course page."), 14, Warn)];
+	else RoundRows->AddSlot().AutoHeight()[Para(TEXT("This course didn't load: try Refresh, or build it again on the Course builder page."), 14, Warn)];
 
 	// the weather
 	TSharedRef<SVerticalBox> WeatherRows = SNew(SVerticalBox);

@@ -1,4 +1,4 @@
-// A map of the world to find a course on (the menu's New course page, SOTGCourseBuilder): OpenStreetMap's
+// A map of the world to find a course on (the menu's Course builder page, SOTGCourseBuilder): OpenStreetMap's
 // map or the aerial photos (tiles fetched and kept by the course helper), dragged and zoomed with the
 // mouse, every golf course mapped in OpenStreetMap a dot (gold: built already), a click picks one.
 

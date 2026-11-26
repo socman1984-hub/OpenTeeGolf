@@ -197,7 +197,7 @@ Everything the golf needs runs inside the game, in C++.
   building types, species and looks wait for the full export (it says which). It compares with the
   course as the editor opened it (the export folder is taken to match the saved course then).
   `-editortestquick` with `-editortestall` runs it.
-- The course editor (phase 4; Edit on a built course in New course, `SOTGCourseEditor`,
+- The course editor (phase 4; Edit on a built course in the Course builder, `SOTGCourseEditor`,
   `SOTGEditCanvas`): the web editor's map and panels - holes (number, par, handicap, the eight
   tees with yardages, two aim points, the green's centre, four pins, Spread pins, add and delete),
   shapes (draw, pick, drag corners, add corners, move, change kind, delete; water as a stream;
@@ -212,7 +212,7 @@ Everything the golf needs runs inside the game, in C++.
   active timer, not Tick (made while drawing, they're drawn once unmeasured). `-ExecCmds="OTG.Menu.Edit
   <id>" -editortest=<id> [-editortestfix | -editortestall]` (a par of 10+ set to 4 / each tool's
   change, two undone) saves and quits, with `Saved/Screenshots/editor_*.png`.
-- Grass biomes and forest presets (the studio: New course > Grass biomes / Forests, `SOTGStudio`;
+- Grass biomes and forest presets (the studio: Course builder > Grass biomes / Forests, `SOTGStudio`;
   `OTGBiomes.h`): a grass biome (`FOTGBiome`) is a named mix of the tall grass's kinds (the game's
   grasses, Megascans and KiteDemo plants: on or off, how many, height and its spread, patches,
   cover, colour); a forest preset (`FOTGForestPreset`, `OTGTreeDesign.h`) is species with shares
@@ -241,11 +241,11 @@ Everything the golf needs runs inside the game, in C++.
   `UOTGCourseData::ForEachDesignedTree` applies them, so the ball meets the trees as drawn.
   `-editortestforest=X,Z[,<preset>] [-editortestbiome=<biome>]` (with `-editortest=<id>`) marks a
   forest there and draws an area of that biome round it (140 m square), saved for the game.
-- Finding and building a course (the menu's New course page, `SOTGCourseBuilder`, phase 3): a world
+- Finding and building a course (the menu's Course builder page, `SOTGCourseBuilder`, phase 3): a world
   map (`SOTGWorldMap`: OpenStreetMap or Esri's aerial photos, tiles fetched and kept on disk by the
   helper, `/api/helper/tile`), the world's mapped courses as dots (`/api/builder/world`, paged while
-  the helper gathers them), a search, the picked course's check (holes, greens ..., the set of
-  holes at a club with several), Build, Play it; the courses built, to export again, update or delete.
+  the helper gathers them), a search, the picked course's check when asked (holes, greens ..., the set of
+  holes at a club with several), Build, Play it. Courses in the game are edited and updated from Play.
   Builds, updates and exports all go in the helper's queue (`lib/queue.js`, `/api/helper/queue`;
   the game's `UOTGHelperSubsystem::GetQueue`): two builds at a time, one export at a time (the next
   course builds meanwhile), each built course then put in the game. It's kept in
@@ -375,7 +375,7 @@ Everything the golf needs runs inside the game, in C++.
     set and Start the round. With no courses it says how to build the first one.
   - Practice: Driving range and Putt-putt (`SOTGMainMenu::SetPracticeMode` gives an entry its start;
     a new name adds one, shown "Coming soon" until it has one).
-  - New course: find and build one (below).
+  - Course builder: find and build one (below).
   - Players: name, colour, handicap, hand and own tees.
   - Launch monitor: the connection, its live status, and the Mevo+ setup and arm-on-turn.
 
