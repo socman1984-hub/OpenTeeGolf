@@ -4,6 +4,9 @@ The newest version first. The game shows this on its What's new page. make_relea
 OpenTeeGolf.exe, and publish_release.py puts each version's part on its GitHub release.
 A version's heading is "## <version> - <date>", and its changes are "- " lines under it.
 
+## 0.26.2 - 25 November 2026
+- rēlā: a new choice in the Launch monitor panel. rēlā (docs.rela.golf) connects many launch monitors, such as SkyTrak, GC2, FlightScope, Nova, Mevo+, R10 and Square. In rēlā choose GSPro as the simulator and, under Settings > Simulator Connection, this PC (127.0.0.1) and port 921.
+
 ## 0.26.1 - 25 November 2026
 - New course is now called Course builder. A course already in the game is edited from the Play page: pick it, then Edit this course. Update its map data is there too.
 - The Course builder no longer looks up what's mapped as soon as you pick a course: press See what's mapped there, and a moving bar shows it's working.
