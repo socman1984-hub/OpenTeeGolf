@@ -5,11 +5,14 @@
 
 #include "CoreMinimal.h"
 #include "LaunchMonitor/OTGLaunchMonitorTypes.h"
+#include "UObject/StrongObjectPtr.h"
 #include "Widgets/SCompoundWidget.h"
 
 class SBox;
 class STextBlock;
 class UOTGLaunchMonitorSubsystem;
+class UTexture2D;
+struct FSlateBrush;
 
 class SOTGLaunchMonitorPanel : public SCompoundWidget
 {
@@ -18,11 +21,21 @@ public:
 	SLATE_END_ARGS()
 
 	void Construct(const FArguments& Args);
+	virtual ~SOTGLaunchMonitorPanel(); // (turns the Mevo+ live view off)
 	virtual void Tick(const FGeometry& Geometry, const double Time, const float Dt) override;
 
 private:
 	void Rebuild();
+	void UpdateLiveView(); // the newest Mevo+ camera picture into LiveTex
 	UOTGLaunchMonitorSubsystem* LM() const;
+
+	// the Mevo+ live view (the web version's mevo.html camera card)
+	TSharedPtr<STextBlock> LiveText;
+	TSharedPtr<FSlateBrush> LiveBrush;
+	TStrongObjectPtr<UTexture2D> LiveTex;
+	TArray64<uint8> LivePixels;
+	int32 LiveSerial = 0;
+	bool bShownLive = false;
 
 	TSharedPtr<SBox> Body;
 	TSharedPtr<STextBlock> StatusText, DetailText;

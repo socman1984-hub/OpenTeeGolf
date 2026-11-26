@@ -31,6 +31,9 @@ public:
 	void SetWantArmed(bool bArmed);
 	void SetHoldAfterShot(bool bHold);         // after a shot, stay disarmed (until SetWantArmed(true))
 	void SetSetup(const FOTGMevoSetup& Setup); // applied straight away if it's armed
+	// Live view: the camera board streams its picture (MJPEG on port 8080, OTGMevoVideo.h), or goes
+	// back to its normal shot-only mode. Works armed or disarmed; reported in the outbox's Camera.
+	void SetCamera(bool bOn);
 	// Disarm (so the radar stops watching for shots), hang up, end the thread (waits up to ~3.5 s)
 	void Shutdown();
 
@@ -62,7 +65,8 @@ private:
 	void StartShot();
 	void OnShotText(const FString& T);
 	bool FinishShot();
-	bool ApplyRequests();                  // mode / setup / armed changes the game asked for
+	bool ApplyRequests();                  // mode / setup / armed / camera changes the game asked for
+	void Camera(bool bOn);
 
 	void SetState(const FString& State, const FString& Error = FString());
 	void Log(const FString& Msg);
@@ -77,6 +81,7 @@ private:
 	FCriticalSection Ctl;
 	FString WantMode;
 	bool bWantDisarmed = false, bHoldAfterShot = false, bSetupChanged = false, bHasSetup = false;
+	bool bWantCamera = false, bCameraChanged = false;
 	FOTGMevoSetup Setup;
 
 	// the thread's own

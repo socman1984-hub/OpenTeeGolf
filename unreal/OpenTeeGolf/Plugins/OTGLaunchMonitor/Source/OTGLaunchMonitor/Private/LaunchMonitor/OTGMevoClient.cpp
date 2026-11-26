@@ -34,6 +34,23 @@ namespace
 		const FString S = Text(M.Payload);
 		return S.Contains(TEXT("ARMED")) && !S.Contains(TEXT("CANCELLED"));
 	}
+	// Camera config "standard preset" (1024x768) used when the live view is on (lib/mevo.js camConfigStandard)
+	TArray<uint8> CamConfigStandard()
+	{
+		auto I16 = [](int32 V) { return TArray<uint8>{ uint8((V >> 8) & 255), uint8(V & 255) }; };
+		TArray<uint8> P = { 0x33, 1 };
+		for (int32 V : { 1024, 768, 0, 0 }) P.Append(I16(V));
+		P.Append({ 20, 20, 20 });
+		P.Append(I16(2000)); P.Append(I16(1500));
+		P.Append({ 0, 0 });
+		P.Append(WriteFloat40(0));
+		for (int32 i = 0; i < 5; i++) P.Append(I16(-1));
+		P.Add(0);
+		for (int32 i = 0; i < 4; i++) P.Append(I16(-1));
+		P.Append(WriteFloat40(-1));
+		for (int32 i = 0; i < 2; i++) P.Append(I16(-1));
+		return P;
+	}
 }
 
 FOTGMevoClient::FOTGMevoClient(const FString& InHost, int32 InPort, const FString& InMode, TSharedRef<FOTGLMOutbox> InOut, const FString& TracePath)
@@ -74,6 +91,12 @@ void FOTGMevoClient::SetSetup(const FOTGMevoSetup& InSetup)
 	FScopeLock L(&Ctl);
 	Setup = InSetup;
 	bHasSetup = bSetupChanged = true;
+}
+void FOTGMevoClient::SetCamera(bool bOn)
+{
+	FScopeLock L(&Ctl);
+	bWantCamera = bOn;
+	bCameraChanged = true;
 }
 
 void FOTGMevoClient::Shutdown()
@@ -427,6 +450,18 @@ bool FOTGMevoClient::Session()
 
 bool FOTGMevoClient::ApplyRequests()
 {
+	// Live view on / off (armed or not: the camera board streams either way)
+	bool bCamera = false, bCameraOn = false;
+	{
+		FScopeLock L(&Ctl);
+		if (bCameraChanged) { bCamera = true; bCameraOn = bWantCamera; bCameraChanged = false; }
+	}
+	if (bCamera)
+	{
+		Camera(bCameraOn);
+		if (bDropped) { Err = TEXT("connection to the Mevo+ dropped"); return false; }
+		if (Shot) return true; // (a shot came in meanwhile: the session loop reads it first)
+	}
 	FString M;
 	bool bDisarmWanted, bNewSetup;
 	{
@@ -612,6 +647,50 @@ void FOTGMevoClient::Disarm()
 	WaitFor([](const FMevoFrame& M) { return (M.Type == T::TXT && Text(M.Payload).Contains(TEXT("System State"))) || M.Type == T::MODE_ACK; }, 1.5, TEXT("idle"));
 	if (!bDropped) Err.Reset();
 	bArmed = false;
+}
+
+// Live camera view (lib/mevo.js camera): standard 1024x768 picture with streaming on (the Pi needs a
+// few tries while it warms up), or back to the camera's normal shot-only mode. A camera that doesn't
+// answer isn't a reason to drop the session: it's reported in the outbox instead.
+void FOTGMevoClient::Camera(bool bOn)
+{
+	auto FromPi = [](uint8 Type) { return [Type](const FMevoFrame& M) { return M.Src == BUS_PI && M.Type == Type; }; };
+	if (!bOn)
+	{
+		Ask(BUS_PI, T::CAM_STATE, { 1, 1 }, [](const FMevoFrame& M) { return M.Src == BUS_PI && (M.Type == T::CONFIG_ACK || M.Type == T::CAM_STATE); }, TEXT("camera reply"));
+		if (!bDropped) Err.Reset();
+		Out->Update([](FOTGLMDeviceState& S) { S.Camera = 0; S.CameraError.Reset(); });
+		return;
+	}
+	Out->Update([](FOTGLMDeviceState& S) { S.Camera = 0; S.CameraError.Reset(); });
+	Ask(BUS_PI, T::CAM_CONFIG, CamConfigStandard(), FromPi(T::CONFIG_ACK), TEXT("camera config ack"));
+	if (bDropped) return;
+	Ask(BUS_PI, T::CAM_CONFIG_REQ, { 2, 1, 5 }, FromPi(T::CAM_CONFIG), TEXT("camera config"));
+	for (int32 Try = 0; Try < 8; Try++)
+	{
+		if (bDropped || !bRunning || bStopRequested) return;
+		if (Shot)
+		{
+			// (asked again once the shot's been read)
+			FScopeLock L(&Ctl);
+			if (!bCameraChanged) { bWantCamera = true; bCameraChanged = true; }
+			return;
+		}
+		FMevoFrame R;
+		if (Ask(BUS_PI, T::CAM_STATE, { 1, 3 }, FromPi(T::CAM_STATE), TEXT("camera state"), 3.0, &R) && R.Payload.Num() >= 2 && R.Payload[1] == 1)
+		{
+			Err.Reset();
+			Out->Update([](FOTGLMDeviceState& S) { S.Camera = 1; S.CameraError.Reset(); });
+			Log(TEXT("Mevo+: camera streaming"));
+			return;
+		}
+		if (bDropped) return;
+		Idle(4.0);
+	}
+	if (bDropped) return;
+	Err.Reset();
+	Log(TEXT("Mevo+: the camera did not start"));
+	Out->Update([](FOTGLMDeviceState& S) { S.Camera = 0; S.CameraError = TEXT("the camera did not start"); });
 }
 
 // Status polls every second keep the session alive (not during a shot)

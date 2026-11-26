@@ -11,6 +11,7 @@
 #include "LaunchMonitor/OTGFrp.h"
 #include "LaunchMonitor/OTGLMOutbox.h"
 #include "LaunchMonitor/OTGMevoClient.h"
+#include "LaunchMonitor/OTGMevoVideo.h"
 #include "LaunchMonitor/OTGOpenConnect.h"
 #include "Misc/CommandLine.h"
 #include "Misc/ConfigCacheIni.h"
@@ -92,6 +93,9 @@ namespace
 	FAutoConsoleCommandWithWorldAndArgs OffCmd(TEXT("OTG.LM.Disconnect"), TEXT("Disconnect the launch monitor (OTG.LM.Connect to connect again)"), FCmd::CreateLambda([](const TArray<FString>&, UWorld* W) {
 		if (UOTGLaunchMonitorSubsystem* S = Of(W)) S->DisconnectDevice();
 	}));
+	FAutoConsoleCommandWithWorldAndArgs LiveViewCmd(TEXT("OTG.LM.LiveView"), TEXT("OTG.LM.LiveView 1|0: the Mevo+ camera's live view on or off (Mevo+ directly)"), FCmd::CreateLambda([](const TArray<FString>& A, UWorld* W) {
+		if (UOTGLaunchMonitorSubsystem* S = Of(W)) S->SetMevoLiveView(!A.Num() || A[0] != TEXT("0"));
+	}));
 	FAutoConsoleCommandWithWorldAndArgs TestShotCmd(TEXT("OTG.LM.TestShot"), TEXT("OTG.LM.TestShot [mph vla hla spin axis]: a shot without a launch monitor"), FCmd::CreateLambda([](const TArray<FString>& A, UWorld* W) {
 		auto Arg = [&](int32 i, double D) { return A.IsValidIndex(i) ? FCString::Atod(*A[i]) : D; };
 		if (UOTGLaunchMonitorSubsystem* S = Of(W)) S->InjectShot(Arg(0, 150), Arg(1, 12), Arg(2, 0), Arg(3, 2700), Arg(4, 0));
@@ -106,6 +110,7 @@ void UOTGLaunchMonitorSubsystem::LoadSettings()
 	if (GConfig->GetString(Section, TEXT("Connection"), S, GGameUserSettingsIni)) KindOf(S, Connection);
 	GConfig->GetString(Section, TEXT("MevoHost"), MevoHost, GGameUserSettingsIni);
 	GConfig->GetInt(Section, TEXT("MevoPort"), MevoPort, GGameUserSettingsIni);
+	GConfig->GetInt(Section, TEXT("MevoVideoPort"), MevoVideoPort, GGameUserSettingsIni); // (the camera's video; 8080 unless set by hand)
 	GConfig->GetString(Section, TEXT("FrpUrl"), FrpUrl, GGameUserSettingsIni);
 	GConfig->GetBool(Section, TEXT("ArmOnTurn"), bArmOnTurn, GGameUserSettingsIni);
 	if (GConfig->GetBool(Section, TEXT("HasSetup"), bHasSetup, GGameUserSettingsIni) && bHasSetup)
@@ -195,6 +200,8 @@ void UOTGLaunchMonitorSubsystem::Deinitialize()
 
 void UOTGLaunchMonitorSubsystem::StopDevice()
 {
+	bLiveView = false;
+	if (MevoVideo) { MevoVideo->Shutdown(); MevoVideo.Reset(); }
 	if (Mevo) { Mevo->Shutdown(); Mevo.Reset(); }
 	if (Frp) { Frp->Stop(); Frp.Reset(); }
 	if (Bridge) { Bridge->Stop(); Bridge.Reset(); }
@@ -363,6 +370,43 @@ void UOTGLaunchMonitorSubsystem::ConnectDevice()
 {
 	bDeviceOff = false;
 	StartDevice();
+}
+
+// ------------------------------------------------------------------ Mevo+ live view
+
+void UOTGLaunchMonitorSubsystem::SetMevoLiveView(bool bOn)
+{
+	bOn = bOn && Mevo.IsValid();
+	if (Mevo && (bOn || bLiveView)) Mevo->SetCamera(bOn);
+	bLiveView = bOn;
+	if (bOn && !MevoVideo)
+	{
+		// (it keeps trying until the camera serves its picture: that can take up to 30 s)
+		MevoVideo = MakeShared<FOTGMevoVideo>(MevoHost, MevoVideoPort);
+		MevoVideo->Start();
+	}
+	else if (!bOn && MevoVideo)
+	{
+		MevoVideo->Shutdown();
+		MevoVideo.Reset();
+	}
+}
+
+FString UOTGLaunchMonitorSubsystem::GetMevoLiveViewText() const
+{
+	if (!bLiveView) return FString();
+	if (MevoVideo && MevoVideo->HasPictures()) return FString();
+	const FOTGLMDeviceState D = DevOut ? DevOut->Read() : FOTGLMDeviceState();
+	if (!D.bConnected) return TEXT("Waiting for the Mevo+ to connect...");
+	if (!D.CameraError.IsEmpty()) return FString::Printf(TEXT("Camera: %s. Try Stop and Start again."), *D.CameraError);
+	if (D.Camera != 1) return TEXT("Starting the camera (10-30 s)...");
+	const FString E = MevoVideo ? MevoVideo->GetError() : FString();
+	return E.IsEmpty() ? FString(TEXT("Connecting to the camera...")) : E;
+}
+
+bool UOTGLaunchMonitorSubsystem::TakeMevoLiveViewFrame(int32& InOutSerial, TArray64<uint8>& OutBgra, int32& OutW, int32& OutH)
+{
+	return bLiveView && MevoVideo && MevoVideo->TakeFrame(InOutSerial, OutBgra, OutW, OutH);
 }
 
 void UOTGLaunchMonitorSubsystem::InjectShot(double SpeedMph, double VLA, double HLA, double TotalSpin, double SpinAxis)

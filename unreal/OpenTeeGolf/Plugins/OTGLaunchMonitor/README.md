@@ -3,7 +3,7 @@
 Shots from a launch monitor, inside the game (what the web version's `server.js` does):
 
 - **OpenConnect:** FS Golf or any OpenConnect connector sends shots to TCP port 921. It's always listening.
-- **Mevo+ directly:** the PC joins the Mevo+'s Wi-Fi and talks to the radar itself (`OTGMevoClient`, `OTGMevoWire`).
+- **Mevo+ directly:** the PC joins the Mevo+'s Wi-Fi and talks to the radar itself (`OTGMevoClient`, `OTGMevoWire`), plus the camera's live view for lining up the ball (`OTGMevoVideo`).
 - **Garmin R10 / Square Golf:** through their bridge programs (`bridges/`), over FRP (Flight Relay Protocol).
 - **Any FRP device** at an address (`OTGFrp`).
 

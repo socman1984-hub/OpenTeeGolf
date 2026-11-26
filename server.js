@@ -989,7 +989,9 @@ const httpServer = http.createServer(async (req, res) => {
     }
     if (p === '/api/mevo/camera' && req.method === 'POST') {
       const b = await readBody(req);
-      if (!mevo || !mevo.armed) return json(res, { error: 'The Mevo+ is not connected directly' }, 409);
+      // (armed or not: the camera board streams either way, and with "arm only on my turn" the
+      // Mevo+ sits disarmed while you line up on the setup page)
+      if (!mevo?.sock || !['ready', 'idle', 'shot', 'arming'].includes(mevo.state)) return json(res, { error: 'The Mevo+ is not connected directly' }, 409);
       try { await mevo.camera(!!b.on); } catch (err) { return json(res, { error: err.message }, 502); }
       return json(res, { ok: true, info: mevo.info });
     }

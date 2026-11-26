@@ -15,7 +15,7 @@
 // -mevo=host[:port], -frp=ws://..., -ocport=<n>, -bridgecmd="<program> <args>", -lmturn (start on
 // the player's turn), -quitafter=<s>, -execat="<s>:<console command>|<s>:<command>...".
 // Console: OTG.LM.Status, OTG.LM.Connect <kind> [address], OTG.LM.Turn 0|1, OTG.LM.Player <club>
-// [yards] [RH|LH], OTG.LM.Disconnect, OTG.LM.TestShot [mph vla hla spin axis].
+// [yards] [RH|LH], OTG.LM.Disconnect, OTG.LM.TestShot [mph vla hla spin axis], OTG.LM.LiveView 1|0.
 
 #pragma once
 
@@ -28,6 +28,7 @@
 struct FOTGLMOutbox;
 class FOTGOpenConnectServer;
 class FOTGMevoClient;
+class FOTGMevoVideo;
 class FOTGFrpController;
 class FOTGBridgeProcess;
 
@@ -64,6 +65,15 @@ public:
 	// The player disconnected the device (until ConnectDevice or a restart); and connecting again
 	UFUNCTION(BlueprintCallable, Category = "OpenTeeGolf") void DisconnectDevice();
 	UFUNCTION(BlueprintCallable, Category = "OpenTeeGolf") void ConnectDevice();
+	// Mevo+ live view (Mevo+ directly only): the camera's picture, for lining up the ball. Works armed
+	// or disarmed; off again when the device is disconnected or changed. Not saved.
+	UFUNCTION(BlueprintCallable, Category = "OpenTeeGolf") void SetMevoLiveView(bool bOn);
+	UFUNCTION(BlueprintCallable, Category = "OpenTeeGolf") bool IsMevoLiveViewOn() const { return bLiveView; }
+	// What the live view is doing while there's no picture ("Starting the camera..."), or why it
+	// failed; empty once pictures arrive
+	UFUNCTION(BlueprintCallable, Category = "OpenTeeGolf") FString GetMevoLiveViewText() const;
+	// The newest picture if it's newer than InOutSerial (BGRA, 8 bits a channel)
+	bool TakeMevoLiveViewFrame(int32& InOutSerial, TArray64<uint8>& OutBgra, int32& OutW, int32& OutH);
 	// A shot as if from the launch monitor (no device needed)
 	UFUNCTION(BlueprintCallable, Category = "OpenTeeGolf") void InjectShot(double SpeedMph, double VLA, double HLA, double TotalSpin, double SpinAxis);
 
@@ -91,8 +101,8 @@ private:
 
 	EOTGConnection Connection = EOTGConnection::FSGolf;
 	FString MevoHost = TEXT("192.168.2.1"), FrpUrl = TEXT("ws://127.0.0.1:5880/frp"), BridgeCommand;
-	int32 MevoPort = 5100, OpenConnectPort = 921, BridgePort = 5881;
-	bool bArmOnTurn = true, bHasSetup = false, bTurn = false, bDeviceOff = false;
+	int32 MevoPort = 5100, MevoVideoPort = 8080, OpenConnectPort = 921, BridgePort = 5881;
+	bool bArmOnTurn = true, bHasSetup = false, bTurn = false, bDeviceOff = false, bLiveView = false;
 	FOTGMevoSetup MevoSetup;
 	FString Club = TEXT("DR"), Handed = TEXT("RH");
 	double DistanceYd = 0;
@@ -101,6 +111,7 @@ private:
 	// (shared pointers: they're only declared here)
 	TSharedPtr<FOTGOpenConnectServer> OpenConnect;
 	TSharedPtr<FOTGMevoClient> Mevo;
+	TSharedPtr<FOTGMevoVideo> MevoVideo;
 	TSharedPtr<FOTGFrpController> Frp;
 	TSharedPtr<FOTGBridgeProcess> Bridge;
 

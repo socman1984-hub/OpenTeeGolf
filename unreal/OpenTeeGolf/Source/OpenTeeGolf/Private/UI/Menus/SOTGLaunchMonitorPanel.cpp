@@ -60,8 +60,17 @@ void SOTGLaunchMonitorPanel::Construct(const FArguments&)
 		bShownOff = L->IsDeviceOff();
 		Address = Shown == EOTGConnection::Frp ? L->GetFrpUrl() : L->GetMevoHost();
 	}
+	LiveBrush = MakeShared<FSlateBrush>();
+	LiveBrush->DrawAs = ESlateBrushDrawType::Image;
+	LiveBrush->ImageSize = FVector2D(1024, 768);
 	ChildSlot[SAssignNew(Body, SBox).WidthOverride(560)];
 	Rebuild();
+}
+
+SOTGLaunchMonitorPanel::~SOTGLaunchMonitorPanel()
+{
+	// (the camera only streams while someone's looking)
+	if (UOTGLaunchMonitorSubsystem* L = LM(); L && L->IsMevoLiveViewOn()) L->SetMevoLiveView(false);
 }
 
 void SOTGLaunchMonitorPanel::Rebuild()
@@ -118,6 +127,53 @@ void SOTGLaunchMonitorPanel::Rebuild()
 	// what it's doing (Tick keeps it current)
 	V->AddSlot().AutoHeight().Padding(0, 6, 0, 0)[SAssignNew(StatusText, STextBlock).Font(Font(16, "Bold")).ColorAndOpacity(Ink)];
 	V->AddSlot().AutoHeight().Padding(0, 2, 0, 8)[SAssignNew(DetailText, STextBlock).Font(Font(13)).ColorAndOpacity(Soft).AutoWrapText(true)];
+	// the Mevo+ camera: live view for lining up the ball (armed or not)
+	bShownLive = L->IsMevoLiveViewOn();
+	LiveText.Reset();
+	if (C == EOTGConnection::Direct && !L->IsDeviceOff())
+	{
+		V->AddSlot().AutoHeight().Padding(0, 4, 0, 4)
+		[
+			SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot().FillWidth(1).VAlign(VAlign_Center)[Heading(TEXT("Camera"))]
+			+ SHorizontalBox::Slot().AutoWidth()[Button(bShownLive ? TEXT("Stop live view") : TEXT("Start live view"), [this]() {
+				if (UOTGLaunchMonitorSubsystem* X = LM()) X->SetMevoLiveView(!X->IsMevoLiveViewOn());
+				Rebuild();
+			}, 13, bShownLive)]
+		];
+		if (bShownLive)
+		{
+			// The picture is drawn 520 x 390 (the camera's 1024 x 768); the guide is mevo.html's: the
+			// centre line and the "ball here" box at (432, 470), 160 square, in the camera's pixels
+			static const FSlateRoundedBoxBrush GuideBox(FLinearColor::Transparent, 5.f, FLinearColor(1.f, 0.82f, 0.35f, 0.9f), 2.f);
+			const FSlateBrush* White = FCoreStyle::Get().GetBrush("WhiteBrush");
+			const float Sx = 520.f / 1024.f, Sy = 390.f / 768.f;
+			V->AddSlot().AutoHeight().Padding(0, 2, 0, 4)
+			[
+				SNew(SBox).WidthOverride(520).HeightOverride(390)
+				[
+					SNew(SOverlay)
+					+ SOverlay::Slot()[SNew(SBorder).BorderImage(White).BorderBackgroundColor(FLinearColor(0, 0, 0, 0.6f))]
+					+ SOverlay::Slot()[SNew(SImage).Image(LiveBrush.Get()).Visibility_Lambda([this]() { return LiveTex.IsValid() ? EVisibility::HitTestInvisible : EVisibility::Hidden; })]
+					+ SOverlay::Slot().HAlign(HAlign_Center)[SNew(SBox).WidthOverride(2)[SNew(SBorder).BorderImage(White).BorderBackgroundColor(FLinearColor(1.f, 0.82f, 0.35f, 0.6f))]]
+					+ SOverlay::Slot().HAlign(HAlign_Left).VAlign(VAlign_Top).Padding(432 * Sx, 470 * Sy, 0, 0)
+					[
+						SNew(SBox).WidthOverride(160 * Sx).HeightOverride(160 * Sy)[SNew(SBorder).BorderImage(&GuideBox)]
+					]
+					+ SOverlay::Slot().HAlign(HAlign_Left).VAlign(VAlign_Top).Padding(432 * Sx, 470 * Sy + 160 * Sy + 2, 0, 0)
+					[
+						SNew(SBox).WidthOverride(160 * Sx)[SNew(STextBlock).Text(FText::FromString(TEXT("ball here"))).Font(Font(11)).ColorAndOpacity(Gold).Justification(ETextJustify::Center)]
+					]
+					+ SOverlay::Slot().HAlign(HAlign_Center).VAlign(VAlign_Center).Padding(16)
+					[
+						SAssignNew(LiveText, STextBlock).Font(Font(14)).ColorAndOpacity(Ink).AutoWrapText(true).Justification(ETextJustify::Center)
+					]
+				]
+			];
+			V->AddSlot().AutoHeight().Padding(0, 0, 0, 6)[SNew(STextBlock).Text(FText::FromString(TEXT("Place the ball inside the box, on the centre line, and aim the Mevo+ straight down your target line. The box is a guide only.")))
+				.Font(Font(12)).ColorAndOpacity(Soft).AutoWrapText(true)];
+		}
+	}
 	// the Mevo+ setup
 	if (C == EOTGConnection::Direct)
 	{
@@ -156,12 +212,44 @@ void SOTGLaunchMonitorPanel::Rebuild()
 	Body->SetContent(V);
 }
 
+void SOTGLaunchMonitorPanel::UpdateLiveView()
+{
+	UOTGLaunchMonitorSubsystem* L = LM();
+	if (!L || !L->IsMevoLiveViewOn())
+	{
+		if (LiveTex.IsValid())
+		{
+			LiveBrush->SetResourceObject(nullptr);
+			LiveTex.Reset();
+		}
+		LiveSerial = 0;
+		return;
+	}
+	if (LiveText) LiveText->SetText(FText::FromString(L->GetMevoLiveViewText()));
+	int32 W = 0, H = 0;
+	if (!L->TakeMevoLiveViewFrame(LiveSerial, LivePixels, W, H) || W <= 0 || H <= 0 || LivePixels.Num() < int64(W) * H * 4) return;
+	if (!LiveTex.IsValid() || LiveTex->GetSizeX() != W || LiveTex->GetSizeY() != H)
+	{
+		UTexture2D* T = UTexture2D::CreateTransient(W, H, PF_B8G8R8A8);
+		if (!T) return;
+		LiveTex.Reset(T);
+		LiveBrush->SetResourceObject(T);
+		LiveBrush->ImageSize = FVector2D(W, H);
+	}
+	UTexture2D* T = LiveTex.Get();
+	void* Data = T->GetPlatformData()->Mips[0].BulkData.Lock(LOCK_READ_WRITE);
+	FMemory::Memcpy(Data, LivePixels.GetData(), int64(W) * H * 4);
+	T->GetPlatformData()->Mips[0].BulkData.Unlock();
+	T->UpdateResource();
+}
+
 void SOTGLaunchMonitorPanel::Tick(const FGeometry& Geometry, const double Time, const float Dt)
 {
 	SCompoundWidget::Tick(Geometry, Time, Dt);
 	UOTGLaunchMonitorSubsystem* L = LM();
 	if (!L || !StatusText) return;
-	if (L->GetConnection() != Shown || L->IsDeviceOff() != bShownOff) Rebuild();
+	if (L->GetConnection() != Shown || L->IsDeviceOff() != bShownOff || L->IsMevoLiveViewOn() != bShownLive) Rebuild();
+	UpdateLiveView();
 	const FOTGLaunchMonitorStatus S = L->GetStatus();
 	FString Line = (S.Device.IsEmpty() ? FString(TEXT("Launch monitor")) : S.Device) + TEXT(": ") + S.Text;
 	if (S.Battery >= 0) Line += FString::Printf(TEXT("  ·  %d%%"), S.Battery);

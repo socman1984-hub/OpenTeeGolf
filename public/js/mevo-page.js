@@ -80,8 +80,10 @@ function render() {
     info.model && `Model: ${info.model}`, info.ssid && `Network: ${info.ssid}`,
     fw?.dsp && `DSP: ${fw.dsp}`, fw?.avr && `AVR: ${fw.avr}`, fw?.camera && `Camera: ${fw.camera}`,
   ].filter(Boolean).join('\n') || 'Not connected.';
-  $('cam-btn').disabled = !ready;
-  if (!ready && camOn) stopVideo('The Mevo+ is not connected.');
+  // Live view works armed or disarmed, as long as it's connected
+  const connected = ready || state === 'idle' || state === 'arming';
+  $('cam-btn').disabled = !connected;
+  if (!connected && camOn) stopVideo('The Mevo+ is not connected.');
 }
 
 // ---- live camera view (relayed by the server from the Mevo+)

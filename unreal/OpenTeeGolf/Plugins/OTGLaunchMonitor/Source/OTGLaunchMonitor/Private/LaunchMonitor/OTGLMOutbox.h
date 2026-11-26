@@ -18,6 +18,8 @@ struct FOTGLMDeviceState
 	int32 Ready = -1;     // 1 ready, 0 not, -1 not said
 	int32 Battery = -1;
 	double Tilt = NAN, Roll = NAN, TempC = NAN;
+	int32 Camera = -1;    // (Mevo+ live view: 1 streaming, 0 off, -1 not asked)
+	FString CameraError;  // (Mevo+: why the camera didn't start)
 	int32 Clients = 0;    // (OpenConnect: connections open)
 	FString PortError;    // (OpenConnect)
 	FString Device;       // (OpenConnect and FRP: what the device calls itself)
