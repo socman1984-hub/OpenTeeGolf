@@ -157,8 +157,9 @@ and please report what the status box said. For development without the device,
 connection it shows the Mevo+ camera live with alignment guides, a level for tilt and roll,
 battery, temperature, status and the last shot. It also holds the setup sent to the radar:
 distance from the Mevo+ to the ball, hitting-surface and tee height, standard or RCT balls, how
-much of the flight must be tracked, and the detection mode (automatic by club, or always full
-swing / outdoor). The live view relays the camera's own video stream; it can take 10-30 s to
+much of the flight must be tracked, and fast shots. The detection mode follows the club (putter:
+putting; a short wedge: chipping; else full swing, which uses the Mevo+'s mode for nets and
+screens, where it reads RCT spin and finishes a shot in about half a second). The live view relays the camera's own video stream; it can take 10-30 s to
 start while the camera warms up.
 
 If your mat is higher than the Mevo+, keep the Mevo+ on the floor and enter the mat's height as

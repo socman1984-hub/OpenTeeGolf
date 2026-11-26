@@ -8,8 +8,10 @@ namespace otg::mevo
 	{
 		if (Mode == TEXT("chipping")) return 5;
 		if (Mode == TEXT("putting")) return 3;
-		if (Mode == TEXT("outdoor")) return 9;
-		return 1;
+		// Full swing is 9 ("limited flight", for nets and simulator screens): in it the Mevo+ reads RCT
+		// spin and finishes a shot in about 0.55 s, where 1 ("indoor") failed the spin read every time
+		// and took about 1.8 s (lib/mevo.js MODES)
+		return 9;
 	}
 
 	namespace

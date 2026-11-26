@@ -105,17 +105,11 @@
         <label>Ball tracking needed
           <span class="unit-row"><input id="s-track" type="number" step="0.05" min="0.6" max="1"></span>
           <small>Share of the flight the radar must track before a shot counts (0.6–1.0).</small></label>
-        <label>Detection mode
-          <select id="s-mode">
-            <option value="auto">Automatic: putter → putting, wedge inside 50 yd (or anything inside 25 yd) → chipping, else full swing</option>
-            <option value="full">Always full swing (indoor)</option>
-            <option value="outdoor">Always outdoor</option>
-          </select></label>
         <label class="check-row"><span><input id="s-fast" type="checkbox"> Fast shots</span>
-          <small>Full swings start about 0.2 s after impact instead of about 2 s, from the Mevo+'s first reading. Speed and angles are final; spin is a first estimate, corrected in flight when the full reading arrives. Chips and putts wait for the full reading.</small></label>
+          <small>Full swings start about 0.15 s after impact, from the Mevo+'s first reading, instead of waiting for the full reading (about 0.55 s when it reads the spin, about 2 s when it can't). Speed and angles are final; spin is a first estimate, corrected in flight when the full reading arrives. Chips and putts wait for the full reading.</small></label>
         <label>Fast shots: wait up to
           <span class="unit-row"><input id="s-fast-wait" type="number" step="0.1" min="0" max="3"> s</span>
-          <small>How long to wait for the full reading before starting with the first one (0–3 s). The full reading usually comes about 1.6 s after the first, so 0 is fastest, and 1.8 or more is the same as fast shots off. If the full reading arrives sooner, the ball takes off with it straight away.</small></label>
+          <small>How long to wait for the full reading before starting with the first one (0–3 s). When the Mevo+ reads the spin, the full reading comes about 0.4 s after the first; when it can't, about 1.6 s. So 0 is fastest, about 0.6 waits for a measured spin but doesn't hold on when the spin read fails, and 1.8 or more is the same as fast shots off. If the full reading arrives sooner, the ball takes off with it straight away.</small></label>
         <label class="check-row"><span><input id="s-turn" type="checkbox" checked> Arm only when it's my turn</span>
           <small>After a shot is read the Mevo+ stays disarmed; the game arms it again (in the mode for your club) once the ball has stopped. Disarmed between holes, in the menu and when the game is closed.</small></label>
         <div class="form-actions">

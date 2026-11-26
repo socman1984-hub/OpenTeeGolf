@@ -342,12 +342,10 @@ const saveSettings = () => { fs.mkdirSync(path.dirname(SETTINGS_FILE), { recursi
 
 // The Mevo+ detection mode follows the club: putter → putting; a wedge for a short shot (or any
 // club inside 25 yd) → chipping, since full-swing mode can miss slow, low chips; everything else
-// full swing. (The setup page can force full swing or outdoor mode for everything but putts.)
+// full swing (the Mevo+'s mode 9, for nets and screens: lib/mevo.js MODES).
 const WEDGES = ['PW', 'GW', 'SW', 'LW'];
 const mevoMode = () => {
   if (player.Club === 'PT') return 'putting';
-  const forced = settings.lm.setup?.mode;
-  if (forced === 'full' || forced === 'outdoor') return forced;
   const d = player.DistanceToTarget;
   if (d > 0 && (d < 25 || (d < 50 && WEDGES.includes(player.Club)))) return 'chipping';
   return 'full';
@@ -984,7 +982,7 @@ const httpServer = http.createServer(async (req, res) => {
       settings.lm.setup = {
         distanceM: num(b.distanceM, 1.5, 6, d.distanceM), surfaceIn: num(b.surfaceIn, 0, 10, d.surfaceIn),
         teeHeightIn: num(b.teeHeightIn, 0, 4, d.teeHeightIn), tiltTarget: num(b.tiltTarget, -10, 25, d.tiltTarget), ballType: b.ballType ? 1 : 0,
-        trackPct: num(b.trackPct, 0.6, 1, d.trackPct), mode: ['auto', 'full', 'outdoor'].includes(b.mode) ? b.mode : 'auto',
+        trackPct: num(b.trackPct, 0.6, 1, d.trackPct), mode: 'auto', // (by club; there's no other choice now)
         fast: !!b.fast, fastWait: num(b.fastWait, 0, 3, d.fastWait),
       };
       if (typeof b.armOnTurn === 'boolean') settings.lm.armOnTurn = b.armOnTurn;

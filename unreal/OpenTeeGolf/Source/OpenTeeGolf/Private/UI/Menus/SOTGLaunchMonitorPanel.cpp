@@ -185,10 +185,6 @@ void SOTGLaunchMonitorPanel::Rebuild()
 		V->AddSlot().AutoHeight().Padding(0, 2)[Row(TEXT("Balls"), SNew(SHorizontalBox)
 			+ SHorizontalBox::Slot().AutoWidth().Padding(0, 0, 6, 0)[Button(TEXT("Standard"), [this]() { Draft.BallType = 0; Rebuild(); }, 13, Draft.BallType == 0)]
 			+ SHorizontalBox::Slot().AutoWidth()[Button(TEXT("RCT"), [this]() { Draft.BallType = 1; Rebuild(); }, 13, Draft.BallType == 1)])];
-		V->AddSlot().AutoHeight().Padding(0, 2)[Row(TEXT("Detection mode"), SNew(SHorizontalBox)
-			+ SHorizontalBox::Slot().AutoWidth().Padding(0, 0, 6, 0)[Button(TEXT("By club"), [this]() { Draft.Mode = TEXT("auto"); Rebuild(); }, 13, Draft.Mode == TEXT("auto"))]
-			+ SHorizontalBox::Slot().AutoWidth().Padding(0, 0, 6, 0)[Button(TEXT("Full swing"), [this]() { Draft.Mode = TEXT("full"); Rebuild(); }, 13, Draft.Mode == TEXT("full"))]
-			+ SHorizontalBox::Slot().AutoWidth()[Button(TEXT("Outdoor"), [this]() { Draft.Mode = TEXT("outdoor"); Rebuild(); }, 13, Draft.Mode == TEXT("outdoor"))])];
 		V->AddSlot().AutoHeight().Padding(0, 4)
 		[
 			SNew(SCheckBox).IsChecked_Lambda([this]() { return bArmOnTurn ? ECheckBoxState::Checked : ECheckBoxState::Unchecked; })
@@ -199,12 +195,12 @@ void SOTGLaunchMonitorPanel::Rebuild()
 		[
 			SNew(SCheckBox).IsChecked_Lambda([this]() { return Draft.bFast ? ECheckBoxState::Checked : ECheckBoxState::Unchecked; })
 			.OnCheckStateChanged_Lambda([this](ECheckBoxState S) { Draft.bFast = S == ECheckBoxState::Checked; })
-			[Text(TEXT("Fast shots (full swings start ~0.2 s after impact, not ~2 s)"), 14, Ink)]
+			[Text(TEXT("Fast shots (full swings start ~0.15 s after impact)"), 14, Ink)]
 		];
 		V->AddSlot().AutoHeight().Padding(24, 0, 0, 4)[SNew(STextBlock).Text(FText::FromString(TEXT("From the Mevo+'s first reading: speed and angles are final, spin is a first estimate, corrected in flight when the full reading arrives. Chips and putts wait for the full reading. Save the setup to apply.")))
 			.Font(Font(12)).ColorAndOpacity(Soft).AutoWrapText(true)];
 		V->AddSlot().AutoHeight().Padding(0, 2)[Row(TEXT("Fast shots: wait up to (s)"), Number(0, 3, 0.1, [this]() { return Draft.FastWait; }, [this](double X) { Draft.FastWait = X; }))];
-		V->AddSlot().AutoHeight().Padding(24, 0, 0, 4)[SNew(STextBlock).Text(FText::FromString(TEXT("How long to wait for the full reading before starting with the first one (0-3 s). It usually comes about 1.6 s after the first, so 0 is fastest and 1.8 or more is the same as fast shots off. If it comes sooner, the ball takes off with it straight away.")))
+		V->AddSlot().AutoHeight().Padding(24, 0, 0, 4)[SNew(STextBlock).Text(FText::FromString(TEXT("How long to wait for the full reading before starting with the first one (0-3 s). When the Mevo+ reads the spin it comes about 0.4 s after the first; when it can't, about 1.6 s. So 0 is fastest, about 0.6 waits for a measured spin, and 1.8 or more is the same as fast shots off. If it comes sooner, the ball takes off with it straight away.")))
 			.Font(Font(12)).ColorAndOpacity(Soft).AutoWrapText(true)];
 		V->AddSlot().AutoHeight().Padding(0, 4)[Button(TEXT("Save the setup"), [this]() { if (UOTGLaunchMonitorSubsystem* X = LM()) X->SetMevoSetup(Draft); }, 14)];
 	}

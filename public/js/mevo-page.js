@@ -130,7 +130,6 @@ function fillSetup(st) {
   $('s-target').value = tiltTarget = st.tiltTarget;
   $('s-ball').value = String(st.ballType);
   $('s-track').value = st.trackPct;
-  $('s-mode').value = st.mode;
   $('s-turn').checked = st.armOnTurn !== false;
   $('s-fast').checked = !!st.fast;
   $('s-fast-wait').value = st.fastWait ?? 0;
@@ -141,7 +140,7 @@ $('setup').onsubmit = async (e) => {
   e.preventDefault();
   const body = {
     distanceM: +$('s-dist').value * FT, surfaceIn: +$('s-surface').value, teeHeightIn: +$('s-tee').value, tiltTarget: +$('s-target').value,
-    ballType: +$('s-ball').value, trackPct: +$('s-track').value, mode: $('s-mode').value, armOnTurn: $('s-turn').checked,
+    ballType: +$('s-ball').value, trackPct: +$('s-track').value, armOnTurn: $('s-turn').checked,
     fast: $('s-fast').checked, fastWait: +$('s-fast-wait').value || 0,
   };
   $('save').disabled = true;

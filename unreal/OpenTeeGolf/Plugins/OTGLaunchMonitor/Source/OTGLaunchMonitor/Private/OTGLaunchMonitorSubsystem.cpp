@@ -272,10 +272,9 @@ void UOTGLaunchMonitorSubsystem::SetConnection(EOTGConnection Kind, const FStrin
 FString UOTGLaunchMonitorSubsystem::MevoMode() const
 {
 	// The detection mode follows the club: putter -> putting; a wedge for a short shot (or any club
-	// inside 25 yd) -> chipping, since full-swing mode can miss slow, low chips; else full swing.
-	// (The setup can force full swing or outdoor mode for everything but putts.)
+	// inside 25 yd) -> chipping, since full-swing mode can miss slow, low chips; else full swing (the
+	// Mevo+'s mode 9, for nets and screens: OTGMevoWire ModeNumber).
 	if (Club == TEXT("PT")) return TEXT("putting");
-	if (bHasSetup && (MevoSetup.Mode == TEXT("full") || MevoSetup.Mode == TEXT("outdoor"))) return MevoSetup.Mode;
 	const bool bWedge = Club == TEXT("PW") || Club == TEXT("GW") || Club == TEXT("SW") || Club == TEXT("LW");
 	if (DistanceYd > 0 && (DistanceYd < 25 || (DistanceYd < 50 && bWedge))) return TEXT("chipping");
 	return TEXT("full");
@@ -355,7 +354,7 @@ void UOTGLaunchMonitorSubsystem::SetMevoSetup(const FOTGMevoSetup& Setup)
 	MevoSetup.BallType = Setup.BallType ? 1 : 0;
 	MevoSetup.TrackPct = FMath::Clamp(Setup.TrackPct, 0.6, 1.0);
 	MevoSetup.FastWait = FMath::Clamp(Setup.FastWait, 0.0, 3.0);
-	if (MevoSetup.Mode != TEXT("full") && MevoSetup.Mode != TEXT("outdoor")) MevoSetup.Mode = TEXT("auto");
+	MevoSetup.Mode = TEXT("auto"); // (by club; there's no other choice now)
 	bHasSetup = true;
 	SaveSettings();
 	if (Mevo)

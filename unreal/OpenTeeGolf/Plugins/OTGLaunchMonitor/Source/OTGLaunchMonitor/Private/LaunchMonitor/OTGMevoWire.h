@@ -25,7 +25,7 @@ namespace otg::mevo
 	}
 
 	// Detection modes (commsIndex): what ironsight's own bridge uses for each shot type
-	int32 ModeNumber(const FString& Mode); // full 1, chipping 5, putting 3, outdoor 9
+	int32 ModeNumber(const FString& Mode); // chipping 5, putting 3, full swing (and "outdoor") 9
 
 	struct FMevoFrame
 	{

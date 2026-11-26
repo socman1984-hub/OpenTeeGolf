@@ -43,10 +43,11 @@ Mevo+ directly         Close FS Golf, join this PC to the Mevo+'s own Wi-Fi (FS 
                        your setup: the distance from the Mevo+ to the ball, the mat height, the tee
                        height. "Arm only on my turn" keeps it quiet between shots. Start live
                        view shows the Mevo+ camera's picture (armed or not) with a box to put
-                       the ball in; it can take 10-30 s to start. "Fast shots" starts full
-                       swings about 0.2 s after impact (instead of about 2 s) from the Mevo+'s
-                       first reading; the spin is corrected in flight when its full reading
-                       arrives. "Wait up to" (0-3 s) waits that long for the full reading first
+                       the ball in; it can take 10-30 s to start. Full swings use the Mevo+'s
+                       mode for nets and screens, where it reads RCT spin and finishes a shot
+                       in about half a second. "Fast shots" starts full swings about 0.15 s
+                       after impact from the Mevo+'s first reading; the spin is corrected in
+                       flight when its full reading arrives. "Wait up to" (0-3 s) waits that long for the full reading first
                        and takes off with it if it comes in time. The spin shows both readings:
                        the Mevo+'s first estimate above, the final spin below.
 Garmin R10             Pair the R10 in Windows Bluetooth settings first. The game runs its bridge
