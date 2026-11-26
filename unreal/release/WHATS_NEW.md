@@ -4,6 +4,14 @@ The newest version first. The game shows this on its What's new page. make_relea
 OpenTeeGolf.exe, and publish_release.py puts each version's part on its GitHub release.
 A version's heading is "## <version> - <date>", and its changes are "- " lines under it.
 
+## 0.28.0 - 26 November 2026
+- Auto-putt: on the Play page, Game > Putting > Auto-putt. Once your ball stops on the green the hole's done: 1 putt from inside the circle round the hole (6, 10, 15 or 20 ft, painted on the green), 2 from further away.
+- Updates as the game starts: if there's a new version the game asks first. Update now downloads it with its progress shown, then installs it and starts the new version; Not now plays this one.
+- The flight camera follows behind the ball again as it did before 0.27, and on the ball's way down it turns toward the pin so the flag stays in view as it lands and rolls.
+- Trees in the way while you line up a shot are see-through now instead of hidden (their shadows stay). The ball still hits them.
+- The grass biome studio's preview no longer washes out pale when you show one grass alone or fly up high.
+- Mevo+: a swing it saw but couldn't read shows a message in the round, so you know to hit again.
+
 ## 0.27.0 - 26 November 2026
 - New ball physics from the latest OpenFairway: the flight is fitted to tour averages, launch-monitor shots and a trajectory calculator (carries within about a yard of the calculator), landings on grass read each impact's angle and backspin, and the roll-out is fitted to real launch-monitor roll. A topped shot runs along the ground the way it really does.
 - A TV-style camera: it follows the ball up, then holds its height as the ball comes down, so the fairway, the green and the hole stay in view as it lands. Once the ball is rolling the camera glides down behind it, with the hole in view when it's close.
