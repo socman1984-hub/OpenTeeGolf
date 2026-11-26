@@ -17,6 +17,9 @@ $Editor = Join-Path $Engine 'Binaries\Win64\UnrealEditor-Cmd.exe'
 $scripts = Join-Path ([IO.Path]::GetTempPath()) 'OTGPack'
 New-Item -ItemType Directory -Force $scripts | Out-Null
 Copy-Item (Join-Path $Here 'make_game_assets.py'), (Join-Path $Here 'make_sky.py'), (Join-Path $Here 'build_course.py'), (Join-Path $Here 'make_turf.py') $scripts -Force
+# (and the grass biome studio's pictures, grass_icons.ps1's)
+if (Test-Path (Join-Path $scripts 'grass_icons')) { Remove-Item -Recurse -Force (Join-Path $scripts 'grass_icons') }
+if (Test-Path (Join-Path $Here 'grass_icons')) { Copy-Item -Recurse (Join-Path $Here 'grass_icons') (Join-Path $scripts 'grass_icons') }
 $env:OTG_SCRIPT_DIR = $scripts
 Remove-Item (Join-Path $scripts 'assets_done.txt') -ErrorAction SilentlyContinue
 $log = Join-Path $Here 'OpenTeeGolf\Saved\game_assets.log'

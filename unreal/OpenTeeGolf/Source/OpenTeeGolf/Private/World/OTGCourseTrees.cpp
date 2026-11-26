@@ -403,6 +403,62 @@ void FOTGCourseTrees::MarkPicked(const FOTGPicked& P)
 	PickCone->SetVisibility(true);
 }
 
+void FOTGCourseTrees::MarkForests(const TArray<int32>& Which)
+{
+	const FOTGTreeDesign& D = TreeDesign();
+	FString Key;
+	for (int32 i : Which)
+		if (D.Forests.IsValidIndex(i))
+		{
+			Key += FString::Printf(TEXT("%d:%d;"), i, D.Forests[i].Pts.Num());
+			for (const FVector2D& P : D.Forests[i].Pts) Key += FString::Printf(TEXT("%.1f,%.1f "), P.X, P.Y);
+		}
+	if (Key.IsEmpty()) return;
+	// (made the first time: beads, pale green, unlit by shadows)
+	if (!ForestBeads)
+	{
+		UStaticMesh* Sphere = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Sphere.Sphere"));
+		UMaterialInterface* Base = LoadObject<UMaterialInterface>(nullptr, TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
+		if (!Sphere || !Base) return;
+		UMaterialInstanceDynamic* M = UMaterialInstanceDynamic::Create(Base, Course);
+		M->SetVectorParameterValue(TEXT("Color"), FLinearColor(0.55f, 1.f, 0.35f));
+		ForestBeads = NewObject<UInstancedStaticMeshComponent>(Course);
+		ForestBeads->SetStaticMesh(Sphere);
+		ForestBeads->SetMaterial(0, M);
+		ForestBeads->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		ForestBeads->SetCastShadow(false);
+		ForestBeads->SetMobility(EComponentMobility::Movable);
+		ForestBeads->SetupAttachment(Course->RootComponent);
+		ForestBeads->RegisterComponent();
+	}
+	ForestMarkedAt = FPlatformTime::Seconds();
+	if (Key == ForestMarkKey && ForestBeads->IsVisible()) return;
+	ForestMarkKey = Key;
+	// (a bead every 4 m round each one's edge, 1 m over the ground: course metres to the level's cm as the trees are placed)
+	ForestBeads->ClearInstances();
+	const UOTGCourseData* Data = Course->Data;
+	TArray<FTransform> Xfs;
+	for (int32 i : Which)
+	{
+		if (!D.Forests.IsValidIndex(i)) continue;
+		const TArray<FVector2D>& Pts = D.Forests[i].Pts;
+		for (int32 k = 0; k < Pts.Num(); k++)
+		{
+			const FVector2D A = Pts[k], B = Pts[(k + 1) % Pts.Num()];
+			const int32 N = FMath::Max(1, FMath::CeilToInt32(FVector2D::Distance(A, B) / 4.0));
+			for (int32 j = 0; j < N; j++)
+			{
+				const FVector2D P = FMath::Lerp(A, B, double(j) / N);
+				const double G = Data->GroundAt(P.X, P.Y);
+				Xfs.Add(FTransform(FRotator::ZeroRotator, FVector((P.X - Data->HeightX0) * 100.0, (Data->HeightZ1 - P.Y) * 100.0, (G - Data->HeightBase) * 100.0 + 100.0), FVector(0.6)));
+			}
+		}
+	}
+	ForestBeads->AddInstances(Xfs, false, true);
+	UE_LOG(LogTemp, Display, TEXT("Forests outlined: %d, %d beads"), Which.Num(), Xfs.Num());
+	ForestBeads->SetVisibility(true);
+}
+
 bool FOTGCourseTrees::Picked(bool bRock, double X, double Z, FOTGPicked& Out) const
 {
 	for (const FOTGCourseTrees::FDrawn& T : bRock ? DrawnRocks : DrawnTrees)
@@ -417,6 +473,7 @@ bool FOTGCourseTrees::Picked(bool bRock, double X, double Z, FOTGPicked& Out) co
 // (each frame: the picked one's marks gone once the designer stops calling; the cone bobbing)
 void FOTGCourseTrees::UpdateMarks()
 {
+	if (ForestBeads && ForestBeads->IsVisible() && FPlatformTime::Seconds() - ForestMarkedAt > 0.3) ForestBeads->SetVisibility(false);
 	if (PickRing && PickRing->IsVisible())
 	{
 		if (FPlatformTime::Seconds() - PickMarkedAt > 0.3) { PickRing->SetVisibility(false); PickCone->SetVisibility(false); }
@@ -437,6 +494,7 @@ void FOTGCourseTrees::AddReferencedObjects(FReferenceCollector& Collector)
 {
 	Collector.AddReferencedObject(PickRing);
 	Collector.AddReferencedObject(PickCone);
+	Collector.AddReferencedObject(ForestBeads);
 	Collector.AddReferencedObjects(TreeComps);
 	Collector.AddReferencedObjects(RockComps);
 }

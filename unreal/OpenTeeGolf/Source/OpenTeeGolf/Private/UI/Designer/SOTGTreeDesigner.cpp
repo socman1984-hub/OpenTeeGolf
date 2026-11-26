@@ -5,6 +5,10 @@
 
 #include "UI/OTGUi.h"
 #include "World/OTGRuntimeCourse.h"
+#include "World/OTGBiomes.h"
+#include "Misc/CommandLine.h"
+#include "Misc/Parse.h"
+#include "Widgets/Layout/SWrapBox.h"
 #include "Widgets/Input/SComboBox.h"
 #include "Widgets/Input/SSlider.h"
 #include "Widgets/Layout/SBox.h"
@@ -24,6 +28,7 @@ void SOTGTreeDesigner::Construct(const FArguments&)
 	// (the picked one marked on the course while this shows: the marks go when it stops asking)
 	RegisterActiveTimer(0.f, FWidgetActiveTimerDelegate::CreateLambda([this](double, float) {
 		if (bPicked && Course.IsValid() && GetVisibility().IsVisible()) Course->MarkPicked(Picked);
+		if (SelForests.Num() && Course.IsValid() && GetVisibility().IsVisible()) Course->MarkForests(SelForests.Array());
 		return EActiveTimerReturnType::Continue;
 	}));
 }
@@ -35,6 +40,10 @@ void SOTGTreeDesigner::Open(AOTGRuntimeCourse* InCourse)
 	Species = InCourse ? InCourse->TreeSpecies() : TArray<TPair<FString, int32>>();
 	Status.Empty();
 	bPicked = false;
+	SelForests.Reset();
+	LibForests = OTGLibrary::Forests();
+	// (testing, -designforests=all: every forest picked, outlined)
+	if (FString W; FParse::Value(FCommandLine::Get(), TEXT("designforests="), W) && W == TEXT("all")) for (int32 i = 0; i < Edit.Forests.Num(); i++) SelForests.Add(i);
 	// (the species to add: the course's own first, then the rest the game knows)
 	SpeciesOpts.Reset();
 	for (const TPair<FString, int32>& S : Species) SpeciesOpts.Add(MakeShared<FString>(S.Key));
@@ -281,6 +290,85 @@ TSharedRef<SWidget> SOTGTreeDesigner::PickPanel()
 	return V;
 }
 
+// The course editor's forests: picked (one, several or all), outlined on the course, and changed
+// together - how many trees, their size, the trees they're planted with
+TSharedRef<SWidget> SOTGTreeDesigner::ForestPanel()
+{
+	TSharedRef<SVerticalBox> V = SNew(SVerticalBox);
+	V->AddSlot().AutoHeight()[Text(TEXT("Forests"), 15, Gold, "Bold")];
+	if (!Edit.Forests.Num())
+	{
+		V->AddSlot().AutoHeight()[SNew(STextBlock).Font(Font(11)).ColorAndOpacity(Soft).WrapTextAt(470).Text(FText::FromString(
+			TEXT("None yet. Mark a group of trees as a forest in the course editor (Play page: Edit this course, then Trees), and it's here to change in the game.")))];
+		return V;
+	}
+	for (auto It = SelForests.CreateIterator(); It; ++It) if (!Edit.Forests.IsValidIndex(*It)) It.RemoveCurrent();
+	V->AddSlot().AutoHeight()[SNew(STextBlock).Font(Font(11)).ColorAndOpacity(Soft).WrapTextAt(470).Text(FText::FromString(
+		TEXT("Pick one or more: they're outlined on the course, and what you change here changes them all.")))];
+	TSharedRef<SWrapBox> Chips = SNew(SWrapBox).UseAllottedSize(true).InnerSlotPadding(FVector2D(4, 4));
+	for (int32 i = 0; i < Edit.Forests.Num(); i++)
+		Chips->AddSlot()[Button(Edit.Forests[i].Name, [this, i]() { if (!SelForests.Remove(i)) SelForests.Add(i); Rebuild(); }, 12, SelForests.Contains(i))];
+	Chips->AddSlot()[Button(TEXT("All"), [this]() { for (int32 i = 0; i < Edit.Forests.Num(); i++) SelForests.Add(i); Rebuild(); }, 11)];
+	Chips->AddSlot()[Button(TEXT("None"), [this]() { SelForests.Reset(); Rebuild(); }, 11)];
+	V->AddSlot().AutoHeight().Padding(0, 6, 0, 0)[Chips];
+	if (!SelForests.Num()) return V;
+	TArray<int32> Sel = SelForests.Array();
+	Sel.Sort();
+	const FOTGForest& F0 = Edit.Forests[Sel[0]];
+	V->AddSlot().AutoHeight().Padding(0, 6, 0, 2)[Text(Sel.Num() == 1 ? FString::Printf(TEXT("%s: %.1f ha"), *F0.Name, F0.AreaM2() / 10000.0)
+		: FString::Printf(TEXT("%d forests together"), Sel.Num()), 13, Ink, "Bold")];
+	// (a slider on all of them: it shows the first's, and sets every one's)
+	auto Slide = [&](const FString& Label, float Lo, float Hi, float FOTGForest::* Field, TFunction<FString(float)> Fmt) {
+		V->AddSlot().AutoHeight().Padding(18, 2, 0, 0)
+		[
+			SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)[SNew(SBox).WidthOverride(112)[Text(Label, 12, Soft)]]
+			+ SHorizontalBox::Slot().FillWidth(1).VAlign(VAlign_Center)
+			[
+				SNew(SSlider)
+				.Value_Lambda([this, Sel, Lo, Hi, Field]() { return Edit.Forests.IsValidIndex(Sel[0]) ? FMath::Clamp((Edit.Forests[Sel[0]].*Field - Lo) / (Hi - Lo), 0.f, 1.f) : 0.f; })
+				.OnValueChanged_Lambda([this, Sel, Lo, Hi, Field](float X) { for (int32 i : Sel) if (Edit.Forests.IsValidIndex(i)) Edit.Forests[i].*Field = FMath::RoundToFloat((Lo + (Hi - Lo) * X) * 20) / 20; })
+				.OnMouseCaptureEnd_Lambda([this]() { Apply(); })
+				.OnControllerCaptureEnd_Lambda([this]() { Apply(); })
+			]
+			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(8, 0, 0, 0)
+			[
+				SNew(SBox).WidthOverride(140)[SNew(STextBlock).Font(Font(12, "Bold")).ColorAndOpacity(Ink).Text_Lambda([this, Sel, Field, Fmt]() { return FText::FromString(Edit.Forests.IsValidIndex(Sel[0]) ? Fmt(Edit.Forests[Sel[0]].*Field) : FString()); })]
+			]
+		];
+	};
+	Slide(TEXT("How many"), FOTGForest::AmountLo, FOTGForest::AmountHi, &FOTGForest::Amount,
+		[](float X) { return FMath::IsNearlyEqual(X, 1.f) ? FString(TEXT("as mapped")) : X <= 0 ? FString(TEXT("none")) : FString::Printf(TEXT("x %.2g"), X); });
+	Slide(TEXT("Their size"), FOTGForest::SizeLo, FOTGForest::SizeHi, &FOTGForest::Size, [](float X) { return FString::Printf(TEXT("%d%%"), FMath::RoundToInt(X * 100)); });
+	// their trees: their own, or one of the Course builder's forests
+	TArray<FString> Presets = { FString() };
+	for (const FOTGForestPreset& P : LibForests) Presets.Add(P.Name);
+	V->AddSlot().AutoHeight().Padding(18, 2, 0, 0)
+	[
+		SNew(SHorizontalBox)
+		+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)[SNew(SBox).WidthOverride(112)[Text(TEXT("Its trees"), 12, Soft)]]
+		+ SHorizontalBox::Slot().FillWidth(1)[Dropdown(Presets, F0.Preset.IsSet() ? F0.Preset.Name : FString(),
+			[](const FString& K) { return K.IsEmpty() ? FString(TEXT("Their own (as mapped)")) : K; },
+			[this, Sel](const FString& K) {
+				const FOTGForestPreset* P = LibForests.FindByPredicate([&](const FOTGForestPreset& X) { return X.Name == K; });
+				for (int32 i : Sel) if (Edit.Forests.IsValidIndex(i)) { Edit.Forests[i].Preset = P ? *P : FOTGForestPreset(); if (P) Edit.Forests[i].bFill = true; }
+				Apply(); Rebuild();
+			})]
+	];
+	if (F0.Preset.IsSet())
+		V->AddSlot().AutoHeight().Padding(18, 4, 0, 0)
+		[
+			SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)[SNew(SBox).WidthOverride(112)[Text(TEXT("Planted out"), 12, Soft)]]
+			+ SHorizontalBox::Slot().AutoWidth()[Button(F0.bFill ? TEXT("Yes: to its spacing") : TEXT("No: the trees there only"), [this, Sel]() {
+				const bool bTo = !Edit.Forests[Sel[0]].bFill;
+				for (int32 i : Sel) if (Edit.Forests.IsValidIndex(i)) Edit.Forests[i].bFill = bTo;
+				Apply(); Rebuild();
+			}, 12, F0.bFill)]
+		];
+	return V;
+}
+
 void SOTGTreeDesigner::Apply()
 {
 	if (!Course.IsValid()) return;
@@ -367,6 +455,8 @@ void SOTGTreeDesigner::Rebuild()
 	List->AddSlot().AutoHeight().Padding(0, 12, 0, 0)[Text(TEXT("All trees"), 15, Gold, "Bold")];
 	Slider(List, TEXT("Size"), 0.5f, 1.8f, [](FOTGTreeDesign& D) { return &D.AllSize; }, SizeFmt);
 	Slider(List, TEXT("How many"), 0.f, 2.5f, [](FOTGTreeDesign& D) { return &D.AllDensity; }, Times);
+
+	List->AddSlot().AutoHeight().Padding(0, 12, 0, 0)[ForestPanel()];
 
 	List->AddSlot().AutoHeight().Padding(0, 12, 0, 0)[Text(TEXT("Species on this course"), 15, Gold, "Bold")];
 	List->AddSlot().AutoHeight()[SNew(STextBlock).Font(Font(11)).ColorAndOpacity(Soft).WrapTextAt(470)

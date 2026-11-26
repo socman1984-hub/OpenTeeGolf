@@ -117,6 +117,14 @@ void AOTGPreviewStage::Frame(bool bForest)
 	Place();
 }
 
+void AOTGPreviewStage::FrameClose()
+{
+	bFree = false;
+	bTurning = false;
+	Yaw = 35; Pitch = -32; Dist = 420; LookUp = 10;
+	Place();
+}
+
 int32 AOTGPreviewStage::GrassCount() const { return Plot ? Plot->GrassInstances() : 0; }
 TArray<FString> AOTGPreviewStage::Plants() const { return Plot ? Plot->GrassPlants() : TArray<FString>(); }
 int32 AOTGPreviewStage::TreeCount() const { return Plot ? Plot->TreesDrawn() : 0; }

@@ -273,6 +273,31 @@ const TArray<otg::FGrassKind>& FOTGCourseTurf::GrassKinds() const
 	return OwnKindsP.IsValid() ? *OwnKindsP : None;
 }
 
+bool FOTGCourseTurf::CourseBiomes(FOTGCourseBiomes& Out) const
+{
+	if (!Biomes.IsValid()) return false;
+	Out = *Biomes;
+	return true;
+}
+
+void FOTGCourseTurf::SetCourseBiomes(const FOTGCourseBiomes& B)
+{
+	if (!Grass.IsValid()) return;
+	Biomes = MakeShared<FOTGCourseBiomes>(B);
+	const TArray<otg::FGrassKind> K = Grown();
+	Grass->SetKinds(K, GrassMeshes(K));
+	Grass->SetSwaps(GrassSwaps);
+	const int32 Size = FMath::Clamp(int32(Course->LandCm / 200.0), 64, 2048);
+	if (Biomes->Areas.Num()) Grass->SetBiomeMap(Biomes->Raster(Course->Data, Course->LandCm, Size), Size);
+	else Grass->SetBiomeMap(TArray<uint8>(), 0);
+	TintGrass();
+}
+
+bool FOTGCourseTurf::SaveCourseBiomes() const
+{
+	return Biomes.IsValid() && Biomes->Save(Course->Data->ExportDir);
+}
+
 void FOTGCourseTurf::SetGrassKinds(const TArray<otg::FGrassKind>& Kinds)
 {
 	if (!Grass.IsValid()) return;

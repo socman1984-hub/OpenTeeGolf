@@ -50,6 +50,9 @@ private:
 	TSharedPtr<FString> AddKind;
 	float AddHeight = 12.f, AddRock = 1.2f;
 	TArray<TPair<FString, int32>> Species;
+	TSet<int32> SelForests;            // (the course editor's forests picked here: outlined, changed together)
+	TArray<FOTGForestPreset> LibForests;   // (the Course builder's forests, to plant one with)
+	TSharedRef<SWidget> ForestPanel();
 	TSharedPtr<SBox> Body;
 	TSharedPtr<class SScrollBox> Scroll;   // (kept where it was across a Rebuild)
 	FString Status;

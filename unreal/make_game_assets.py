@@ -272,8 +272,48 @@ def fab_tints():
                     unreal.log_warning("[OpenTeeGolf assets] %s not tinted: %s" % (path, e))
 
 
+def grass_icons():
+    """The grass biome studio's pictures (unreal/grass_icons/<kind>.png, from grass_icons.ps1): UI
+    textures, /Game/OpenTeeGolf/Game/Runtime/GrassIcons/T_GrassIcon_<kind>, which the studio shows beside
+    each kind's name (SOTGStudio::Picture). Small and uncompressed-looking: no mips, the UI's group."""
+    src = os.path.join(os.environ.get("OTG_SCRIPT_DIR", os.path.dirname(os.path.abspath(__file__))), "grass_icons")
+    if not os.path.isdir(src):
+        return
+    dest = FOLDER + "/Runtime/GrassIcons"
+    # (made afresh: a picture dropped from grass_icons goes from the game too)
+    if eal.does_directory_exist(dest):
+        eal.delete_directory(dest)
+    tasks = []
+    for f in sorted(os.listdir(src)):
+        if not f.lower().endswith(".png"):
+            continue
+        safe = "".join(c if c.isalnum() else "_" for c in f[:-4])
+        t = unreal.AssetImportTask()
+        t.filename = os.path.join(src, f)
+        t.destination_path = dest
+        t.destination_name = "T_GrassIcon_" + safe
+        t.replace_existing = True
+        t.automated = True
+        t.save = False
+        tasks.append(t)
+    tools.import_asset_tasks(tasks)
+    for t in tasks:
+        path = dest + "/" + t.destination_name
+        tex = eal.load_asset(path)
+        if not tex:
+            unreal.log_warning("[OpenTeeGolf assets] grass picture not made: %s" % path)
+            continue
+        tex.set_editor_property("compression_settings", unreal.TextureCompressionSettings.TC_EDITOR_ICON)
+        tex.set_editor_property("mip_gen_settings", unreal.TextureMipGenSettings.TMGS_NO_MIPMAPS)
+        tex.set_editor_property("lod_group", unreal.TextureGroup.TEXTUREGROUP_UI)
+        tex.set_editor_property("srgb", True)
+        eal.save_loaded_asset(tex)
+    log("grass pictures: %d" % len(tasks))
+
+
 if not eal.does_directory_exist(FOLDER):
     eal.make_directory(FOLDER)
+grass_icons()
 fab_usage()
 # (the Tidewright water's material uses CalculateLevelOfDetail in Custom HLSL, which ray-tracing
 # hit shaders can't: with the game's ray tracing on, the whole material failed and the water drew as

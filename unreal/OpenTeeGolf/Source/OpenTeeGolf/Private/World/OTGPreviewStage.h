@@ -37,7 +37,8 @@ public:
 	// turned where it stands. Turning round the plot again (Orbit, Zoom, Frame) leaves it
 	void Fly(const FVector& Move);
 	void Look(float DYaw, float DPitch);
-	bool IsFree() const { return bFree; }   // (from eye height near the grass; further back and up for a forest)
+	bool IsFree() const { return bFree; }
+	void FrameClose();   // (close over the grass, looking down into it: a kind's picture, -studioicons)   // (from eye height near the grass; further back and up for a forest)
 	int32 GrassCount() const;
 	TArray<FString> Plants() const;   // (the Megascans and KiteDemo plants the game has: kinds to add)
 	int32 TreeCount() const;

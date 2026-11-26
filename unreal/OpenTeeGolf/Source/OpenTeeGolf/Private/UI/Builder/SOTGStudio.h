@@ -16,6 +16,7 @@
 #include "CoreMinimal.h"
 #include "Widgets/SCompoundWidget.h"
 #include "World/OTGBiomes.h"
+#include "UObject/StrongObjectPtr.h"
 
 class SBox;
 class AOTGPreviewStage;
@@ -79,5 +80,13 @@ private:
 	TSharedRef<class SWidget> BiomePanel();
 	TSharedRef<class SWidget> ForestPanel();
 	TSharedRef<class SWidget> KindRow(int32 I);
+	void ListEveryPlant();            // (every Megascans and KiteDemo plant in the biome's list: those it hasn't, off)
+	// Each kind's picture (GrassIcons: unreal/grass_icons, photographed by -studioicons): its brush, or none
+	const struct FSlateBrush* Picture(const FString& KindName);
+	TMap<FString, TSharedPtr<struct FSlateBrush>> Pictures;
+	TArray<TStrongObjectPtr<class UTexture2D>> PictureTextures;   // (held: a brush doesn't keep its texture from the garbage collector)
+	FString Solo;                    // (a kind shown alone on the plot: its picture clicked; empty, the whole biome)
+	int32 IconStep = -1;             // (-studioicons: the kind being photographed)
+	double IconAt = 0;
 	TArray<otg::FGrassKind> UnderKinds() const;   // (the forest's biome, or the game's tall grass)
 };

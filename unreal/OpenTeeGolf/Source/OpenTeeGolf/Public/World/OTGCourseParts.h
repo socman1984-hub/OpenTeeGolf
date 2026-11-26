@@ -149,12 +149,18 @@ struct FOTGCourseTrees
 	bool Pick(const FVector& Origin, const FVector& Dir, double MaxT, FOTGPicked& Out) const;
 	bool Picked(bool bRock, double X, double Z, FOTGPicked& Out) const;
 	void MarkPicked(const FOTGPicked& P);
+	// The design's forests (by their place in it) outlined on the ground with beads, while it's asked
+	// for each frame (the tree designer: the forests picked)
+	void MarkForests(const TArray<int32>& Which);
 	void UpdateMarks();   // (each frame: the marks gone once the designer stops marking; the marker bobbing)
 	void AddReferencedObjects(FReferenceCollector& Collector);
 
 	TObjectPtr<UInstancedStaticMeshComponent> PickRing;
 	TObjectPtr<UStaticMeshComponent> PickCone;
 	double PickMarkedAt = -1;
+	TObjectPtr<UInstancedStaticMeshComponent> ForestBeads;
+	double ForestMarkedAt = -1;
+	FString ForestMarkKey;   // (what's outlined now: drawn again only when it changes)
 	FVector PickConeAt = FVector::ZeroVector;
 	struct FTreeRec { double X = 0, Y = 0, Z = 0, H = 0; FString Kind; };   // (trees.json: cm)
 	TArray<FTreeRec> TreeRecs;
@@ -245,6 +251,11 @@ struct FOTGCourseTurf
 	TArray<otg::FGrassKind> Grown() const;
 	// (the studio's preview: these kinds, no grass.json or biomes.json)
 	void BuildGrassFrom(const TArray<otg::FGrassKind>& Kinds);
+	// (the grass designer in the game: the course's biomes as they are, changed - the grass grown again
+	// with them - and saved to biomes.json, as the course editor does)
+	bool CourseBiomes(struct FOTGCourseBiomes& Out) const;
+	void SetCourseBiomes(const struct FOTGCourseBiomes& B);
+	bool SaveCourseBiomes() const;
 	TArray<TObjectPtr<UMaterialInstanceDynamic>> TurfMats;
 	TArray<TObjectPtr<UStaticMesh>> TurfMeshes;   // (kept loaded: the grass makes cells of them as the camera moves)
 };

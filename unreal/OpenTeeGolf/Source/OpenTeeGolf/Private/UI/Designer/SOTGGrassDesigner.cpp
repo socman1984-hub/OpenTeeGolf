@@ -5,6 +5,7 @@
 
 #include "UI/OTGUi.h"
 #include "World/OTGRuntimeCourse.h"
+#include "World/OTGBiomes.h"
 #include "Widgets/Input/SComboBox.h"
 #include "Widgets/Input/SSlider.h"
 #include "Widgets/Layout/SBox.h"
@@ -226,6 +227,66 @@ TSharedRef<SWidget> SOTGGrassDesigner::KindRow(int32 I)
 	return V;
 }
 
+// The course's grass biomes (made in the Course builder, given in the course editor): which one its
+// tall grass grows, and each area drawn with its own. A change grows the grass again at once and is
+// saved for the course (biomes.json), as the course editor does
+TSharedRef<SWidget> SOTGGrassDesigner::BiomePanel()
+{
+	TSharedRef<SVerticalBox> V = SNew(SVerticalBox);
+	V->AddSlot().AutoHeight()[Text(TEXT("Grass biomes"), 15, Gold, "Bold")];
+	FOTGCourseBiomes B;
+	if (!Course.IsValid() || !Course->CourseBiomes(B))
+	{
+		V->AddSlot().AutoHeight()[Text(TEXT("Not for this course (still loading)."), 11, Soft)];
+		return V;
+	}
+	if (!LibBiomes.Num()) LibBiomes = OTGLibrary::Biomes();
+	TArray<FString> Names = { FString() };
+	for (const FOTGBiome& L : LibBiomes) Names.Add(L.Name);
+	V->AddSlot().AutoHeight()[SNew(STextBlock).Font(Font(11)).ColorAndOpacity(Soft).WrapTextAt(470).Text(FText::FromString(
+		TEXT("The mix of tall grass the deep rough and wild places grow (made in the Course builder > Grass biomes). The rough itself stays one even colour.")))];
+	auto Row = [&](const FString& Label, TSharedRef<SWidget> W) {
+		V->AddSlot().AutoHeight().Padding(18, 3, 0, 0)
+		[
+			SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)[SNew(SBox).WidthOverride(150)[Text(Label, 12, Soft)]]
+			+ SHorizontalBox::Slot().FillWidth(1)[W]
+		];
+	};
+	Row(TEXT("All its tall grass"), Dropdown(Names, B.Default, [](const FString& K) { return K.IsEmpty() ? FString(TEXT("The course's own")) : K; },
+		[this](const FString& K) {
+			FOTGCourseBiomes C;
+			if (!Course.IsValid() || !Course->CourseBiomes(C)) return;
+			C.Default = K;
+			if (const FOTGBiome* L = OTGLibrary::FindIn(LibBiomes, K)) C.Use(*L);
+			SetBiomes(C, K.IsEmpty() ? FString(TEXT("The tall grass: the course's own")) : TEXT("The tall grass: ") + K);
+		}));
+	TArray<FString> AreaNames = Names;
+	AreaNames.RemoveAt(0);
+	for (int32 i = 0; i < B.Areas.Num(); i++)
+		Row(FString::Printf(TEXT("Area %d"), i + 1), Dropdown(AreaNames, B.Areas[i].Biome, [](const FString& K) { return K; },
+			[this, i](const FString& K) {
+				FOTGCourseBiomes C;
+				if (!Course.IsValid() || !Course->CourseBiomes(C) || !C.Areas.IsValidIndex(i)) return;
+				if (const FOTGBiome* L = OTGLibrary::FindIn(LibBiomes, K)) { C.Use(*L); C.Areas[i].Biome = K; }
+				SetBiomes(C, FString::Printf(TEXT("Area %d: %s"), i + 1, *K));
+			}));
+	if (!B.Areas.Num())
+		V->AddSlot().AutoHeight().Padding(18, 2, 0, 0)[SNew(STextBlock).Font(Font(11)).ColorAndOpacity(Soft).WrapTextAt(450).Text(FText::FromString(
+			TEXT("Areas with a biome of their own are drawn in the course editor (Play page: Edit this course, then Tall grass).")))];
+	return V;
+}
+
+void SOTGGrassDesigner::SetBiomes(const FOTGCourseBiomes& B, const FString& Say)
+{
+	if (!Course.IsValid()) return;
+	FOTGCourseBiomes C = B;
+	C.Tidy();
+	Course->SetCourseBiomes(C);
+	Status = Course->SaveCourseBiomes() ? Say + TEXT(" (saved for this course)") : FString(TEXT("Couldn't save the grass biomes"));
+	Rebuild();
+}
+
 void SOTGGrassDesigner::Rebuild()
 {
 	TSharedRef<SVerticalBox> V = SNew(SVerticalBox);
@@ -249,6 +310,7 @@ void SOTGGrassDesigner::Rebuild()
 			if (Edit[i].FarOf.IsEmpty() && Edit[i].Masks.Contains(Surface)) List->AddSlot().AutoHeight()[KindRow(i)];
 	};
 	// the mown turf: the fairways (and tees) and the greens - their colour, seen at once
+	List->AddSlot().AutoHeight().Padding(0, 4, 0, 6)[BiomePanel()];
 	List->AddSlot().AutoHeight().Padding(0, 4, 0, 0)[Text(TEXT("Fairways and greens"), 15, Gold, "Bold")];
 	List->AddSlot().AutoHeight()[SNew(STextBlock).Text(FText::FromString(TEXT("The mown turf's colour: the fairways (with the tees) and the greens, each its own."))).Font(Font(11)).ColorAndOpacity(Soft).WrapTextAt(470)];
 	List->AddSlot().AutoHeight()[TurfRow(TEXT("fairway"), TEXT("Fairways and tees"))];

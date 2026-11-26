@@ -14,6 +14,9 @@
 #include "Misc/CommandLine.h"
 #include "Misc/Parse.h"
 #include "Widgets/Input/SCheckBox.h"
+#include "Widgets/Images/SImage.h"
+#include "Brushes/SlateImageBrush.h"
+#include "Engine/Texture2D.h"
 #include "Widgets/Input/SButton.h"
 #include "Styling/CoreStyle.h"
 #include "Widgets/Input/SComboBox.h"
@@ -109,7 +112,10 @@ void SOTGStudio::Construct(const FArguments& Args, bool bInForests)
 		[
 			Box(SNew(STextBlock).Font(Font(11)).ColorAndOpacity(Soft).Text_Lambda([this]() {
 				const AOTGPreviewStage* S = Stage.Get();
-				return FText::FromString(FString::Printf(TEXT("Drag to turn round  ·  wheel to come closer  ·  W A S D to fly, Q / E down and up, right button to look, Shift faster  ·  %d patches of grass%s"),
+				if (!Solo.IsEmpty() && !bForests)
+				if (const otg::FGrassKind* K = Biome.Kinds.FindByPredicate([&](const otg::FGrassKind& X) { return X.Name == Solo; }))
+					return FText::FromString(FString::Printf(TEXT("%s alone  \u00b7  click its picture again for the whole biome  \u00b7  W A S D to fly, right button to look"), *(K->Label.IsEmpty() ? K->Name : K->Label)));
+			return FText::FromString(FString::Printf(TEXT("Drag to turn round  ·  wheel to come closer  ·  W A S D to fly, Q / E down and up, right button to look, Shift faster  ·  %d patches of grass%s"),
 					S ? S->GrassCount() : 0, bForests && S ? *FString::Printf(TEXT(", %d trees"), S->TreeCount()) : TEXT("")));
 			}), FMargin(10, 5))
 		]
@@ -145,6 +151,7 @@ void SOTGStudio::Pick(const FString& Name)
 void SOTGStudio::Load(const FString& Name)
 {
 	bScrollTop = true;
+	Solo.Empty();
 	if (bForests)
 	{
 		const FOTGForestPreset* P = Forests.FindByPredicate([&](const FOTGForestPreset& X) { return X.Name == Name; });
@@ -158,6 +165,7 @@ void SOTGStudio::Load(const FString& Name)
 		if (!B && Biomes.Num()) B = &Biomes[0];
 		Biome = B ? *B : FOTGBiome::TallGrass(TEXT("New biome"));
 		Was = B ? B->Name : FString();
+		ListEveryPlant();
 	}
 	bUnsaved = false;
 	bConfirmDelete = false;
@@ -182,6 +190,7 @@ void SOTGStudio::New()
 		TArray<FString> Names;
 		for (const FOTGBiome& B : Biomes) Names.Add(B.Name);
 		Biome = FOTGBiome::TallGrass(OTGLibrary::FreeName(TEXT("New biome"), Names));
+		ListEveryPlant();
 	}
 	Was.Empty();
 	Changed();
@@ -238,7 +247,13 @@ void SOTGStudio::Apply()
 	else
 	{
 		otg::FGrass::Derive(Biome.Kinds);
-		S->ShowGrass(Biome.Kinds);
+		if (Biome.Kinds.ContainsByPredicate([&](const otg::FGrassKind& K) { return K.Name == Solo; }))
+		{
+			TArray<otg::FGrassKind> One = Biome.Kinds;
+			for (otg::FGrassKind& K : One) K.bOn = K.Name == Solo || K.FarOf == Solo;
+			S->ShowGrass(One);
+		}
+		else S->ShowGrass(Biome.Kinds);
 	}
 	AppliedAt = FPlatformTime::Seconds();
 	bDirty = false;
@@ -249,6 +264,47 @@ void SOTGStudio::Tick(const FGeometry& Geometry, const double Time, const float 
 	SCompoundWidget::Tick(Geometry, Time, Dt);
 	// (grown again as it changes: at most every fifth of a second while a slider's dragged)
 	if (bDirty && FPlatformTime::Seconds() - AppliedAt > 0.2) Apply();
+	// (-studioicons: each kind grown on its own and photographed close, for its picture in the list -
+	// Saved/Screenshots/grassicon_<kind>.png; unreal/grass_icons.ps1 crops them into unreal/grass_icons)
+	if (FParse::Param(FCommandLine::Get(), TEXT("studioicons")) && Stage.IsValid() && !bForests)
+	{
+		if (IconStep < 0)
+		{
+			IconStep = 0; IconAt = FPlatformTime::Seconds() + 15;
+			// (one exposure for all: the camera's own adjusting washed the pale ones out over bare ground)
+			if (GEngine) { GEngine->Exec(nullptr, TEXT("r.EyeAdaptationQuality 0")); GEngine->Exec(nullptr, TEXT("r.DefaultFeature.AutoExposure 0")); }
+		}
+		if (FPlatformTime::Seconds() >= IconAt)
+		{
+			// (each kind: grown alone at twice its density, given 6 s to grow, then photographed)
+			const int32 Kind = IconStep / 2;
+			TArray<int32> Kinds;
+			for (int32 i = 0; i < Biome.Kinds.Num(); i++) if (Biome.Kinds[i].FarOf.IsEmpty()) Kinds.Add(i);
+			if (!Kinds.IsValidIndex(Kind)) { FPlatformMisc::RequestExit(false, TEXT("studioicons")); return; }
+			if (IconStep % 2 == 0)
+			{
+				TArray<otg::FGrassKind> One = Biome.Kinds;
+				for (otg::FGrassKind& K : One) K.bOn = false;
+				One[Kinds[Kind]].bOn = true;
+				One[Kinds[Kind]].Density = FMath::Max(One[Kinds[Kind]].Density * 2, 600.f);   // (thick enough to see, even the wildflowers)
+				if (One[Kinds[Kind]].PatchM > 0) SetCover(One[Kinds[Kind]], 1.f);   // (its patches covering all of it)
+				otg::FGrass::Derive(One);
+				Stage->ShowGrass(One);
+				Stage->FrameClose();
+				bDirty = false;
+				IconAt = FPlatformTime::Seconds() + 6;
+			}
+			else
+			{
+				FString Safe;
+				for (TCHAR C : Biome.Kinds[Kinds[Kind]].Name) Safe.AppendChar(FChar::IsAlnum(C) ? C : TEXT('_'));
+				if (GEngine) GEngine->Exec(nullptr, *FString::Printf(TEXT("OTG.Shot grassicon_%s"), *Safe));
+				IconAt = FPlatformTime::Seconds() + 1.5;
+			}
+			IconStep++;
+		}
+		return;
+	}
 	// (testing, -studiotest: the list folded, then its first kind opened and turned off, then the free
 	// view flown low over the grass - each photographed (Saved/Screenshots/studio_*.png) - and quit)
 	if (FParse::Param(FCommandLine::Get(), TEXT("studiotest")) && Stage.IsValid())
@@ -396,8 +452,7 @@ TSharedRef<SWidget> SOTGStudio::KindRow(int32 I)
 	const otg::FGrassKind* D = otg::FGrass::DefaultKinds().FindByPredicate([&](const otg::FGrassKind& X) { return X.Name == K.Name; });
 	const otg::FGrassKind Base = D ? *D : otg::FGrass::PlantKind(K.Fab.Num() ? K.Fab[0] : FString());
 	TSharedRef<SVerticalBox> V = SNew(SVerticalBox);
-	// its line: growing or not (a checkbox), its name - click to open its sliders - and, folded, how
-	// many and how tall
+	// its line: growing or not (a checkbox), its picture and name - click to open its sliders
 	const FString KindName = K.Name;
 	const bool bOpen = OpenKinds.Contains(KindName);
 	auto Fold = [this, KindName]() { if (!OpenKinds.Remove(KindName)) OpenKinds.Add(KindName); Rebuild(); return FReply::Handled(); };
@@ -413,19 +468,32 @@ TSharedRef<SWidget> SOTGStudio::KindRow(int32 I)
 		SNew(SButton).ButtonStyle(FCoreStyle::Get(), "NoBorder").OnClicked_Lambda(Fold)
 		[Text(bOpen ? TEXT("\u2212") : TEXT("+"), 16, Soft, "Bold")]
 	];
+	const FSlateBrush* Pic = Picture(KindName);
 	Head->AddSlot().FillWidth(1).VAlign(VAlign_Center)
 	[
 		SNew(SButton).ButtonStyle(FCoreStyle::Get(), "NoBorder").OnClicked_Lambda(Fold)
 		[
-			SNew(SVerticalBox)
-			+ SVerticalBox::Slot().AutoHeight()[Text(K.Label.IsEmpty() ? K.Name : K.Label, 14, K.bOn ? Ink : Soft, K.bOn ? "Bold" : "Regular")]
-			+ SVerticalBox::Slot().AutoHeight()[bOpen ? StaticCastSharedRef<SWidget>(SNullWidget::NullWidget)
-				: StaticCastSharedRef<SWidget>(Text(FString::Printf(TEXT("%d per 100 m²  ·  height %d%%"), FMath::RoundToInt(K.Density), FMath::RoundToInt(100 * Mid(K) / FMath::Max(0.01f, Mid(Base)))), 11, Soft))]
+			SNew(SHorizontalBox)
+			// (a picture of it, the size of the line: a blank square where there's none yet)
+			// (clicked: this grass alone on the plot, to fly round; again, the whole biome)
+			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0, 0, 10, 0)
+			[
+				SNew(SButton).ButtonStyle(FCoreStyle::Get(), "NoBorder").ContentPadding(FMargin(0))
+				.ToolTipText(FText::FromString(Solo == KindName ? TEXT("Showing it alone: click for the whole biome") : TEXT("See it alone in the preview")))
+				.OnClicked_Lambda([this, KindName]() { Solo = Solo == KindName ? FString() : KindName; bDirty = true; Rebuild(); return FReply::Handled(); })
+				[
+					SNew(SBorder).BorderImage(FCoreStyle::Get().GetBrush("WhiteBrush")).Padding(2)
+					.BorderBackgroundColor(Solo == KindName ? FLinearColor(0.95f, 0.78f, 0.3f, 1) : FLinearColor(0, 0, 0, 0.25f))
+					[
+						SNew(SBox).WidthOverride(44).HeightOverride(44)
+						[Pic ? StaticCastSharedRef<SWidget>(SNew(SImage).Image(Pic).ColorAndOpacity(FLinearColor(1, 1, 1, K.bOn || Solo == KindName ? 1.f : 0.55f))) : StaticCastSharedRef<SWidget>(SNew(STextBlock).Font(Font(10)).ColorAndOpacity(Soft).Justification(ETextJustify::Center).Text(FText::FromString(TEXT("see\nalone"))))]
+					]
+				]
+			]
+			+ SHorizontalBox::Slot().FillWidth(1).VAlign(VAlign_Center)[Text(K.Label.IsEmpty() ? K.Name : K.Label, 14, K.bOn ? Ink : Soft, K.bOn ? "Bold" : "Regular")]
 		]
 	];
-	if (K.Name.StartsWith(TEXT("fab_")))
-		Head->AddSlot().AutoWidth().VAlign(VAlign_Center)[Button(TEXT("Remove"), [this, I]() { Biome.Kinds.RemoveAt(I); Changed(); Rebuild(); }, 11)];
-	V->AddSlot().AutoHeight().Padding(0, 4, 0, 2)[Head];
+	V->AddSlot().AutoHeight().Padding(0, 2, 0, 2)[Head];
 	if (!bOpen) return V;
 	auto Add = [&](TSharedRef<SWidget> W) { V->AddSlot().AutoHeight().Padding(18, 2, 0, 0)[W]; };
 	auto Get = [this, I](TFunction<float(const otg::FGrassKind&)> F) { return [this, I, F]() { return Biome.Kinds.IsValidIndex(I) ? F(Biome.Kinds[I]) : 0.f; }; };
@@ -474,35 +542,55 @@ TSharedRef<SWidget> SOTGStudio::BiomePanel()
 	];
 	for (int32 i = 0; i < Biome.Kinds.Num(); i++)
 		if (Biome.Kinds[i].FarOf.IsEmpty()) L->AddSlot().AutoHeight()[KindRow(i)];
-	// a Megascans or KiteDemo plant added
-	TArray<TSharedPtr<FString>> Left;
-	for (const TSharedPtr<FString>& P : PlantOpts)
-		if (!Biome.Kinds.ContainsByPredicate([&](const otg::FGrassKind& K) { return K.Fab.Contains(*P); })) Left.Add(P);
-	PlantOpts.Sort([](const TSharedPtr<FString>& A, const TSharedPtr<FString>& B) { return otg::FGrass::PlantKind(*A).Label < otg::FGrass::PlantKind(*B).Label; });
-	if (!PlantPick.IsValid() || !Left.Contains(PlantPick)) PlantPick = Left.Num() ? Left[0] : nullptr;
-	if (PlantOpts.Num())
-		L->AddSlot().AutoHeight().Padding(0, 14, 0, 0)
-		[
-			SNew(SHorizontalBox)
-			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0, 0, 8, 0)[Text(TEXT("Add a plant"), 13, Soft)]
-			+ SHorizontalBox::Slot().FillWidth(1).VAlign(VAlign_Center)
-			[
-				SNew(SComboBox<TSharedPtr<FString>>)
-				.OptionsSource(&PlantOpts)
-				.InitiallySelectedItem(PlantPick)
-				.OnGenerateWidget_Lambda([](TSharedPtr<FString> P) { return StaticCastSharedRef<SWidget>(Text(otg::FGrass::PlantKind(*P).Label, 12)); })
-				.OnSelectionChanged_Lambda([this](TSharedPtr<FString> P, ESelectInfo::Type) { if (P.IsValid()) PlantPick = P; })
-				[SNew(STextBlock).Font(Font(12)).Text_Lambda([this]() { return FText::FromString(PlantPick.IsValid() ? otg::FGrass::PlantKind(*PlantPick).Label : FString(TEXT("(all added)"))); })]
-			]
-			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(8, 0, 0, 0)[Button(TEXT("Add"), [this]() { if (PlantPick.IsValid()) AddPlant(*PlantPick); }, 12)]
-		];
 	return L;
+}
+
+void SOTGStudio::ListEveryPlant()
+{
+	// (the Megascans and KiteDemo plants the biome hasn't: listed off, by name, after its own - so every
+	// grass the game has is there to tick, and to see)
+	TArray<otg::FGrassKind> Add;
+	for (const FString& P : PlantList)
+		if (!Biome.Kinds.ContainsByPredicate([&](const otg::FGrassKind& K) { return K.Fab.Contains(P); }))
+		{
+			otg::FGrassKind K = otg::FGrass::PlantKind(P);
+			K.bOn = false;
+			Add.Add(K);
+		}
+	Add.Sort([](const otg::FGrassKind& A, const otg::FGrassKind& B) { return A.Label < B.Label; });
+	Biome.Kinds.Append(Add);
+}
+
+// (the textures make_game_assets.py makes from unreal/grass_icons/<kind>.png)
+static FString PictureAsset(const FString& KindName)
+{
+	FString Safe;
+	for (TCHAR C : KindName) Safe.AppendChar(FChar::IsAlnum(C) ? C : TEXT('_'));
+	return FString::Printf(TEXT("/Game/OpenTeeGolf/Game/Runtime/GrassIcons/T_GrassIcon_%s.T_GrassIcon_%s"), *Safe, *Safe);
+}
+
+const FSlateBrush* SOTGStudio::Picture(const FString& KindName)
+{
+	if (const TSharedPtr<FSlateBrush>* B = Pictures.Find(KindName)) return B->Get();
+	TSharedPtr<FSlateBrush> Brush;
+	if (UTexture2D* T = LoadObject<UTexture2D>(nullptr, *PictureAsset(KindName), nullptr, LOAD_NoWarn | LOAD_Quiet))
+	{
+		PictureTextures.Emplace(T);
+		Brush = MakeShared<FSlateBrush>();
+		Brush->SetResourceObject(T);
+		Brush->ImageSize = FVector2D(44, 44);
+		Brush->DrawAs = ESlateBrushDrawType::Image;
+	}
+	Pictures.Add(KindName, Brush);
+	return Brush.Get();
 }
 
 void SOTGStudio::AddPlant(const FString& Plant)
 {
-	if (bForests || Biome.Kinds.ContainsByPredicate([&](const otg::FGrassKind& K) { return K.Fab.Contains(Plant); })) return;
-	Biome.Kinds.Add(otg::FGrass::PlantKind(Plant));
+	// (OTG.Studio.Add: a plant turned on - every one is listed already)
+	if (bForests) return;
+	if (otg::FGrassKind* K = Biome.Kinds.FindByPredicate([&](const otg::FGrassKind& X) { return X.Fab.Contains(Plant); })) K->bOn = true;
+	else Biome.Kinds.Add(otg::FGrass::PlantKind(Plant));
 	Changed();
 	Rebuild();
 }

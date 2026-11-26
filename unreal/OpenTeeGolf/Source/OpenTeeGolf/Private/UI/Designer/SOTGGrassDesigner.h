@@ -13,6 +13,7 @@
 #include "World/OTGGrass.h"
 #include "World/OTGTreeDesign.h"
 #include "World/OTGRuntimeCourse.h"
+#include "World/OTGBiomes.h"
 
 class AOTGRuntimeCourse;
 class SBox;
@@ -35,6 +36,9 @@ private:
 	void SetTurf(const TMap<FString, FOTGTurfLook>& Looks);                       // (both, as these: the rest as they are)
 	TSharedRef<SWidget> KindRow(int32 I);
 	const otg::FGrassKind* Default(const FString& Name) const;
+	TSharedRef<SWidget> BiomePanel();   // (the course's grass biomes: the tall grass's, and each area's)
+	void SetBiomes(const struct FOTGCourseBiomes& B, const FString& Say);
+	TArray<FOTGBiome> LibBiomes;   // (the Course builder's grass biomes)
 
 	TWeakObjectPtr<AOTGRuntimeCourse> Course;
 	TArray<otg::FGrassKind> Edit;
