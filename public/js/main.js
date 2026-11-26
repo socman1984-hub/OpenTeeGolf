@@ -1927,7 +1927,22 @@ function showShotData(shot, res) {
   set('d-speed', shot.speedMph.toFixed(1));
   set('d-vla', shot.vla.toFixed(1));
   set('d-hla', `${Math.abs(shot.hla).toFixed(1)}${shot.hla > 0.05 ? 'R' : shot.hla < -0.05 ? 'L' : ''}`);
-  set('d-spin', Math.round(Math.hypot(shot.backSpin, shot.sideSpin)));
+  // (Mevo+: the radar's first spin estimate on top, the final spin under it - "…" until it's in)
+  const spin = Math.round(Math.hypot(shot.backSpin, shot.sideSpin));
+  const top = $('d-spin'), fin = $('d-spin-final');
+  const dual = Number.isFinite(shot.earlySpin);
+  top.classList.toggle('dual', dual);
+  fin.classList.toggle('dual', dual);
+  fin.classList.toggle('hidden', !dual);
+  if (dual) {
+    top.innerHTML = `${Math.round(shot.earlySpin)}<em>first</em>`;
+    fin.innerHTML = `${shot.early ? '…' : spin}<em>final</em>`;
+    top.title = 'The Mevo+\'s first spin estimate (about 0.2 s after impact)';
+    fin.title = 'The Mevo+\'s final spin (about 1.8 s after impact)';
+  } else {
+    top.textContent = spin;
+    top.title = '';
+  }
   const axis = shot.spinAxis ?? (Math.atan2(shot.sideSpin, shot.backSpin) * 180) / Math.PI;
   set('d-axis', `${Math.abs(axis).toFixed(1)}${axis > 0.05 ? 'R' : axis < -0.05 ? 'L' : ''}`);
   const putt = onGreen() && !res?.carryPoint;

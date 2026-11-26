@@ -50,7 +50,7 @@ void SOTGRangePanel::Show(const TArray<FOTGRangeShot>& Shots, const FString& Clu
 	const TPair<FString, FString> Cells[] = {
 		{ TEXT("Carry"), Whole(L.CarryYd) + TEXT(" yd") }, { TEXT("Total"), Whole(L.TotalYd) + TEXT(" yd") }, { TEXT("Offline"), Side(L.OfflineYd, TEXT(" yd")) },
 		{ TEXT("Ball speed"), FString::Printf(TEXT("%.1f mph"), L.Mph) }, { TEXT("Launch"), FString::Printf(TEXT("%.1f°"), L.Launch) }, { TEXT("Apex"), Whole(L.ApexFt) + TEXT(" ft") },
-		{ TEXT("Spin"), Whole(L.Spin) + TEXT(" rpm") }, { TEXT("Spin axis"), Side(L.Axis, TEXT("°"), 1) }, { TEXT("Direction"), Side(L.Direction, TEXT("°"), 1) },
+		{ TEXT("Spin"), L.EarlySpin >= 0 ? Whole(L.EarlySpin) + TEXT(" first\n") + Whole(L.Spin) + TEXT(" final") : Whole(L.Spin) + TEXT(" rpm") }, { TEXT("Spin axis"), Side(L.Axis, TEXT("°"), 1) }, { TEXT("Direction"), Side(L.Direction, TEXT("°"), 1) },
 	};
 	for (int32 i = 0; i < UE_ARRAY_COUNT(Cells); i++)
 	{

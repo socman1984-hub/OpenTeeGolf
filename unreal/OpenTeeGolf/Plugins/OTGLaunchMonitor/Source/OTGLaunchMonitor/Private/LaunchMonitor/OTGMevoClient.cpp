@@ -331,19 +331,26 @@ void FOTGMevoClient::OnFrame(const FMevoFrame& M)
 			if (M.Type == T::FLIGHT && Shot->Flight) FlightDeadline = Now() + 2.5;
 		}
 	}
-	// Fast shots: the early launch result goes to the game at once (full swing only: a chip or putt is
-	// over before the full result could correct it); the full result follows as a shot update
-	if (M.Type == T::LAUNCH && bUsingSetup && Using.bFast && (Mode == TEXT("full") || Mode == TEXT("outdoor")) && Shot && !Shot->bEarly && !Shot->bDone)
+	// The early launch result: always kept (its spin estimate is shown beside the final spin). With fast
+	// shots it goes to the game - at once, or after waiting up to FastWait seconds for the full result
+	// (which then goes instead, as an ordinary shot). Full swing only: a chip or putt is over before
+	// the full result could correct it. After an early one the full result follows as a shot update.
+	if (M.Type == T::LAUNCH && Shot && !Shot->Launch && !Shot->bDone)
 	{
 		FLaunch L;
 		if (DecodeLaunch(P, L))
 		{
-			Shot->bEarly = true;
+			Shot->Launch = L;
+			const bool bFast = bUsingSetup && Using.bFast && (Mode == TEXT("full") || Mode == TEXT("outdoor"));
+			const double Wait = bFast ? FMath::Clamp(Using.FastWait, 0.0, 3.0) : 0.0;
 			const FOTGBallData Ball = EarlyBallData(L);
-			FOTGShot S = OTGToShot(Ball, TEXT("mevo"), DeviceName(), Shot->Id);
-			S.bEarly = true;
-			Log(FString::Printf(TEXT("Mevo+: early launch result %.1f mph, launch %.1f, direction %.1f, spin estimate %d (starting with %d)"), *Ball.Speed, *Ball.VLA, *Ball.HLA, L.Spin, FMath::RoundToInt(*Ball.TotalSpin)));
-			Out->Shot(S);
+			Log(FString::Printf(TEXT("Mevo+: early launch result %.1f mph, launch %.1f, direction %.1f, spin estimate %d%s"), *Ball.Speed, *Ball.VLA, *Ball.HLA, L.Spin,
+				bFast ? *FString::Printf(TEXT(" (starting with %d%s)"), FMath::RoundToInt(*Ball.TotalSpin), Wait > 0 ? *FString::Printf(TEXT(" if the full result isn't in within %.1f s"), Wait) : TEXT("")) : TEXT("")));
+			if (bFast)
+			{
+				if (Wait > 0) Shot->EarlyDue = Now() + Wait;
+				else SendEarly();
+			}
 		}
 	}
 	// Shot progress arrives as shot text (0xE5); some firmware may use plain text (0xE3)
@@ -429,6 +436,12 @@ bool FOTGMevoClient::Session()
 		}
 		if (Shot)
 		{
+			// (fast shots with a wait: the full result isn't in by now, so the early one goes)
+			if (Shot->EarlyDue > 0 && Now() >= Shot->EarlyDue && !bFinishPending)
+			{
+				Log(TEXT("Mevo+: no full result yet; starting with the early one"));
+				SendEarly();
+			}
 			if (bFinishPending)
 			{
 				bFinishPending = false;
@@ -726,6 +739,17 @@ bool FOTGMevoClient::Keepalive()
 
 // ------------------------------------------------------------------ shots
 
+void FOTGMevoClient::SendEarly()
+{
+	if (!Shot || !Shot->Launch || Shot->bEarly || Shot->bDone || Shot->bFinishing) return;
+	Shot->bEarly = true;
+	Shot->EarlyDue = 0;
+	FOTGShot S = OTGToShot(EarlyBallData(*Shot->Launch), TEXT("mevo"), DeviceName(), Shot->Id);
+	S.bEarly = true;
+	S.EarlySpin = Shot->Launch->Spin;
+	Out->Shot(S);
+}
+
 FString FOTGMevoClient::DeviceName()
 {
 	const FOTGLMDeviceState D = Out->Read();
@@ -776,6 +800,7 @@ bool FOTGMevoClient::FinishShot()
 	{
 		const FOTGBallData Ball = ToBallData(*Shot->Flight, Shot->Spin.GetPtrOrNull(), Shot->Club.GetPtrOrNull());
 		FOTGShot S = OTGToShot(Ball, TEXT("mevo"), DeviceName(), Shot->Id);
+		if (Shot->Launch) S.EarlySpin = Shot->Launch->Spin; // (the radar's first estimate, shown above the final spin)
 		Log(FString::Printf(TEXT("Mevo+: shot %.1f mph, launch %.1f, direction %.1f, spin %d"), *Ball.Speed, *Ball.VLA, *Ball.HLA, FMath::RoundToInt(*Ball.TotalSpin)));
 		// Held: the game arms it again when it's the player's turn
 		{

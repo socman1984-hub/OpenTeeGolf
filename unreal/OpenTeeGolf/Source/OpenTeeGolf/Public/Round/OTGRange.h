@@ -28,6 +28,7 @@ struct FOTGRangeShot
 	FString Club, ClubName;
 	double CarryYd = 0, TotalYd = 0, OfflineYd = 0, ApexFt = 0, Mph = 0, Launch = 0, Direction = 0, Spin = 0, Axis = 0;
 	double RestX = 0, RestZ = 0;   // (where it stopped: course metres)
+	double EarlySpin = -1;         // (Mevo+: the radar's first spin estimate, shown above the final; -1 none)
 };
 
 class UOTGCourseData;

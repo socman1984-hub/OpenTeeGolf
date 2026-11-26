@@ -133,13 +133,16 @@ function fillSetup(st) {
   $('s-mode').value = st.mode;
   $('s-turn').checked = st.armOnTurn !== false;
   $('s-fast').checked = !!st.fast;
+  $('s-fast-wait').value = st.fastWait ?? 0;
+  $('s-fast-wait').disabled = !st.fast;
 }
+$('s-fast').onchange = () => { $('s-fast-wait').disabled = !$('s-fast').checked; };
 $('setup').onsubmit = async (e) => {
   e.preventDefault();
   const body = {
     distanceM: +$('s-dist').value * FT, surfaceIn: +$('s-surface').value, teeHeightIn: +$('s-tee').value, tiltTarget: +$('s-target').value,
     ballType: +$('s-ball').value, trackPct: +$('s-track').value, mode: $('s-mode').value, armOnTurn: $('s-turn').checked,
-    fast: $('s-fast').checked,
+    fast: $('s-fast').checked, fastWait: +$('s-fast-wait').value || 0,
   };
   $('save').disabled = true;
   $('save-msg').textContent = state === 'ready' ? 'Sending to the Mevo+ and re-arming…' : 'Saving…';

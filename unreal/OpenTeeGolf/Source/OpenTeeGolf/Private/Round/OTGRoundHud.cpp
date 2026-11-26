@@ -184,7 +184,13 @@ void FOTGRoundHud::ShowShotData(bool bWithResult)
 	}
 	V.Add(TEXT("launch"), FString::Printf(TEXT("%.1f%s"), S.VLA, DEG));
 	V.Add(TEXT("direction"), Side(S.HLA));
-	V.Add(TEXT("spin"), Rpm(S.TotalSpin));
+	// (Mevo+: the radar's first spin estimate on top, the final spin under it - "…" until it's in)
+	if (S.EarlySpin >= 0)
+	{
+		const FString Final = S.bEarly ? FString(TEXT("…")) : FText::AsNumber(FMath::RoundToInt(S.TotalSpin)).ToString();
+		V.Add(TEXT("spin"), FString::Printf(TEXT("%s first\n%s final"), *FText::AsNumber(FMath::RoundToInt(S.EarlySpin)).ToString(), *Final));
+	}
+	else V.Add(TEXT("spin"), Rpm(S.TotalSpin));
 	V.Add(TEXT("backspin"), Rpm(S.BackSpin));
 	V.Add(TEXT("sidespin"), FMath::Abs(S.SideSpin) < 1 ? FString(TEXT("0 rpm")) : Rpm(S.SideSpin) + (S.SideSpin > 0 ? TEXT(" R") : TEXT(" L")));
 	V.Add(TEXT("axis"), Side(S.SpinAxis));

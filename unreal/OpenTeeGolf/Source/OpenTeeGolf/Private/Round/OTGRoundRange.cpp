@@ -68,6 +68,8 @@ void FOTGRoundRangeMode::RangeShotDone()
 	S.Direction = Round->LastShot.HLA;
 	S.Spin = Round->LastShot.TotalSpin > 0 ? Round->LastShot.TotalSpin : FMath::Sqrt(FMath::Square(Round->LastShot.BackSpin) + FMath::Square(Round->LastShot.SideSpin));
 	S.Axis = Round->LastShot.SpinAxis;
+	// (both spins once the full result is in; a flight skipped before it came keeps just the one it flew with)
+	S.EarlySpin = Round->LastShot.bEarly ? -1.0 : Round->LastShot.EarlySpin;
 	S.RestX = Round->Res.rest.x;
 	S.RestZ = Round->Res.rest.z;
 	RangeShots.Add(S);

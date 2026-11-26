@@ -203,6 +203,9 @@ void SOTGLaunchMonitorPanel::Rebuild()
 		];
 		V->AddSlot().AutoHeight().Padding(24, 0, 0, 4)[SNew(STextBlock).Text(FText::FromString(TEXT("From the Mevo+'s first reading: speed and angles are final, spin is a first estimate, corrected in flight when the full reading arrives. Chips and putts wait for the full reading. Save the setup to apply.")))
 			.Font(Font(12)).ColorAndOpacity(Soft).AutoWrapText(true)];
+		V->AddSlot().AutoHeight().Padding(0, 2)[Row(TEXT("Fast shots: wait up to (s)"), Number(0, 3, 0.1, [this]() { return Draft.FastWait; }, [this](double X) { Draft.FastWait = X; }))];
+		V->AddSlot().AutoHeight().Padding(24, 0, 0, 4)[SNew(STextBlock).Text(FText::FromString(TEXT("How long to wait for the full reading before starting with the first one (0-3 s). It usually comes about 1.6 s after the first, so 0 is fastest and 1.8 or more is the same as fast shots off. If it comes sooner, the ball takes off with it straight away.")))
+			.Font(Font(12)).ColorAndOpacity(Soft).AutoWrapText(true)];
 		V->AddSlot().AutoHeight().Padding(0, 4)[Button(TEXT("Save the setup"), [this]() { if (UOTGLaunchMonitorSubsystem* X = LM()) X->SetMevoSetup(Draft); }, 14)];
 	}
 	V->AddSlot().AutoHeight().Padding(0, 10, 0, 0)

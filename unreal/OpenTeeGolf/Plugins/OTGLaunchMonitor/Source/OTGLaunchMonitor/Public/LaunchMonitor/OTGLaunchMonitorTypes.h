@@ -56,6 +56,9 @@ struct FOTGShot
 	// Mevo+ fast shots: the radar's early launch result (speed and angles final, spin a first
 	// estimate). The same shot (ShotNumber) comes again through OnShotUpdate with the full result.
 	UPROPERTY(BlueprintReadOnly, Category = "OpenTeeGolf") bool bEarly = false;
+	// Mevo+: the radar's first spin estimate (from the early launch result, as it gave it), shown above
+	// the final spin; -1 when there's none (other launch monitors)
+	UPROPERTY(BlueprintReadOnly, Category = "OpenTeeGolf") double EarlySpin = -1;
 };
 
 // The Mevo+ setup the player can change (what FS Golf asks for when you set it up)
@@ -73,6 +76,9 @@ struct FOTGMevoSetup
 	// Fast shots: full swings start from the radar's early launch result (~0.2 s after impact, not ~2 s),
 	// corrected in flight by the full result (not sent to the radar)
 	UPROPERTY(BlueprintReadWrite, Category = "OpenTeeGolf") bool bFast = false;
+	// Fast shots: wait up to this long (0-3 s) for the full result before starting with the early one
+	// (if the full result comes sooner, the ball takes off with it at once)
+	UPROPERTY(BlueprintReadWrite, Category = "OpenTeeGolf") double FastWait = 0;
 };
 
 USTRUCT(BlueprintType)

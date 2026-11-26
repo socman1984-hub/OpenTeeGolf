@@ -102,8 +102,11 @@ private:
 		bool bDone = false, bFinishing = false;
 		bool bEarly = false; // (fast shots: the early launch result has gone to the game)
 		int32 Id = 0;        // (the shot's number: the early result and the full one share it)
+		TOptional<otg::mevo::FLaunch> Launch; // (the early launch result: its spin estimate is shown beside the final)
+		double EarlyDue = 0; // (fast shots with a wait: when the early result goes if the full one isn't in)
 	};
 	FString DeviceName();
+	void SendEarly(); // fast shots: the early launch result to the game (unless the full result is on its way)
 	TOptional<FShot> Shot;
 	bool bFinishPending = false, bPendingModeChange = false;
 	double TriggerDeadline = 0, FlightDeadline = 0;

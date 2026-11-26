@@ -418,6 +418,8 @@ function startMevo() {
     const shot = toShot({ DeviceID: lmState.device || 'Mevo+', ShotNumber: meta.id, BallData: ball, ClubData: ball.ClubData }, 'mevo');
     // (fast shots: the early launch result, to start the ball at once; a 'shot-update' follows)
     if (meta.early) shot.early = true;
+    // (the radar's first spin estimate, shown above the final spin)
+    if (Number.isFinite(ball.EarlySpin)) shot.earlySpin = ball.EarlySpin;
     console.log(`Shot (direct${meta.early ? ', early' : ''}): ${shot.speedMph.toFixed(1)} mph, VLA ${shot.vla.toFixed(1)}, HLA ${shot.hla.toFixed(1)}, spin ${Math.round(shot.totalSpin)} rpm, axis ${shot.spinAxis.toFixed(1)}`);
     setLm({ lastShotAt: shot.at });
     broadcast('shot', shot);
@@ -425,7 +427,8 @@ function startMevo() {
   // The full result of a shot already sent early: the game corrects the ball's flight with it
   mevo.on('shot-update', (ball, meta = {}) => {
     const shot = toShot({ DeviceID: lmState.device || 'Mevo+', ShotNumber: meta.id, BallData: ball, ClubData: ball.ClubData }, 'mevo');
-    console.log(`Shot (direct, final): ${shot.speedMph.toFixed(1)} mph, VLA ${shot.vla.toFixed(1)}, HLA ${shot.hla.toFixed(1)}, spin ${Math.round(shot.totalSpin)} rpm, axis ${shot.spinAxis.toFixed(1)}`);
+    if (Number.isFinite(ball.EarlySpin)) shot.earlySpin = ball.EarlySpin;
+    console.log(`Shot (direct, final):${shot.speedMph.toFixed(1)} mph, VLA ${shot.vla.toFixed(1)}, HLA ${shot.hla.toFixed(1)}, spin ${Math.round(shot.totalSpin)} rpm, axis ${shot.spinAxis.toFixed(1)}`);
     broadcast('shot-update', shot);
   });
   mevo.start();
@@ -982,7 +985,7 @@ const httpServer = http.createServer(async (req, res) => {
         distanceM: num(b.distanceM, 1.5, 6, d.distanceM), surfaceIn: num(b.surfaceIn, 0, 10, d.surfaceIn),
         teeHeightIn: num(b.teeHeightIn, 0, 4, d.teeHeightIn), tiltTarget: num(b.tiltTarget, -10, 25, d.tiltTarget), ballType: b.ballType ? 1 : 0,
         trackPct: num(b.trackPct, 0.6, 1, d.trackPct), mode: ['auto', 'full', 'outdoor'].includes(b.mode) ? b.mode : 'auto',
-        fast: !!b.fast,
+        fast: !!b.fast, fastWait: num(b.fastWait, 0, 3, d.fastWait),
       };
       if (typeof b.armOnTurn === 'boolean') settings.lm.armOnTurn = b.armOnTurn;
       saveSettings();

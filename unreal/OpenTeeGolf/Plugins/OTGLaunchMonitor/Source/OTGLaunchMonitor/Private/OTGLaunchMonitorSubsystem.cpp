@@ -123,6 +123,7 @@ void UOTGLaunchMonitorSubsystem::LoadSettings()
 		GConfig->GetDouble(Section, TEXT("TrackPct"), MevoSetup.TrackPct, GGameUserSettingsIni);
 		GConfig->GetString(Section, TEXT("Mode"), MevoSetup.Mode, GGameUserSettingsIni);
 		GConfig->GetBool(Section, TEXT("Fast"), MevoSetup.bFast, GGameUserSettingsIni);
+		GConfig->GetDouble(Section, TEXT("FastWait"), MevoSetup.FastWait, GGameUserSettingsIni);
 	}
 	// (for this run only)
 	const TCHAR* Cmd = FCommandLine::Get();
@@ -158,6 +159,7 @@ void UOTGLaunchMonitorSubsystem::SaveSettings()
 		GConfig->SetDouble(Section, TEXT("TrackPct"), MevoSetup.TrackPct, GGameUserSettingsIni);
 		GConfig->SetString(Section, TEXT("Mode"), *MevoSetup.Mode, GGameUserSettingsIni);
 		GConfig->SetBool(Section, TEXT("Fast"), MevoSetup.bFast, GGameUserSettingsIni);
+		GConfig->SetDouble(Section, TEXT("FastWait"), MevoSetup.FastWait, GGameUserSettingsIni);
 	}
 	GConfig->Flush(false, GGameUserSettingsIni);
 }
@@ -352,6 +354,7 @@ void UOTGLaunchMonitorSubsystem::SetMevoSetup(const FOTGMevoSetup& Setup)
 	MevoSetup.TiltTarget = FMath::Clamp(Setup.TiltTarget, -10.0, 25.0);
 	MevoSetup.BallType = Setup.BallType ? 1 : 0;
 	MevoSetup.TrackPct = FMath::Clamp(Setup.TrackPct, 0.6, 1.0);
+	MevoSetup.FastWait = FMath::Clamp(Setup.FastWait, 0.0, 3.0);
 	if (MevoSetup.Mode != TEXT("full") && MevoSetup.Mode != TEXT("outdoor")) MevoSetup.Mode = TEXT("auto");
 	bHasSetup = true;
 	SaveSettings();
