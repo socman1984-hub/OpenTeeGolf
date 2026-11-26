@@ -160,6 +160,12 @@ private:
 	FString WindText() const;
 	void WeatherChanged();
 	void HoleOut(bool bPickedUp, const FString& Note);
+	// Auto-putt (the round's setup): on the green, the putts counted - 1 inside the circle, 2 outside - and the hole done
+	bool AutoPutting() const { return Setup_.bAutoPutt && !bMini && !bRange; }
+	double AutoPuttRadiusM() const { return FMath::Max(0.3, Setup_.AutoPuttFt * 0.3048); }
+	void AutoPutt();
+	void ShowPuttCircle();
+	bool bAutoPuttDue = false;
 	void NextHole();
 	bool WaterDrop(otg::V3& Out) const;
 	bool PathRelief(const otg::V3& Ball, otg::V3& Out) const;
@@ -197,6 +203,7 @@ private:
 	UPROPERTY() TObjectPtr<UStaticMeshComponent> AimStickTop;  // (...its coloured top)
 	UPROPERTY() TObjectPtr<UStaticMeshComponent> PinMesh;
 	UPROPERTY() TObjectPtr<UStaticMeshComponent> FlagMesh;
+	UPROPERTY() TObjectPtr<class UInstancedStaticMeshComponent> PuttCircle;   // (auto-putt: the circle round the hole, painted on the green)
 	UPROPERTY() TObjectPtr<class UMaterialParameterCollection> WindMPC;   // (the wind for the trees and grass)
 	UPROPERTY() TObjectPtr<class UMaterialParameterCollection> FabWindMPC;   // (the Megascans plants' wind)
 	UPROPERTY() TObjectPtr<class UMaterialParameterCollection> WeatherMPC;   // (MPC_Weather: Wet, Rain)

@@ -412,6 +412,22 @@ TSharedRef<SWidget> SOTGMainMenu::PlayPage()
 				+ SHorizontalBox::Slot().AutoWidth().Padding(0, 0, 6, 0)[Chip(TEXT("Off"), [this]() { Setup.bHandicaps = false; Remember(); Rebuild(); }, !Setup.bHandicaps)]
 				+ SHorizontalBox::Slot().AutoWidth()[Chip(TEXT("Count them"), [this]() { Setup.bHandicaps = true; Remember(); Rebuild(); }, Setup.bHandicaps)])
 		];
+		// (auto-putt: on the green the hole's done - 1 putt inside the circle, 2 outside)
+		GameRows->AddSlot().AutoHeight().Padding(0, 8, 0, 0)
+		[
+			Option(TEXT("Putting"), SNew(SHorizontalBox)
+				+ SHorizontalBox::Slot().AutoWidth().Padding(0, 0, 6, 0)[Chip(TEXT("Putt everything"), [this]() { Setup.bAutoPutt = false; Remember(); Rebuild(); }, !Setup.bAutoPutt)]
+				+ SHorizontalBox::Slot().AutoWidth()[Chip(TEXT("Auto-putt"), [this]() { Setup.bAutoPutt = true; Remember(); Rebuild(); }, Setup.bAutoPutt)])
+		];
+		if (Setup.bAutoPutt)
+		{
+			TSharedRef<SHorizontalBox> Sizes = SNew(SHorizontalBox);
+			for (const double Ft : { 6.0, 10.0, 15.0, 20.0 })
+				Sizes->AddSlot().AutoWidth().Padding(0, 0, 6, 0)[Chip(FString::Printf(TEXT("%.0f ft"), Ft), [this, Ft]() { Setup.AutoPuttFt = Ft; Remember(); Rebuild(); }, FMath::IsNearlyEqual(Setup.AutoPuttFt, Ft))];
+			GameRows->AddSlot().AutoHeight().Padding(0, 8, 0, 0)[Option(TEXT("Auto-putt circle"), Sizes)];
+			GameRows->AddSlot().AutoHeight().Padding(0, 2, 0, 0)
+			[Para(FString::Printf(TEXT("Once your ball stops on the green the hole's done: 1 putt from inside %.0f ft of the hole (the circle on the green), 2 from further away."), Setup.AutoPuttFt), 12, Dim)];
+		}
 	}
 
 	OptionsScroll = SNew(SScrollBox);
@@ -469,6 +485,7 @@ TSharedRef<SWidget> SOTGMainMenu::PlayPage()
 	FString Line1 = Course ? FString::Printf(TEXT("%s tees  ·  %s pins  ·  %d holes from hole %d"), *Setup.Tee, *Setup.Pin, bNine ? 9 : N, Setup.StartHole) : FString(TEXT("Pick a course"));
 	FString Who = Setup.Picked.Num() == 0 ? FString(TEXT("On your own")) : Setup.Picked.Num() == 1 ? FString(TEXT("1 player")) : FString::Printf(TEXT("%d players"), Setup.Picked.Num());
 	FString Line2 = FString::Printf(TEXT("%s  ·  %s  ·  %s%s"), *F.Name, *Who, *WeatherName, Setup.bHandicaps ? TEXT("  ·  handicaps") : TEXT(""));
+	if (Setup.bAutoPutt) Line2 += TEXT("  ·  auto-putt");
 	TSharedRef<SWidget> Action = Card(
 		SNew(SHorizontalBox)
 		+ SHorizontalBox::Slot().FillWidth(1).VAlign(VAlign_Center)

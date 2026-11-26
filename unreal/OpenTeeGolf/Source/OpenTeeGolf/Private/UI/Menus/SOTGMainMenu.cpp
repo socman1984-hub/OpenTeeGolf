@@ -208,8 +208,107 @@ void SOTGMainMenu::Construct(const FArguments&)
 					*GetDefault<UGeneralProjectSettings>()->ProjectVersion)))
 			]
 		]
+		// on start, over everything: checking for an update, then (one found) Update now or Not now, and
+		// its download - before the game starts
+		+ SOverlay::Slot()[StartupWindow()]
 	];
 	Rebuild();
+}
+
+TSharedRef<SWidget> SOTGMainMenu::StartupWindow()
+{
+	using S = EOTGUpdateState;
+	auto St = [this]() { UOTGUpdateSubsystem* U = Updater(); return U ? U->GetState() : S::Off; };
+	auto When = [St](std::initializer_list<S> Any) {
+		TArray<S> L(Any);
+		return TAttribute<EVisibility>::CreateLambda([St, L]() { return L.Contains(St()) ? EVisibility::Visible : EVisibility::Collapsed; });
+	};
+	auto Title = [this, St]() {
+		UOTGUpdateSubsystem* U = Updater();
+		if (!U) return FString();
+		switch (St())
+		{
+		case S::Available: return U->IsInstalling() ? FString(TEXT("The scenery still needs downloading")) : FString::Printf(TEXT("OpenTeeGolf %s is out"), *U->NewVersion());
+		case S::Downloading: return U->IsInstalling() ? FString(TEXT("Downloading the scenery")) : FString::Printf(TEXT("Downloading OpenTeeGolf %s"), *U->NewVersion());
+		case S::Ready: return FString(TEXT("Installing the update"));
+		case S::Failed: return FString(TEXT("The update didn't download"));
+		default: return FString(TEXT("Checking for updates"));
+		}
+	};
+	auto Line = [this, St]() {
+		UOTGUpdateSubsystem* U = Updater();
+		if (!U) return FString();
+		const double Mb = U->BytesToGet() / (1024.0 * 1024.0);
+		const FString Size = Mb >= 1024 ? FString::Printf(TEXT("%.1f GB"), Mb / 1024) : FString::Printf(TEXT("%.0f MB"), FMath::Max(1.0, Mb));
+		switch (St())
+		{
+		case S::Available: return FString::Printf(TEXT("You have %s. Update now to download it (%s) and start the new version, or play this one and update another time."), *U->InstalledVersion(), *Size);
+		case S::Downloading: return U->StatusLine();
+		case S::Ready: return FString(TEXT("The game closes and starts again in a moment, updated."));
+		case S::Failed: return U->GetMessage() + TEXT(". Try again carries on where it stopped.");
+		default: return FString(TEXT("A moment while the game asks GitHub for the newest version."));
+		}
+	};
+	auto Do = [this](TFunction<void(UOTGUpdateSubsystem&)> F) { if (UOTGUpdateSubsystem* U = Updater()) F(*U); };
+	// (testing, -updatewindow=update|skip: photographed - Saved/Screenshots/update_*.png - and answered)
+	FString Test;
+	if (FParse::Value(FCommandLine::Get(), TEXT("updatewindow="), Test))
+		RegisterActiveTimer(1.f, FWidgetActiveTimerDelegate::CreateLambda([this, Test](double, float) {
+			static int32 Step = 0;
+			UOTGUpdateSubsystem* U = Updater();
+			if (!U || !GEngine) return EActiveTimerReturnType::Continue;
+			auto Shot = [](const TCHAR* N) { GEngine->Exec(nullptr, *FString::Printf(TEXT("OTG.Shot %s"), N)); };
+			const EOTGUpdateState X = U->GetState();
+			if (Step == 0 && X == EOTGUpdateState::Available) { Shot(TEXT("update_offer")); Step = 1; }
+			else if (Step == 1) { if (Test == TEXT("update")) U->Download(true); else U->Decline(); Step = 2; }
+			else if (Step == 2 && X == EOTGUpdateState::Downloading && U->BytesDone() > U->BytesToGet() / 3) { Shot(TEXT("update_progress")); Step = 3; }
+			else if (Step == 2 && Test != TEXT("update")) { Shot(TEXT("update_skipped")); Step = 3; }
+			return EActiveTimerReturnType::Continue;
+		}));
+	return SNew(SBorder).BorderImage(FCoreStyle::Get().GetBrush("WhiteBrush")).BorderBackgroundColor(FLinearColor(0.005f, 0.012f, 0.008f, 0.82f))
+		.Visibility_Lambda([this]() { UOTGUpdateSubsystem* U = Updater(); return U && U->StartupWindowOpen() ? EVisibility::Visible : EVisibility::Collapsed; })
+		.HAlign(HAlign_Center).VAlign(VAlign_Center)
+		[
+			SNew(SBox).WidthOverride(560)
+			[
+				Card(SNew(SVerticalBox)
+					+ SVerticalBox::Slot().AutoHeight()[Caps(TEXT("Update"), 11, Accent)]
+					+ SVerticalBox::Slot().AutoHeight().Padding(0, 6, 0, 0)
+					[SNew(STextBlock).Font(Font(22, "Bold")).ColorAndOpacity(Ink).AutoWrapText(true).Text_Lambda([Title]() { return FText::FromString(Title()); })]
+					+ SVerticalBox::Slot().AutoHeight().Padding(0, 10, 0, 0)
+					[SNew(STextBlock).Font(Font(14)).ColorAndOpacity(Soft).AutoWrapText(true).Text_Lambda([Line]() { return FText::FromString(Line()); })]
+					// (how the download's going; checking and installing: the bar moving to and fro)
+					+ SVerticalBox::Slot().AutoHeight().Padding(0, 16, 0, 0)
+					[
+						SNew(SBox).HeightOverride(10).Visibility(When({ S::Idle, S::Checking, S::Downloading, S::Ready }))
+						[
+							SNew(SProgressBar).FillColorAndOpacity(FLinearColor(0.3f, 0.75f, 0.4f, 1.f))
+							.Percent_Lambda([this, St]() {
+								UOTGUpdateSubsystem* U = Updater();
+								if (St() != S::Downloading || !U || U->BytesToGet() <= 0) return TOptional<float>();
+								return TOptional<float>(float(double(U->BytesDone()) / U->BytesToGet()));
+							})
+						]
+					]
+					+ SVerticalBox::Slot().AutoHeight().Padding(0, 20, 0, 0).HAlign(HAlign_Right)
+					[
+						SNew(SHorizontalBox)
+						+ SHorizontalBox::Slot().AutoWidth().Padding(0, 0, 10, 0)
+						[SNew(SBox).Visibility(When({ S::Available }))[Button(TEXT("Not now"), [Do]() { Do([](UOTGUpdateSubsystem& U) { U.Decline(); }); }, 14)]]
+						+ SHorizontalBox::Slot().AutoWidth()
+						[SNew(SBox).Visibility(When({ S::Available }))[Button(TEXT("Update now"), [Do]() { Do([](UOTGUpdateSubsystem& U) { U.Download(true); }); }, 14, true)]]
+						+ SHorizontalBox::Slot().AutoWidth()
+						[SNew(SBox).Visibility(When({ S::Downloading }))[Button(TEXT("Cancel and play"), [Do]() { Do([](UOTGUpdateSubsystem& U) { U.Cancel(); U.Decline(); }); }, 14)]]
+						+ SHorizontalBox::Slot().AutoWidth().Padding(0, 0, 10, 0)
+						[SNew(SBox).Visibility(When({ S::Failed }))[Button(TEXT("Play without it"), [Do]() { Do([](UOTGUpdateSubsystem& U) { U.Decline(); }); }, 14)]]
+						+ SHorizontalBox::Slot().AutoWidth()
+						[SNew(SBox).Visibility(When({ S::Failed }))[Button(TEXT("Try again"), [Do]() { Do([](UOTGUpdateSubsystem& U) { U.Download(true); }); }, 14, true)]]
+						+ SHorizontalBox::Slot().AutoWidth()
+						[SNew(SBox).Visibility(When({ S::Idle, S::Checking }))[Button(TEXT("Skip"), [Do]() { Do([](UOTGUpdateSubsystem& U) { U.CloseStartupWindow(); }); }, 14)]]
+					]
+					, FMargin(28, 24))
+			]
+		];
 }
 
 UOTGUpdateSubsystem* SOTGMainMenu::Updater() const
@@ -225,8 +324,9 @@ TSharedRef<SWidget> SOTGMainMenu::UpdateBar()
 	auto Shown = [this, St]() {
 		UOTGUpdateSubsystem* U = Updater();
 		const S X = St();
+		if (U && U->StartupWindowOpen()) return EVisibility::Collapsed;   // (the start-up window says it all)
 		if (X == S::Downloading || X == S::Ready) return EVisibility::Visible;
-		if (X == S::Available) return bUpdateLater ? EVisibility::Collapsed : EVisibility::Visible;
+		if (X == S::Available) return bUpdateLater || (U && U->WasDeclined()) ? EVisibility::Collapsed : EVisibility::Visible;
 		if (X == S::Failed) return U && (U->WasAsked() || U->BytesDone() > 0) ? EVisibility::Visible : EVisibility::Collapsed;
 		return EVisibility::Collapsed;
 	};

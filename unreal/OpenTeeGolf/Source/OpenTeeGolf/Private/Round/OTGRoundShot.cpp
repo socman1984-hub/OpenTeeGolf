@@ -5,6 +5,8 @@
 #include "World/OTGRuntimeCourse.h"
 #include "App/OTGHelperSubsystem.h"
 #include "Round/OTGMiniGolf.h"
+#include "Components/InstancedStaticMeshComponent.h"
+#include "Materials/MaterialInstanceDynamic.h"
 
 #include "Camera/CameraActor.h"
 #include "Components/DirectionalLightComponent.h"
@@ -128,7 +130,7 @@ void AOTGRound::OnShot(const FOTGShot& Shot)
 	bCarryShown = false;
 	Camera.ShotFrom = World(Ball);
 	Camera.FlightTopZ = Camera.ShotFrom.Z;
-	Camera.bPastApex = false;
+	Camera.PinLean = 0;
 	ClearTracer();
 	AimMesh->SetVisibility(false);
 	TellLaunchMonitor(false);
@@ -249,6 +251,15 @@ void AOTGRound::FinishShot()
 	}
 	PlaceBall(Ball);
 	HudView.ShowShotData(true);
+	// (auto-putt: stopped on the green - a moment to see it there, then the putts counted and the hole done)
+	if (AutoPutting() && Lie == otg::Surface::Green && Title.IsEmpty())
+	{
+		bAutoPuttDue = true;
+		Phase = EPhase::Resting;
+		PhaseTimer = 1.4;
+		HudView.UpdateHudInfo();
+		return;
+	}
 	if (Strokes >= MaxStrokes()) return HoleOut(true, TEXT("Maximum strokes reached: picked up"));
 	Phase = EPhase::Resting;
 	PhaseTimer = PendingShot ? 0.0 : Title.IsEmpty() ? 1.6 : 2.4;
@@ -339,6 +350,7 @@ void AOTGRound::HoleOut(bool bPickedUp, const FString& Note)
 {
 	const FOTGHole& H = Hole();
 	PendingShot.Reset();
+	bAutoPuttDue = false;
 	const int32 Total = bPickedUp ? MaxStrokes() : Strokes;
 	FOTGSide& Sd = Turns.Game->Sides[Turns.SideIdx];
 	Sd.Attempts.Reset();
@@ -378,6 +390,56 @@ void AOTGRound::HoleOut(bool bPickedUp, const FString& Note)
 	PhaseTimer = 2.6;
 	bScorecardAuto = true;
 	HudView.UpdateHudInfo();
+}
+
+void AOTGRound::AutoPutt()
+{
+	bAutoPuttDue = false;
+	const otg::V3 P = Pin();
+	const double D = Dist(Ball, P);
+	const int32 Putts = D <= AutoPuttRadiusM() ? 1 : 2;
+	Strokes += Putts;
+	UE_LOG(LogOTGRound, Display, TEXT("Auto-putt: %d from %.1f m"), Putts, D);
+	// (the ball in the cup, as the score has it)
+	Ball = P;
+	PlaceBall(otg::V3{ P.x, P.y - 0.06, P.z });
+	if (Strokes > MaxStrokes()) return HoleOut(true, TEXT("Maximum strokes reached: picked up"));
+	HoleOut(false, FString::Printf(TEXT("Auto-putt: %d putt%s from %s"), Putts, Putts > 1 ? TEXT("s") : TEXT(""), *Putt(D)));
+}
+
+// Auto-putt's circle round the hole: short white dashes painted on the green, over its slopes
+void AOTGRound::ShowPuttCircle()
+{
+	if (!PuttCircle) return;
+	PuttCircle->ClearInstances();
+	if (!AutoPutting())
+	{
+		PuttCircle->SetVisibility(false);
+		return;
+	}
+	if (!PuttCircle->GetMaterial(0) || !PuttCircle->GetMaterial(0)->IsA<UMaterialInstanceDynamic>())
+		if (UMaterialInterface* Base = LoadObject<UMaterialInterface>(nullptr, TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial")))
+		{
+			UMaterialInstanceDynamic* M = UMaterialInstanceDynamic::Create(Base, this);
+			M->SetVectorParameterValue(TEXT("Color"), FLinearColor(0.9f, 0.9f, 0.9f));
+			PuttCircle->SetMaterial(0, M);
+		}
+	const otg::V3 P = Pin();
+	const double R = AutoPuttRadiusM();
+	const int32 N = FMath::Clamp(FMath::RoundToInt32(UE_DOUBLE_TWO_PI * R / 0.18), 24, 400);
+	TArray<FTransform> Xfs;
+	for (int32 i = 0; i < N; i++)
+	{
+		const double A = i * UE_DOUBLE_TWO_PI / N;
+		const otg::V3 G = OnGround(P.x + FMath::Cos(A) * R, P.z + FMath::Sin(A) * R);
+		const FVector At = World(G) + FVector(0, 0, 0.4);
+		// (each dash along the circle: its direction there, from this point to the next)
+		const otg::V3 G2 = OnGround(P.x + FMath::Cos(A + 0.01) * R, P.z + FMath::Sin(A + 0.01) * R);
+		const FVector Along = (World(G2) - World(G)).GetSafeNormal();
+		Xfs.Add(FTransform(Along.Rotation(), At, FVector(0.10, 0.025, 0.004)));   // (the cube's a metre: 10 cm by 2.5 cm)
+	}
+	PuttCircle->AddInstances(Xfs, false, true);
+	PuttCircle->SetVisibility(true);
 }
 
 void AOTGRound::NextHole()

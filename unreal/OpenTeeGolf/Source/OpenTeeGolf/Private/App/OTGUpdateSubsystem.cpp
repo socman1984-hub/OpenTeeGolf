@@ -30,7 +30,9 @@ namespace
 
 FString UOTGUpdateSubsystem::Root()
 {
-	FString R = FPaths::ConvertRelativePathToFull(FPaths::RootDir());
+	// (testing: -updateroot=<a folder> stands in for the installed game's)
+	FString R;
+	if (!FParse::Value(FCommandLine::Get(), TEXT("updateroot="), R)) R = FPaths::ConvertRelativePathToFull(FPaths::RootDir());
 	FPaths::NormalizeDirectoryName(R);
 	return R;
 }
@@ -40,7 +42,7 @@ FString UOTGUpdateSubsystem::Staging() { return Root() / TEXT("Update/staging");
 void UOTGUpdateSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
 	Super::Initialize(Collection);
-	if (GIsEditor || FParse::Param(FCommandLine::Get(), TEXT("noupdate"))) return;
+	if ((GIsEditor && !FParse::Param(FCommandLine::Get(), TEXT("game"))) || FParse::Param(FCommandLine::Get(), TEXT("noupdate"))) return;
 	FString Text;
 	if (!FFileHelper::LoadFileToString(Text, *(Root() / TEXT("manifest.json"))) || !Parse(Text, Installed))
 	{
@@ -50,6 +52,7 @@ void UOTGUpdateSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 	FParse::Value(FCommandLine::Get(), TEXT("updateurl="), OverrideUrl);
 	bAuto = FParse::Param(FCommandLine::Get(), TEXT("updateauto"));
 	State = EOTGUpdateState::Idle;
+	StartedAt = FPlatformTime::Seconds();
 	UE_LOG(LogOTGUpdate, Display, TEXT("OpenTeeGolf %s, %d files (%s)"), *Installed.Version, Installed.Files.Num(), OverrideUrl.IsEmpty() ? *Installed.Repo : *OverrideUrl);
 	Check(false);
 }
@@ -218,13 +221,14 @@ void UOTGUpdateSubsystem::GotManifest(const FString& Json)
 	State = EOTGUpdateState::Available;
 	UE_LOG(LogOTGUpdate, Display, TEXT("Update: %s, %d files, %s%s"), *Remote.Version, Needed.Num(), *Size(Bytes), bInstalling ? TEXT(" (installing)") : TEXT(""));
 	// (installing: the game isn't whole yet - fetch it straight away)
-	if (bInstalling || bAuto) Download();
+	if (bInstalling || bAuto) Download(bInstalling && !bWindowDone);
 }
 
-void UOTGUpdateSubsystem::Download()
+void UOTGUpdateSubsystem::Download(bool bThenRestart)
 {
 	if (State != EOTGUpdateState::Available && State != EOTGUpdateState::Failed) return;
 	if (!Needed.Num()) return;
+	bRestartWhenReady = bThenRestart;
 	State = EOTGUpdateState::Downloading;
 	Message.Empty();
 	Index = 0;
@@ -239,7 +243,7 @@ void UOTGUpdateSubsystem::NextFile(bool bFresh)
 		FFileHelper::SaveStringToFile(Remote.Text, *(Staging() / TEXT("manifest.json")), FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
 		State = EOTGUpdateState::Ready;
 		UE_LOG(LogOTGUpdate, Display, TEXT("Update %s downloaded: restart to apply"), *Remote.Version);
-		if (bAuto) ApplyAndRestart();
+		if (bAuto || bRestartWhenReady) ApplyAndRestart();
 		return;
 	}
 	const FEntry& E = Needed[Index];
@@ -279,6 +283,37 @@ void UOTGUpdateSubsystem::NextFile(bool bFresh)
 	Req = R;
 	UE_LOG(LogOTGUpdate, Display, TEXT("Downloading %s (%s%s)"), *E.Path, *Size(E.Size), From > 0 ? *FString::Printf(TEXT(", from %s"), *Size(From)) : TEXT(""));
 	R->ProcessRequest();
+}
+
+void UOTGUpdateSubsystem::Cancel()
+{
+	if (State != EOTGUpdateState::Downloading) return;
+	UE_LOG(LogOTGUpdate, Display, TEXT("Download stopped at %lld of %lld bytes"), Done, Bytes);
+	State = EOTGUpdateState::Available;
+	bRestartWhenReady = false;
+	if (Req.IsValid()) Req->CancelRequest();
+	Req.Reset();
+	if (Writer.IsValid()) Writer->Close();
+	Writer.Reset();
+}
+
+bool UOTGUpdateSubsystem::StartupWindowOpen()
+{
+	if (bWindowDone) return false;
+	switch (State)
+	{
+	// (checking: only a few seconds - a slow answer turns up on the menu's update bar instead)
+	case EOTGUpdateState::Idle:
+	case EOTGUpdateState::Checking: if (FPlatformTime::Seconds() - StartedAt < 8.0) return true; break;
+	case EOTGUpdateState::Available:
+	case EOTGUpdateState::Downloading:
+	case EOTGUpdateState::Ready: return true;
+	// (a download from the window that failed: said there, with Try again)
+	case EOTGUpdateState::Failed: if (Done > 0 || bRestartWhenReady) return true; break;
+	default: break;
+	}
+	bWindowDone = true;
+	return false;
 }
 
 void UOTGUpdateSubsystem::FileDone(bool bOk, int32 Code, bool bResumed)

@@ -77,9 +77,8 @@ struct FOTGRoundCamera
 	TObjectPtr<ACameraActor> Cam;
 	FVector CamGoal = FVector::ZeroVector, CamLook = FVector::ZeroVector, CamPos = FVector::ZeroVector, CamLookNow = FVector::ZeroVector;
 	FVector ShotFrom = FVector::ZeroVector;
-	double FlightTopZ = 0;   // (the highest the ball has been this shot: the camera keeps that height past the apex)
-	FVector ApexCam = FVector::ZeroVector;   // (where the camera was as the ball passed its apex: it stays near there as it comes down)
-	bool bPastApex = false;
+	double FlightTopZ = 0;   // (the highest the ball has been this shot: how far down from it the ball is)
+	double PinLean = 0;   // (how far the flight camera has turned from the ball toward the pin, 0 to 0.5)
 	double OverviewLeft = 0;
 	float CamSpeed = 3.f;
 	FVector OrbitCentre = FVector::ZeroVector, OrbitGoal = FVector(1e30);   // (the address view: AddressView, UpdateCamera)

@@ -13,6 +13,10 @@
 // too big for one zip there): the installed manifest lists the scenery, the files are missing, and
 // the same download fetches them on the first start.
 //
+// On start the main menu holds a window over everything while this checks (a few seconds at most):
+// an update found is offered there - Update now (downloaded with its progress shown, then put in
+// place and the game started again) or Not now (the game as it is) - before the game starts.
+//
 // Testing: -updateurl=<a manifest's address> reads that manifest instead of asking GitHub;
 // -updateauto downloads and restarts without asking; -noupdate turns it off. Nothing happens in the editor, or in a build without manifest.json.
 
@@ -47,8 +51,18 @@ public:
 
 	// Ask for the newest release (bAsked: the player pressed the button - failures are shown)
 	void Check(bool bAsked = false);
-	// Fetch what's Available
-	void Download();
+	// Fetch what's Available (bThenRestart: put it in place and start again as soon as it's in)
+	void Download(bool bThenRestart = false);
+	// Stop a download (what's in so far is kept: the next one carries on from there)
+	void Cancel();
+	// The start-up window (SOTGMainMenu): still to be shown - checking (a few seconds at most), an
+	// update to offer, its download - or done with for this run
+	bool StartupWindowOpen();
+	void CloseStartupWindow() { bWindowDone = true; }
+	// Not now: the menu's update bar left alone too until the game starts again
+	void Decline() { bDeclined = true; bWindowDone = true; }
+	bool WasDeclined() const { return bDeclined; }
+	bool WillRestart() const { return bRestartWhenReady; }
 	// Ready: quit, put the new files in place, start again
 	void ApplyAndRestart();
 
@@ -100,6 +114,8 @@ private:
 	int64 Bytes = 0, Done = 0, FileBase = 0;
 	bool bInstalling = false, bAsked = false;
 	bool bAuto = false;   // (-updateauto: download and restart without asking - testing)
+	bool bRestartWhenReady = false, bWindowDone = false, bDeclined = false;
+	double StartedAt = 0;
 	FString Message;
 	FString OverrideUrl;
 	TSharedPtr<IHttpRequest, ESPMode::ThreadSafe> Req;

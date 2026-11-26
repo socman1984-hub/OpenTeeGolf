@@ -56,6 +56,10 @@ struct FOTGRoundSetup
 	UPROPERTY() int32 Holes = 18;      // 18, or 9 (the front or back nine from StartHole)
 	UPROPERTY() FString Format = TEXT("stroke");
 	UPROPERTY() bool bHandicaps = false;
+	// Auto-putt: on the green the hole's done - 1 putt inside a circle round the hole AutoPuttFt across
+	// its radius, 2 outside (main.js autoPutt, autoPuttR)
+	UPROPERTY() bool bAutoPutt = false;
+	UPROPERTY() double AutoPuttFt = 10;
 	UPROPERTY() TArray<FString> Picked;            // profile ids, in playing order (none: a round on your own)
 	UPROPERTY() TMap<FString, FString> Teams;      // profile id -> A / B
 	UPROPERTY() FString Weather = TEXT("live");    // live, a preset (OTGWeather.h), or custom
