@@ -1885,9 +1885,139 @@ def tree_parent_material(kind):
         mel.connect_material_property(wpo, "", unreal.MaterialProperty.MP_WORLD_POSITION_OFFSET)
     except Exception:
         warn("Trees: no wind (%s)" % traceback.format_exc().splitlines()[-1])
+    try:
+        see_through(mat)
+    except Exception:
+        warn("Trees: not see-through (%s)" % traceback.format_exc().splitlines()[-1])
     mel.recompile_material(mat)
     unreal.EditorAssetLibrary.save_loaded_asset(mat)
     return mat
+
+
+SEE_THROUGH = "OTG see-through"
+SEE_THROUGH_DATA = 3   # (the tree's per-instance data: 0-2 its leaf colour, 3 see-through)
+KITE_TREE_FOLDERS = ["/Game/KiteDemo/Environments/Trees/ScotsPine_01", "/Game/KiteDemo/Environments/Trees/ScotsPineTall_01",
+                     "/Game/KiteDemo/Environments/Trees/HillTree_02", "/Game/KiteDemo/Environments/Trees/HillTree_Tall_02"]
+
+
+def see_through(mat):
+    """A tree material made see-through where the round asks (FOTGCourseTrees::SeeThrough: a tree in the way
+    while lining up a shot, per-instance data 3 set to 1): it then draws only SeeThroughKeep of its pixels,
+    scattered afresh each frame, which the upscaler blends into a see-through tree. Its shadow stays whole.
+    The game finds a material that can by its SeeThroughKeep parameter. Done once: 2 made so now, 1 already, 0 can't."""
+    if mat is None or not isinstance(mat, unreal.Material):
+        return False
+    P = unreal.MaterialProperty
+    node = mel.get_material_property_input_node(mat, P.MP_OPACITY_MASK)
+    if isinstance(node, unreal.MaterialExpressionCustom) and node.get_editor_property("description") == SEE_THROUGH:
+        return 1
+    attrs = mat.get_editor_property("use_material_attributes")
+    if attrs:
+        # (its outputs as material attributes - Megaplant's: broken out, the mask through the see-through,
+        # made again; done already if the make's mask comes from it)
+        src = mel.get_material_property_input_node(mat, P.MP_MATERIAL_ATTRIBUTES)
+        if src is None:
+            return False
+        if isinstance(src, unreal.MaterialExpressionMakeMaterialAttributes) and src.get_editor_property("desc") == SEE_THROUGH:
+            return 1
+    blend = mat.get_editor_property("blend_mode")
+    if blend not in (unreal.BlendMode.BLEND_OPAQUE, unreal.BlendMode.BLEND_MASKED):
+        return False
+    E = lambda cls, x, y: mel.create_material_expression(mat, cls, x, y)
+    c = E(unreal.MaterialExpressionCustom, 400, 1400)
+    c.set_editor_property("description", SEE_THROUGH)
+    c.set_editor_property("output_type", unreal.CustomMaterialOutputType.CMOT_FLOAT1)
+    # (its shadow whole - GetShadowReplaceState, the shadow-pass switch, Nanite's too; ray tracing as it was)
+    c.set_editor_property("code",
+        "#if RAYHITGROUPSHADER\n"
+        "return M;\n"
+        "#else\n"
+        "if (F < 0.5 || GetShadowReplaceState()) return M;\n"
+        "float n = InterleavedGradientNoise(Parameters.SvPosition.xy, View.StateFrameIndexMod8);\n"
+        "return n > K ? 0 : M;\n"
+        "#endif")
+    ins = []
+    for n in ("M", "F", "K"):
+        ci = unreal.CustomInput()
+        ci.set_editor_property("input_name", n)
+        ins.append(ci)
+    c.set_editor_property("inputs", ins)
+    # M: the mask it had (an opaque material: all of it - it becomes masked)
+    if attrs:
+        brk = E(unreal.MaterialExpressionBreakMaterialAttributes, -200, 1700)
+        mel.connect_material_expressions(src, mel.get_material_property_input_node_output_name(mat, P.MP_MATERIAL_ATTRIBUTES), brk, "")
+        mk = E(unreal.MaterialExpressionMakeMaterialAttributes, 700, 1700)
+        mk.set_editor_property("desc", SEE_THROUGH)
+        missed = []
+        for a in ("BaseColor", "Metallic", "Specular", "Roughness", "Anisotropy", "EmissiveColor", "Opacity", "Normal", "Tangent",
+                  "WorldPositionOffset", "SubsurfaceColor", "ClearCoat", "ClearCoatRoughness", "AmbientOcclusion", "Refraction",
+                  "PixelDepthOffset", "ShadingModel", "Displacement", "SurfaceThickness") + tuple("CustomizedUV%d" % i for i in range(8)):
+            if not mel.connect_material_expressions(brk, a, mk, a):
+                missed.append(a)
+        mel.connect_material_expressions(brk, "OpacityMask", c, "M")
+        if not mel.connect_material_expressions(c, "", mk, "OpacityMask"):
+            missed.append("OpacityMask")
+        if missed:
+            warn("Trees: %s see-through, these not carried over: %s" % (mat.get_name(), ", ".join(missed)))
+        mel.connect_material_property(mk, "", P.MP_MATERIAL_ATTRIBUTES)
+        if blend == unreal.BlendMode.BLEND_OPAQUE:
+            mat.set_editor_property("blend_mode", unreal.BlendMode.BLEND_MASKED)
+    elif blend == unreal.BlendMode.BLEND_MASKED and node:
+        mel.connect_material_expressions(node, mel.get_material_property_input_node_output_name(mat, P.MP_OPACITY_MASK), c, "M")
+    else:
+        one = E(unreal.MaterialExpressionConstant, 100, 1400)
+        one.set_editor_property("r", 1.0)
+        mel.connect_material_expressions(one, "", c, "M")
+        mat.set_editor_property("blend_mode", unreal.BlendMode.BLEND_MASKED)
+    # F: the tree's see-through
+    f = E(unreal.MaterialExpressionPerInstanceCustomData, 100, 1480)
+    f.set_editor_property("data_index", SEE_THROUGH_DATA)
+    try:
+        f.set_editor_property("const_default_value", 0.0)
+    except Exception:
+        pass
+    mel.connect_material_expressions(f, "", c, "F")
+    k = E(unreal.MaterialExpressionScalarParameter, 100, 1600)
+    k.set_editor_property("parameter_name", "SeeThroughKeep")
+    k.set_editor_property("default_value", 0.3)
+    mel.connect_material_expressions(k, "", c, "K")
+    if not attrs:
+        mel.connect_material_property(c, "", P.MP_OPACITY_MASK)
+    return 2
+
+
+def see_through_trees():
+    """Every tree material the game draws with made see-through: the game's own (M_TreeLeaves, M_TreeBark:
+    tree_parent_material does those), Megaplant's conifers' and KiteDemo's trees' masters."""
+    meshes = [m for m, _ in ue_broadleaf() + ue_broadleaf(UE_CONIFER_FOLDERS, None)]
+    for folder in KITE_TREE_FOLDERS:
+        if unreal.EditorAssetLibrary.does_directory_exist(folder):
+            for path in unreal.EditorAssetLibrary.list_assets(folder, recursive=False, include_folder=False):
+                m = unreal.load_asset(path.split(".")[0])
+                if isinstance(m, unreal.StaticMesh):
+                    meshes.append(m)
+    masters = {}
+    for mesh in meshes:
+        for sm in mesh.get_editor_property("static_materials"):
+            mi = sm.get_editor_property("material_interface")
+            if mi is None or "Impostor" in mi.get_name() or tree_standin(mi):
+                continue
+            base = mi.get_base_material()
+            if base and not base.get_path_name().startswith(("/Engine/", CONTENT)):
+                masters[base.get_path_name()] = base
+    done = 0
+    for path, mat in sorted(masters.items()):
+        try:
+            r = see_through(mat)
+            if r:
+                done += 1
+                if r == 2:
+                    mel.recompile_material(mat)
+                    unreal.EditorAssetLibrary.save_loaded_asset(mat)
+                    log("Trees: %s made see-through" % path)
+        except Exception:
+            warn("Trees: %s not made see-through:\n%s" % (path, traceback.format_exc()))
+    warn("Trees: %d of %d pack tree materials see-through (%s)" % (done, len(masters), ", ".join(sorted(masters))))
 
 
 _tree_parents = {}
@@ -3202,6 +3332,7 @@ def build_runtime_assets():
                     n += 1
         log("Tree stand-ins: %d" % len(_tree_standins))
     step("Tree stand-ins", trees)
+    step("Trees see-through", see_through_trees)
     step("Boulders", boulder_meshes)
     step("Water material", water_material)
     step("Sea material", sea_material)

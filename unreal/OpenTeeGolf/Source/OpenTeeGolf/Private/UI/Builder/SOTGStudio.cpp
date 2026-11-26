@@ -320,7 +320,13 @@ void SOTGStudio::Tick(const FGeometry& Geometry, const double Time, const float 
 			else if (Step == 2) Shot(TEXT("studio_opened"));
 			else if (Step == 3) { Stage->Look(0, 30); Stage->Fly(FVector(0, 0, -5000)); }
 			else if (Step == 4) Shot(TEXT("studio_low"));
-			else if (Step == 5) FPlatformMisc::RequestExit(false, TEXT("studiotest"));
+			else if (Step == 5) { Solo = TEXT("fescue"); for (const otg::FGrassKind& K : Biome.Kinds) if (K.Label.Contains(TEXT("Fescue (Megascans)"))) Solo = K.Name; bDirty = true; Rebuild(); }
+			else if (Step == 6) Shot(TEXT("studio_solo_low"));
+			else if (Step == 7) { Stage->Orbit(0, -25); Stage->Zoom(2.5f); }
+			else if (Step == 8) Shot(TEXT("studio_solo_high"));
+			else if (Step == 9) { Solo.Empty(); bDirty = true; Rebuild(); }
+			else if (Step == 10) Shot(TEXT("studio_whole_high"));
+			else if (Step >= 11) FPlatformMisc::RequestExit(false, TEXT("studiotest"));
 			Step++;
 		}
 	}

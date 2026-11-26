@@ -325,6 +325,7 @@ void AOTGRound::Setup(UOTGCourseData* InData, const FOTGRoundSetup& InSetup)
 	{
 		ShotHandle = LM->OnShotNative.AddUObject(this, &AOTGRound::OnShot);
 		ShotUpdateHandle = LM->OnShotUpdateNative.AddUObject(this, &AOTGRound::OnShotUpdate);
+		NoticeHandle = LM->OnNoticeNative.AddWeakLambda(this, [this](const FString& Text) { HudView.Toast(Text, 6.f); });
 	}
 
 	// Courses built in the background (the Course builder page's queue): told here when one is ready
@@ -363,6 +364,7 @@ void AOTGRound::EndPlay(const EEndPlayReason::Type Reason)
 		{
 			LM->OnShotNative.Remove(ShotHandle);
 			LM->OnShotUpdateNative.Remove(ShotUpdateHandle);
+			LM->OnNoticeNative.Remove(NoticeHandle);
 			LM->SetTurn(false);
 		}
 	if (Hud && GEngine && GEngine->GameViewport) GEngine->GameViewport->RemoveViewportWidgetContent(Hud.ToSharedRef());

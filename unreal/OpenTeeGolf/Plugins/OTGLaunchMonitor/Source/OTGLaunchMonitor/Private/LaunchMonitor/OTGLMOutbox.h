@@ -62,9 +62,23 @@ struct FOTGLMOutbox
 		Updates.Reset();
 		return Out;
 	}
+	// Something the player should hear about now (a swing the device saw but couldn't read, ...)
+	void Notice(const FString& Text)
+	{
+		FScopeLock L(&Lock);
+		Notices.Add(Text);
+	}
+	TArray<FString> TakeNotices()
+	{
+		FScopeLock L(&Lock);
+		TArray<FString> Out = MoveTemp(Notices);
+		Notices.Reset();
+		return Out;
+	}
 
 private:
 	FCriticalSection Lock;
 	FOTGLMDeviceState State;
 	TArray<FOTGShot> Shots, Updates;
+	TArray<FString> Notices;
 };

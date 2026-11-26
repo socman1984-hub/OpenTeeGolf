@@ -509,6 +509,12 @@ bool UOTGLaunchMonitorSubsystem::Tick(float)
 			OnShotUpdateNative.Broadcast(S);
 			OnShotUpdate.Broadcast(S);
 		}
+	if (DevOut)
+		for (const FString& N : DevOut->TakeNotices())
+		{
+			UE_LOG(LogOTGLM, Display, TEXT("Notice: %s"), *N);
+			OnNoticeNative.Broadcast(N);
+		}
 	Compose();
 	for (int32 i = 0; i < ExecAt.Num();)
 	{

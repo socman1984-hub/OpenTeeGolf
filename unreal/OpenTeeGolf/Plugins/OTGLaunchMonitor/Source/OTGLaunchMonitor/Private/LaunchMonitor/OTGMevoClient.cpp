@@ -462,6 +462,7 @@ bool FOTGMevoClient::Session()
 			else if (Now() > TriggerDeadline)
 			{
 				// Trigger but never processed: the session is stuck; start over
+				Out->Notice(TEXT("The Mevo+ saw that swing but never finished reading it. Reconnecting; hit again in a moment."));
 				Err = TEXT("shot never finished, reconnecting");
 				return false;
 			}
@@ -814,7 +815,11 @@ bool FOTGMevoClient::FinishShot()
 		if (Shot->bEarly) Out->ShotUpdate(S);
 		else Out->Shot(S);
 	}
-	else Log(TEXT("Mevo+: shot without a usable flight result (miss-hit?)"));
+	else
+	{
+		Log(TEXT("Mevo+: shot without a usable flight result (miss-hit?)"));
+		Out->Notice(TEXT("The Mevo+ saw that swing but couldn't track the ball. Hit again; if it keeps happening, check its setup (distance, tilt, tracking %)."));
+	}
 	Send(BUS_AVR, T::SHOT_DATA_ACK);
 	Send(BUS_AVR, T::SHOT_DATA_ACK);
 	// (some firmware never sends IDLE)

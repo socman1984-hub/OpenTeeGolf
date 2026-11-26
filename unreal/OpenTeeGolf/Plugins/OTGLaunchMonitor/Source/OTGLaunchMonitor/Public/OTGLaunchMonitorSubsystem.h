@@ -51,6 +51,8 @@ public:
 	// ShotNumber; the game flies that shot again with it
 	UPROPERTY(BlueprintAssignable, Category = "OpenTeeGolf") FOTGShotEvent OnShotUpdate;
 	TMulticastDelegate<void(const FOTGShot&)> OnShotUpdateNative;
+	// A message for the player from the device right now (the Mevo+ saw a swing but couldn't read it)
+	TMulticastDelegate<void(const FString&)> OnNoticeNative;
 
 	UFUNCTION(BlueprintCallable, Category = "OpenTeeGolf") FOTGLaunchMonitorStatus GetStatus() const { return Status; }
 

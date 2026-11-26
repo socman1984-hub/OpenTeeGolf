@@ -214,7 +214,7 @@ private:
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> PinMat;
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> FlagMat;
 	TSharedPtr<SOTGHud> Hud;
-	FDelegateHandle ShotHandle, ShotUpdateHandle;
+	FDelegateHandle ShotHandle, ShotUpdateHandle, NoticeHandle;
 
 	otg::PlayCourse Course;
 	otg::PlayTrees Trees;

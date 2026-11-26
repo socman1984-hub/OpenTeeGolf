@@ -38,13 +38,23 @@ AOTGPreviewStage::AOTGPreviewStage()
 	Sky->bRealTimeCapture = true;
 	UExponentialHeightFogComponent* Fog = CreateDefaultSubobject<UExponentialHeightFogComponent>(TEXT("Haze"));
 	Fog->SetupAttachment(RootComponent);
-	// (thick enough past the plot that the ground beyond fades into it)
-	Fog->FogDensity = 0.03f;
-	Fog->StartDistance = 12000.f;
-	Fog->FogHeightFalloff = 0.05f;
+	// (past the plot the ground beyond fades into it - a thin haze, low down: thicker or higher, it
+	// washed the whole view out pale once the camera flew up and looked down through it)
+	Fog->FogDensity = 0.01f;
+	Fog->StartDistance = 15000.f;
+	Fog->FogHeightFalloff = 0.2f;
 	UCameraComponent* Cam = CreateDefaultSubobject<UCameraComponent>(TEXT("Camera"));
 	Cam->SetupAttachment(RootComponent);
 	Cam->SetFieldOfView(55.f);
+	// (one brightness wherever it looks, as the grass pictures were taken: left to adjust itself, a view
+	// of mostly bare ground - one sparse grass shown alone, or from high up - came out washed pale)
+	Cam->PostProcessSettings.bOverride_AutoExposureMethod = true;
+	Cam->PostProcessSettings.AutoExposureMethod = EAutoExposureMethod::AEM_Manual;
+	Cam->PostProcessSettings.bOverride_AutoExposureApplyPhysicalCameraExposure = true;
+	Cam->PostProcessSettings.AutoExposureApplyPhysicalCameraExposure = false;
+	Cam->PostProcessSettings.bOverride_AutoExposureBias = true;
+	Cam->PostProcessSettings.AutoExposureBias = 1.f;
+	Cam->PostProcessBlendWeight = 1.f;
 }
 
 AOTGPreviewStage* AOTGPreviewStage::Open(UWorld* World)

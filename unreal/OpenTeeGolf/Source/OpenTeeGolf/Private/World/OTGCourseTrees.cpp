@@ -66,6 +66,7 @@ void FOTGCourseTrees::BuildTrees()
 	for (UHierarchicalInstancedStaticMeshComponent* C : TreeComps) if (C) { Course->Parts.Remove(C); C->DestroyComponent(); }
 	TreeComps.Reset();
 	MeshComps.Reset();
+	SeeThroughMeshes.Reset();
 	SeeThroughHidden.Reset();
 	SeeThroughKey.Empty();
 	TreeCount = 0;
@@ -151,15 +152,6 @@ void FOTGCourseTrees::BuildTrees()
 	for (auto& P : ByMesh)
 	{
 		UHierarchicalInstancedStaticMeshComponent* C = Course->Instances(P.Key, P.Value.Xfs, TreeCull[0], TreeCull[1]);
-		// (trees given their own leaf colour: the leaves' material reads it per tree - M_TreeLeaves)
-		if (P.Value.bTinted)
-		{
-			C->SetNumCustomDataFloats(3);
-			for (int32 i = 0; i < P.Value.Tints.Num(); i++)
-				if (!P.Value.Tints[i].Equals(FLinearColor(0, 0, 0, 0)))
-					C->SetCustomData(i, TArray<float>({ P.Value.Tints[i].R, P.Value.Tints[i].G, P.Value.Tints[i].B }), false);
-			C->MarkRenderStateDirty();
-		}
 		TreeComps.Add(C);
 		MeshComps.Add(P.Key, C);
 		// (the Fab trees' own materials need a master the game hasn't got: their stand-ins)
@@ -173,10 +165,29 @@ void FOTGCourseTrees::BuildTrees()
 					// (the game's leaves: they take a tree's own colour - M_TreeLeaves)
 					if (Sub->GetBaseMaterial() && Sub->GetBaseMaterial()->GetName() == TEXT("M_TreeLeaves")) Colourable.Add(P.Key);
 				}
+		// (a model whose every material can draw it see-through - build_course.py see_through: they have
+		// SeeThroughKeep - is, with its per-instance data 3; the impostor's isn't drawn by a Nanite tree)
+		bool bCan = C->GetNumMaterials() > 0;
+		for (int32 i = 0; i < C->GetNumMaterials() && bCan; i++)
+			if (UMaterialInterface* M = C->GetMaterial(i); M && !M->GetName().Contains(TEXT("Impostor")))
+			{
+				float Keep = 0;
+				bCan = M->GetScalarParameterValue(FHashedMaterialParameterInfo(TEXT("SeeThroughKeep")), Keep);
+			}
+		if (bCan) SeeThroughMeshes.Add(P.Key);
+		// (trees given their own leaf colour: the leaves' material reads it per tree - M_TreeLeaves)
+		if (P.Value.bTinted || bCan)
+		{
+			C->SetNumCustomDataFloats(bCan ? 4 : 3);
+			for (int32 i = 0; i < P.Value.Tints.Num(); i++)
+				if (!P.Value.Tints[i].Equals(FLinearColor(0, 0, 0, 0)))
+					C->SetCustomData(i, TArray<float>({ P.Value.Tints[i].R, P.Value.Tints[i].G, P.Value.Tints[i].B }), false);
+			C->MarkRenderStateDirty();
+		}
 		TreeCount += P.Value.Xfs.Num();
 	}
 	for (FOTGCourseTrees::FDrawn& D : DrawnTrees) D.bColourable = Colourable.Contains(D.Mesh);
-	UE_LOG(LogOTGRuntimeCourse, Display, TEXT("Trees: %d from %d models (%d stand-in materials)%s"), TreeCount, ByMesh.Num(), Standins, Design.IsDefault() ? TEXT("") : TEXT(", as the course's tree designer has them"));
+	UE_LOG(LogOTGRuntimeCourse, Display, TEXT("Trees: %d from %d models (%d stand-in materials, %d models see-through)%s"), TreeCount, ByMesh.Num(), Standins, SeeThroughMeshes.Num(), Design.IsDefault() ? TEXT("") : TEXT(", as the course's tree designer has them"));
 }
 
 // Boulders (boulders.json: [x, y, z, size cm, yaw, flat, kind]): the game's six stones (as the
@@ -436,12 +447,14 @@ void FOTGCourseTrees::SeeThrough(const FVector& From, const FVector& To, double 
 		const FDrawn& D = DrawnTrees[It.Key()];
 		if (const TObjectPtr<UHierarchicalInstancedStaticMeshComponent>* C = MeshComps.Find(D.Mesh); C && *C)
 		{
-			(*C)->UpdateInstanceTransform(D.Instance, It.Value(), true, false, true);
+			if (SeeThroughMeshes.Contains(D.Mesh)) (*C)->SetCustomDataValue(D.Instance, 3, 0.f, false);
+			else (*C)->UpdateInstanceTransform(D.Instance, It.Value(), true, false, true);
 			Touched.Add(*C);
 		}
 		It.RemoveCurrent();
 	}
-	// (those in the strip: shrunk to nothing where they stand)
+	// (those in the strip: see-through - their materials draw a scatter of their pixels, which the upscaler
+	// blends - or, a model whose materials can't, shrunk to nothing where they stand)
 	for (int32 i : Want)
 	{
 		if (SeeThroughHidden.Contains(i)) continue;
@@ -451,9 +464,13 @@ void FOTGCourseTrees::SeeThrough(const FVector& From, const FVector& To, double 
 		FTransform Was;
 		if (!(*C)->GetInstanceTransform(D.Instance, Was, true)) continue;
 		SeeThroughHidden.Add(i, Was);
-		FTransform Gone = Was;
-		Gone.SetScale3D(FVector(0.001));
-		(*C)->UpdateInstanceTransform(D.Instance, Gone, true, false, true);
+		if (SeeThroughMeshes.Contains(D.Mesh)) (*C)->SetCustomDataValue(D.Instance, 3, 1.f, false);
+		else
+		{
+			FTransform Gone = Was;
+			Gone.SetScale3D(FVector(0.001));
+			(*C)->UpdateInstanceTransform(D.Instance, Gone, true, false, true);
+		}
 		Touched.Add(*C);
 	}
 	for (UHierarchicalInstancedStaticMeshComponent* C : Touched) C->MarkRenderStateDirty();

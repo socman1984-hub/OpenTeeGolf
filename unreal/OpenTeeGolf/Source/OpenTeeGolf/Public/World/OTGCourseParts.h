@@ -163,6 +163,7 @@ struct FOTGCourseTrees
 	double PickMarkedAt = -1;
 	TObjectPtr<UInstancedStaticMeshComponent> ForestBeads;
 	TMap<UStaticMesh*, TObjectPtr<UHierarchicalInstancedStaticMeshComponent>> MeshComps;   // (each tree model's instances)
+	TSet<UStaticMesh*> SeeThroughMeshes;   // (the tree models whose materials can draw them see-through)
 	TMap<int32, FTransform> SeeThroughHidden;   // (DrawnTrees index -> its transform, while it's hidden)
 	FString SeeThroughKey;
 	double ForestMarkedAt = -1;
