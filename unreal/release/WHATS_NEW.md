@@ -4,6 +4,14 @@ The newest version first. The game shows this on its What's new page. make_relea
 OpenTeeGolf.exe, and publish_release.py puts each version's part on its GitHub release.
 A version's heading is "## <version> - <date>", and its changes are "- " lines under it.
 
+## 0.27.0 - 26 November 2026
+- New ball physics from the latest OpenFairway: the flight is fitted to tour averages, launch-monitor shots and a trajectory calculator (carries within about a yard of the calculator), landings on grass read each impact's angle and backspin, and the roll-out is fitted to real launch-monitor roll. A topped shot runs along the ground the way it really does.
+- A TV-style camera: it follows the ball up, then holds its height as the ball comes down, so the fairway, the green and the hole stay in view as it lands. Once the ball is rolling the camera glides down behind it, with the hole in view when it's close.
+- Lining up a shot among trees: the trees right in front of you, between the camera and about 40 m along your aim, are hidden so you can see where you're aiming. They come back as you swing, and the ball still hits them.
+- Grass biomes: every grass is listed with a picture of it beside its name (ticked if the biome uses it). Click a picture to see that grass alone in the 3D preview.
+- In a round (R), Trees and rocks: pick one or more of the course's forests, see them outlined on the course, and make them thicker or thinner, bigger or smaller, or plant them with one of your forests.
+- In a round (R), Grass: choose which grass biome the course's tall grass grows, and each area you drew in the course editor.
+
 ## 0.26.2 - 25 November 2026
 - rēlā: a new choice in the Launch monitor panel. rēlā (docs.rela.golf) connects many launch monitors, such as SkyTrak, GC2, FlightScope, Nova, Mevo+, R10 and Square. In rēlā choose GSPro as the simulator and, under Settings > Simulator Connection, this PC (127.0.0.1) and port 921.
 
