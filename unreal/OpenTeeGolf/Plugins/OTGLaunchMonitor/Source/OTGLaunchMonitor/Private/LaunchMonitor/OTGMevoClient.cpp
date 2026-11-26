@@ -332,8 +332,9 @@ void FOTGMevoClient::OnFrame(const FMevoFrame& M)
 		}
 	}
 	// The early launch result: always kept (its spin estimate is shown beside the final spin). With fast
-	// shots it goes to the game - at once, or after waiting up to FastWait seconds for the full result
-	// (which then goes instead, as an ordinary shot). Full swing only: a chip or putt is over before
+	// shots it goes to the game only if the full result (with the measured spin) isn't in within FastWait
+	// seconds (0.6-3) - that is, when the spin read has failed; otherwise the full result goes instead,
+	// as an ordinary shot. Full swing only: a chip or putt is over before
 	// the full result could correct it. After an early one the full result follows as a shot update.
 	if (M.Type == T::LAUNCH && Shot && !Shot->Launch && !Shot->bDone)
 	{
@@ -342,7 +343,9 @@ void FOTGMevoClient::OnFrame(const FMevoFrame& M)
 		{
 			Shot->Launch = L;
 			const bool bFast = bUsingSetup && Using.bFast && (Mode == TEXT("full") || Mode == TEXT("outdoor"));
-			const double Wait = bFast ? FMath::Clamp(Using.FastWait, 0.0, 3.0) : 0.0;
+			// (at least 0.6 s: a measured RCT spin is in ~0.43 s after the early result, so only a failed
+			// spin read - ~1.6 s more - starts the ball from the early one; lib/mevo.js FAST_WAIT)
+			const double Wait = bFast ? FMath::Clamp(Using.FastWait, 0.6, 3.0) : 0.0;
 			const FOTGBallData Ball = EarlyBallData(L);
 			Log(FString::Printf(TEXT("Mevo+: early launch result %.1f mph, launch %.1f, direction %.1f, spin estimate %d%s"), *Ball.Speed, *Ball.VLA, *Ball.HLA, L.Spin,
 				bFast ? *FString::Printf(TEXT(" (starting with %d%s)"), FMath::RoundToInt(*Ball.TotalSpin), Wait > 0 ? *FString::Printf(TEXT(" if the full result isn't in within %.1f s"), Wait) : TEXT("")) : TEXT("")));

@@ -45,11 +45,11 @@ Mevo+ directly         Close FS Golf, join this PC to the Mevo+'s own Wi-Fi (FS 
                        view shows the Mevo+ camera's picture (armed or not) with a box to put
                        the ball in; it can take 10-30 s to start. Full swings use the Mevo+'s
                        mode for nets and screens, where it reads RCT spin and finishes a shot
-                       in about half a second. "Fast shots" starts full swings about 0.15 s
-                       after impact from the Mevo+'s first reading; the spin is corrected in
-                       flight when its full reading arrives. "Wait up to" (0-3 s) waits that long for the full reading first
-                       and takes off with it if it comes in time. The spin shows both readings:
-                       the Mevo+'s first estimate above, the final spin below.
+                       in about half a second. When the spin read fails it takes about 2 s;
+                       "Fast shots" doesn't wait for that: after "wait up to" (0.6-3 s, 0.7 is
+                       about right) the ball takes off with the Mevo+'s first reading and the
+                       spin is corrected in flight. The spin shows both readings: the Mevo+'s
+                       first estimate above, the final spin below.
 Garmin R10             Pair the R10 in Windows Bluetooth settings first. The game runs its bridge
                        program (bridges\tenover-frp...) itself.
 Square Golf            Turn it on; the game runs its bridge program (bridges\allsquare-frp...).

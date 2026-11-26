@@ -33,7 +33,7 @@ import { ensureRoads } from './lib/roads.js';
 import { ensurePhoto, photoMeta, photoStale, savePhoto } from './lib/coursephoto.js';
 import { ensureCanopy } from './lib/canopy.js';
 import { ensureFarLand } from './lib/farland.js';
-import { MevoClient, DEFAULT_SETUP } from './lib/mevo.js';
+import { MevoClient, DEFAULT_SETUP, fastWaitOf } from './lib/mevo.js';
 import { FrpController } from './lib/frp.js';
 import { BridgeProcess, BRIDGES } from './lib/bridges.js';
 import { UnrealRound } from './lib/unrealplay.js';
@@ -983,7 +983,7 @@ const httpServer = http.createServer(async (req, res) => {
         distanceM: num(b.distanceM, 1.5, 6, d.distanceM), surfaceIn: num(b.surfaceIn, 0, 10, d.surfaceIn),
         teeHeightIn: num(b.teeHeightIn, 0, 4, d.teeHeightIn), tiltTarget: num(b.tiltTarget, -10, 25, d.tiltTarget), ballType: b.ballType ? 1 : 0,
         trackPct: num(b.trackPct, 0.6, 1, d.trackPct), mode: 'auto', // (by club; there's no other choice now)
-        fast: !!b.fast, fastWait: num(b.fastWait, 0, 3, d.fastWait),
+        fast: !!b.fast, fastWait: fastWaitOf(b.fastWait),
       };
       if (typeof b.armOnTurn === 'boolean') settings.lm.armOnTurn = b.armOnTurn;
       saveSettings();

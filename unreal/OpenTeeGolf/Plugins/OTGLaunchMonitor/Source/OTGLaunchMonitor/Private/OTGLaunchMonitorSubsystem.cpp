@@ -353,7 +353,7 @@ void UOTGLaunchMonitorSubsystem::SetMevoSetup(const FOTGMevoSetup& Setup)
 	MevoSetup.TiltTarget = FMath::Clamp(Setup.TiltTarget, -10.0, 25.0);
 	MevoSetup.BallType = Setup.BallType ? 1 : 0;
 	MevoSetup.TrackPct = FMath::Clamp(Setup.TrackPct, 0.6, 1.0);
-	MevoSetup.FastWait = FMath::Clamp(Setup.FastWait, 0.0, 3.0);
+	MevoSetup.FastWait = FMath::Clamp(Setup.FastWait, 0.6, 3.0);
 	MevoSetup.Mode = TEXT("auto"); // (by club; there's no other choice now)
 	bHasSetup = true;
 	SaveSettings();

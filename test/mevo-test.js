@@ -196,17 +196,17 @@ console.log(`states: ${[...new Set(states)].join(' → ')}`);
     const t0 = Date.now();
     c.onFrame(launchFrame);
     if (finishAfterMs != null) setTimeout(() => { c.shot.finishing = true; }, finishAfterMs); // (the full result arriving)
-    await new Promise((r) => setTimeout(r, 600));
+    await new Promise((r) => setTimeout(r, 900));
     clearTimeout(c.triggerTimer);
     return { got, t0, c };
   };
-  let r = await run({ fastWait: 0 });
-  check(r.got.length === 1 && r.got[0].meta.early && r.got[0].at - r.t0 < 50 && r.got[0].ball.EarlySpin === 6075,
-    'fast shots, no wait: the early result goes at once (with the radar\'s spin estimate for showing)');
-  r = await run({ fastWait: 0.3 });
-  check(r.got.length === 1 && r.got[0].at - r.t0 >= 280, `fast shots, wait 0.3 s: the early result goes after ${r.got[0] ? r.got[0].at - r.t0 : '-'} ms`);
-  r = await run({ fastWait: 0.3 }, 100);
-  check(r.got.length === 0, 'fast shots, wait 0.3 s, full result in after 0.1 s: no early result (the full one goes instead)');
+  let r = await run({});
+  check(r.got.length === 1 && r.got[0].meta.early && r.got[0].at - r.t0 >= 680 && r.got[0].ball.EarlySpin === 6075,
+    `fast shots, default wait (0.7 s), no full result: the early result goes after ${r.got[0] ? r.got[0].at - r.t0 : '-'} ms (with the radar's spin estimate for showing)`);
+  r = await run({ fastWait: 0 });
+  check(r.got.length === 1 && r.got[0].at - r.t0 >= 580, `fast shots, wait set to 0: still waits the 0.6 s minimum for a measured spin (${r.got[0] ? r.got[0].at - r.t0 : '-'} ms)`);
+  r = await run({}, 430);
+  check(r.got.length === 0, 'fast shots, measured spin in after 0.43 s: no early result (the full one goes instead)');
   r = await run({ fast: false });
   check(r.got.length === 0 && r.c.shot.launch?.spin === 6075, 'fast shots off: nothing early, but the spin estimate is kept for showing');
 }

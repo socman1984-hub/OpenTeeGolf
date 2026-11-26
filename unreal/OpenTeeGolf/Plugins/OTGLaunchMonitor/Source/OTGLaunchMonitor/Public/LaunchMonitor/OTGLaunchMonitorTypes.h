@@ -76,9 +76,10 @@ struct FOTGMevoSetup
 	// Fast shots: full swings start from the radar's early launch result (~0.2 s after impact, not ~2 s),
 	// corrected in flight by the full result (not sent to the radar)
 	UPROPERTY(BlueprintReadWrite, Category = "OpenTeeGolf") bool bFast = false;
-	// Fast shots: wait up to this long (0-3 s) for the full result before starting with the early one
-	// (if the full result comes sooner, the ball takes off with it at once)
-	UPROPERTY(BlueprintReadWrite, Category = "OpenTeeGolf") double FastWait = 0;
+	// Fast shots: wait up to this long (0.6-3 s) for the full result, with its measured spin, before
+	// starting with the early one (a measured spin is in ~0.55 s after impact; if the full result comes
+	// sooner, the ball takes off with it at once)
+	UPROPERTY(BlueprintReadWrite, Category = "OpenTeeGolf") double FastWait = 0.7;
 };
 
 USTRUCT(BlueprintType)

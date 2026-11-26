@@ -195,12 +195,12 @@ void SOTGLaunchMonitorPanel::Rebuild()
 		[
 			SNew(SCheckBox).IsChecked_Lambda([this]() { return Draft.bFast ? ECheckBoxState::Checked : ECheckBoxState::Unchecked; })
 			.OnCheckStateChanged_Lambda([this](ECheckBoxState S) { Draft.bFast = S == ECheckBoxState::Checked; })
-			[Text(TEXT("Fast shots (full swings start ~0.15 s after impact)"), 14, Ink)]
+			[Text(TEXT("Fast shots (don't wait ~2 s when the spin read fails)"), 14, Ink)]
 		];
-		V->AddSlot().AutoHeight().Padding(24, 0, 0, 4)[SNew(STextBlock).Text(FText::FromString(TEXT("From the Mevo+'s first reading: speed and angles are final, spin is a first estimate, corrected in flight when the full reading arrives. Chips and putts wait for the full reading. Save the setup to apply.")))
+		V->AddSlot().AutoHeight().Padding(24, 0, 0, 4)[SNew(STextBlock).Text(FText::FromString(TEXT("When the Mevo+ reads the spin, a full swing is ready about 0.55 s after impact with the measured spin. When the read fails it takes about 2 s; with fast shots the ball takes off with the Mevo+'s first reading instead (speed and angles final, spin estimated) and is corrected in flight. Chips and putts always wait. Save the setup to apply.")))
 			.Font(Font(12)).ColorAndOpacity(Soft).AutoWrapText(true)];
-		V->AddSlot().AutoHeight().Padding(0, 2)[Row(TEXT("Fast shots: wait up to (s)"), Number(0, 3, 0.1, [this]() { return Draft.FastWait; }, [this](double X) { Draft.FastWait = X; }))];
-		V->AddSlot().AutoHeight().Padding(24, 0, 0, 4)[SNew(STextBlock).Text(FText::FromString(TEXT("How long to wait for the full reading before starting with the first one (0-3 s). When the Mevo+ reads the spin it comes about 0.4 s after the first; when it can't, about 1.6 s. So 0 is fastest, about 0.6 waits for a measured spin, and 1.8 or more is the same as fast shots off. If it comes sooner, the ball takes off with it straight away.")))
+		V->AddSlot().AutoHeight().Padding(0, 2)[Row(TEXT("Fast shots: wait up to (s)"), Number(0.6, 3, 0.1, [this]() { return FMath::Max(0.6, Draft.FastWait); }, [this](double X) { Draft.FastWait = X; }))];
+		V->AddSlot().AutoHeight().Padding(24, 0, 0, 4)[SNew(STextBlock).Text(FText::FromString(TEXT("How long to wait for the full reading, with its measured spin, before taking off with the first one (0.6-3 s; 0.7 is about right). A measured spin is in about 0.55 s after impact, so anything from 0.6 gets it; longer only makes failed spin reads wait longer, and 2 or more is the same as fast shots off.")))
 			.Font(Font(12)).ColorAndOpacity(Soft).AutoWrapText(true)];
 		V->AddSlot().AutoHeight().Padding(0, 4)[Button(TEXT("Save the setup"), [this]() { if (UOTGLaunchMonitorSubsystem* X = LM()) X->SetMevoSetup(Draft); }, 14)];
 	}
