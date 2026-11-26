@@ -4,6 +4,12 @@ The newest version first. The game shows this on its What's new page. make_relea
 OpenTeeGolf.exe, and publish_release.py puts each version's part on its GitHub release.
 A version's heading is "## <version> - <date>", and its changes are "- " lines under it.
 
+## 0.26.0 - 25 November 2026
+- Mevo+ live view in the game: the Launch monitor panel shows the Mevo+ camera, with the "ball here" guide, to help you line up the ball. It works whether or not the Mevo+ is armed.
+- Mevo+ fast shots (Launch monitor setup, off by default): full swings take off sooner. The ball starts from the radar's first reading and waits a moment for the measured spin (0.7 s unless you change it, from 0.6 to 3 s).
+- The shot data shows both of the Mevo+'s spin readings, the first estimate and the final one.
+- Full swings always use the Mevo+'s net and simulator mode, which reads spin on every shot and finishes sooner. The setup no longer asks you to choose a detection mode.
+
 ## 0.25.0 - 25 November 2026
 - Grass biomes: in New course > Grass biomes, mix the tall grasses, wildflowers, heather and ferns into your own "biome" (how many of each, how tall, in what patches, what colour) and see it grow on a preview plot as you change it. Five come ready made: heathland, wildflower meadow, links dunes, woodland floor and the game's own tall grass.
 - Forests: in New course > Forests, mix tree species into a forest (how many of each, drawn as which model, how tall, how close, and the grass under them), with a live preview. Four come ready made.
