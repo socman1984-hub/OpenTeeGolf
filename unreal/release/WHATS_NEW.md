@@ -4,6 +4,14 @@ The newest version first. The game shows this on its What's new page. make_relea
 OpenTeeGolf.exe, and publish_release.py puts each version's part on its GitHub release.
 A version's heading is "## <version> - <date>", and its changes are "- " lines under it.
 
+## 0.26.1 - 25 November 2026
+- New course is now called Course builder. A course already in the game is edited from the Play page: pick it, then Edit this course. Update its map data is there too.
+- The Course builder no longer looks up what's mapped as soon as you pick a course: press See what's mapped there, and a moving bar shows it's working.
+- Grass biomes: each kind has a checkbox and stays in its place in the list when turned on or off. Each is folded to one line until you open it (+), or use Open all and Fold all.
+- Grass biomes and forests: fly round the preview with W A S D, Q / E down and up, the right mouse button to look and Shift to go faster. The camera no longer goes under the grass.
+- The course editor's choices of grass biome and forest are dropdown lists.
+- The sea mist draws properly again instead of with a plain stand-in material.
+
 ## 0.26.0 - 25 November 2026
 - Mevo+ live view in the game: the Launch monitor panel shows the Mevo+ camera, with the "ball here" guide, to help you line up the ball. It works whether or not the Mevo+ is armed.
 - Mevo+ fast shots (Launch monitor setup, off by default): full swings take off sooner. The ball starts from the radar's first reading and waits a moment for the measured spin (0.7 s unless you change it, from 0.6 to 3 s).
