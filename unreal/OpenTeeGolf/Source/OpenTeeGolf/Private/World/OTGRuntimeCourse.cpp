@@ -143,10 +143,13 @@ void AOTGRuntimeCourse::SetPictures(UMaterialInstanceDynamic* M) const
 	M->SetScalarParameterValue(TEXT("LandSizeCm"), float(LandCm));
 }
 
-UHierarchicalInstancedStaticMeshComponent* AOTGRuntimeCourse::Instances(UStaticMesh* Mesh, const TArray<FTransform>& Xfs, int32 CullFrom, int32 CullTo)
+UHierarchicalInstancedStaticMeshComponent* AOTGRuntimeCourse::Instances(UStaticMesh* Mesh, const TArray<FTransform>& Xfs, int32 CullFrom, int32 CullTo, int32 CustomFloats)
 {
 	UHierarchicalInstancedStaticMeshComponent* C = NewObject<UHierarchicalInstancedStaticMeshComponent>(this);
 	C->SetStaticMesh(Mesh);
+	// (each instance's own data, all 0, before there are any: set afterwards, a packaged game drew some
+	// trees' leaves with others' numbers - red and blue)
+	if (CustomFloats > 0) C->SetNumCustomDataFloats(CustomFloats);
 	C->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	C->SetMobility(EComponentMobility::Movable);
 	C->InstanceStartCullDistance = CullFrom;

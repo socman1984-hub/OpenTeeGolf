@@ -140,7 +140,7 @@ private:
 
 	void LoadPictures();
 	void SetPictures(UMaterialInstanceDynamic* M) const;
-	class UHierarchicalInstancedStaticMeshComponent* Instances(class UStaticMesh* Mesh, const TArray<FTransform>& Xfs, int32 CullFrom, int32 CullTo);
+	class UHierarchicalInstancedStaticMeshComponent* Instances(class UStaticMesh* Mesh, const TArray<FTransform>& Xfs, int32 CullFrom, int32 CullTo, int32 CustomFloats = 0);
 
 	UPROPERTY() TObjectPtr<UOTGCourseData> Data;
 	UPROPERTY() TMap<FName, TObjectPtr<UTexture2D>> Textures;

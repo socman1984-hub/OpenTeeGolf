@@ -151,7 +151,8 @@ void FOTGCourseTrees::BuildTrees()
 	TSet<UStaticMesh*> Colourable;
 	for (auto& P : ByMesh)
 	{
-		UHierarchicalInstancedStaticMeshComponent* C = Course->Instances(P.Key, P.Value.Xfs, TreeCull[0], TreeCull[1]);
+		// (every tree its own data from the start: 0-2 its leaf colour, 3 see-through)
+		UHierarchicalInstancedStaticMeshComponent* C = Course->Instances(P.Key, P.Value.Xfs, TreeCull[0], TreeCull[1], 4);
 		TreeComps.Add(C);
 		MeshComps.Add(P.Key, C);
 		// (the Fab trees' own materials need a master the game hasn't got: their stand-ins)
@@ -176,12 +177,11 @@ void FOTGCourseTrees::BuildTrees()
 			}
 		if (bCan) SeeThroughMeshes.Add(P.Key);
 		// (trees given their own leaf colour: the leaves' material reads it per tree - M_TreeLeaves)
-		if (P.Value.bTinted || bCan)
+		if (P.Value.bTinted)
 		{
-			C->SetNumCustomDataFloats(bCan ? 4 : 3);
 			for (int32 i = 0; i < P.Value.Tints.Num(); i++)
 				if (!P.Value.Tints[i].Equals(FLinearColor(0, 0, 0, 0)))
-					C->SetCustomData(i, TArray<float>({ P.Value.Tints[i].R, P.Value.Tints[i].G, P.Value.Tints[i].B }), false);
+					C->SetCustomData(i, TArray<float>({ P.Value.Tints[i].R, P.Value.Tints[i].G, P.Value.Tints[i].B, 0.f }), false);
 			C->MarkRenderStateDirty();
 		}
 		TreeCount += P.Value.Xfs.Num();
