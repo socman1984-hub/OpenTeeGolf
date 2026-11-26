@@ -65,6 +65,9 @@ void FOTGCourseTrees::BuildTrees()
 	}
 	for (UHierarchicalInstancedStaticMeshComponent* C : TreeComps) if (C) { Course->Parts.Remove(C); C->DestroyComponent(); }
 	TreeComps.Reset();
+	MeshComps.Reset();
+	SeeThroughHidden.Reset();
+	SeeThroughKey.Empty();
 	TreeCount = 0;
 	if (!TreeRecs.Num()) return;
 	const TArray<FTreeModel> Broad = TreeModels(BroadleafFolders, UE_ARRAY_COUNT(BroadleafFolders), true);
@@ -109,12 +112,13 @@ void FOTGCourseTrees::BuildTrees()
 		const double Yaw = Hash01(X, Y, 2.9) * 360;
 		FGroup& G = ByMesh.FindOrAdd(M.Mesh);
 		const FVector Foot = Course->Data->LevelOrigin + FVector(X, Y, Zc - 10);
+		const int32 Instance = G.Xfs.Num();
 		G.Xfs.Add(FTransform(FRotator(0, Yaw, 0), Foot, FVector(S)));
 		const FLinearColor T = E ? E->LeafTint() : FLinearColor(0, 0, 0, 0);
 		G.Tints.Add(T);
 		G.bTinted |= E && E->HasColour();
 		FOTGCourseTrees::FDrawn& D = DrawnTrees.AddDefaulted_GetRef();
-		D.Base = Foot; D.H = M.Height * S; D.R = FMath::Max(150.0, D.H * 0.22); D.Kind = Kind; D.bAdded = E && E->bAdded; D.Mesh = M.Mesh;
+		D.Base = Foot; D.H = M.Height * S; D.R = FMath::Max(150.0, D.H * 0.22); D.Kind = Kind; D.bAdded = E && E->bAdded; D.Mesh = M.Mesh; D.Instance = Instance;
 	};
 	if (TreeRecs.Num() == Course->Data->Trees.Num())
 	{
@@ -157,6 +161,7 @@ void FOTGCourseTrees::BuildTrees()
 			C->MarkRenderStateDirty();
 		}
 		TreeComps.Add(C);
+		MeshComps.Add(P.Key, C);
 		// (the Fab trees' own materials need a master the game hasn't got: their stand-ins)
 		const TArray<FStaticMaterial>& Mats = P.Key->GetStaticMaterials();
 		for (int32 i = 0; i < Mats.Num(); i++)
@@ -401,6 +406,58 @@ void FOTGCourseTrees::MarkPicked(const FOTGPicked& P)
 	}
 	PickRing->SetVisibility(true);
 	PickCone->SetVisibility(true);
+}
+
+void FOTGCourseTrees::SeeThrough(const FVector& From, const FVector& To, double HalfWidthCm)
+{
+	// (worked out again only when the strip moves more than a metre)
+	const FString Key = From.Equals(To, 1.0) ? FString() : FString::Printf(TEXT("%.0f %.0f %.0f %.0f %.0f"), From.X / 100, From.Y / 100, To.X / 100, To.Y / 100, HalfWidthCm / 100);
+	if (Key == SeeThroughKey) return;
+	SeeThroughKey = Key;
+	TSet<int32> Want;
+	if (!Key.IsEmpty())
+	{
+		const FVector2D A(From), B(To);
+		for (int32 i = 0; i < DrawnTrees.Num(); i++)
+		{
+			const FDrawn& D = DrawnTrees[i];
+			if (D.Instance == INDEX_NONE) continue;
+			const FVector2D P(D.Base);
+			const FVector2D AB = B - A;
+			const double T = FMath::Clamp(FVector2D::DotProduct(P - A, AB) / FMath::Max(AB.SizeSquared(), 1.0), 0.0, 1.0);
+			if (FVector2D::Distance(P, A + AB * T) < HalfWidthCm + D.R * 0.5) Want.Add(i);
+		}
+	}
+	TSet<UHierarchicalInstancedStaticMeshComponent*> Touched;
+	// (those hidden before and not now: back where they were)
+	for (auto It = SeeThroughHidden.CreateIterator(); It; ++It)
+	{
+		if (Want.Contains(It.Key())) continue;
+		const FDrawn& D = DrawnTrees[It.Key()];
+		if (const TObjectPtr<UHierarchicalInstancedStaticMeshComponent>* C = MeshComps.Find(D.Mesh); C && *C)
+		{
+			(*C)->UpdateInstanceTransform(D.Instance, It.Value(), true, false, true);
+			Touched.Add(*C);
+		}
+		It.RemoveCurrent();
+	}
+	// (those in the strip: shrunk to nothing where they stand)
+	for (int32 i : Want)
+	{
+		if (SeeThroughHidden.Contains(i)) continue;
+		const FDrawn& D = DrawnTrees[i];
+		const TObjectPtr<UHierarchicalInstancedStaticMeshComponent>* C = MeshComps.Find(D.Mesh);
+		if (!C || !*C) continue;
+		FTransform Was;
+		if (!(*C)->GetInstanceTransform(D.Instance, Was, true)) continue;
+		SeeThroughHidden.Add(i, Was);
+		FTransform Gone = Was;
+		Gone.SetScale3D(FVector(0.001));
+		(*C)->UpdateInstanceTransform(D.Instance, Gone, true, false, true);
+		Touched.Add(*C);
+	}
+	for (UHierarchicalInstancedStaticMeshComponent* C : Touched) C->MarkRenderStateDirty();
+	if (Touched.Num()) UE_LOG(LogTemp, Display, TEXT("See-through: %d trees out of the way"), SeeThroughHidden.Num());
 }
 
 void FOTGCourseTrees::MarkForests(const TArray<int32>& Which)

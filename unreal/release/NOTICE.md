@@ -13,7 +13,7 @@ project's licence). This game is built with Unreal Engine and includes the follo
 
 | Component | Licence |
 | --- | --- |
-| [OpenFairwayPhysics](https://github.com/digitalhand/uopengolf/tree/main/Plugins/OpenFairwayPhysics), part of uopengolf (Copyright (c) 2026 uopengolf contributors; equations and calibration from [ogolf-physics](https://github.com/digitalhand/ogolf-physics)' OpenFairway): the ball physics, ported to C++ through the web version's JavaScript port | MIT |
+| [OpenFairwayPhysics](https://github.com/digitalhand/uopengolf/tree/main/Plugins/OpenFairwayPhysics), part of uopengolf (Copyright (c) 2026 uopengolf contributors; equations and calibration from [ogolf-physics](https://github.com/digitalhand/ogolf-physics)' OpenFairway): the ball physics: the fitted spin-ratio flight, turf landing and roll of revision `e8c318e3`, translated to C++ (`Plugins/OTGBallPhysics`); its flight table fits published tour averages, launch-monitor shots and a trajectory calculator, and the modern ball's measured drag is from Lyu et al. 2020 (CC BY 4.0) | MIT |
 | [ironsight](https://github.com/divotmaker/ironsight) (Copyright 2026 Eric Thill): the Mevo+ protocol | MIT OR Apache-2.0 (used under MIT) |
 | [Flight Relay Protocol](https://github.com/flightrelay/spec) 0.1: the shot format the game reads from FRP launch monitors and bridges | CC0 1.0 |
 

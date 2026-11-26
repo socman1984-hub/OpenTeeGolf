@@ -127,6 +127,8 @@ void AOTGRound::OnShot(const FOTGShot& Shot)
 	AnimT = 0;
 	bCarryShown = false;
 	Camera.ShotFrom = World(Ball);
+	Camera.FlightTopZ = Camera.ShotFrom.Z;
+	Camera.bPastApex = false;
 	ClearTracer();
 	AimMesh->SetVisibility(false);
 	TellLaunchMonitor(false);

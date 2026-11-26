@@ -1,6 +1,6 @@
-// OpenTeeGolf ball physics in C++: public/js/openfairway.js and public/js/physics.js, kept line for
-// line (the same names, the same order of operations), so the parity test can hold them to the
-// same results. When either JS file changes, change this to match. See OTGBallPhysics.h.
+// OpenTeeGolf ball physics in C++. The ball on the course (SimulateShot) is public/js/physics.js, kept
+// line for line; OpenFairway (namespace of) is the newer OpenFairwayPhysics of uopengolf, ahead of the web
+// version's openfairway.js. See OTGBallPhysics.h.
 
 #include "Physics/OTGBallPhysics.h"
 
@@ -36,7 +36,11 @@ namespace otg
 		}
 	}
 
-	// ================================================================== OpenFairway (openfairway.js)
+	// ================================================================== OpenFairway
+	// The OpenFairwayPhysics plugin of uopengolf at e8c318e3 (MIT; see OTGBallPhysics.h), in plain C++ with
+	// doubles: Private/OpenFairway/{SpinRatioData.h, BallData.h, FlightAerodynamics, FlightStep, Atmosphere,
+	// WindProfile, Impact, GroundRoll, Surfaces, BallProfile}.cpp. The game's surfaces (rough, deep rough,
+	// path ...) are set on top in SurfaceFor below.
 	namespace of
 	{
 		const double MASS = 0.04592623;
@@ -49,29 +53,33 @@ namespace otg
 		{
 			const double AREA = kPi * RADIUS * RADIUS;
 			const double INERTIA = 0.4 * MASS * RADIUS * RADIUS;
+			const double MIN_AERO_SPEED = 0.5;
+			const double REST_SPEED = 0.05;                 // GolfPhysics::RestSpeedMps
+			const double STOP_SPIN = 8.0;                   // GroundRollDetail::StopSpinRadPerS
+			const double PUTT_RAMP_START = 12, PUTT_RAMP_END = 18;   // GolfPhysics::PuttSpeedRamp*
 
-			// ---- profiles (FLIGHT, BOUNCE, ROLLOUT, PROFILE)
-			namespace P
+			// (InterpolateHeld: piecewise-linear, held at the ends)
+			template <int N>
+			double held(const double (&x)[N], const double (&y)[N], double v)
 			{
-				const double spinDecayCoefficient = 2.0e-5;
-				const double cdPoly[4] = { 1.1948, -0.0000209661, 1.42472e-10, -3.14383e-16 };
-				const double highReCdCap = 0.2, highReCdBlendStart = 175000, lowReCdFloor = 0.38, lowReBlendStart = 30000, cdAt50k = 0.4632;
-				const double clMaxBase = 0.268, clMaxHighSpin = 0.32, clMaxSrTransitionStart = 0.35, clMaxSrTransitionEnd = 0.5;
-				const double spinDragMultiplierCoeff = 4.0, spinDragMultiplierMax = 1.2, spinDragMultiplierHighSpinMax = 1.03, spinDragMultiplierUltraHighSpinMax = 1.21;
-				const double highSpinDragSrStart = 0.3, highSpinDragSrEnd = 0.48, highSpinDragReliefReFullMax = 90000, highSpinDragReliefReZero = 105000;
-				const double ultraHighSpinDragSrStart = 0.57, ultraHighSpinDragSrEnd = 0.77;
-				const bool bridgeLowReLift = true;
-				const double highReStart = 75000, highReMidSpinGain = 16.0, highReSpinGain = 16.0;
-				const double highReGainReductionStart = 0.1, highReGainReductionEnd = 0.18, highReGainRecoveryStart = 0.26, highReGainRecoveryEnd = 0.4;
-				const double highSpinClAttenuationStart = 0.45, highSpinClAttenuationEnd = 0.55, highSpinClAttenuationMax = 0.09;
-				const double ultraHighSpinClAttenuationStart = 0.58, ultraHighSpinClAttenuationEnd = 0.85, ultraHighSpinClAttenuationMax = 0.1;
-				const double lowReHighSpinClAttenuationMax = 0.1, lowReUltraHighSpinClAttenuationMax = 0.06;
-				const double lowLaunchLiftRecoveryMax = 1.0, lowLaunchVlaFullDeg = 6.5, lowLaunchVlaZeroDeg = 9.5, lowLaunchReStart = 85000, lowLaunchReEnd = 110000;
-				const double lowLaunchSpinRatioFull = 0.18, lowLaunchSpinRatioMax = 0.22;
-				const double spinDragProgressiveCapSrStart = 0.33, spinDragProgressiveCapSrEnd = 0.5, spinDragProgressiveCapBoostMax = 0.25;
-				const double midSpinClBoostSrStart = 0.17, midSpinClBoostSrEnd = 0.31, midSpinClBoostMax = 0.45;
-				const double highLaunchDragBoostMax = 1.24, highLaunchDragVlaStartDeg = 24.5, highLaunchDragVlaFullDeg = 31.5, highLaunchDragSrStart = 0.5, highLaunchDragSrEnd = 0.7;
+				if (v <= x[0]) return y[0];
+				for (int i = 1; i < N; i++) if (v < x[i]) return lerp(y[i - 1], y[i], (v - x[i - 1]) / (x[i] - x[i - 1]));
+				return y[N - 1];
 			}
+
+			// ---- BallData.h: measured drag of a modern ball (Lyu et al. 2020, digitized), near 2250 rpm
+			const double BD_RE[8] = { 50000, 65000, 75000, 100000, 125000, 150000, 175000, 200000 };
+			const double BD_CD[8] = { .49, .33, .25, .215, .18, .17, .19, .20 };
+			double ballDrag(double re) { return held(BD_RE, BD_CD, re); }
+
+			// ---- SpinRatioData.h: the flight table, drag and lift against spin ratio W
+			const double SR_W[10] = { 0.06, 0.08, 0.10, 0.12, 0.15, 0.16, 0.22, 0.32, 0.50, 0.80 };
+			const double SR_CD[10] = { 0.1895485, 0.2073769, 0.2251196, 0.2384511, 0.2461, 0.2793, 0.2985, 0.3244, 0.3605, 0.3605 };
+			const double SR_CL[10] = { 0.1302894, 0.1449717, 0.1793615, 0.1977254, 0.2251639, 0.2387429, 0.2852, 0.3319, 0.3528, 0.413 };
+			const double CRISIS_SCALE = 0.6838, CRISIS_START_RE = 100000;
+			const double MIN_RE = 35000, MAX_RE = 215000, MIN_W = 0.06, MAX_W = 0.80;
+
+			// ---- profiles (Profiles.h: FBounceProfile, FRolloutProfile; BallProfile: GroundDragScale)
 			namespace B
 			{
 				const double corBaseA = 0.45, corBaseB = -0.01, corBaseC = 0.0002, corHighSpeedCap = 0.25, corHighSpeedThreshold = 20.0, corKillThreshold = 2.0;
@@ -86,24 +94,62 @@ namespace otg
 			{
 				const double chipSpeedThreshold = 20.0, pitchSpeedThreshold = 35.0, chipVelocityScaleMin = 0.6, chipVelocityScaleMax = 0.87;
 				const double lowSpinThreshold = 1250, midSpinThreshold = 1750, lowSpinMultiplierMax = 1.3, midSpinMultiplierMax = 2.25, highSpinMultiplierMax = 2.5, highSpinRampRange = 1000;
-				const double tangentVelocityThreshold = 0.05, slopeResistanceRatio = 1.6;
+				const double slopeResistanceRatio = 1.6;
 			}
-			const double PROFILE_dragScale = 1.01, PROFILE_liftScale = 1.0, PROFILE_sandPlowRatio = 2.5, PROFILE_greenGrassViscosity = 0.0009;
+			const double SPIN_DECAY = 2.0e-5;                // FFlightProfile::SpinDecayCoefficient
+			const double SAND_PLOW_RATIO = 2.5, SAND_ROLLING = 0.45, GREEN_VISCOSITY = 0.0009;
+
+			// ---- FlightAerodynamics.cpp GroundDragCurve: the old flight model's drag, kept for a ball on the ground
+			namespace GD
+			{
+				const double capRe = 200000, a = 1.1948, b = -0.0000209661, c = 1.42472e-10, d = -3.14383e-16;
+				const double highReCap = 0.2, highReBlendStart = 175000, lowReFloor = 0.38, lowReBlendStart = 30000, at50k = 0.4632;
+				const double spinCoeff = 4.0, spinMax = 1.2, spinHighMax = 1.03, spinUltraMax = 1.21;
+				const double highSrStart = 0.3, highSrEnd = 0.48, reliefReFullMax = 90000, reliefReZero = 105000;
+				const double ultraSrStart = 0.57, ultraSrEnd = 0.77, progStart = 0.33, progEnd = 0.5, progBoost = 0.25;
+				double drag(double re)
+				{
+					if (re > capRe) return highReCap;
+					if (re >= 50000)
+					{
+						const double poly = a + b * re + c * re * re + d * re * re * re;
+						return re <= highReBlendStart ? poly : lerp(poly, highReCap, smoothRange(re, highReBlendStart, capRe));
+					}
+					if (re <= lowReBlendStart) return lowReFloor;
+					return lerp(lowReFloor, at50k, smoothRange(re, lowReBlendStart, 50000));
+				}
+				double spinMult(double s, double re)
+				{
+					if (s <= 0) return 1;
+					const double high = smoothRange(s, highSrStart, highSrEnd);
+					const double relief = 1 - smoothRange(re, reliefReFullMax, reliefReZero);
+					double cap = lerp(spinMax, spinHighMax, high * relief);
+					cap += progBoost * smoothRange(s, progStart, progEnd);
+					cap = lerp(cap, spinUltraMax, smoothRange(s, ultraSrStart, ultraSrEnd));
+					return std::min(1 + spinCoeff * s * s, cap);
+				}
+			}
+
+			// ---- Surfaces.cpp: the turf recalibration (fitted to a 124-shot launch-monitor roll-out on fairway)
+			const double TURF_LANDING_ANGLE_LOSS = 0.665, TURF_LANDING_SPIN_LOSS = 0.464;
+			const double TURF_ROLLING = 0.0469, TURF_VISCOSITY = 0.0242, TURF_FORM_DRAG = 0.0086;
+			const double TURF_STRUCK_VISCOSITY = 0.26, TURF_STRUCK_FORM_DRAG = 0.69;
+			const double PORTED_FAIRWAY_ROLLING = 0.05, PORTED_FAIRWAY_VISCOSITY = 0.0017;
 
 			std::map<std::string, SurfaceParams> MakePresets()
 			{
 				std::map<std::string, SurfaceParams> p;
-				p["fairway"] = MakeSurface(0.5, 0.05, 0.0017, 0.29, 0.78);
-				p["fairwaySoft"] = MakeSurface(0.56, 0.07, 0.0024, 0.32, 0.92);
-				p["rough"] = MakeSurface(0.62, 0.095, 0.0032, 0.35, 0.7);
-				p["firm"] = MakeSurface(0.3, 0.03, 0.001, 0.25, 0.6);
-				p["fringe"] = MakeSurface(0.56, 0.0725, 0.00245, 0.29, 0.78);
-				SurfaceParams green = MakeSurface(0.58, std::numeric_limits<double>::quiet_NaN(), PROFILE_greenGrassViscosity, 0.36, 1.12);
+				p["fairway"] = Turf(MakeSurface(0.5, 0.05, 0.0017, 0.29, 0.78));
+				p["fairwaySoft"] = Turf(MakeSurface(0.56, 0.07, 0.0024, 0.32, 0.92));
+				p["rough"] = Turf(MakeSurface(0.62, 0.095, 0.0032, 0.35, 0.7));
+				p["firm"] = Turf(MakeSurface(0.3, 0.03, 0.001, 0.25, 0.6));
+				p["fringe"] = Turf(MakeSurface(0.56, 0.0725, 0.00245, 0.29, 0.78));
+				SurfaceParams green = MakeSurface(0.58, std::numeric_limits<double>::quiet_NaN(), GREEN_VISCOSITY, 0.36, 1.12);
 				green.spinbackThetaBoostMax = 0.12; green.spinbackSpinStartRpm = 3500; green.spinbackSpinEndRpm = 5500;
 				green.spinbackSpeedStartMps = 8; green.spinbackSpeedEndMps = 20; green.rollingSpinScale = 0;
 				p["green"] = green;
-				SurfaceParams sand = MakeSurface(0.65, 0.3, 0.012, 0.45, 1.0);
-				sand.restitutionScale = 0.6; sand.impactRetentionScale = 0.25; sand.impactPlowRatio = PROFILE_sandPlowRatio;
+				SurfaceParams sand = MakeSurface(0.65, SAND_ROLLING, 0.012, 0.45, 1.0);
+				sand.restitutionScale = 0.6; sand.impactRetentionScale = 0.25; sand.impactPlowRatio = SAND_PLOW_RATIO;
 				sand.hasBounce = true; sand.firstImpactMinimumSpeed = 0.15; sand.laterImpactMinimumSpeed = 0.15; sand.laterImpactScale = 0.85; sand.minimumBounceHeight = 0.001;
 				p["sand"] = sand;
 				return p;
@@ -118,6 +164,23 @@ namespace otg
 			return s;
 		}
 
+		SurfaceParams Turf(SurfaceParams s)
+		{
+			// (Surfaces.cpp RecalibrateTurf: each turf keeps its ratio of grass drag and rolling friction to the
+			// ported fairway's; the landing law and the struck-along-the-ground drag are the same on all)
+			const double dragRatio = s.grassViscosity / PORTED_FAIRWAY_VISCOSITY;
+			s.rollingFriction = TURF_ROLLING * s.rollingFriction / PORTED_FAIRWAY_ROLLING;
+			s.grassViscosity = TURF_VISCOSITY * dragRatio;
+			s.grassFormDrag = TURF_FORM_DRAG * dragRatio;
+			s.landingAngleLoss = TURF_LANDING_ANGLE_LOSS;
+			s.landingSpinLoss = TURF_LANDING_SPIN_LOSS;
+			s.rollingSpinScale = 0;
+			s.slidingSpinScale = 0;
+			s.struckViscosityScale = TURF_STRUCK_VISCOSITY;
+			s.struckFormDragScale = TURF_STRUCK_FORM_DRAG;
+			return s;
+		}
+
 		const SurfaceParams& Preset(const char* name)
 		{
 			static const std::map<std::string, SurfaceParams> presets = MakePresets();
@@ -125,20 +188,33 @@ namespace otg
 			return it != presets.end() ? it->second : presets.at("rough");
 		}
 
-		// ---- green speed
+		// ---- green speed (Surfaces.cpp GreenSpeed): the rolling friction that, with the green's grass drag and
+		// the ground air drag in standard air, stops a stimpmeter ball at the stimp distance
 		namespace
 		{
 			const double STIMPMETER_MPS = 1.83;
 			double speedDragPerSecond(double viscosity) { return (10 * kPi * RADIUS * viscosity) / MASS; }
+			// (the distance a ball rolling at Speed goes with a0 + k v + q v^2 against it: Simpson's rule)
 			double rollMeters(double speed, double a0, double k)
 			{
-				return k <= 0 ? (speed * speed) / (2 * a0) : speed / k - (a0 / (k * k)) * std::log(1 + (k * speed) / a0);
+				const double rollRe = 1.225 * STIMPMETER_MPS * RADIUS * 2 / 1.789e-5;
+				const double q = 5.0 / 7.0 * 0.5 * 1.225 * GD::drag(rollRe) * GD::spinMult(1, rollRe) * AREA / MASS;
+				const int n = 128;
+				const double h = speed / n;
+				double sum = 0;
+				for (int i = 0; i <= n; i++)
+				{
+					const double v = i * h;
+					const double drag = v >= MIN_AERO_SPEED ? q * v * v : 0;
+					sum += (i == 0 || i == n ? 1 : i % 2 ? 4 : 2) * (v / (a0 + k * v + drag));
+				}
+				return sum * h / 3;
 			}
 		}
 
 		double GreenRollingFriction(double stimpFt, double viscosity)
 		{
-			if (viscosity < 0) viscosity = PROFILE_greenGrassViscosity;
+			if (viscosity < 0) viscosity = GREEN_VISCOSITY;
 			const double k = speedDragPerSecond(viscosity);
 			const double d = clamp(std::isfinite(stimpFt) ? stimpFt : 10, 6, 15) * 0.3048;
 			double lo = 0, hi = (STIMPMETER_MPS * STIMPMETER_MPS) / (2 * d);
@@ -152,7 +228,7 @@ namespace otg
 
 		double PuttSpeed(double distanceM, double stimpFt, double viscosity)
 		{
-			if (viscosity < 0) viscosity = PROFILE_greenGrassViscosity;
+			if (viscosity < 0) viscosity = GREEN_VISCOSITY;
 			const double a0 = (5 * G * GreenRollingFriction(stimpFt, viscosity)) / 7, k = speedDragPerSecond(viscosity);
 			double lo = 0, hi = 30;
 			for (int i = 0; i < 40; i++)
@@ -163,7 +239,7 @@ namespace otg
 			return 0.5 * (lo + hi);
 		}
 
-		// ---- air
+		// ---- air (Atmosphere.cpp, WindProfile.cpp)
 		double AirDensity(double altitudeM, double tempC, double humidity, double stationPressurePa)
 		{
 			const double T = std::max(tempC + 273.15, 1.0);
@@ -182,207 +258,95 @@ namespace otg
 
 		double WindFactor(double heightM, double referenceM, double roughnessM)
 		{
+			if (!(std::isfinite(referenceM) && std::isfinite(roughnessM) && roughnessM > 0 && referenceM > roughnessM)) return 1;
 			if (!std::isfinite(heightM) || heightM <= roughnessM) return 0;
 			const double lz = std::log(roughnessM);
 			return (std::log(std::min(heightM, 100.0)) - lz) / (std::log(referenceM) - lz);
 		}
 
-		// ---- aerodynamics
-		namespace
+		// ---- aerodynamics (FlightAerodynamics.cpp, SpinRatioData.h)
+		double FlightLift(double spinRatio)
 		{
-			const double RE_SAMPLES[5] = { 50000, 60000, 65000, 70000, 75000 };
-			double clRe50k(double s) { return 0.0472121 + 2.84795 * s - 23.4342 * s * s + 45.4849 * s * s * s; }
-			double clRe60k(double s) { return 0.320524 - 4.7032 * s + 14.0613 * s * s; }
-			double clRe65k(double s) { return 0.266667 - 4.0 * s + 13.3333 * s * s; }
-			double clRe70k(double s) { return 0.0496189 + 0.00211396 * s + 2.34201 * s * s; }
-
-			double clMax(double s)
-			{
-				if (s <= P::clMaxSrTransitionStart) return P::clMaxBase;
-				if (s >= P::clMaxSrTransitionEnd) return P::clMaxHighSpin;
-				return lerp(P::clMaxBase, P::clMaxHighSpin, smoothRange(s, P::clMaxSrTransitionStart, P::clMaxSrTransitionEnd));
-			}
-			double highReSpinGain(double s)
-			{
-				if (s <= P::highReGainReductionStart) return P::highReSpinGain;
-				if (s < P::highReGainReductionEnd) return lerp(P::highReSpinGain, P::highReMidSpinGain, smoothRange(s, P::highReGainReductionStart, P::highReGainReductionEnd));
-				if (s <= P::highReGainRecoveryStart) return P::highReMidSpinGain;
-				if (s < P::highReGainRecoveryEnd) return lerp(P::highReMidSpinGain, P::highReSpinGain, smoothRange(s, P::highReGainRecoveryStart, P::highReGainRecoveryEnd));
-				return P::highReSpinGain;
-			}
-			double clHighRe(double s) { const double g = highReSpinGain(s); return (clMax(s) * s * g) / (1 + s * g); }
-			double clAtSample(int i, double s)
-			{
-				switch (i) { case 0: return clRe50k(s); case 1: return clRe60k(s); case 2: return clRe65k(s); case 3: return clRe70k(s); default: return clHighRe(s); }
-			}
-			double highSpinAttenuation(double s, double cl, double max, double ultraMax)
-			{
-				return cl * (1 - max * smoothRange(s, P::highSpinClAttenuationStart, P::highSpinClAttenuationEnd)) *
-					(1 - ultraMax * smoothRange(s, P::ultraHighSpinClAttenuationStart, P::ultraHighSpinClAttenuationEnd));
-			}
-			double spinDragMultiplier(double s, double re)
-			{
-				if (s <= 0) return 1;
-				const double highSpin = smoothRange(s, P::highSpinDragSrStart, P::highSpinDragSrEnd);
-				const double relief = 1 - smoothRange(re, P::highSpinDragReliefReFullMax, P::highSpinDragReliefReZero);
-				double cap = lerp(P::spinDragMultiplierMax, P::spinDragMultiplierHighSpinMax, highSpin * relief);
-				cap += P::spinDragProgressiveCapBoostMax * smoothRange(s, P::spinDragProgressiveCapSrStart, P::spinDragProgressiveCapSrEnd);
-				cap = lerp(cap, P::spinDragMultiplierUltraHighSpinMax, smoothRange(s, P::ultraHighSpinDragSrStart, P::ultraHighSpinDragSrEnd));
-				return std::min(1 + P::spinDragMultiplierCoeff * s * s, cap);
-			}
-			double lowLaunchLiftScale(double vlaDeg, double s, double re)
-			{
-				const double launch = smoothRange(P::lowLaunchVlaZeroDeg - vlaDeg, 0, P::lowLaunchVlaZeroDeg - P::lowLaunchVlaFullDeg);
-				if (launch <= 0) return 1;
-				const double reF = smoothRange(re, P::lowLaunchReStart, P::lowLaunchReEnd);
-				if (reF <= 0) return 1;
-				const double spinF = 1 - smoothRange(s, P::lowLaunchSpinRatioFull, P::lowLaunchSpinRatioMax);
-				if (spinF <= 0) return 1;
-				return lerp(1, P::lowLaunchLiftRecoveryMax, launch * reF * spinF);
-			}
-			double highLaunchDragScale(double vlaDeg, double s)
-			{
-				const double launch = smoothRange(vlaDeg, P::highLaunchDragVlaStartDeg, P::highLaunchDragVlaFullDeg);
-				if (launch <= 0) return 1;
-				const double spinF = smoothRange(s, P::highLaunchDragSrStart, P::highLaunchDragSrEnd);
-				if (spinF <= 0) return 1;
-				return lerp(1, P::highLaunchDragBoostMax, launch * spinF);
-			}
-			double midSpinClBoost(double s)
-			{
-				if (P::midSpinClBoostMax <= 0) return 1;
-				const double t = smoothRange(s, P::midSpinClBoostSrStart, P::midSpinClBoostSrEnd);
-				return 1 + P::midSpinClBoostMax * t * (1 - t) * 4;
-			}
-			const double MIN_AERO_SPEED = 0.5;
+			const double w = std::max(spinRatio, 0.0);
+			return w < SR_W[0] ? SR_CL[0] * w / SR_W[0] : held(SR_W, SR_CL, w);
 		}
 
-		double DragCoefficient(double re)
+		double FlightDrag(double re, double spinRatio)
 		{
-			const double cap = 200000;
-			if (re > cap) return P::highReCdCap;
-			if (re >= 50000)
-			{
-				const double a = P::cdPoly[0], b = P::cdPoly[1], c = P::cdPoly[2], d = P::cdPoly[3];
-				const double poly = a + b * re + c * re * re + d * re * re * re;
-				if (P::highReCdBlendStart >= cap || re <= P::highReCdBlendStart) return poly;
-				return lerp(poly, P::highReCdCap, smoothRange(re, P::highReCdBlendStart, cap));
-			}
-			if (re <= P::lowReBlendStart) return P::lowReCdFloor;
-			return lerp(P::lowReCdFloor, P::cdAt50k, smoothRange(re, P::lowReBlendStart, 50000));
+			const double crisis = re < CRISIS_START_RE ? std::max(ballDrag(re) - ballDrag(CRISIS_START_RE), 0.0) : 0.0;
+			return held(SR_W, SR_CD, std::max(spinRatio, 0.0)) + CRISIS_SCALE * crisis;
 		}
 
-		double LiftCoefficient(double re, double spinRatio)
-		{
-			const double s = std::max(0.0, spinRatio);
-			if (s <= 0) return 0;
-			const double max = clMax(s);
-			if (re < 50000)
-			{
-				if (re <= 30000) return 0;
-				const double t = smooth01((re - 30000) / 20000);
-				return highSpinAttenuation(s, clamp(clRe50k(s), 0, max) * t, P::lowReHighSpinClAttenuationMax, P::lowReUltraHighSpinClAttenuationMax);
-			}
-			if (re >= P::highReStart) return highSpinAttenuation(s, clamp(clHighRe(s), 0, max), P::highSpinClAttenuationMax, P::ultraHighSpinClAttenuationMax);
-			static const int bridged[3] = { 0, 3, 4 }, all[5] = { 0, 1, 2, 3, 4 };
-			const int* samples = P::bridgeLowReLift ? bridged : all;
-			const int count = P::bridgeLowReLift ? 3 : 5;
-			int hiSlot = count - 1;
-			for (int k = 0; k < count; k++) if (re <= RE_SAMPLES[samples[k]]) { hiSlot = k; break; }
-			const int hi = samples[hiSlot], lo = samples[std::max(hiSlot - 1, 0)];
-			const double clLo = std::max(0.0, clAtSample(lo, s)), clHi = std::max(0.0, clAtSample(hi, s));
-			const double reLo = RE_SAMPLES[lo], reHi = RE_SAMPLES[hi];
-			const double w = reHi != reLo ? (re - reLo) / (reHi - reLo) : 0;
-			return highSpinAttenuation(s, clamp(lerp(clLo, clHi, w), 0, max), P::lowReHighSpinClAttenuationMax, P::lowReUltraHighSpinClAttenuationMax);
-		}
+		double GroundDragCoefficient(double re, double spinRatio) { return GD::drag(re) * GD::spinMult(spinRatio, re); }
 
 		Aero AeroSample(const V3& air, const V3& spin, const Env& env)
 		{
 			Aero out;
 			out.speed = len(air);
-			out.spinDecay = (std::max(0.0, P::spinDecayCoefficient) * out.speed) / RADIUS;
+			out.spinDecay = (std::max(0.0, SPIN_DECAY) * out.speed) / RADIUS;
 			if (out.speed < MIN_AERO_SPEED) return out;
 			out.spinRatio = (len(spin) * RADIUS) / out.speed;
 			out.reynolds = (env.rho * out.speed * RADIUS * 2) / env.mu;
-			out.cd = DragCoefficient(out.reynolds) * spinDragMultiplier(out.spinRatio, out.reynolds) * env.dragScale * highLaunchDragScale(env.launchDeg, out.spinRatio);
-			out.cl = LiftCoefficient(out.reynolds, out.spinRatio) * env.liftScale * lowLaunchLiftScale(env.launchDeg, out.spinRatio, out.reynolds) * midSpinClBoost(out.spinRatio);
+			out.cl = FlightLift(out.spinRatio);
+			out.cd = FlightDrag(out.reynolds, out.spinRatio);
+			out.outside = out.reynolds < MIN_RE || out.reynolds > MAX_RE || out.spinRatio < MIN_W || out.spinRatio > MAX_W;
 			return out;
 		}
 
-		Aero StepFlight(V3& v, V3& spin, const Env& env, const V3& wind, double dt)
+		V3 WindAt(const Env& env, double heightM)
 		{
-			const V3 air = vec(v.x - wind.x, v.y - wind.y, v.z - wind.z);
-			const Aero s = AeroSample(air, spin, env);
-			V3 a = vec(0, -G, 0);
-			if (s.speed >= MIN_AERO_SPEED)
-			{
-				const double k = (0.5 * env.rho * AREA * s.speed) / MASS;
-				a = add(a, air, -k * s.cd);
-				const double w = len(spin);
-				if (w > 0.1) a = add(a, cross(spin, air), (k * s.cl) / w);
-			}
-			v = add(v, a, dt);
-			spin = scale(spin, std::exp(-s.spinDecay * dt));
-			return s;
+			return scale(env.wind, WindFactor(heightM, env.windReferenceM, env.windRoughnessM));
 		}
 
-		// ---- launch calibration
+		// (FlightStep.cpp: one coupled RK4 step of position, velocity and spin, the wind read at the ball
+		// centre's height above the launch ground at every stage)
+		Aero StepFlight(V3& p, V3& v, V3& spin, const Env& env, double dt)
+		{
+			struct S { V3 p, v, w; };
+			Aero first;
+			bool sampled = false;
+			auto deriv = [&](const S& s) {
+				const V3 air = add(s.v, WindAt(env, s.p.y - env.groundY + RADIUS), -1);
+				const Aero a = AeroSample(air, s.w, env);
+				if (!sampled) { first = a; sampled = true; }
+				V3 acc = vec(0, -G, 0);
+				if (a.speed >= MIN_AERO_SPEED)
+				{
+					const double q = 0.5 * env.rho * AREA * a.speed / MASS;
+					acc = add(acc, air, -q * a.cd);
+					const double wl = len(s.w);
+					if (wl > 0.1) acc = add(acc, cross(s.w, air), q * a.cl / wl);
+				}
+				return S{ s.v, acc, scale(s.w, -a.spinDecay) };
+			};
+			auto adv = [](const S& s, const S& k, double h) { return S{ add(s.p, k.p, h), add(s.v, k.v, h), add(s.w, k.w, h) }; };
+			const S s0{ p, v, spin };
+			const S k1 = deriv(s0);
+			const S k2 = deriv(adv(s0, k1, dt * 0.5));
+			const S k3 = deriv(adv(s0, k2, dt * 0.5));
+			const S k4 = deriv(adv(s0, k3, dt));
+			auto mix = [&](const V3& a, const V3& b, const V3& c, const V3& d) { return vec((a.x + 2 * b.x + 2 * c.x + d.x) * dt / 6, (a.y + 2 * b.y + 2 * c.y + d.y) * dt / 6, (a.z + 2 * b.z + 2 * c.z + d.z) * dt / 6); };
+			p = add(p, mix(k1.p, k2.p, k3.p, k4.p));
+			v = add(v, mix(k1.v, k2.v, k3.v, k4.v));
+			spin = add(spin, mix(k1.w, k2.w, k3.w, k4.w));
+			return first;
+		}
+
+		// ---- the landing response (BallProfile.cpp: buckets by launch angle and backspin, blended)
 		namespace
 		{
-			const char* family(double mph, double vla) { return mph < 60 ? "C" : mph > 110 && vla < 18 ? "D" : vla > 30 ? "W" : "I"; }
-			const char* speedBin(double mph) { return mph < 60 ? "S0" : mph < 72 ? "S1a" : mph < 85 ? "S1b" : mph < 105 ? "S2" : mph < 120 ? "S3" : "S4"; }
-			const char* launchBin(double vla) { return vla < 10 ? "V0" : vla < 18 ? "V1" : vla < 25 ? "V2" : vla < 33 ? "V3" : "V4"; }
-			const char* spinBin(double rpm) { return rpm < 2500 ? "P0" : rpm < 4000 ? "P1" : rpm < 5500 ? "P2" : rpm < 7500 ? "P3" : "P4"; }
-
-			struct DL { double drag, lift; };
-			const std::unordered_map<std::string, DL>& Regimes()
+			const double LAUNCH_ANCHORS[6] = { 5, 14, 21.5, 27.5, 31.5, 36.5 };
+			const double SPIN_ANCHORS[5] = { 1250, 3250, 4750, 6500, 8500 };
+			struct AW { double a[2], w[2]; };
+			template <int N>
+			AW bracket(const double (&anchors)[N], double x)
 			{
-				static const std::unordered_map<std::string, DL> r = {
-					{ "C-S0", { 0.7, 1.2 } }, { "C-S0-V1-P0", { 0.55, 1.15 } }, { "C-S0-V4-P3", { 0.65, 1.25 } },
-					{ "I-S1a-V0-P1", { 0.94, 1.04 } }, { "I-S1a-V2-P1", { 0.8, 1.14 } }, { "I-S1a-V2-P2", { 0.82, 1.13 } }, { "I-S1a-V2-P3", { 0.82, 1.12 } },
-					{ "I-S1a-V3-P2", { 0.79, 1.14 } }, { "I-S1a-V3-P3", { 0.94, 1.04 } }, { "I-S1a-V1-P2", { 0.92, 1.05 } },
-					{ "I-S1b-V0-P0", { 0.97, 1.02 } }, { "I-S1b-V2-P2", { 0.94, 1.03 } }, { "I-S1b-V2-P3", { 0.97, 1.01 } }, { "I-S1b-V3-P2", { 0.88, 1.06 } },
-					{ "I-S1b-V3-P3", { 0.97, 1.02 } }, { "I-S1b-V1-P2", { 0.98, 1.01 } },
-					{ "W-S1a-V3-P3", { 0.83, 1.1 } },
-					{ "I-S3-V2-P3", { 1.11, 0.94 } }, { "I-S3-V1-P2", { 1.04, 0.98 } }, { "I-S2-V2-P3", { 1.05, 1 } }, { "I-S2-V2-P4", { 1.06, 0.95 } },
-					{ "I-S2-V1-P2", { 1.03, 0.99 } }, { "I-S2-V0-P2", { 1.06, 0.96 } }, { "I-S2-V1-P0", { 0.96, 1.03 } }, { "I-S2-V1-P1", { 0.97, 1.02 } },
-					{ "D-S3-V1", { 1.04, 0.99 } }, { "D-S4-V0-P1", { 1.03, 0.98 } }, { "D-S4-V0-P2", { 1.09, 0.94 } }, { "D-S4-V1-P0", { 0.98, 1.02 } },
-					{ "D-S4-V1-P1", { 1.04, 1 } }, { "D-S4-V1-P2", { 1.04, 1 } },
-					{ "W-S2-V3-P4", { 1.06, 0.97 } },
-				};
-				return r;
+				if (x <= anchors[0]) return { { anchors[0], anchors[0] }, { 1, 0 } };
+				for (int i = 1; i < N; i++)
+					if (x < anchors[i]) { const double t = (x - anchors[i - 1]) / (anchors[i] - anchors[i - 1]); return { { anchors[i - 1], anchors[i] }, { 1 - t, t } }; }
+				return { { anchors[N - 1], anchors[N - 1] }, { 1, 0 } };
 			}
-			DL lookupRegime(double mph, double vla, double rpm)
-			{
-				const std::string f = family(mph, vla), s = speedBin(mph), l = launchBin(vla);
-				const std::string keys[4] = { f + "-" + s + "-" + l + "-" + spinBin(rpm), f + "-" + s + "-" + l, f + "-" + s, f };
-				for (const std::string& k : keys)
-				{
-					auto it = Regimes().find(k);
-					if (it != Regimes().end()) return it->second;
-				}
-				return { 1, 1 };
-			}
-
-			const std::vector<double> SPEED_ANCHORS = { 54, 66, 78.5, 95, 107.5, 115, 125 };
-			const std::vector<double> LAUNCH_ANCHORS = { 5, 14, 21.5, 27.5, 31.5, 36.5 };
-			const std::vector<double> SPIN_ANCHORS = { 1250, 3250, 4750, 6500, 8500 };
-			struct AW { double a, w; };
-			std::vector<AW> bracket(const std::vector<double>& anchors, double x)
-			{
-				if (x <= anchors[0]) return { { anchors[0], 1 } };
-				for (size_t i = 1; i < anchors.size(); i++)
-				{
-					if (x < anchors[i])
-					{
-						const double t = (x - anchors[i - 1]) / (anchors[i] - anchors[i - 1]);
-						return { { anchors[i - 1], 1 - t }, { anchors[i], t } };
-					}
-				}
-				return { { anchors.back(), 1 } };
-			}
-			struct LandingRow { double bite, spinback, rampStart, rampEnd; };
-			LandingRow landingRow(const std::string& bucket)
+			Landing landingRow(const std::string& bucket)
 			{
 				if (bucket == "release") return { 0.5, 0, 8, 20 };
 				if (bucket == "check") return { 0.85, 0, 8, 20 };
@@ -391,51 +355,32 @@ namespace otg
 			}
 		}
 
-		std::string RegimeKey(double mph, double vla, double rpm)
-		{
-			return std::string(family(mph, vla)) + "-" + speedBin(mph) + "-" + launchBin(vla) + "-" + spinBin(rpm);
-		}
-
 		std::string LandingBucket(double vla, double rpm)
 		{
-			const std::string p = spinBin(rpm);
-			if (p == "P0" || p == "P1") return "run";
-			if (p == "P2") return "release";
-			if (p == "P3") return "check";
-			const std::string v = launchBin(vla);
-			return v == "V0" || v == "V1" ? "check" : "spinback";
+			if (rpm < 4000) return "run";
+			if (rpm < 5500) return "release";
+			if (rpm < 7500) return "check";
+			return vla < 18 ? "check" : "spinback";
 		}
 
-		Launch ResolveLaunch(double speedMph, double vlaDeg, double totalSpinRpm)
+		Launch ResolveLaunch(double vlaDeg, double backSpinRpm)
 		{
-			double drag = 0, lift = 0;
-			for (const AW& s : bracket(SPEED_ANCHORS, speedMph))
-				for (const AW& l : bracket(LAUNCH_ANCHORS, vlaDeg))
-					for (const AW& p : bracket(SPIN_ANCHORS, totalSpinRpm))
-					{
-						const double w = s.w * l.w * p.w;
-						if (w <= 0) continue;
-						const DL r = lookupRegime(s.a, l.a, p.a);
-						drag += r.drag * w; lift += r.lift * w;
-					}
+			const double rpm = std::max(0.0, backSpinRpm);   // (only backspin bites at landing)
 			Launch out;
-			for (const AW& l : bracket(LAUNCH_ANCHORS, vlaDeg))
-				for (const AW& p : bracket(SPIN_ANCHORS, totalSpinRpm))
+			const AW l = bracket(LAUNCH_ANCHORS, vlaDeg), s = bracket(SPIN_ANCHORS, rpm);
+			for (int a = 0; a < 2; a++)
+				for (int b = 0; b < 2; b++)
 				{
-					const LandingRow r = landingRow(LandingBucket(l.a, p.a));
-					const double w = l.w * p.w;
-					out.landing.spinBiteScale += r.bite * w; out.landing.maxSpinbackMps += r.spinback * w;
-					out.landing.speedRampStartMps += r.rampStart * w; out.landing.speedRampEndMps += r.rampEnd * w;
+					const double w = l.w[a] * s.w[b];
+					const Landing r = landingRow(LandingBucket(l.a[a], s.a[b]));
+					out.landing.spinBiteScale += r.spinBiteScale * w; out.landing.maxSpinbackMps += r.maxSpinbackMps * w;
+					out.landing.speedRampStartMps += r.speedRampStartMps * w; out.landing.speedRampEndMps += r.speedRampEndMps * w;
 				}
-			out.regime = RegimeKey(speedMph, vlaDeg, totalSpinRpm);
-			out.bucket = LandingBucket(vlaDeg, totalSpinRpm);
-			out.dragScale = PROFILE_dragScale * drag;
-			out.liftScale = PROFILE_liftScale * lift;
-			out.launchDeg = vlaDeg;
+			out.bucket = LandingBucket(vlaDeg, rpm);
 			return out;
 		}
 
-		// ---- impact
+		// ---- impact (Impact.cpp)
 		namespace
 		{
 			double landingWeight(double vn) { return rampUp(vn, B::flightRetentionRampStartMps, B::flightRetentionRampEndMps); }
@@ -444,6 +389,28 @@ namespace otg
 				const double landing = B::flightTangentialRetentionBase * clamp(1 - rpm / B::flightSpinFactorDivisor, B::flightSpinFactorMin, 1);
 				const double w = landingWeight(vn);
 				return w >= 1 ? landing : lerp(1, landing, w);
+			}
+			bool usesTurfLanding(const SurfaceParams& s) { return s.landingAngleLoss > 0 || s.landingSpinLoss > 0; }
+			// (a turf impact keeps exp(-k vn/vt) of its tangential speed, and loses backspin's grip on it - bounded
+			// by the contact's Coulomb limit)
+			double turfRetention(const V3& v, const V3& w, const V3& n, double incoming, double gripLimit, const SurfaceParams& s)
+			{
+				const V3 t = add(v, n, incoming);
+				const double ts = len(t);
+				const double backspin = ts >= 0.01 ? std::max(0.0, dot(w, cross(scale(t, 1 / ts), n))) : 0.0;
+				const double speed = std::max(ts, 0.01);
+				const double grip = std::min(s.landingSpinLoss * RADIUS * backspin, std::max(0.0, gripLimit));
+				return std::exp(-s.landingAngleLoss * incoming / speed) * std::max(0.0, 1 - grip / speed);
+			}
+			// (the backspin across the ball's travel: neither sidespin nor topspin checks a ball)
+			struct ImpactSpin { double rpm, ratioRad; };
+			ImpactSpin readImpactSpin(const V3& v, const V3& w, const V3& n, double vn)
+			{
+				const V3 t = add(v, n, -vn);
+				const double ts = len(t);
+				if (ts < 0.01) { const double plane = len(tangent(w, n)); return { plane / RAD_PER_RPM, plane }; }
+				const double backspin = dot(w, cross(scale(t, 1 / ts), n));
+				return { std::max(0.0, backspin) / RAD_PER_RPM, std::abs(backspin) };
 			}
 			double restitution(double vn, double rpm, double minimumSpeed)
 			{
@@ -484,7 +451,8 @@ namespace otg
 			const double vn = dot(v, n);
 			if (vn >= 0) return;
 			const double incoming = -vn;
-			const double rpm = len(spin) / RAD_PER_RPM;
+			const ImpactSpin is = readImpactSpin(v, spin, n, vn);
+			const double rpm = is.rpm;
 			const double minimum = firstImpact ? (surf.hasBounce ? surf.firstImpactMinimumSpeed : B::corKillThreshold)
 				: (surf.hasBounce ? surf.laterImpactMinimumSpeed : std::max(B::corKillThreshold, B::rolloutBounceCorKillThreshold));
 			double e = restitution(incoming, rpm, minimum);
@@ -501,7 +469,7 @@ namespace otg
 				const double spinT = smoothRange(rpm, surf.spinbackSpinStartRpm, surf.spinbackSpinEndRpm);
 				const double speedT = smoothRange(len(v), surf.spinbackSpeedStartMps, surf.spinbackSpeedEndMps);
 				const double effective = surf.criticalAngle + surf.spinbackThetaBoostMax * spinT * speedT;
-				const double angle = std::atan2(incoming, len(tangent(v, n)));
+				const double angle = std::atan2(incoming, len(add(v, n, -vn)));
 				spinback = 1 + (spinback - 1) * clamp((angle - effective) / 0.1, 0, 1);
 			}
 			const double maxJt = surf.kineticFriction * std::max(0.0, spinback) * jn;
@@ -511,11 +479,14 @@ namespace otg
 			V3 nv = add(add(v, n, jn / MASS), jt, 1 / MASS);
 			V3 nw = add(spin, cross(arm, jt), 1 / INERTIA);
 			const double speed = len(v);
-			double keep = firstImpact ? flightRetention(incoming, rpm)
+			const bool turf = usesTurfLanding(surf);
+			double keep = turf ? turfRetention(v, spin, n, incoming, maxJt / MASS, surf)
+				: firstImpact ? flightRetention(incoming, rpm)
 				: speed > 0.1 && B::rolloutSpinRatioThreshold > 0
-				? lerp(B::rolloutLowSpinRetention, B::rolloutHighSpinRetention, std::min((len(spin) * RADIUS) / speed / B::rolloutSpinRatioThreshold, 1.0))
+				? lerp(B::rolloutLowSpinRetention, B::rolloutHighSpinRetention, std::min((is.ratioRad * RADIUS) / speed / B::rolloutSpinRatioThreshold, 1.0))
 				: B::rolloutHighSpinRetention;
 			const double normalShare = clamp((incoming * incoming) / std::max(dot(v, v), 1e-12), 0, 1);
+			// (landingKeepScale: the game's own, a longer grass grabbing a landing ball - SurfaceFor)
 			keep = clamp(keep * surf.landingKeepScale * lerp(1, surf.impactRetentionScale, normalShare), 0, 1);
 			auto keepT = [&n](const V3& a, double k) { return add(scale(n, dot(a, n)), tangent(a, n), k); };
 			nv = keepT(nv, keep);
@@ -527,7 +498,7 @@ namespace otg
 				nv = keepT(nv, k);
 				nw = keepT(nw, k);
 			}
-			if (firstImpact && response && response->spinBiteScale > 0) landingBite(v, spin, nv, nw, n, surf, *response);
+			if (firstImpact && !turf && response && response->spinBiteScale > 0) landingBite(v, spin, nv, nw, n, surf, *response);
 			v = nv;
 			spin = nw;
 		}
@@ -546,11 +517,25 @@ namespace otg
 			const V3 n = validNormal(nIn);
 			const double vn = dot(v, n);
 			const V3 t = tangent(v, n);
-			const double rolling = (1 - landingWeight(std::abs(vn))) * (1 - rampUp(len(t), 12, 18));
+			const double rolling = (1 - landingWeight(std::abs(vn))) * (1 - rampUp(len(t), PUTT_RAMP_START, PUTT_RAMP_END));
 			return rolling <= 0 ? vec(0, 0, 0) : scale(cross(n, t), rolling / RADIUS);
 		}
 
-		// ---- ground
+		double StruckAlongGroundWeight(double tangentSpeed) { return rampUp(tangentSpeed, PUTT_RAMP_START, PUTT_RAMP_END); }
+
+		SurfaceParams StruckAlongGround(const SurfaceParams& s, double weight)
+		{
+			const double w = clamp(weight, 0, 1);
+			if (w <= 0) return s;
+			SurfaceParams out = s;
+			out.grassViscosity *= lerp(1, s.struckViscosityScale, w);
+			out.grassFormDrag *= lerp(1, s.struckFormDragScale, w);
+			return out;
+		}
+
+		double RolloutSpinRpm(const V3& spin, const V3& n) { return len(tangent(spin, validNormal(n))) / RAD_PER_RPM; }
+
+		// ---- ground (GroundRoll.cpp)
 		double SpinFrictionMultiplier(double rpm, double speed)
 		{
 			const double speedScale = speed < R::chipSpeedThreshold ? lerp(R::chipVelocityScaleMin, R::chipVelocityScaleMax, speed / R::chipSpeedThreshold)
@@ -572,20 +557,21 @@ namespace otg
 			{
 				const double ns = dot(w, n);
 				const double remaining = std::max(0.0, std::abs(ns) - (rollingFriction * load * RADIUS / INERTIA) * dt);
-				return add(w, n, sign(ns) * remaining - ns);
+				return add(w, n, (ns < 0 ? -remaining : remaining) - ns);
 			}
 		}
 
-		void StepGround(V3& v, V3& spin, const V3& nIn, const SurfaceParams& surf, double impactRpm, double dt)
+		void StepGround(V3& v, V3& spin, const V3& nIn, const SurfaceParams& surf, double impactRpm, double dt, const Env& env)
 		{
 			const V3 n = validNormal(nIn);
-			V3 vel = tangent(v, n);
+			const V3 vel = tangent(v, n);
 			const V3 slip = tangent(add(vel, cross(spin, scale(n, -RADIUS))), n);
 			const double load = MASS * G * std::max(0.0, n.y);
 			const V3 slope = add(vec(0, -MASS * G, 0), n, load);
 			const double slopeL = len(slope);
 			const double staticCap = surf.rollingFriction * R::slopeResistanceRatio * load;
-			if (dot(vel, vel) < 0.05 * 0.05 && dot(spin, spin) < 8 * 8 && slopeL <= staticCap)
+			const V3 rollingSpin = tangent(spin, n);
+			if (dot(vel, vel) < REST_SPEED * REST_SPEED && dot(rollingSpin, rollingSpin) < STOP_SPIN * STOP_SPIN && slopeL <= staticCap)
 			{
 				v = vec(0, 0, 0); spin = vec(0, 0, 0);
 				return;
@@ -596,33 +582,49 @@ namespace otg
 				spin = resistContactSpin(dampenSpin(spin, surf.grassViscosity, dt), n, surf.rollingFriction, load, dt);
 				return;
 			}
-			const double mult = SpinFrictionMultiplier(std::max(impactRpm, len(spin) / RAD_PER_RPM), len(vel));
-			V3 w = spin;
-			if (len(slip) >= R::tangentVelocityThreshold && dot(slip, slip) > 1e-7)
+			const double mult = SpinFrictionMultiplier(std::max(impactRpm, len(rollingSpin) / RAD_PER_RPM), len(vel));
+			// grass drag, linear and speed-squared, integrated exactly
+			const double speed = len(vel);
+			const double k = 6 * kPi * RADIUS * surf.grassViscosity / MASS;
+			const double decay = std::exp(-k * dt);
+			const double dragIntegral = k > 1e-8 ? (1 - decay) / k : dt;
+			V3 nv = scale(vel, decay / (1 + surf.grassFormDrag * speed * dragIntegral));
+			// the air (the ball meets the wind one radius above its lie)
+			const V3 tWind = tangent(WindAt(env, RADIUS), n);
+			const V3 air = add(nv, tWind, -1);
+			const double airSpeed = len(air);
+			if (airSpeed >= MIN_AERO_SPEED)
 			{
-				V3 j = scale(slip, (-2 * MASS) / 7);
-				const double maxJ = surf.kineticFriction * mult * load * dt, jl = len(j);
-				if (jl > maxJ) j = scale(j, maxJ / jl);
-				vel = add(vel, j, 1 / MASS);
-				w = add(w, cross(scale(n, -RADIUS), j), 1 / INERTIA);
+				const double re = env.rho * airSpeed * RADIUS * 2 / env.mu;
+				const double sr = len(spin) * RADIUS / airSpeed;
+				const double cd = GroundDragCoefficient(re, sr) * env.groundDragScale;
+				const double rate = 0.5 * cd * env.rho * AREA / MASS;
+				nv = add(tWind, air, 1 / (1 + rate * airSpeed * dt));
 			}
-			V3 force = add(slope, vel, -6 * kPi * RADIUS * surf.grassViscosity);
-			if (dot(vel, vel) > 1e-7)
-			{
-				const double rollMult = surf.rollingSpinScale == 1 ? mult : 1 + (mult - 1) * surf.rollingSpinScale;
-				force = add(force, vel, (-surf.rollingFriction * rollMult * load) / len(vel));
-			}
-			V3 nv = add(vel, force, dt / MASS);
-			if (dot(vel, nv) < 0 && slopeL <= staticCap) nv = vec(0, 0, 0);
-			w = resistContactSpin(dampenSpin(w, surf.grassViscosity, dt), n, surf.rollingFriction, load, dt);
-			v = nv;
-			spin = w;
+			// rolling resistance, then the slope
+			const double rollMult = 1 + (mult - 1) * surf.rollingSpinScale;
+			const double rollDelta = surf.rollingFriction * rollMult * load / MASS * dt;
+			const double dragged = len(nv);
+			if (dragged > 0) nv = scale(nv, std::max(0.0, dragged - rollDelta) / dragged);
+			nv = add(nv, slope, dt / MASS);
+			V3 nw = resistContactSpin(dampenSpin(spin, surf.grassViscosity, dt), n, surf.rollingFriction, load, dt);
+			// the contact: a Coulomb-capped impulse toward rolling without slipping
+			const V3 arm = scale(n, -RADIUS);
+			const V3 nslip = tangent(add(nv, cross(nw, arm)), n);
+			V3 j = scale(nslip, (-2 * MASS) / 7);
+			const double slideMult = 1 + (mult - 1) * surf.slidingSpinScale;
+			const double cap = surf.kineticFriction * slideMult * load * dt;
+			const double jl = len(j);
+			if (jl > cap && jl > 0) j = scale(j, cap / jl);
+			v = add(nv, j, 1 / MASS);
+			spin = add(nw, cross(arm, j), 1 / INERTIA);
 		}
 
 		bool CanRest(const V3& v, const V3& spin, const V3& nIn, const SurfaceParams& surf)
 		{
-			if (dot(v, v) >= 0.05 * 0.05 || dot(spin, spin) >= 0.5 * 0.5) return false;
+			if (dot(v, v) >= REST_SPEED * REST_SPEED) return false;
 			const V3 n = validNormal(nIn);
+			if (dot(tangent(spin, n), tangent(spin, n)) >= 0.5 * 0.5) return false;
 			const V3 g = vec(0, -MASS * G, 0);
 			return len(tangent(g, n)) <= surf.rollingFriction * R::slopeResistanceRatio * MASS * G * std::max(0.0, n.y);
 		}
@@ -648,7 +650,8 @@ namespace otg
 		}
 
 		// (physics.js SURFACES: longer grass cushions, grabs and stops the ball sooner; sand all but plugs
-		// it; a cart path bounces it high and lets it run)
+		// it; a cart path bounces it high and lets it run. The grass is OpenFairway's turf - of::Turf - each
+		// cut keeping its own drag and grab on top)
 		of::SurfaceParams SurfaceFor(Surface s)
 		{
 			auto with = [](of::SurfaceParams p, double restitution, double impactRetention, double landingKeep) {
@@ -657,11 +660,11 @@ namespace otg
 			switch (s)
 			{
 			case Surface::Green: return of::Preset("green");
-			case Surface::Fringe: return with(of::MakeSurface(0.56, 0.085, 0.0028, 0.3, 0.85), 0.92, 0.95, 1);
+			case Surface::Fringe: return with(of::Turf(of::MakeSurface(0.56, 0.085, 0.0028, 0.3, 0.85)), 0.92, 0.95, 1);
 			case Surface::Fairway: case Surface::Tee: return of::Preset("fairway");
-			case Surface::FirstCut: return with(of::MakeSurface(0.58, 0.12, 0.0038, 0.33, 0.68), 0.85, 0.85, 0.9);
-			case Surface::DeepRough: return with(of::MakeSurface(0.72, 0.55, 0.018, 0.42, 0.35), 0.38, 0.4, 0.4);
-			case Surface::Native: return with(of::MakeSurface(0.74, 0.65, 0.022, 0.44, 0.3), 0.33, 0.35, 0.35);
+			case Surface::FirstCut: return with(of::Turf(of::MakeSurface(0.58, 0.12, 0.0038, 0.33, 0.68)), 0.85, 0.85, 0.9);
+			case Surface::DeepRough: return with(of::Turf(of::MakeSurface(0.72, 0.55, 0.018, 0.42, 0.35)), 0.38, 0.4, 0.4);
+			case Surface::Native: return with(of::Turf(of::MakeSurface(0.74, 0.65, 0.022, 0.44, 0.3)), 0.33, 0.35, 0.35);
 			case Surface::Path:
 			{
 				of::SurfaceParams p = with(of::MakeSurface(0.22, 0.028, 0.0002, 0.25, 0.2), 2.8, 1, 1.7);
@@ -675,7 +678,7 @@ namespace otg
 				p.hasBounce = true; p.firstImpactMinimumSpeed = 0.15; p.laterImpactMinimumSpeed = 0.15; p.laterImpactScale = 0.6; p.minimumBounceHeight = 0.001;
 				return p;
 			}
-			default: return with(of::MakeSurface(0.66, 0.2, 0.007, 0.38, 0.5), 0.62, 0.65, 0.75); // rough, oob, anything else
+			default: return with(of::Turf(of::MakeSurface(0.66, 0.2, 0.007, 0.38, 0.5)), 0.62, 0.65, 0.75); // rough, oob, anything else
 			}
 		}
 
@@ -842,11 +845,11 @@ namespace otg
 		std::function<double()> rnd = opts.random ? opts.random : []() { return 0.5; };
 		const double tempC = opts.tempC;
 		const double back = shot.backSpin, side = shot.sideSpin;
-		const of::Launch launch = of::ResolveLaunch(shot.speedMph, shot.vla, std::hypot(back, side));
+		const of::Launch launch = of::ResolveLaunch(shot.vla, back);
 		of::Env env;
 		env.rho = of::AirDensity(opts.altitudeM, tempC, opts.humidity, opts.pressureHpa > 0 ? opts.pressureHpa * 100 : 0);
 		env.mu = of::AirViscosity(tempC);
-		env.dragScale = launch.dragScale; env.liftScale = launch.liftScale; env.launchDeg = launch.launchDeg;
+		env.groundY = origin.y;
 		const double wet = std::min(1.0, std::max(0.0, opts.wet));
 		const double greenRolling = of::GreenRollingFriction(std::max(6.0, opts.stimp - 1.8 * wet));
 		std::map<Surface, of::SurfaceParams> settings;
@@ -873,8 +876,7 @@ namespace otg
 		const double tilt = std::atan2(side, back);
 		const double wf = (opts.windFromDeg * kPi) / 180;
 		const double wm = opts.windMps;
-		const V3 wind = vec(-std::sin(wf) * wm, 0, -std::cos(wf) * wm);
-		V3 windH = vec(0, 0, 0);
+		env.wind = vec(-std::sin(wf) * wm, 0, -std::cos(wf) * wm);   // (at 10 m, growing with height: of::WindAt)
 
 		V3 p = origin;
 		ShotResult res;
@@ -892,7 +894,16 @@ namespace otg
 			const double vn = v.x * n.x + v.y * n.y + v.z * n.z;
 			v.x -= vn * n.x; v.y -= vn * n.y; v.z -= vn * n.z;
 			spin = of::LaunchSpin(v, spin, n);
-			impactRpm = hypot3(spin.x, spin.y, spin.z) / RPM;
+			impactRpm = of::RolloutSpinRpm(spin, n);
+		}
+		// (a full shot struck into or along the ground - a topped shot - rolls with the turf's struck grass drag
+		// for the rest of its way: OpenFairway's ShotSimulator)
+		double struckWeight = 0;
+		if (air)
+		{
+			const V3 n = course.NormalAt(origin.x, origin.z);
+			const double vn = dot(v, n);
+			if (vn <= 0) struckWeight = of::StruckAlongGroundWeight(std::sqrt(std::max(0.0, dot(v, v) - vn * vn)));
 		}
 		std::string result = "rest";
 		V3 lastDry = p;
@@ -955,11 +966,8 @@ namespace otg
 		{
 			if (air)
 			{
-				const double wk = of::WindFactor(p.y - origin.y + BALL_RADIUS);
-				windH.x = wind.x * wk; windH.z = wind.z * wk;
-				of::StepFlight(v, spin, env, windH, DT);
 				prev = p;
-				p.x += v.x * DT; p.y += v.y * DT; p.z += v.z * DT;
+				of::StepFlight(p, v, spin, env, DT);
 				t += DT;
 				bool landed = false;
 				double spent = 1;
@@ -1005,7 +1013,7 @@ namespace otg
 					lastDry = p;
 					const V3 n = course.NormalAt(p.x, p.z);
 					const of::SurfaceParams& sp = surfaceParams(surf);
-					if (firstImpact) impactRpm = hypot3(spin.x, spin.y, spin.z) / RPM;
+					if (firstImpact) impactRpm = of::RolloutSpinRpm(spin, n);
 					of::ResolveImpact(v, spin, n, sp, firstImpact, &launch.landing);
 					firstImpact = false;
 					bounces++;
@@ -1034,9 +1042,9 @@ namespace otg
 				if (surf == Surface::Water) { result = "water"; res.hasWaterEntry = true; res.waterEntry = lastDry; push(); break; }
 				if (surf == Surface::None) { result = "oob"; push(); break; }
 				lastDry = p;
-				const of::SurfaceParams& sp = surfaceParams(surf);
+				const of::SurfaceParams sp = struckWeight > 0 ? of::StruckAlongGround(surfaceParams(surf), struckWeight) : surfaceParams(surf);
 				const V3 n = course.NormalAt(p.x, p.z);
-				of::StepGround(v, spin, n, sp, impactRpm, DT);
+				of::StepGround(v, spin, n, sp, impactRpm, DT, env);
 				if (of::CanRest(v, spin, n, sp))
 				{
 					if (hasPin && std::hypot(p.x - pin.x, p.z - pin.z) < CUP_RADIUS) { dropIntoCup(); result = "holed"; break; }
@@ -1092,7 +1100,7 @@ namespace otg
 		res.duration = t;
 		res.treeHits = treeState.hits;
 		res.spinTilt = tilt;
-		res.regime = launch.regime;
+		res.regime = launch.bucket;
 		return res;
 	}
 }

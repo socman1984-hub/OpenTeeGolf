@@ -606,6 +606,18 @@ void AOTGRound::Tick(float Dt)
 		UE_LOG(LogOTGRound, Display, TEXT("(roundexec) %s"), *Command);
 		if (GEngine) GEngine->Exec(GetWorld(), *Command);
 	}
+	// (lining up a shot among trees: those between the camera and 40 m along the aim hidden from view, so
+	// you can see where you're aiming - only from view: the ball still meets them; back as the ball's hit)
+	if (AOTGRuntimeCourse* SeeRC = CourseOf(GetWorld()))
+	{
+		if (Phase == EPhase::Ready && !Camera.bFreeView && !OnGreen() && !bMini)
+		{
+			const FVector Bw = World(Ball);
+			const FVector Dir(FMath::Sin(Heading), -FMath::Cos(Heading), 0);
+			SeeRC->SeeThrough(Camera.CamPos, Bw + Dir * 4000, 400);
+		}
+		else SeeRC->SeeThrough(FVector::ZeroVector, FVector::ZeroVector, 0);
+	}
 	if (bPaused) {} // (everything waits)
 	else if (Phase == EPhase::Flying)
 	{
@@ -647,15 +659,67 @@ void AOTGRound::Tick(float Dt)
 			const FVector Dh = FVector(Pw.X - Camera.ShotFrom.X, Pw.Y - Camera.ShotFrom.Y, 0).GetSafeNormal();
 			Camera.CamGoal = B - Dh * 330 + FVector(0, 0, 300);
 			Camera.CamSpeed = 2.f;
+			Camera.CamLook = B;
+			Camera.CamLookNow = B;
 		}
-		else if (Flat.Size() > 300)
+		else if (bPutt)
 		{
-			const FVector U = Flat.GetSafeNormal();
-			Camera.CamGoal = B - U * (bPutt ? 450 : 1400) + FVector(0, 0, FMath::Max(B.Z, Camera.ShotFrom.Z) - B.Z + (bPutt ? 160 : 450));
-			Camera.CamSpeed = 3.f;
+			if (Flat.Size() > 300)
+			{
+				const FVector U = Flat.GetSafeNormal();
+				Camera.CamGoal = B - U * 450 + FVector(0, 0, FMath::Max(B.Z, Camera.ShotFrom.Z) - B.Z + 160);
+				Camera.CamSpeed = 3.f;
+			}
+			Camera.CamLook = B;
+			Camera.CamLookNow = B;
 		}
-		Camera.CamLook = B;
-		Camera.CamLookNow = B;
+		else
+		{
+			// A full shot, as a TV follow camera: up with the ball, then holding the height it reached while the
+			// view leans from the ball toward where it comes down (the shot is known to its end: Res) - so the
+			// green and the hole stay in the picture as it lands, not the ground under the camera - and once it's
+			// down, lower behind it as it rolls, the hole in view when it's near
+			Camera.FlightTopZ = FMath::Max(Camera.FlightTopZ, B.Z);
+			const bool bLanded = Res.hasCarryPoint && AnimT >= Res.carryPoint.t;
+			const FVector Land = Res.hasCarryPoint ? World(otg::V3{ Res.carryPoint.x, Res.carryPoint.y, Res.carryPoint.z }) : World(Res.rest);
+			const FVector Rest = World(Res.rest);
+			// (how far past the apex: 0 at the top, 1 at the landing)
+			const double Top = Camera.FlightTopZ, Down = FMath::Max(1.0, Top - Land.Z);
+			const double Descent = B.Z < Top - 50 ? FMath::Clamp((Top - B.Z) / Down, 0.0, 1.0) : 0.0;
+			const double SinceLanding = bLanded ? AnimT - Res.carryPoint.t : 0.0;
+			const double Settle = bLanded ? FMath::Clamp(SinceLanding / 1.5, 0.0, 1.0) : 0.0;
+			if (Flat.Size() > 300)
+			{
+				const FVector U = Flat.GetSafeNormal();
+				const FVector Behind = FVector(B.X, B.Y, 0) - U * 1400;
+				// (height: the ball's on the way up; then the top it reached; easing down to 6 m over the ball once it's rolling)
+				const double High = FMath::Max(Top, Camera.ShotFrom.Z) + 450;
+				const double Z = FMath::Lerp(High, B.Z + 600, Settle);
+				// (along the line: behind the ball on the way up; from the apex nearly holding still while the ball flies
+				// away from it toward the green - a TV landing camera - then gliding in behind it as it rolls)
+				if (Descent > 0 && !Camera.bPastApex) { Camera.bPastApex = true; Camera.ApexCam = Camera.CamPos; }
+				FVector XY = Behind;
+				if (Camera.bPastApex)
+				{
+					const FVector Held = FVector(Camera.ApexCam.X, Camera.ApexCam.Y, 0) + (Behind - FVector(Camera.ApexCam.X, Camera.ApexCam.Y, 0)) * 0.3;
+					XY = FMath::Lerp(Held, Behind, Settle);
+				}
+				Camera.CamGoal = XY + FVector(0, 0, Z);
+				Camera.CamSpeed = Camera.bPastApex && !bLanded ? 1.5f : 3.f;
+			}
+			// (where it looks: the ball, leaning toward the landing on the way down; on the ground the ball, leaning
+			// toward the hole when it's within 60 m of it)
+			FVector Look = FMath::Lerp(B, Land, 0.55 * FMath::SmoothStep(0.0, 1.0, Descent));
+			if (bLanded)
+			{
+				const FVector Pw = World(Pin());
+				const bool bNearHole = FVector::Dist2D(Rest, Pw) < 6000;
+				Look = FMath::Lerp(FMath::Lerp(B, Land, 0.55 * (1 - Settle)), bNearHole ? FMath::Lerp(B, Pw, 0.3) : B, Settle);
+			}
+			Camera.CamLook = Look;
+			Camera.CamLookNow += (Look - Camera.CamLookNow) * (1.f - FMath::Exp(-Dt * 4.f));
+			if (FVector::Dist(Camera.CamLookNow, B) > 40000) Camera.CamLookNow = Look;   // (a fresh shot: from the start)
+		}
 		if (N >= int32(Pts.size())) FinishShot();
 	}
 	else if (Phase == EPhase::Resting)

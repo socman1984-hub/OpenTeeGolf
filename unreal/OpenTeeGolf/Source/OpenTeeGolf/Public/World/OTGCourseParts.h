@@ -152,6 +152,9 @@ struct FOTGCourseTrees
 	// The design's forests (by their place in it) outlined on the ground with beads, while it's asked
 	// for each frame (the tree designer: the forests picked)
 	void MarkForests(const TArray<int32>& Which);
+	// The trees standing in a strip From to To (the level's cm; HalfWidth either side) hidden from view - only from
+	// view: the ball's trees are the course data's - and the ones hidden before shown again. From == To: none hidden
+	void SeeThrough(const FVector& From, const FVector& To, double HalfWidthCm);
 	void UpdateMarks();   // (each frame: the marks gone once the designer stops marking; the marker bobbing)
 	void AddReferencedObjects(FReferenceCollector& Collector);
 
@@ -159,6 +162,9 @@ struct FOTGCourseTrees
 	TObjectPtr<UStaticMeshComponent> PickCone;
 	double PickMarkedAt = -1;
 	TObjectPtr<UInstancedStaticMeshComponent> ForestBeads;
+	TMap<UStaticMesh*, TObjectPtr<UHierarchicalInstancedStaticMeshComponent>> MeshComps;   // (each tree model's instances)
+	TMap<int32, FTransform> SeeThroughHidden;   // (DrawnTrees index -> its transform, while it's hidden)
+	FString SeeThroughKey;
 	double ForestMarkedAt = -1;
 	FString ForestMarkKey;   // (what's outlined now: drawn again only when it changes)
 	FVector PickConeAt = FVector::ZeroVector;
@@ -171,7 +177,7 @@ struct FOTGCourseTrees
 	TArray<TObjectPtr<UHierarchicalInstancedStaticMeshComponent>> RockComps;
 	int32 TreeCount = 0, RockCount = 0;
 	// (each tree and rock as drawn, for picking: foot, height or radius, cm; key; species)
-	struct FDrawn { FVector Base; double H = 0, R = 0; double X = 0, Z = 0; FString Kind; bool bAdded = false; UStaticMesh* Mesh = nullptr; bool bColourable = false; };
+	struct FDrawn { FVector Base; double H = 0, R = 0; double X = 0, Z = 0; FString Kind; bool bAdded = false; UStaticMesh* Mesh = nullptr; bool bColourable = false; int32 Instance = INDEX_NONE; };
 	TArray<FDrawn> DrawnTrees, DrawnRocks;
 };
 

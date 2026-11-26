@@ -1,9 +1,12 @@
 # OTGBallPhysics
 
-A golf ball's flight, bounce and roll, and a course for it to play on. It's the web version's
-`public/js/openfairway.js` and `physics.js` in C++, kept line for line, so a shot plays the same in
-both. It's plain C++17 with no Unreal types, so the parity tests (`unreal/tests/physics`) build the
-same files outside Unreal.
+A golf ball's flight, bounce and roll, and a course for it to play on. The ball on the course is the
+web version's `physics.js` in C++; its flight, impacts and roll are OpenFairway (the OpenFairwayPhysics
+plugin of [uopengolf](https://github.com/digitalhand/uopengolf), MIT) at revision `e8c318e3`: drag and
+lift fitted to tour averages, launch-monitor shots and a trajectory calculator, integrated with RK4 at
+120 Hz; turf landings read from each impact's angle and backspin; and roll fitted to launch-monitor
+roll-out. That's newer than the web version's `openfairway.js`. It's plain C++17 with no Unreal types,
+so the tests (`unreal/tests/physics`) build the same files outside Unreal.
 
 ## Main pieces
 
@@ -21,8 +24,11 @@ calls `SimulateShot` for each shot and animates the path it returns.
 
 ## Checking it
 
-`node unreal/tests/physics/parity.mjs` plays 86 shots through this code and through the web
-version's JavaScript, and compares where they stop.
+`node unreal/tests/physics/carry_check.mjs` flies OpenFairway's reference launches (its
+`Docs/Accuracy.md`) through this code and prints carry, apex and roll beside the references; the
+carries and apexes match OpenFairway's own to 0.1 yd and 0.1 ft. `parity.mjs` (86 shots through this and
+the web version's JavaScript) compared the two while they were the same physics; since the newer
+OpenFairway they differ by design.
 
 ## Taking it into another project
 
