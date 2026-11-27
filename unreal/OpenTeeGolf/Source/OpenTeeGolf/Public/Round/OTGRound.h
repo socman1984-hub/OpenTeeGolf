@@ -82,7 +82,8 @@ public:
 	void RefreshBridges();   // (the bridges changed in the designer: the ball's decks and rails again)
 	void BuildCollider();
 	void ShowTree(const FString& Kind);
-	void ShowGrass(const FString& Kind);   // (the free view flown to where it grows thickly nearby)
+	void ShowGrass(const FString& Kind);
+	void ShowArea(const TArray<FVector2D>& Pts);   // (the free view flown back over these course metres, all of them in sight)   // (the free view flown to where it grows thickly nearby)
 	// A click on the course (the camera's line through the cursor): the course designer's, when it's
 	// open on its trees tab (true: it used it), else nothing
 	bool DesignClick(const FVector& Origin, const FVector& Dir);

@@ -27,6 +27,7 @@ public:
 	void Open(AOTGRuntimeCourse* Course);
 	TFunction<void()> OnChanged;                   // (the trees changed: the ball's too)
 	TFunction<void(const FString& Kind)> OnShow;   // (fly to one of these)
+	TFunction<void(const TArray<FVector2D>& Pts)> OnShowArea;   // (fly to see these course metres: the forests picked)
 	// A click on the course: the camera's line through it (the level's cm), and the ground where it
 	// meets it (bGround false: none). True if the designer used it (otherwise it aims)
 	bool WorldClick(const FVector& Origin, const FVector& Dir, bool bGround, const FVector& Ground);

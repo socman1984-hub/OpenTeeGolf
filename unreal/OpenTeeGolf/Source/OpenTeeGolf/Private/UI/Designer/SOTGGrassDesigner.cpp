@@ -7,6 +7,7 @@
 #include "World/OTGRuntimeCourse.h"
 #include "World/OTGBiomes.h"
 #include "Widgets/Input/SComboBox.h"
+#include "Widgets/Input/SCheckBox.h"
 #include "Widgets/Input/SSlider.h"
 #include "Widgets/Layout/SBox.h"
 #include "Widgets/Layout/SScrollBox.h"
@@ -45,7 +46,8 @@ TSharedRef<SWidget> SOTGGrassDesigner::TurfRow(const FString& Surface, const FSt
 {
 	using G = otg::FGrassKind;
 	TSharedRef<SVerticalBox> V = SNew(SVerticalBox);
-	V->AddSlot().AutoHeight().Padding(0, 8, 0, 2)[Text(Label, 14, Ink, "Bold")];
+	V->AddSlot().AutoHeight().Padding(0, 6, 0, 2)[FoldHead(Surface, Label, true)];
+	if (!Opened.Contains(Surface)) return V;
 	auto Colour = [this, &V, Surface](const FString& Name, float Lo, float Hi, float FOTGTurfLook::* Field, TFunction<FString(float)> Fmt) {
 		V->AddSlot().AutoHeight().Padding(18, 2, 0, 0)
 		[
@@ -84,6 +86,21 @@ TSharedRef<SWidget> SOTGGrassDesigner::TurfRow(const FString& Surface, const FSt
 	return V;
 }
 
+// A row's head, as the Course builder's: +/- then its name, either clicked to open or fold its sliders
+TSharedRef<SWidget> SOTGGrassDesigner::FoldHead(const FString& Key, const FString& Label, bool bBright)
+{
+	const bool bOpen = Opened.Contains(Key);
+	auto Fold = [this, Key]() { if (!Opened.Remove(Key)) Opened.Add(Key); Rebuild(); return FReply::Handled(); };
+	return SNew(SButton).ButtonStyle(FCoreStyle::Get(), "NoBorder").ContentPadding(FMargin(0)).OnClicked_Lambda(Fold)
+		.ToolTipText(FText::FromString(bOpen ? TEXT("Fold it away") : TEXT("Open its sliders")))
+		[
+			SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0, 0, 6, 0)
+			[SNew(SBox).WidthOverride(14)[Text(bOpen ? TEXT("\u2212") : TEXT("+"), 16, Soft, "Bold")]]
+			+ SHorizontalBox::Slot().FillWidth(1).VAlign(VAlign_Center)[Text(Label, 14, bBright ? Ink : Soft, bBright ? "Bold" : "Regular")]
+		];
+}
+
 const otg::FGrassKind* SOTGGrassDesigner::Default(const FString& Name) const
 {
 	return otg::FGrass::DefaultKinds().FindByPredicate([&](const otg::FGrassKind& K) { return K.Name == Name; });
@@ -113,11 +130,16 @@ TSharedRef<SWidget> SOTGGrassDesigner::KindRow(int32 I)
 	const otg::FGrassKind Base = D ? *D : otg::FGrass::PlantKind(K.Fab.Num() ? K.Fab[0] : FString());
 	const float HeightCm = Course.IsValid() ? Course->GrassHeightCm(K.Name) : 0.f;
 	TSharedRef<SVerticalBox> V = SNew(SVerticalBox);
-	// the kind: on or off, where it grows, its name
+	// the kind: growing or not (a checkbox), +/- and its name to open its sliders, where it grows
 	TSharedRef<SHorizontalBox> Head = SNew(SHorizontalBox);
 	Head->AddSlot().AutoWidth().VAlign(VAlign_Center).Padding(0, 0, 8, 0)
-		[Button(K.bOn ? TEXT("On") : TEXT("Off"), [this, I]() { Edit[I].bOn = !Edit[I].bOn; Apply(); Rebuild(); }, 12, K.bOn)];
-	Head->AddSlot().FillWidth(1).VAlign(VAlign_Center)[Text(K.Label.IsEmpty() ? K.Name : K.Label, 14, K.bOn ? Ink : Soft, K.bOn ? "Bold" : "Regular")];
+	[
+		SNew(SCheckBox)
+		.ToolTipText(FText::FromString(TEXT("Grown on the course or not")))
+		.IsChecked_Lambda([this, I]() { return Edit.IsValidIndex(I) && Edit[I].bOn ? ECheckBoxState::Checked : ECheckBoxState::Unchecked; })
+		.OnCheckStateChanged_Lambda([this, I](ECheckBoxState C) { if (Edit.IsValidIndex(I)) { Edit[I].bOn = C == ECheckBoxState::Checked; Apply(); Rebuild(); } })
+	];
+	Head->AddSlot().FillWidth(1).VAlign(VAlign_Center)[FoldHead(K.Name, K.Label.IsEmpty() ? K.Name : K.Label, K.bOn)];
 	if (K.bEven)
 	{
 		// (only the rough's own grasses can move between the two)
@@ -130,7 +152,7 @@ TSharedRef<SWidget> SOTGGrassDesigner::KindRow(int32 I)
 	if (K.bAdded)
 		Head->AddSlot().AutoWidth().VAlign(VAlign_Center).Padding(4, 0, 0, 0)[Button(TEXT("Remove"), [this, I]() { Edit.RemoveAt(I); Apply(); Rebuild(); }, 11)];
 	V->AddSlot().AutoHeight().Padding(0, 6, 0, 2)[Head];
-	if (!K.bOn) return V;
+	if (!K.bOn || !Opened.Contains(K.Name)) return V;
 
 	// its numbers: sliders, the grass grown again when one is let go
 	auto Slider = [this, I, &V](const FString& Label, float Lo, float Hi, TFunction<float(const otg::FGrassKind&)> Get, TFunction<void(otg::FGrassKind&, float)> Set, TFunction<FString(const otg::FGrassKind&)> Fmt) {
@@ -295,6 +317,8 @@ void SOTGGrassDesigner::Rebuild()
 		SNew(SHorizontalBox)
 		+ SHorizontalBox::Slot().AutoWidth()[Text(TEXT("Grass designer"), 18, Ink, "Bold")]
 		+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Bottom).Padding(8, 0, 0, 2)[Text(TEXT("seen at once  ·  R: close"), 12, Soft)]
+		+ SHorizontalBox::Slot().FillWidth(1)
+		+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)[Button(TEXT("Fold all"), [this]() { Opened.Reset(); Rebuild(); }, 11)]
 	];
 	if (!Course.IsValid() || !Edit.Num())
 	{

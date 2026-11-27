@@ -43,6 +43,8 @@ GAME_TEXTURES = os.path.normpath(os.path.join(EXPORT_DIR, "..", "..", "public", 
 # lawn_*.jpg is the same grass at 1K, used when they're missing)
 GROUND_MEAN = {"lawn": (0.137, 0.239, 0.0275), "rough": (0.118, 0.152, 0.03), "sand": (0.462, 0.342, 0.165)}
 DETAIL_TILE_M = 2.5       # metres each ground texture covers
+DETAIL_FADE_M = (60.0, 220.0)   # the ground textures' detail eased off between these distances...
+DETAIL_FAR = 0.35               # ...to this much of it (0.85 close by)
 # The surface masks are always in memory (never streamed: streamed down, the course's edges go
 # blocky), so a big course's 8192-pixel masks are kept at this size: they're smooth distance fields,
 # so the edges still follow the outlines (a dozen masks: 0.25 GB at 4096, 1 GB at 8192). The mowing
@@ -606,19 +608,21 @@ def build_ground(land):
         c = sample(tex[k], fine, -1800, 1600 + i * 500, S.SAMPLERTYPE_COLOR)
         n = sample(tex[k + "_n"], fine, -1800, 1850 + i * 500, S.SAMPLERTYPE_NORMAL)
         r = op(unreal.MaterialExpressionDivide, c, const3(GROUND_MEAN[k], -1600, 1700 + i * 500), -1400, 1600 + i * 500, "RGB")
-        if k == "lawn":
-            c2 = sample(tex[k], fine2, -1800, 1500, S.SAMPLERTYPE_COLOR)
-            r2 = op(unreal.MaterialExpressionDivide, c2, const3(GROUND_MEAN[k], -1600, 1450), -1500, 1450, "RGB")
-            half2 = E(unreal.MaterialExpressionLinearInterpolate, -1450, 1500)
-            mel.connect_material_expressions(const(1.0, -1550, 1520), "", half2, "A")
+        if k in ("lawn", "rough"):
+            # (the rough too: its 2.5 m repeat showed far off as a woven grid over the deep rough)
+            y0 = 1500 + i * 500
+            c2 = sample(tex[k], fine2, -1800, y0, S.SAMPLERTYPE_COLOR)
+            r2 = op(unreal.MaterialExpressionDivide, c2, const3(GROUND_MEAN[k], -1600, y0 - 50), -1500, y0 - 50, "RGB")
+            half2 = E(unreal.MaterialExpressionLinearInterpolate, -1450, y0)
+            mel.connect_material_expressions(const(1.0, -1550, y0 + 20), "", half2, "A")
             mel.connect_material_expressions(r2, "", half2, "B")
-            mel.connect_material_expressions(const(0.45, -1550, 1560), "", half2, "Alpha")
-            r = op(unreal.MaterialExpressionMultiply, r, half2, -1350, 1550)
-            n2 = sample(tex[k + "_n"], fine2, -1800, 1750, S.SAMPLERTYPE_NORMAL)
-            nb = E(unreal.MaterialExpressionLinearInterpolate, -1450, 1800)
+            mel.connect_material_expressions(const(0.45, -1550, y0 + 60), "", half2, "Alpha")
+            r = op(unreal.MaterialExpressionMultiply, r, half2, -1350, y0 + 50)
+            n2 = sample(tex[k + "_n"], fine2, -1800, y0 + 250, S.SAMPLERTYPE_NORMAL)
+            nb = E(unreal.MaterialExpressionLinearInterpolate, -1450, y0 + 300)
             mel.connect_material_expressions(n, "RGB", nb, "A")
             mel.connect_material_expressions(n2, "RGB", nb, "B")
-            mel.connect_material_expressions(const(0.4, -1550, 1820), "", nb, "Alpha")
+            mel.connect_material_expressions(const(0.4, -1550, y0 + 320), "", nb, "Alpha")
             n = nb
         dk = op(unreal.MaterialExpressionMultiply, r, w, -1200, 1600 + i * 500, "", wout)
         nk = op(unreal.MaterialExpressionMultiply, n, w, -1200, 1850 + i * 500, "" if k == "lawn" else "RGB", wout)
@@ -642,7 +646,17 @@ def build_ground(land):
     mix = E(unreal.MaterialExpressionLinearInterpolate, -700, 1000)
     mel.connect_material_expressions(const(1.0, -900, 950), "", mix, "A")
     mel.connect_material_expressions(detail, "", mix, "B")
-    mel.connect_material_expressions(const(0.85, -900, 1150), "", mix, "Alpha")
+    # (its strength: full close by, eased off far away - DETAIL_FADE_M - where a texture repeating every
+    # few metres is a few pixels across and reads as a pattern rather than as grass)
+    far = E(unreal.MaterialExpressionSaturate, -1000, 1250)
+    mel.connect_material_expressions(op(unreal.MaterialExpressionDivide,
+        op(unreal.MaterialExpressionSubtract, E(unreal.MaterialExpressionPixelDepth, -1400, 1200), const(DETAIL_FADE_M[0] * 100.0, -1400, 1260), -1250, 1200),
+        const((DETAIL_FADE_M[1] - DETAIL_FADE_M[0]) * 100.0, -1250, 1280), -1100, 1200), "", far, "")
+    strength = E(unreal.MaterialExpressionLinearInterpolate, -900, 1200)
+    mel.connect_material_expressions(const(0.85, -1000, 1150), "", strength, "A")
+    mel.connect_material_expressions(const(DETAIL_FAR, -1000, 1300), "", strength, "B")
+    mel.connect_material_expressions(far, "", strength, "Alpha")
+    mel.connect_material_expressions(strength, "", mix, "Alpha")
     # Turf colour: each surface's own, lit by the photo's light and shade (its brightness over 0.3,
     # kept within 0.65..1.35), over the photo's colour except on water
     lum = E(unreal.MaterialExpressionDotProduct, -1500, -600)

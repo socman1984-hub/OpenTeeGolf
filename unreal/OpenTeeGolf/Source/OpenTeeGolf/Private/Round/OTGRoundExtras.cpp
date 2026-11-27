@@ -421,6 +421,7 @@ void AOTGRound::ToggleGrassDesigner(int32 Tab)
 		TWeakObjectPtr<AOTGRound> Self(this);
 		Hud->Designer()->Trees()->OnChanged = [Self]() { if (Self.IsValid()) Self->RefreshTrees(); };
 		Hud->Designer()->Trees()->OnShow = [Self](const FString& Kind) { if (Self.IsValid()) Self->ShowTree(Kind); };
+		Hud->Designer()->Trees()->OnShowArea = [Self](const TArray<FVector2D>& Pts) { if (Self.IsValid()) Self->ShowArea(Pts); };
 		Hud->Designer()->GrassTab()->OnShow = [Self](const FString& Kind) { if (Self.IsValid()) Self->ShowGrass(Kind); };
 		Hud->Designer()->BridgeTab()->OnChanged = [Self]() { if (Self.IsValid()) Self->RefreshBridges(); };
 		Hud->Designer()->Open(C);
@@ -464,6 +465,26 @@ void AOTGRound::ShowGrass(const FString& Kind)
 	const FVector Dir = (At - From).GetSafeNormal2D();
 	const double Yaw = Dir.IsNearlyZero() ? Camera.FreeRot.Yaw : FMath::RadiansToDegrees(FMath::Atan2(Dir.Y, Dir.X));
 	Camera.FreeLookAt(At + FVector(0, 0, 30), 650, 170, Yaw);
+}
+
+// The free view flown to see these (course metres: a forest's outline) all at once: from the side
+// you're on, up and back as far as they're wide
+void AOTGRound::ShowArea(const TArray<FVector2D>& Pts)
+{
+	AOTGRuntimeCourse* C = nullptr;
+	for (TActorIterator<AOTGRuntimeCourse> It(GetWorld()); It; ++It) { C = *It; break; }
+	const UOTGCourseData* D = Data;
+	if (!C || !D || !Pts.Num()) return;
+	auto ToLevel = [&](const FVector2D& P) { return C->GetActorLocation() + FVector((P.X - D->HeightX0) * 100.0, (D->HeightZ1 - P.Y) * 100.0, (D->GroundAt(P.X, P.Y) - D->HeightBase) * 100.0); };
+	FBox2D B(ForceInit);
+	for (const FVector2D& P : Pts) B += P;
+	const FVector Mid = ToLevel(B.GetCenter());
+	const double R = FMath::Max(3000.0, B.GetExtent().Size() * 100.0);
+	APlayerController* PC = GetWorld() ? GetWorld()->GetFirstPlayerController() : nullptr;
+	const FVector From = PC && PC->PlayerCameraManager ? PC->PlayerCameraManager->GetCameraLocation() : Mid - FVector(R, 0, 0);
+	const FVector Dir = (Mid - From).GetSafeNormal2D();
+	const double Yaw = Dir.IsNearlyZero() ? Camera.FreeRot.Yaw : FMath::RadiansToDegrees(FMath::Atan2(Dir.Y, Dir.X));
+	Camera.FreeLookAt(Mid, R * 1.5, R * 1.3, Yaw);
 }
 
 bool AOTGRound::DesignClick(const FVector& Origin, const FVector& Dir)

@@ -315,8 +315,18 @@ TSharedRef<SWidget> SOTGTreeDesigner::ForestPanel()
 	TArray<int32> Sel = SelForests.Array();
 	Sel.Sort();
 	const FOTGForest& F0 = Edit.Forests[Sel[0]];
-	V->AddSlot().AutoHeight().Padding(0, 6, 0, 2)[Text(Sel.Num() == 1 ? FString::Printf(TEXT("%s: %.1f ha"), *F0.Name, F0.AreaM2() / 10000.0)
-		: FString::Printf(TEXT("%d forests together"), Sel.Num()), 13, Ink, "Bold")];
+	V->AddSlot().AutoHeight().Padding(0, 6, 0, 2)
+	[
+		SNew(SHorizontalBox)
+		+ SHorizontalBox::Slot().FillWidth(1).VAlign(VAlign_Center)[Text(Sel.Num() == 1 ? FString::Printf(TEXT("%s: %.1f ha"), *F0.Name, F0.AreaM2() / 10000.0)
+			: FString::Printf(TEXT("%d forests together"), Sel.Num()), 13, Ink, "Bold")]
+		// (the free view flown back to see it - or them - whole)
+		+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)[Button(Sel.Num() == 1 ? TEXT("Go to it") : TEXT("Go to them"), [this, Sel]() {
+			TArray<FVector2D> Pts;
+			for (int32 i : Sel) if (Edit.Forests.IsValidIndex(i)) Pts.Append(Edit.Forests[i].Pts);
+			if (OnShowArea && Pts.Num()) OnShowArea(Pts);
+		}, 11)]
+	];
 	// (a slider on all of them: it shows the first's, and sets every one's)
 	auto Slide = [&](const FString& Label, float Lo, float Hi, float FOTGForest::* Field, TFunction<FString(float)> Fmt) {
 		V->AddSlot().AutoHeight().Padding(18, 2, 0, 0)
@@ -338,7 +348,7 @@ TSharedRef<SWidget> SOTGTreeDesigner::ForestPanel()
 		];
 	};
 	Slide(TEXT("How many"), FOTGForest::AmountLo, FOTGForest::AmountHi, &FOTGForest::Amount,
-		[](float X) { return FMath::IsNearlyEqual(X, 1.f) ? FString(TEXT("as mapped")) : X <= 0 ? FString(TEXT("none")) : FString::Printf(TEXT("x %.2g"), X); });
+		[](float X) { return FMath::IsNearlyEqual(X, 1.f) ? FString(TEXT("as mapped")) : X <= 0 ? FString(TEXT("none")) : FString::Printf(TEXT("x %g"), FMath::RoundToFloat(X * 10) / 10); });
 	Slide(TEXT("Their size"), FOTGForest::SizeLo, FOTGForest::SizeHi, &FOTGForest::Size, [](float X) { return FString::Printf(TEXT("%d%%"), FMath::RoundToInt(X * 100)); });
 	// their trees: their own, or one of the Course builder's forests
 	TArray<FString> Presets = { FString() };

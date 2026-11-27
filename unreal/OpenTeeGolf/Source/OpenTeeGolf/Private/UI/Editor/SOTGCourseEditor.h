@@ -45,7 +45,7 @@ public:
 	int32 HoleI = 0;
 	int32 SelShape = INDEX_NONE, SelTree = INDEX_NONE, SelFound = INDEX_NONE, SelRemoved = INDEX_NONE, SelBuilding = INDEX_NONE;
 	TArray<int32> SelMany;                 // (found trees, picked together)
-	enum class EMode : uint8 { None, Draw, Place, AddTree, Cut, Paint, Erase, Forest };
+	enum class EMode : uint8 { None, Draw, Place, AddTree, Cut, Paint, Erase, Forest, Patch, Join };
 	EMode Mode = EMode::None;
 	FString ModeKind, ModeKey;             // (Draw: the shape's kind; Place: tee/aim/green/pin and which)
 	TArray<FVector2D> DrawPts;
@@ -70,6 +70,9 @@ public:
 	int32 SelForest = INDEX_NONE, SelArea = INDEX_NONE;
 	FString AreaBiome;               // (the biome a new area's drawn with)
 	void MarkForest(const FVector2D& P);   // (the group of found trees round P, as one forest)
+	void ForestOf(const TArray<int32>& In); // (these found trees, as one forest)
+	void JoinForest(const FVector2D& P);   // (the forest at P joined to the picked one)
+	void MarkPatch(const FVector2D& P);    // (the patch of tall grass round P - found or painted - as an area of AreaBiome)
 	void SaveForests(const FString& Say);
 	void SaveBiomes(const FString& Say);
 	int32 CurrentTab() const { return Tab; }
@@ -79,6 +82,9 @@ public:
 	TStrongObjectPtr<UTexture2D> Photo, Shade, Heather;
 	TSharedPtr<FSlateBrush> PhotoBrush, ShadeBrush, HeatherBrush;
 	double HeatherX0 = 0, HeatherZ1 = 0, HeatherW = 0, HeatherH = 0;   // (the tall grass the game found in the aerial photo)
+	TArray<uint8> HeatherPx;                                          // (and its cells, 1 where it's tall grass: row 0 at HeatherZ1)
+	int32 HeatherPxW = 0, HeatherPxH = 0;
+	double HeatherRes = 0;
 	double PhotoX0 = 0, PhotoZ1 = 0, PhotoSizeM = 0, ShadeX0 = 0, ShadeZ1 = 0, ShadeW = 0, ShadeH = 0;
 	// reviewing the trees in the line of play: the found ones, one at a time
 	TArray<int32> Review;
@@ -110,7 +116,16 @@ private:
 	void MakeShade();
 	void Rebuild();
 	// 0 save; 1 save and update the game at once (OTGQuickUpdate); 2 save and the full export
-	void Save(int32 Then);
+	void Save(int32 Then);   // (3: save, then close)
+	// What's changed since the course was opened or last saved (Saved), a line each: shown before a
+	// save to confirm it, and on closing with changes not saved
+	FOTGCourseSource Saved;
+	TArray<FString> ChangeList() const;
+	void AskSave(int32 Then);
+	void AskClose();
+	void ShowDialog(const FString& Title, const FString& Intro, const TArray<FString>& Lines, TArray<TPair<FString, TFunction<void()>>> Buttons);
+	void HideDialog();
+	TSharedPtr<SBox> DialogHost;
 	void Quick();
 	FOTGCourseSource Applied;   // (the course as the game's folder has it: what the quick update compares with)
 	bool bQuicking = false;
@@ -155,5 +170,5 @@ private:
 	// (-editortest=<id>: the editor open, a screenshot; -editortestfix: a hole's par of 10 or more set to 4, saved, quit)
 	int32 TestStep = 0;
 	double TestAt = 0;
-	bool bForestTested = false;   // (-editortestforest=X,Z[,preset] [-editortestbiome=<biome>]: a forest marked there, an area of that biome round it)
+	bool bForestTested = false, bExtraTested = false, bDialogTested = false;   // (-editortestforest=X,Z[,preset] [-editortestbiome=<biome>]: a forest marked there, an area of that biome round it)
 };
