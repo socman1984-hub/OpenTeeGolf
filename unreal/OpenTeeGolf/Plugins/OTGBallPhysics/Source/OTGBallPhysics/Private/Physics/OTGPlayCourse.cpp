@@ -7,7 +7,31 @@
 
 namespace otg
 {
+	bool PlayCourse::Deck::TopAt(double x, double z, double& y) const
+	{
+		const double dx = bx - ax, dz = bz - az, l2 = dx * dx + dz * dz;
+		if (l2 < 1e-6) return false;
+		const double t = ((x - ax) * dx + (z - az) * dz) / l2;
+		if (t < 0 || t > 1) return false;
+		const double side = std::fabs((x - ax) * dz - (z - az) * dx) / std::sqrt(l2);
+		if (side > halfW) return false;
+		y = ay + (by - ay) * t + rise * 4 * t * (1 - t);
+		return true;
+	}
+
 	double PlayCourse::HeightAt(double x, double z) const
+	{
+		double g = GroundAt(x, z);
+		if (std::isnan(g)) return g;
+		for (const Deck& d : decks)
+		{
+			double y;
+			if (d.TopAt(x, z, y) && y > g) g = y;
+		}
+		return g;
+	}
+
+	double PlayCourse::GroundAt(double x, double z) const
 	{
 		if (x < minX || x > maxX || z < minZ || z > maxZ || N < 2) return std::nan("");
 		const double fi = (x - x0) / step, fj = (z1 - z) / step;
@@ -32,6 +56,16 @@ namespace otg
 	Surface PlayCourse::SurfaceAt(double x, double z) const
 	{
 		if (x < minX || x > maxX || z < minZ || z > maxZ) return Surface::None;
+		// (on a bridge's deck: a path, whatever's under it)
+		if (!decks.empty())
+		{
+			const double g = GroundAt(x, z);
+			for (const Deck& d : decks)
+			{
+				double y;
+				if (d.TopAt(x, z, y) && !(y < g - 0.02)) return Surface::Path;
+			}
+		}
 		const int i = static_cast<int>(std::floor((x - sMinX) / res)), j = static_cast<int>(std::floor((sMaxZ - z) / res));
 		if (i < 0 || j < 0 || i >= w || j >= h) return Surface::None;
 		const uint8_t c = surfaces[static_cast<size_t>(j) * w + i];

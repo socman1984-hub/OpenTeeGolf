@@ -28,6 +28,7 @@ void SOTGCourseDesigner::Construct(const FArguments&)
 			SAssignNew(Switch, SWidgetSwitcher)
 			+ SWidgetSwitcher::Slot()[SAssignNew(GrassPanel, SOTGGrassDesigner)]
 			+ SWidgetSwitcher::Slot()[SAssignNew(TreePanel, SOTGTreeDesigner)]
+			+ SWidgetSwitcher::Slot()[SAssignNew(BridgePanel, SOTGBridgeDesigner)]
 		]
 	];
 	ShowTab(0);
@@ -40,12 +41,14 @@ void SOTGCourseDesigner::ShowTab(int32 Tab)
 	TabRow->SetContent(
 		SNew(SHorizontalBox)
 		+ SHorizontalBox::Slot().AutoWidth().Padding(0, 0, 4, 0)[Button(TEXT("Grass"), [this]() { ShowTab(0); }, 13, Current == 0)]
-		+ SHorizontalBox::Slot().AutoWidth()[Button(TEXT("Trees and rocks"), [this]() { ShowTab(1); }, 13, Current == 1)]);
+		+ SHorizontalBox::Slot().AutoWidth().Padding(0, 0, 4, 0)[Button(TEXT("Trees and rocks"), [this]() { ShowTab(1); }, 13, Current == 1)]
+		+ SHorizontalBox::Slot().AutoWidth()[Button(TEXT("Bridges"), [this]() { ShowTab(2); }, 13, Current == 2)]);
 }
 
 void SOTGCourseDesigner::Open(AOTGRuntimeCourse* Course)
 {
 	GrassPanel->Open(Course);
 	TreePanel->Open(Course);
+	BridgePanel->Open(Course);
 	ShowTab(Current);
 }

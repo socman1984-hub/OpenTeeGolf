@@ -18,6 +18,7 @@
 #include "GameFramework/Actor.h"
 #include "World/OTGGrassFwd.h"
 #include "World/OTGTreeDesign.h"
+#include "World/OTGBridges.h"
 #include "World/OTGCourseParts.h"
 #include "OTGRuntimeCourse.generated.h"
 
@@ -110,6 +111,20 @@ public:
 	void MarkPicked(const FOTGPicked& P) { Trees.MarkPicked(P); }
 	void MarkForests(const TArray<int32>& Which) { Trees.MarkForests(Which); }
 	void SeeThrough(const FVector& From, const FVector& To, double HalfWidthCm) { Trees.SeeThrough(From, To, HalfWidthCm); }
+	// The bridge designer's view (SOTGBridgeDesigner, OTGCourseBridges.cpp): the course's bridges
+	// drawn again with a design (the course data's, which the ball's decks follow too:
+	// AOTGRound::RefreshBridges), saved for the course (bridges.json), the bridge along a line from
+	// the camera (before MaxT cm; -1 none), and gold posts on points (the level's cm): called each
+	// frame while they're wanted - not called for a moment, they go
+	const FOTGBridgeDesign& BridgeDesign() const;
+	void SetBridges(const FOTGBridgeDesign& Design);
+	bool SaveBridges(FString* Where = nullptr) const;
+	FOTGBridgeDesign SavedBridges() const;
+	int32 PickBridge(const FVector& Origin, const FVector& Dir, double MaxT) const;
+	void MarkPoints(const TArray<FVector>& Points);
+	double GroundHeightAt(double X, double Z) const;   // (course metres: the ground's height there, metres)
+	FVector CourseToWorldAt(double X, double Y, double Z) const;   // (course metres to the level's cm)
+
 	// The studio's preview plot (AOTGPreviewStage, OTGCoursePreview.cpp): built with no export folder -
 	// flat ground SizeM a side with this actor in the middle, a round of tall grass in short rough -
 	// then grown with these kinds, and planted with this forest preset (none: no trees)
@@ -139,6 +154,12 @@ private:
 	FOTGCourseTurf Turf;
 
 	void LoadPictures();
+	void BuildBridges();
+	void UpdateMarkPoints();
+	UPROPERTY() TArray<TObjectPtr<class UStaticMeshComponent>> BridgeMeshes;
+	UPROPERTY() TArray<TObjectPtr<class UStaticMeshComponent>> PointMarks;
+	UPROPERTY() TObjectPtr<class UStaticMesh> PointMarkMesh;
+	double PointMarksAt = 0;   // (when last asked for)
 	void SetPictures(UMaterialInstanceDynamic* M) const;
 	class UHierarchicalInstancedStaticMeshComponent* Instances(class UStaticMesh* Mesh, const TArray<FTransform>& Xfs, int32 CullFrom, int32 CullTo, int32 CustomFloats = 0);
 

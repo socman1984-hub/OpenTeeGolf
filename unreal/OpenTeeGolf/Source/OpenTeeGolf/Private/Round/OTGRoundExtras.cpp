@@ -419,6 +419,7 @@ void AOTGRound::ToggleGrassDesigner(int32 Tab)
 		Hud->Designer()->Trees()->OnChanged = [Self]() { if (Self.IsValid()) Self->RefreshTrees(); };
 		Hud->Designer()->Trees()->OnShow = [Self](const FString& Kind) { if (Self.IsValid()) Self->ShowTree(Kind); };
 		Hud->Designer()->GrassTab()->OnShow = [Self](const FString& Kind) { if (Self.IsValid()) Self->ShowGrass(Kind); };
+		Hud->Designer()->BridgeTab()->OnChanged = [Self]() { if (Self.IsValid()) Self->RefreshBridges(); };
 		Hud->Designer()->Open(C);
 		if (Tab >= 0) Hud->Designer()->ShowTab(Tab);
 	}
@@ -491,6 +492,21 @@ void AOTGRound::EditPicked(const FString& Field, const FString& Value)
 void AOTGRound::SetDesignTool(int32 Tool)
 {
 	if (Hud && Hud->Designer()) Hud->Designer()->Trees()->SetTool(Tool);
+}
+
+void AOTGRound::SetBridgeTool(int32 Tool)
+{
+	if (Hud && Hud->Designer()) Hud->Designer()->BridgeTab()->SetTool(Tool);
+}
+
+void AOTGRound::EditBridge(const FString& Field, const FString& Value)
+{
+	if (Hud && Hud->Designer()) Hud->Designer()->BridgeTab()->EditPicked(Field, Value);
+}
+
+void AOTGRound::AddBridgeAt(double AX, double AZ, double BX, double BZ)
+{
+	if (Hud && Hud->Designer()) Hud->Designer()->BridgeTab()->AddAt(AX, AZ, BX, BZ);
 }
 
 void AOTGRound::WeatherChanged()

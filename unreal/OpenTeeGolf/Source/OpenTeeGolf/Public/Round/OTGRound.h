@@ -79,6 +79,8 @@ public:
 	// the ball's trees made again as the designer has them, and the free view flown to a tree
 	void ToggleGrassDesigner(int32 Tab = -1);   // (-1: the tab it was on)
 	void RefreshTrees();
+	void RefreshBridges();   // (the bridges changed in the designer: the ball's decks and rails again)
+	void BuildCollider();
 	void ShowTree(const FString& Kind);
 	void ShowGrass(const FString& Kind);   // (the free view flown to where it grows thickly nearby)
 	// A click on the course (the camera's line through the cursor): the course designer's, when it's
@@ -87,6 +89,10 @@ public:
 	// (testing: a click at a point on the screen, 0..1 across and down)
 	void DesignClickAt(double FX, double FY);
 	void SetDesignTool(int32 Tool);
+	// (testing: OTG.Bridges.* - the bridges tab's click tool, 0 pick 1 add; the picked or new bridge changed)
+	void SetBridgeTool(int32 Tool);
+	void EditBridge(const FString& Field, const FString& Value);
+	void AddBridgeAt(double AX, double AZ, double BX, double BZ);
 	void EditPicked(const FString& Field, const FString& Value);   // (testing: OTG.Trees.Edit)   // (testing: the trees tab's click tool, 0 pick .. 3 take out)
 	// Where a line from the camera meets the course's ground (its own heights: no collision needed)
 	bool GroundAlongRay(const FVector& Origin, const FVector& Dir, FVector& Out) const;

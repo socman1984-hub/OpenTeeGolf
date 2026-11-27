@@ -173,7 +173,40 @@ namespace
 			if (A.Num() > 2) R->SetDesignTool(A[2] == TEXT("tree") ? 1 : A[2] == TEXT("rock") ? 2 : A[2] == TEXT("out") ? 3 : 0);
 			R->DesignClickAt(FCString::Atod(*A[0]), FCString::Atod(*A[1]));
 		}));
-	FAutoConsoleCommandWithWorldAndArgs GrassCmd(TEXT("OTG.Round.GrassDesigner"), TEXT("The course designer (the R key; OTG.Round.GrassDesigner trees: on its trees tab)"), FCmd::CreateLambda([](const TArray<FString>& A, UWorld* W) { if (AOTGRound* R = RoundIn(W)) R->ToggleGrassDesigner(A.Num() && A[0] == TEXT("trees") ? 1 : -1); }));
+	FAutoConsoleCommandWithWorldAndArgs GrassCmd(TEXT("OTG.Round.GrassDesigner"), TEXT("The course designer (the R key; OTG.Round.GrassDesigner trees|bridges: on that tab)"), FCmd::CreateLambda([](const TArray<FString>& A, UWorld* W) {
+		if (AOTGRound* R = RoundIn(W)) R->ToggleGrassDesigner(A.Num() && A[0] == TEXT("trees") ? 1 : A.Num() && A[0] == TEXT("bridges") ? 2 : -1);
+	}));
+	// (testing the bridges tab - the designer open on it first, OTG.Round.GrassDesigner bridges: a click
+	// on the course, a bridge from one point to another in course metres, the picked or new one changed)
+	FAutoConsoleCommandWithWorldAndArgs BridgeClickCmd(TEXT("OTG.Bridges.Click"), TEXT("OTG.Bridges.Click <0..1 across> <0..1 down> [pick|add]: (testing) a click on the course in the designer's bridges tab"),
+		FCmd::CreateLambda([](const TArray<FString>& A, UWorld* W) {
+			AOTGRound* R = RoundIn(W);
+			if (!R || A.Num() < 2) return;
+			if (A.Num() > 2) R->SetBridgeTool(A[2] == TEXT("add") ? 1 : 0);
+			R->DesignClickAt(FCString::Atod(*A[0]), FCString::Atod(*A[1]));
+		}));
+	FAutoConsoleCommandWithWorldAndArgs BridgeAddCmd(TEXT("OTG.Bridges.Add"), TEXT("OTG.Bridges.Add <x> <z> <x> <z>: (testing) a new bridge between two points (course metres), as two clicks would make it"),
+		FCmd::CreateLambda([](const TArray<FString>& A, UWorld* W) {
+			if (AOTGRound* R = RoundIn(W); R && A.Num() >= 4) R->AddBridgeAt(FCString::Atod(*A[0]), FCString::Atod(*A[1]), FCString::Atod(*A[2]), FCString::Atod(*A[3]));
+		}));
+	FAutoConsoleCommandWithWorldAndArgs BridgeShowCmd(TEXT("OTG.Bridges.Show"), TEXT("OTG.Bridges.Show [which, 1..; last] [distance m] [height m] [yaw]: (testing) the free view looking at a bridge, from its side"),
+		FCmd::CreateLambda([](const TArray<FString>& A, UWorld* W) {
+			AOTGRuntimeCourse* C = CourseOf(W);
+			AOTGRound* R = RoundIn(W);
+			if (!C || !R || !C->BridgeDesign().Bridges.Num()) return;
+			const TArray<FOTGBridge>& L = C->BridgeDesign().Bridges;
+			auto Arg = [&](int32 i, double D) { return A.IsValidIndex(i) ? FCString::Atod(*A[i]) : D; };
+			const int32 I = FMath::Clamp(int32(Arg(0, L.Num())) - 1, 0, L.Num() - 1);
+			const FOTGBridge& B = L[I];
+			const FVector Mid = C->CourseToWorldAt((B.AX + B.BX) / 2, B.TopAt(0.5), (B.AZ + B.BZ) / 2);
+			const FVector Along = C->CourseToWorldAt(B.BX, B.BY, B.BZ) - C->CourseToWorldAt(B.AX, B.AY, B.AZ);
+			const double Side = FMath::RadiansToDegrees(FMath::Atan2(Along.Y, Along.X)) + 90;
+			R->FreeLookAt(Mid, Arg(1, 25) * 100, Arg(2, 6) * 100, A.IsValidIndex(3) ? Arg(3, 0) : Side);
+		}));
+	FAutoConsoleCommandWithWorldAndArgs BridgeEditCmd(TEXT("OTG.Bridges.Edit"), TEXT("OTG.Bridges.Edit shape flat|arch, rails on|off, look wood|stone|white, width|rise <m>, build|cancel|out: (testing) the picked or new bridge"),
+		FCmd::CreateLambda([](const TArray<FString>& A, UWorld* W) {
+			if (AOTGRound* R = RoundIn(W); R && A.Num()) R->EditBridge(A[0], A.Num() > 1 ? A[1] : FString());
+		}));
 	FAutoConsoleCommandWithWorldAndArgs WxCmd(TEXT("OTG.Round.WeatherPanel"), TEXT("The weather panel (the L key)"), FCmd::CreateLambda([](const TArray<FString>&, UWorld* W) { if (AOTGRound* R = RoundIn(W)) R->ToggleWeatherPanel(); }));
 	FAutoConsoleCommandWithWorldAndArgs TimeCmd(TEXT("OTG.Round.Time"), TEXT("OTG.Round.Time <hour, 5.5-19.5> | auto: (testing) the time of day"), FCmd::CreateLambda([](const TArray<FString>& A, UWorld* W) {
 		if (AOTGRound* R = RoundIn(W)) R->SetSunHour(A.Num() && A[0] != TEXT("auto") ? FCString::Atod(*A[0]) : -1.0);

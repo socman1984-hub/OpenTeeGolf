@@ -31,10 +31,22 @@ namespace otg
 		std::vector<uint8_t> surfaces;
 		// Where the course is: outside, there is no ground (the ball is out)
 		double minX = 0, maxX = 0, minZ = 0, maxZ = 0;
+		// Bridges' decks (the course designer's): from a to b, each end's top (ay, by) at its own height,
+		// halfW either side of the line, rising by rise in the middle (an arch: a parabola). Over one,
+		// the ground is the deck where it's higher, and its surface a path
+		struct Deck
+		{
+			double ax = 0, az = 0, ay = 0, bx = 0, bz = 0, by = 0, halfW = 1, rise = 0;
+			// (the deck's top over (x, z), if it's over it)
+			bool TopAt(double x, double z, double& y) const;
+		};
+		std::vector<Deck> decks;
 
 		double HeightAt(double x, double z) const override;
 		V3 NormalAt(double x, double z) const override;
 		Surface SurfaceAt(double x, double z) const override;
+		// (the ground alone: the heightmap's, no deck)
+		double GroundAt(double x, double z) const;
 	};
 
 	// A building or parked car: its footprint (x, z) and height above the ground

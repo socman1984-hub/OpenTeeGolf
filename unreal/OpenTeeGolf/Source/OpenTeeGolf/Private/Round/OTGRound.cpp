@@ -161,16 +161,7 @@ void AOTGRound::Setup(UOTGCourseData* InData, const FOTGRoundSetup& InSetup)
 	}
 	Data->FillPlayCourse(Course);
 	Data->FillTrees(Trees);
-	std::vector<otg::Solid> Solids;
-	for (const FOTGSolid& S : Data->Solids)
-	{
-		otg::Solid O;
-		O.h = S.Height;
-		O.kind = TCHAR_TO_UTF8(*S.Kind);
-		for (const FVector2D& Q : S.Footprint) O.pts.emplace_back(Q.X, Q.Y);
-		Solids.push_back(O);
-	}
-	Collider.Build(Course, Trees.all, Solids);
+	BuildCollider();
 	SetActorLocation(FVector::ZeroVector);
 	TeeName = Setup_.Tee.IsEmpty() ? FString(TEXT("White")) : Setup_.Tee;
 	PinName = Setup_.Pin.IsEmpty() ? FString(TEXT("Saturday")) : Setup_.Pin;
@@ -803,4 +794,49 @@ void AOTGRound::QuitToMenu()
 {
 	TellLaunchMonitor(false);
 	UGameplayStatics::OpenLevel(this, TEXT("/Engine/Maps/Entry"));
+}
+
+// What the ball can hit: the ground (with the bridges' decks), the trees' trunks, the buildings and
+// cars, and the bridges' rails
+void AOTGRound::BuildCollider()
+{
+	if (!Data) return;
+	std::vector<otg::Solid> Solids;
+	for (const FOTGSolid& S : Data->Solids)
+	{
+		otg::Solid O;
+		O.h = S.Height;
+		O.kind = TCHAR_TO_UTF8(*S.Kind);
+		for (const FVector2D& Q : S.Footprint) O.pts.emplace_back(Q.X, Q.Y);
+		Solids.push_back(O);
+	}
+	for (const FOTGBridge& B : Data->Bridges.Bridges)
+	{
+		TArray<FOTGBridge::FRail> Rails;
+		B.Rails(Rails);
+		for (const FOTGBridge::FRail& R : Rails)
+		{
+			// (the collider stands a solid half a metre into the ground under it - here the deck)
+			otg::Solid O;
+			O.h = R.Top - R.Bottom + 0.5;
+			O.kind = "rail";
+			for (const FVector2D& Q : R.Pts) O.pts.emplace_back(Q.X, Q.Y);
+			Solids.push_back(O);
+		}
+	}
+	Collider.Build(Course, Trees.all, Solids);
+}
+
+void AOTGRound::RefreshBridges()
+{
+	if (!Data) return;
+	Data->FillBridges(Course);
+	BuildCollider();
+	UE_LOG(LogOTGRound, Display, TEXT("The ball's bridges: %d (%d things to hit)"), Data->Bridges.Bridges.Num(), int32(Collider.Count()));
+	for (const FOTGBridge& B : Data->Bridges.Bridges)
+	{
+		// (what the ball finds halfway across: the deck, a path - not the water under it)
+		const double X = (B.AX + B.BX) / 2, Z = (B.AZ + B.BZ) / 2;
+		UE_LOG(LogOTGRound, Display, TEXT("  bridge middle %.1f %.1f: ball's ground %.2f m (the land %.2f), %s"), X, Z, Course.HeightAt(X, Z), Course.GroundAt(X, Z), UTF8_TO_TCHAR(otg::SurfaceName(Course.SurfaceAt(X, Z))));
+	}
 }

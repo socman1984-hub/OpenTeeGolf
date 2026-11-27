@@ -47,6 +47,7 @@ bool UOTGCourseData::LoadFromExport(const FString& Dir, FString* OutError)
 	if (!FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Text), Play) || !Play.IsValid()) return Fail(TEXT("play.json doesn't read"));
 
 	TreeDesign = FOTGTreeDesign::Load(Dir);
+	Bridges = FOTGBridgeDesign::Load(Dir);
 	CourseId = Play->GetStringField(TEXT("id"));
 	CourseName = Play->GetStringField(TEXT("name"));
 	Play->TryGetStringField(TEXT("location"), Location);
@@ -152,6 +153,21 @@ void UOTGCourseData::FillPlayCourse(otg::PlayCourse& Out) const
 	Out.w = SurfaceW; Out.h = SurfaceH; Out.sMinX = SurfaceMinX; Out.sMaxZ = SurfaceMaxZ; Out.res = SurfaceRes;
 	Out.surfaces.assign(Surfaces.GetData(), Surfaces.GetData() + Surfaces.Num());
 	Out.minX = MinX; Out.maxX = MaxX; Out.minZ = MinZ; Out.maxZ = MaxZ;
+	FillBridges(Out);
+}
+
+void UOTGCourseData::FillBridges(otg::PlayCourse& Out) const
+{
+	Out.decks.clear();
+	for (const FOTGBridge& B : Bridges.Bridges)
+	{
+		otg::PlayCourse::Deck D;
+		D.ax = B.AX; D.az = B.AZ; D.ay = B.AY;
+		D.bx = B.BX; D.bz = B.BZ; D.by = B.BY;
+		D.halfW = B.HalfReach();
+		D.rise = B.bArch ? B.Rise : 0.0;
+		Out.decks.push_back(D);
+	}
 }
 
 void UOTGCourseData::FillTrees(otg::PlayTrees& Out) const

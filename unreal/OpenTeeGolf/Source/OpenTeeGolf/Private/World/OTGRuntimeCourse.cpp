@@ -78,6 +78,7 @@ void AOTGRuntimeCourse::Build(UOTGCourseData* D, TFunction<void(float, const FSt
 	FarLand.BuildFarLand();
 	Props.BuildHouses();   // (before the props: the export's blocks under Hearthline's houses left out there)
 	Props.BuildProps();
+	BuildBridges();
 	Turf.BuildGrass();
 	UE_LOG(LogOTGRuntimeCourse, Display, TEXT("%s built in %.1f s"), *D->CourseName, FPlatformTime::Seconds() - T0);
 }
@@ -100,7 +101,7 @@ void AOTGRuntimeCourse::BuildInSteps(UOTGCourseData* D, TFunction<void(float, co
 	Steps.Add({ TEXT("Rocks and water"), [this]() { Trees.BuildBoulders(); Water.BuildWater(); Water.BuildSea(); } });
 	Steps.Add({ TEXT("The land round it"), [this]() { FarLand.BuildFarLand(); } });
 	Steps.Add({ TEXT("Houses"), [this]() { Props.BuildHouses(); } });   // (OTGHouses.cpp: before the props - the export's blocks under them left out there)
-	Steps.Add({ TEXT("Paths and buildings"), [this]() { Props.BuildProps(); } });
+	Steps.Add({ TEXT("Paths and buildings"), [this]() { Props.BuildProps(); BuildBridges(); } });
 	Steps.Add({ TEXT("Grass"), [this]() { Turf.BuildGrass(); } });
 	StepsTotal = Steps.Num();
 	if (Progress) Progress(0.f, Steps[0].Key);
@@ -167,6 +168,7 @@ void AOTGRuntimeCourse::Tick(float Dt)
 	if ((Water.Lakes.Num() || Water.Rivers.Num() || Water.Sea) && FPlatformTime::Seconds() > Water.TidewrightCheckAt) { Water.TidewrightCheckAt = FPlatformTime::Seconds() + 0.5; Water.UpdateTidewright(); }
 	// (the picked one's marks: gone once the designer stops calling; the cone bobbing)
 	Trees.UpdateMarks();
+	UpdateMarkPoints();
 	// (BuildInSteps: one step a frame)
 	if (Steps.Num())
 	{

@@ -11,6 +11,7 @@
 #include "CoreMinimal.h"
 #include "Engine/DataAsset.h"
 #include "World/OTGTreeDesign.h"
+#include "World/OTGBridges.h"
 #include "OTGCourseData.generated.h"
 
 namespace otg
@@ -133,6 +134,11 @@ public:
 	// The course as the physics plays it
 	void FillPlayCourse(otg::PlayCourse& Out) const;
 	void FillTrees(otg::PlayTrees& Out) const;
+	// (the bridges' decks for the ball: FillPlayCourse does it, and the round again when they change)
+	void FillBridges(otg::PlayCourse& Out) const;
+
+	// The course's bridges, as its course designer left them (bridges.json; changed live by it)
+	FOTGBridgeDesign Bridges;
 
 	// The course's trees and rocks as its tree designer left them (trees_design.json; changed live by
 	// the designer), and the trees as they stand with it: each play tree (Trees, the same order as
