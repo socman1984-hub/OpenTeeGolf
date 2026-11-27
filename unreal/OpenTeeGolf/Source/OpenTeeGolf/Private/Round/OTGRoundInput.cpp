@@ -78,7 +78,7 @@ void AOTGRound::TestShot()
 	// one sized to the distance, a little off line (only on the player's turn: it's made for their
 	// club and distance)
 	if (bRange && Phase == EPhase::Resting && !bPaused) RangeMode.NewBall();   // (the range: a new ball, and hit it)
-	if (Phase != EPhase::Ready || bPaused)
+	if (Phase != EPhase::Ready || bPaused || !Online.MayHit())
 	{
 		HudView.Toast(TEXT("Test shot: wait for your turn"), 1.5f);
 		return;
@@ -118,7 +118,7 @@ void AOTGRound::Continue()
 
 void AOTGRound::DropNearPin(double Yards)
 {
-	if (Phase != EPhase::Ready) return;
+	if (Phase != EPhase::Ready || Online.bOn) return;
 	const otg::V3 P = Pin();
 	const double D = FMath::Max(0.1, DistToPin()), M = FMath::Max(0.3, Yards / M_TO_YD);
 	Ball = OnGround(P.x + (Ball.x - P.x) / D * M, P.z + (Ball.z - P.z) / D * M);
@@ -297,6 +297,7 @@ void AOTGRound::ToggleScorecard()
 void AOTGRound::Mulligan()
 {
 	if (bRange) return RangeMode.NewBall();
+	if (Online.bOn) { HudView.Toast(TEXT("No mulligans in an online game"), 2.f); return; }
 	if (!Undo || Phase != EPhase::Ready) return;
 	Ball = Undo->Ball; Strokes = Undo->Strokes; Lie = Undo->Lie; Heading = Undo->Heading;
 	Undo.Reset();

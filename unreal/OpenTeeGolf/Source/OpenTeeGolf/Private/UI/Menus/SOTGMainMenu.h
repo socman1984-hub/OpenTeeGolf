@@ -4,12 +4,14 @@
 //    recently played or newest - and for the one picked the tees, pins, where to start, 18 or 9
 //    holes, the weather, who's playing and the game), Practice (driving range, putt-putt), Course builder (find a real course on the map and build it:
 //    SOTGCourseBuilder), Players (the profiles: name, colour, handicap, hand, tees), Launch monitor
-//    (SOTGLaunchMonitorPanel.h), Settings and What's new (each version's changes); and a button to
-//    join the Discord
+//    (SOTGLaunchMonitorPanel.h), Online (host a game or join one, and its lobby: UOTGNetSubsystem),
+//    Settings and What's new (each version's changes); and a button to join the Discord
 //
 // The pages are in files of their own: SOTGMainMenu.cpp (the frame, the tabs, the update bar),
 // SOTGMainMenuPlay.cpp (the courses and the round's setup), SOTGMainMenuPractice.cpp (Practice and
-// Players), SOTGMainMenuInfo.cpp (Settings and What's new); their shared look: SOTGMenuStyle.h.
+// Players), SOTGMainMenuInfo.cpp (Settings and What's new), SOTGMainMenuOnline.cpp (Online, and the
+// window that asks what to do with a different version of the host's course); their shared look:
+// SOTGMenuStyle.h.
 
 #pragma once
 
@@ -43,7 +45,7 @@ public:
 	void SetPracticeMode(const FString& Name, TFunction<void()> Open);
 
 private:
-	enum class EPage : uint8 { Play, Practice, Build, Edit, Studio, Players, LaunchMonitor, Settings, WhatsNew };
+	enum class EPage : uint8 { Play, Practice, Build, Edit, Studio, Players, LaunchMonitor, Settings, WhatsNew, Online };
 	void Rebuild();
 	// What's new: each version's changes (WHATS_NEW.md, next to OpenTeeGolf.exe: unreal/release in the repo)
 	TSharedRef<SWidget> WhatsNewPage();
@@ -66,6 +68,20 @@ private:
 	const FSlateBrush* ThumbOf(const FString& Id);
 	TArray<FString> ThumbsWanted;
 	TSharedRef<SWidget> PlayersPage();
+	// Online: hosting (the Play page's course and round) or joining, then the game's lobby
+	TSharedRef<SWidget> OnlinePage();
+	TSharedRef<SWidget> CourseChoiceWindow();   // (joining with a different version of the host's course)
+	TSharedRef<SWidget> EditorsOff();           // (in place of the course builder and editors while in an online game)
+	class UOTGNetSubsystem* Net() const;
+	FOTGPlayerProfile OnlineMe() const;          // (who this computer's player is)
+	void LoadOnline();
+	void SaveOnline() const;
+	void OnlineTest();
+	int32 SeenNetRev = -1;
+	FString JoinAddress, OnlineProfile, OnlineName;
+	bool bOnlineTogether = false;
+	int32 OnlinePort = 7787;
+	FString HostProblem;
 	TSharedRef<SWidget> SettingsPage();
 	TSharedRef<SWidget> UpdateBar();
 	TSharedRef<SWidget> StartupWindow();   // (on start: an update offered, and downloaded, before the game)

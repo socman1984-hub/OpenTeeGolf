@@ -87,7 +87,8 @@ void FOTGRoundTurns::ShowOtherBalls()
 bool FOTGRoundTurns::RoundAfterShot()
 {
 	FOTGSide& Sd = Game->Sides[SideIdx];
-	if (Game->Single())
+	// (online, everyone at once: this computer's player plays on, whatever the others do)
+	if (Game->Single() || Round->Online.bTogether)
 	{
 		SaveSide();
 		Sd.Shots++;
@@ -143,7 +144,7 @@ void FOTGRoundTurns::BeginTurn(int32 I, bool bSameSpot)
 // Each player's round kept with their profile
 void FOTGRoundTurns::RecordRound()
 {
-	if (Round->Setup_.Picked.IsEmpty()) return;
+	if (Round->Setup_.Picked.IsEmpty() && !Round->Online.bOn) return;
 	TArray<FOTGPlayerProfile> Profiles = FOTGPlayers::Load();
 	for (const FOTGGamePlayer& P : Game->Players)
 	{

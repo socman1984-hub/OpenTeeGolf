@@ -5,6 +5,7 @@
 #include "World/OTGRuntimeCourse.h"
 #include "App/OTGHelperSubsystem.h"
 #include "Round/OTGMiniGolf.h"
+#include "App/OTGNetSubsystem.h"
 #include "Components/InstancedStaticMeshComponent.h"
 #include "Materials/MaterialInstanceDynamic.h"
 
@@ -49,11 +50,28 @@ DEFINE_LOG_CATEGORY_STATIC(LogOTGRound, Log, All);
 
 // ------------------------------------------------------------------ shots
 
+namespace
+{
+	// The shot's luck (leaves, branches, lip-outs): online, numbers from a seed every game has, so the
+	// ball flies the same on each
+	std::function<double()> Seeded(int32 Seed)
+	{
+		TSharedRef<FRandomStream> R = MakeShared<FRandomStream>(Seed);
+		return [R]() { return double(R->FRand()); };
+	}
+}
+
 void AOTGRound::OnShot(const FOTGShot& Shot)
 {
 	if (bPaused)
 	{
 		HudView.Toast(TEXT("Paused: the shot wasn't played"));
+		return;
+	}
+	// (online, taking turns: someone else's turn - their shot comes from their computer)
+	if (!Online.MayHit())
+	{
+		HudView.Toast(FString::Printf(TEXT("It's %s's turn"), *Online.SideName(Turns.SideIdx)), 2.f);
 		return;
 	}
 	// A swing while the last ball is still moving: finish that one at once, then play this one
@@ -102,26 +120,34 @@ void AOTGRound::OnShot(const FOTGShot& Shot)
 		O.rainMm = Weather.RainMm;
 	}
 	O.stimp = Data->DefaultStimp;
+	// (a putt-putt putt rolls: no chipping over the boards)
+	if (bMini) Play.vla = FMath::Min(Play.vla, 4.0);
+	const int32 Seed = FMath::Rand();
+	Online.SendShot(Shot, Play, O, Fx.speed, Fx.spin, Seed);
+	Online.bRemoteShot = false;
+	StartShot(Play, O, Fx.speed, Fx.spin, Seed);
+}
+
+void AOTGRound::StartShot(const otg::Shot& Play, otg::ShotOptions O, double FxSpeed, double FxSpin, int32 Seed)
+{
 	O.hasPin = true;
 	O.pin = Pin();
 	O.trees = &Trees;
 	O.collider = &Collider;
-	O.random = []() { return double(FMath::FRand()); };
-	if (bMini)
-	{
-		// (a putt rolls: no chipping over the boards; and the windmill's sails turn as it goes)
-		Play.vla = FMath::Min(Play.vla, 4.0);
-		if (AOTGMiniGolf* M = AOTGMiniGolf::In(GetWorld())) M->AddMovers(O);
-	}
+	Online.ShotSeed = Seed;
+	if (Online.bOn) O.random = Seeded(Seed);
+	else O.random = []() { return double(FMath::FRand()); };
+	// (the putt-putt windmill's sails turn as it goes)
+	if (bMini) if (AOTGMiniGolf* M = AOTGMiniGolf::In(GetWorld())) M->AddMovers(O);
 	const double T0 = FPlatformTime::Seconds();
 	Res = otg::SimulateShot(Course, Ball, Play, O);
 	bHasRes = true;
 	// (kept for a Mevo+ fast shot's full result: OnShotUpdate)
 	LastOpts = O;
-	LastFxSpeed = Fx.speed;
-	LastFxSpin = Fx.spin;
+	LastFxSpeed = FxSpeed;
+	LastFxSpin = FxSpin;
 	BlendT0 = -1;
-	UE_LOG(LogOTGRound, Display, TEXT("Shot from %s: %s -> %s, carry %.1f m, total %.1f m (%.0f ms)"), *SurfaceDisplay(Lie), *OTGShotLine(Shot),
+	UE_LOG(LogOTGRound, Display, TEXT("Shot from %s: %s -> %s, carry %.1f m, total %.1f m (%.0f ms)"), *SurfaceDisplay(Lie), *OTGShotLine(LastShot),
 		UTF8_TO_TCHAR(Res.result.c_str()), Res.carry, Res.total, (FPlatformTime::Seconds() - T0) * 1000);
 	Undo = FUndo{ Ball, Strokes, Lie, Heading };
 	PrevBall = Ball;
@@ -136,8 +162,8 @@ void AOTGRound::OnShot(const FOTGShot& Shot)
 	AimMesh->SetVisibility(false);
 	TellLaunchMonitor(false);
 	HudView.ShowShotData(false);
-	if (Lie != otg::Surface::Tee && Fx.speed < 1)
-		HudView.Toast(FString::Printf(TEXT("From the %s: -%d%% ball speed, -%d%% spin"), *SurfaceDisplay(Lie).ToLower(), FMath::RoundToInt((1 - Fx.speed) * 100), FMath::RoundToInt((1 - Fx.spin) * 100)), 3.f);
+	if (Lie != otg::Surface::Tee && FxSpeed < 1)
+		HudView.Toast(FString::Printf(TEXT("From the %s: -%d%% ball speed, -%d%% spin"), *SurfaceDisplay(Lie).ToLower(), FMath::RoundToInt((1 - FxSpeed) * 100), FMath::RoundToInt((1 - FxSpin) * 100)), 3.f);
 	HudView.UpdateHudInfo();
 }
 
@@ -158,6 +184,20 @@ void AOTGRound::OnShotUpdate(const FOTGShot& Shot)
 		HudView.ShowShotData(true);
 		return;
 	}
+	otg::Shot Play;
+	Play.speedMph = Shot.SpeedMph * LastFxSpeed;
+	Play.vla = bMini ? FMath::Min(Shot.VLA, 4.0) : Shot.VLA;
+	Play.hla = Shot.HLA;
+	Play.backSpin = Shot.BackSpin * LastFxSpin;
+	Play.sideSpin = Shot.SideSpin * LastFxSpin;
+	const int32 Seed = Online.ShotSeed + 1;
+	Online.SendUpdate(Play, Seed);
+	RefineShot(Play, Seed);
+	UE_LOG(LogOTGRound, Display, TEXT("Shot corrected by the full result: %s -> %s, carry %.1f m, total %.1f m"), *OTGShotLine(Shot), UTF8_TO_TCHAR(Res.result.c_str()), Res.carry, Res.total);
+}
+
+void AOTGRound::RefineShot(const otg::Shot& Play, int32 Seed)
+{
 	auto At = [this](const otg::ShotResult& R) {
 		const std::vector<otg::PathPoint>& Pts = R.points;
 		int32 N = 0;
@@ -172,25 +212,29 @@ void AOTGRound::OnShotUpdate(const FOTGShot& Shot)
 		if (N > 0) return otg::V3{ Pts.back().x, Pts.back().y, Pts.back().z };
 		return R.rest;
 	};
-	otg::Shot Play;
-	Play.speedMph = Shot.SpeedMph * LastFxSpeed;
-	Play.vla = bMini ? FMath::Min(Shot.VLA, 4.0) : Shot.VLA;
-	Play.hla = Shot.HLA;
-	Play.backSpin = Shot.BackSpin * LastFxSpin;
-	Play.sideSpin = Shot.SideSpin * LastFxSpin;
 	const otg::V3 Was = At(Res);
+	Online.ShotSeed = Seed;
+	if (Online.bOn) LastOpts.random = Seeded(Seed);
 	Res = otg::SimulateShot(Course, PrevBall, Play, LastOpts);
 	const otg::V3 Now = At(Res);
 	BlendOffset = otg::V3{ Was.x - Now.x, Was.y - Now.y, Was.z - Now.z };
 	BlendT0 = AnimT;
 	if (Res.hasCarryPoint && AnimT < Res.carryPoint.t) bCarryShown = false;
-	UE_LOG(LogOTGRound, Display, TEXT("Shot corrected by the full result: %s -> %s, carry %.1f m, total %.1f m"), *OTGShotLine(Shot), UTF8_TO_TCHAR(Res.result.c_str()), Res.carry, Res.total);
 	HudView.ShowShotData(false);
 }
 
 void AOTGRound::FinishShot()
 {
 	if (bRange) return RangeMode.RangeShotDone();
+	// (online: this computer's shot - where it finished, to the others; another's - their word on it)
+	const bool bRemote = Online.bRemoteShot;
+	FinishShotHere();
+	if (bRemote) Online.ApplyRest();
+	else Online.SendRest();
+}
+
+void AOTGRound::FinishShotHere()
+{
 	const otg::Surface Surface = Course.SurfaceAt(Res.rest.x, Res.rest.z);
 	// (into the water: a splash and rings where it went in)
 	if (Res.result == "water" || Surface == otg::Surface::Water) WaterFx.AddRipple(World(Res.rest));
@@ -365,8 +409,19 @@ void AOTGRound::HoleOut(bool bPickedUp, const FString& Note)
 	FString Small = FString::Printf(TEXT("Hole %d: %d (%s)%s"), H.Number, Total, *ToPar, Note.IsEmpty() ? TEXT("") : *(TEXT("  ·  ") + Note));
 	UE_LOG(LogOTGRound, Display, TEXT("Hole %d: %s%d (%s)"), H.Number, *Who, Total, *ToPar);
 	AimMesh->SetVisibility(false);
+	if (Online.IsLocalSide(Turns.SideIdx)) Online.SendHoled(Total, bPickedUp);
+	// (everyone at once online: done here, the others perhaps still playing)
+	if (Online.bTogether && !Online.AllDone())
+	{
+		Phase = EPhase::Between;
+		Online.bWaiting = true;
+		HudView.Banner(Title, Small + TEXT("\nWaiting for ") + Online.WaitingFor(), 4.f);
+		TellLaunchMonitor(false);
+		HudView.UpdateHudInfo();
+		return;
+	}
 	// Someone else still to finish the hole: their turn next
-	const int32 Next = Turns.Game->Next([this](const otg::V3& B) { return PinDist(B); });
+	const int32 Next = Online.bTogether ? -1 : Turns.Game->Next([this](const otg::V3& B) { return PinDist(B); });
 	if (Next >= 0)
 	{
 		Phase = EPhase::Between;
@@ -377,7 +432,12 @@ void AOTGRound::HoleOut(bool bPickedUp, const FString& Note)
 		HudView.UpdateHudInfo();
 		return;
 	}
-	// everyone's in
+	EveryoneIn(Title, Small);
+}
+
+// Everyone's finished the hole: its news, then the scorecard, then the next hole
+void AOTGRound::EveryoneIn(const FString& Title, FString Small)
+{
 	Turns.Game->EndHole();
 	Phase = EPhase::Holed;
 	if (!Turns.Game->Single())

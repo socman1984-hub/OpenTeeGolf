@@ -19,6 +19,7 @@ rest is in parts, each a class of its own (`Public/Round/OTGRoundParts.h`):
 | `FOTGRoundFlag` | `OTGRoundExtras.cpp` | The flag's cloth in the wind. |
 | `FOTGRoundSlopeGrid` | `OTGRoundSlopeGrid.cpp` | The slope grid on the green (G). |
 | `FOTGRoundRangeMode` | `OTGRoundRange.cpp` | The driving range. |
+| `FOTGRoundNet` | `OTGRoundNet.cpp` | An online game's other players: their shots flown here (taking turns: on the round's own ball; everyone at once: their own balls and tracers), where they finished, the hole gate, the host's weather. |
 
 The round's own code is spread by purpose: `OTGRound.cpp` (setup, the hole, every frame),
 `OTGRoundShot.cpp` (shots), `OTGRoundInput.cpp` (the keys), `OTGRoundCommands.cpp` (the `OTG.Round.*`

@@ -404,12 +404,15 @@ void FOTGRoundFlag::UpdateFlag(float Dt)
 
 void AOTGRound::ToggleWeatherPanel()
 {
+	if (Online.FollowsWeather()) { HudView.Toast(TEXT("The host sets the weather in an online game"), 2.5f); return; }
 	if (Hud) Hud->ShowWeatherPanel(!Hud->IsWeatherPanelShown());
 }
 
 void AOTGRound::ToggleGrassDesigner(int32 Tab)
 {
 	if (!Hud) return;
+	// (online: everyone's course has to stay the same as the host's)
+	if (Online.bOn) { HudView.Toast(TEXT("The course designer is off in an online game"), 2.5f); return; }
 	const bool bShow = !Hud->IsDesignerShown();
 	if (bShow)
 	{

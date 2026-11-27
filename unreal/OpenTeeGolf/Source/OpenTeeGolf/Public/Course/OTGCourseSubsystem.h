@@ -28,6 +28,8 @@ struct FOTGCourseInfo
 	UPROPERTY(BlueprintReadOnly) int32 Holes = 0;
 	// an exported course's folder (empty: a course pack)
 	UPROPERTY(BlueprintReadOnly) FString ExportDir;
+	// a saved copy of another player's version (online games): whose it was (empty: your own)
+	UPROPERTY(BlueprintReadOnly) FString SharedFrom;
 };
 
 UCLASS()

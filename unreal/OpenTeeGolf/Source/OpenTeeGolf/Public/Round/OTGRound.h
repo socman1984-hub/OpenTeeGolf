@@ -141,6 +141,7 @@ private:
 	friend struct FOTGRoundFlag;
 	friend struct FOTGRoundSlopeGrid;
 	friend struct FOTGRoundRangeMode;
+	friend struct FOTGRoundNet;
 	FOTGRoundTurns Turns;
 	FOTGRoundCamera Camera;
 	FOTGRoundHud HudView;
@@ -151,6 +152,7 @@ private:
 	FOTGRoundFlag Flag;
 	FOTGRoundSlopeGrid SlopeGrid;
 	FOTGRoundRangeMode RangeMode;
+	FOTGRoundNet Online;
 
 	// the golf
 	void StartHole(int32 Index);
@@ -158,6 +160,13 @@ private:
 	void AutoClub();
 	void SetClub(const FString& Code);
 	void FinishShot();
+	void FinishShotHere();
+	// A shot flown (its lie's effect already in Play; the options' wind and air set, the course's
+	// trees, collider and pin added here): this computer's player's, or an online game's other player's
+	void StartShot(const otg::Shot& Play, otg::ShotOptions O, double FxSpeed, double FxSpin, int32 Seed);
+	// (a Mevo+ fast shot's full result: the shot in the air flown again from the same start)
+	void RefineShot(const otg::Shot& Play, int32 Seed);
+	void EveryoneIn(const FString& Title, FString Small);
 	void NextShot();
 	double PinDist(const otg::V3& B) const;
 	// the weather (main.js setupWeather, wind, shotWind)
