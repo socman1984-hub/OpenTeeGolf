@@ -446,7 +446,7 @@ void UOTGLaunchMonitorSubsystem::Compose()
 	const FOTGLMDeviceState Oc = OcOut ? OcOut->Read() : FOTGLMDeviceState();
 	S.PortError = Oc.PortError;
 	const FOTGLMDeviceState D = DevOut ? DevOut->Read() : FOTGLMDeviceState();
-	// (FS Golf, rēlā and the MLM2PRO Connector all send to the OpenConnect listener: the last two as to GSPro)
+	// (FS Golf, rēlā and the MLM2PRO Connector all send to the OpenConnect listener)
 	if (ViaOpenConnect(Connection))
 	{
 		S.bConnected = Oc.bConnected;

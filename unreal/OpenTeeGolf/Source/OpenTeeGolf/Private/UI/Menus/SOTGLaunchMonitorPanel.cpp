@@ -107,8 +107,8 @@ void SOTGLaunchMonitorPanel::Rebuild()
 		case EOTGConnection::Direct: return TEXT("Join this PC to the Mevo+'s Wi-Fi (FS M2-...); FS Golf must be closed.");
 		case EOTGConnection::R10: return TEXT("Pair the R10 in Windows Bluetooth settings; the game runs its bridge program.");
 		case EOTGConnection::Square: return TEXT("Turn the Square Golf on; the game runs its bridge program.");
-		case EOTGConnection::Rela: return FString::Printf(TEXT("In rēlā (docs.rela.golf), connect your launch monitor, choose GSPro as the simulator, and in Settings > Simulator Connection set the host to this PC (127.0.0.1 if rēlā runs here) and the port to %d. Then start it."), L->GetOpenConnectPort());
-		case EOTGConnection::Rapsodo: return FString::Printf(TEXT("Run the MLM2PRO Connector (github.com/springbok/MLM2PRO-GSPro-Connector). In the Rapsodo app, authorise GSPro under third-party apps (it expires, so redo it when the Connector says so). In the Connector's settings set the GSPro address to this PC (127.0.0.1 if it runs here) and the port to %d, then connect the MLM2PRO (steady red light). Putts don't come from the MLM2PRO."), L->GetOpenConnectPort());
+		case EOTGConnection::Rela: return FString::Printf(TEXT("In rēlā (docs.rela.golf), connect your launch monitor, and in Settings > Simulator Connection set the host to this PC (127.0.0.1 if rēlā runs here) and the port to %d. Then start it."), L->GetOpenConnectPort());
+		case EOTGConnection::Rapsodo: return FString::Printf(TEXT("Run the free MLM2PRO Connector, set up as its own instructions say (including the authorisation in the Rapsodo app, which expires: redo it when the Connector says so). In the Connector's settings send to this PC (127.0.0.1 if it runs here) and the port to %d, then connect the MLM2PRO (steady red light). Putts don't come from the MLM2PRO."), L->GetOpenConnectPort());
 		default: return TEXT("The device's Flight Relay Protocol address (ws://...).");
 		}
 	};

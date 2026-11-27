@@ -191,10 +191,10 @@ async function mevoDropRun() {
 }
 
 // ---------------------------------------------------------------- Rapsodo MLM2PRO (MLM2PRO Connector)
-// The Connector sends to the OpenConnect listener as it would to GSPro; the game shows its own name
+// The Connector sends to the OpenConnect listener; the game shows its own name
 // while it waits and takes the shot like any other OpenConnect one
 async function rapsodoRun() {
-  console.log('Rapsodo MLM2PRO through the MLM2PRO Connector (OpenConnect, as to GSPro)');
+  console.log('Rapsodo MLM2PRO through the MLM2PRO Connector (OpenConnect)');
   const ocPort = await freePort();
   const replies = [];
   let sent = false;

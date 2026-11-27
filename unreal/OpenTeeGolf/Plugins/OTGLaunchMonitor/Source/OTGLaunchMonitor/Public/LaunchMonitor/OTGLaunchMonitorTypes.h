@@ -10,8 +10,8 @@
 // How shots arrive: FS Golf through OpenConnect (the OpenConnect listener always runs), the Mevo+
 // directly over its Wi-Fi, a Garmin R10 or Square Golf through their bridge programs, any Flight
 // Relay Protocol device, or rēlā (docs.rela.golf: a connector for many launch monitors, sending to
-// the OpenConnect listener as it would to GSPro), or a Rapsodo MLM2PRO through the community
-// MLM2PRO Connector (github.com/springbok/MLM2PRO-GSPro-Connector), which also sends as to GSPro
+// the OpenConnect listener), or a Rapsodo MLM2PRO through the community MLM2PRO Connector, which
+// also sends to the OpenConnect listener
 UENUM(BlueprintType)
 enum class EOTGConnection : uint8
 {
@@ -20,7 +20,7 @@ enum class EOTGConnection : uint8
 	R10 UMETA(DisplayName = "Garmin R10"),
 	Square UMETA(DisplayName = "Square Golf"),
 	Frp UMETA(DisplayName = "Flight Relay Protocol device"),
-	Rela UMETA(DisplayName = "rela (GSPro output, OpenConnect)"),
+	Rela UMETA(DisplayName = "rela (OpenConnect)"),
 	Rapsodo UMETA(DisplayName = "Rapsodo MLM2PRO (MLM2PRO Connector, OpenConnect)"),
 };
 

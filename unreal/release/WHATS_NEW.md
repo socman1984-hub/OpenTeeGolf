@@ -11,7 +11,7 @@ A version's heading is "## <version> - <date>", and its changes are "- " lines u
 - Online games: play a round with friends on other computers from the new Online page. One of you hosts the Play page's course and round; the others join with the host's address (on the same network, or over the internet with TCP port 7787 forwarded on the host's router). You all need the same version of the game.
 - Anyone without the course gets it from the host, only the files they don't already have. If yours is a different version of it, you choose: keep yours and save the host's beside it as a copy, or overwrite yours.
 - Online, take turns and watch each other's shots, or everyone plays at once with all the balls and tracers on screen; nobody goes on to the next hole until everyone has finished it. The host's weather is everyone's, and nobody can change the course during an online game.
-- Rapsodo MLM2PRO: a new choice in the Launch monitor panel, through the free MLM2PRO Connector. Authorise GSPro in the Rapsodo app, and in the Connector send to this PC, port 921. Putts still come from the game.
+- Rapsodo MLM2PRO: a new choice in the Launch monitor panel, through the free MLM2PRO Connector. Set it up as its own instructions say, and in the Connector send to this PC, port 921. Putts still come from the game.
 - Course editor, Tall grass: Mark a patch - click a patch of tall grass (found in the photo or painted) and it becomes an area of the grass biome picked, traced round its edge.
 - Course editor, Trees: pick trees yourself for a forest (shift-click them or shift-drag a box), join one forest to another with Join another forest to it, and Go to it to see a forest whole.
 - In a round (R), Trees and rocks: Go to it flies the free view to see the forests picked.
@@ -39,7 +39,7 @@ A version's heading is "## <version> - <date>", and its changes are "- " lines u
 - In a round (R), Grass: choose which grass biome the course's tall grass grows, and each area you drew in the course editor.
 
 ## 0.26.2 - 25 November 2026
-- rēlā: a new choice in the Launch monitor panel. rēlā (docs.rela.golf) connects many launch monitors, such as SkyTrak, GC2, FlightScope, Nova, Mevo+, R10 and Square. In rēlā choose GSPro as the simulator and, under Settings > Simulator Connection, this PC (127.0.0.1) and port 921.
+- rēlā: a new choice in the Launch monitor panel. rēlā (docs.rela.golf) connects many launch monitors, such as SkyTrak, GC2, FlightScope, Nova, Mevo+, R10 and Square. In rēlā, under Settings > Simulator Connection, send to this PC (127.0.0.1) and port 921.
 
 ## 0.26.1 - 25 November 2026
 - New course is now called Course builder. A course already in the game is edited from the Play page: pick it, then Edit this course. Update its map data is there too.
