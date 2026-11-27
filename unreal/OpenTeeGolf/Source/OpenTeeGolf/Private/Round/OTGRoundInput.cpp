@@ -142,7 +142,7 @@ void AOTGRound::SurfaceTest()
 		otg::Surface::DeepRough, otg::Surface::Native, otg::Surface::Sand, otg::Surface::Path, otg::Surface::Water };
 	otg::ShotOptions O;
 	O.altitudeM = Data->AltitudeM;
-	O.tempC = Weather.TempC; O.humidity = Weather.Humidity; O.pressureHpa = Weather.PressureHpa; O.wet = Weather.Wetness();
+	O.tempC = Weather.TempC; O.humidity = Weather.Humidity; O.pressureHpa = Weather.PressureHpa; O.wet = Weather.Wetness(); O.rainMm = Weather.RainMm;
 	O.stimp = Data->DefaultStimp;
 	O.trees = &Trees;
 	O.collider = &Collider;

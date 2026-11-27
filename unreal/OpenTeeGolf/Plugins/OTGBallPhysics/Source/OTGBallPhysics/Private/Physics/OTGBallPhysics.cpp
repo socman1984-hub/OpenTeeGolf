@@ -313,7 +313,7 @@ namespace otg
 				if (a.speed >= MIN_AERO_SPEED)
 				{
 					const double q = 0.5 * env.rho * AREA * a.speed / MASS;
-					acc = add(acc, air, -q * a.cd);
+					acc = add(acc, air, -q * a.cd * env.rainDragScale);
 					const double wl = len(s.w);
 					if (wl > 0.1) acc = add(acc, cross(s.w, air), q * a.cl / wl);
 				}
@@ -850,6 +850,10 @@ namespace otg
 		env.rho = of::AirDensity(opts.altitudeM, tempC, opts.humidity, opts.pressureHpa > 0 ? opts.pressureHpa * 100 : 0);
 		env.mu = of::AirViscosity(tempC);
 		env.groundY = origin.y;
+		// Heavy rain: the drops the ball flies through, and the water on it, slow it a little more than
+		// the air alone. Nothing in light rain; from moderate rain up a few percent more drag - a storm
+		// costs a long shot a few yards of carry (the launch monitor already measures a wet clubface)
+		env.rainDragScale = 1 + 0.03 * std::min(1.0, std::max(0.0, (opts.rainMm - 1.5) / 5.5));
 		const double wet = std::min(1.0, std::max(0.0, opts.wet));
 		const double greenRolling = of::GreenRollingFriction(std::max(6.0, opts.stimp - 1.8 * wet));
 		std::map<Surface, of::SurfaceParams> settings;

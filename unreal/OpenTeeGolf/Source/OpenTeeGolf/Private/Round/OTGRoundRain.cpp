@@ -56,10 +56,13 @@ void FOTGRoundRain::UpdateRain(float Dt)
 		if (RainVerts) { RainMesh->ClearAllMeshSections(); RainVerts = 0; RainDrops.Reset(); }
 		return;
 	}
-	const int32 N = FMath::Clamp(int32(900 + Mm * 450), 900, 4500);
+	// (more the harder it rains: a storm's thick with it)
+	const int32 N = FMath::Clamp(int32(900 + Mm * 650), 900, 5500);
 	const FVector Half(2200, 2200, 1300);
-	const FVector C = Round->Camera.CamPos;
-	if (RainDrops.Num() != N)
+	const FVector C = Round->Camera.EyePos();
+	// (a fresh fall round the camera when there's none yet, or the view jumped - the free view
+	// toggled, a new hole: else the drops trail in from where it was)
+	if (RainDrops.Num() != N || FVector::DistSquared(C, RainCentre) > 3000.0 * 3000.0)
 	{
 		RainDrops.SetNum(N);
 		for (FVector& D : RainDrops) D = C + FVector(FMath::FRandRange(-Half.X, Half.X), FMath::FRandRange(-Half.Y, Half.Y), FMath::FRandRange(-400, Half.Z));
@@ -83,12 +86,16 @@ void FOTGRoundRain::UpdateRain(float Dt)
 		const float K = float(((uint32(i) * 2654435761u) >> 8) & 0xFFFFu) / 65535.f;
 		D += V * (0.8 + 0.4 * K) * Dt;
 		FVector R = D - C;
-		if (R.Z < -400) { R.Z += Half.Z + 400; R.X = FMath::FRandRange(-Half.X, Half.X); R.Y = FMath::FRandRange(-Half.Y, Half.Y); }
-		if (R.X < -Half.X) R.X += 2 * Half.X; else if (R.X > Half.X) R.X -= 2 * Half.X;
-		if (R.Y < -Half.Y) R.Y += 2 * Half.Y; else if (R.Y > Half.Y) R.Y -= 2 * Half.Y;
+		// (kept in the box round the camera, however fast it moves: the free view flown fast covers
+		// many boxes a frame)
+		auto Wrap = [](double X, double Lo, double Hi) { const double W = Hi - Lo; return Lo + FMath::Fmod(FMath::Fmod(X - Lo, W) + W, W); };
+		if (R.Z < -400) { R.Z = Wrap(R.Z, -400, Half.Z); R.X = FMath::FRandRange(-Half.X, Half.X); R.Y = FMath::FRandRange(-Half.Y, Half.Y); }
+		else if (R.Z > Half.Z) R.Z = Wrap(R.Z, -400, Half.Z);
+		R.X = Wrap(R.X, -Half.X, Half.X);
+		R.Y = Wrap(R.Y, -Half.Y, Half.Y);
 		D = C + R;
 		// (none right in front of the lens: a drop there is a blur across the view)
-		if ((D - C).SizeSquared() < 450 * 450) D += FVector(0, 0, Half.Z);
+		if ((D - C).SizeSquared() < 450 * 450) D.Z = C.Z + Half.Z - 1;
 		const FVector ToCam = (C - D).GetSafeNormal();
 		// (thin; a far one a touch wider so it doesn't flicker to nothing)
 		const double Far = FMath::Clamp((D - C).Size() / 2000.0, 0.0, 1.0);
@@ -99,6 +106,7 @@ void FOTGRoundRain::UpdateRain(float Dt)
 		UV.Append({ FVector2D(0, 0), FVector2D(1, 0), FVector2D(0, 1), FVector2D(1, 1) });
 		Tris.Append({ B, B + 2, B + 1, B + 1, B + 2, B + 3 });
 	}
+	RainCentre = C;
 	if (RainVerts != Verts.Num())
 	{
 		RainMesh->CreateMeshSection_LinearColor(0, Verts, Tris, TArray<FVector>(), UV, TArray<FLinearColor>(), TArray<FProcMeshTangent>(), false);
@@ -106,5 +114,5 @@ void FOTGRoundRain::UpdateRain(float Dt)
 		RainVerts = Verts.Num();
 	}
 	else RainMesh->UpdateMeshSection_LinearColor(0, Verts, TArray<FVector>(), UV, TArray<FLinearColor>(), TArray<FProcMeshTangent>());
-	RainMat->SetScalarParameterValue(TEXT("Opacity"), float(FMath::Clamp(0.14 + Mm * 0.03, 0.14, 0.34)));
+	RainMat->SetScalarParameterValue(TEXT("Opacity"), float(FMath::Clamp(0.14 + Mm * 0.055, 0.14, 0.52)));
 }

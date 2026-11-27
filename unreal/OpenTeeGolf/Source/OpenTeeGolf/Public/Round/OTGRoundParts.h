@@ -73,6 +73,8 @@ struct FOTGRoundCamera
 	void FreeFly(float Dt, const FVector& Move, const FVector2D& Look, bool bFast);
 	void FreeLookAt(const FVector& Target, double Dist, double Height, double YawDeg);
 	void AddReferencedObjects(FReferenceCollector& Collector);
+	// Where the view really is: the free view's own place while flown (CamPos stays with the ball)
+	FVector EyePos() const { return bFreeView ? FreePos : CamPos; }
 
 	TObjectPtr<ACameraActor> Cam;
 	FVector CamGoal = FVector::ZeroVector, CamLook = FVector::ZeroVector, CamPos = FVector::ZeroVector, CamLookNow = FVector::ZeroVector;
@@ -132,6 +134,7 @@ struct FOTGRoundScene
 	TObjectPtr<AMeridianSkyActor> Sky;
 	bool bSkyTried = false;
 	TWeakObjectPtr<UExponentialHeightFogComponent> LevelFog;   // (kept: the level's haze, not Meridian's)
+	FLinearColor OrigFogLight = FLinearColor(-1, -1, -1), OrigFogSkyScale = FLinearColor::White;   // (its own light, before rain greys it)
 	TObjectPtr<UOTGWeatherSound> WxSound;
 	TObjectPtr<UAudioComponent> WxAudio;
 	float NextBolt = 5.f, BoltAge = 99.f, BoltNear = 0.f;
@@ -166,6 +169,7 @@ struct FOTGRoundRain
 	TObjectPtr<UProceduralMeshComponent> RainMesh;
 	TObjectPtr<UMaterialInstanceDynamic> RainMat;
 	TArray<FVector> RainDrops;
+	FVector RainCentre = FVector::ZeroVector;   // (where the camera was last frame)
 	int32 RainVerts = 0;
 	struct FSplash { FVector P; float Age = 0, Size = 1; };
 	TArray<FSplash> Splashes;

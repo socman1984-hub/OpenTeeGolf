@@ -65,6 +65,7 @@ namespace otg
 		struct Env
 		{
 			double rho = 1.225, mu = 1.789e-5, groundDragScale = 1.01;
+			double rainDragScale = 1;   // (heavy rain: the ball pushing through the drops - RainDragScale)
 			V3 wind;
 			double windReferenceM = 10, windRoughnessM = 0.03, groundY = 0;
 		};
@@ -171,6 +172,7 @@ namespace otg
 		double altitudeM = 0, tempC = 20, humidity = 0.5, pressureHpa = 0;  // (0: not measured)
 		double windMps = 0, windFromDeg = 0;
 		double wet = 0, stimp = 10;
+		double rainMm = 0;   // (mm an hour: heavy rain takes a little off the carry)
 		bool hasPin = false;
 		V3 pin;
 		const Trees* trees = nullptr;

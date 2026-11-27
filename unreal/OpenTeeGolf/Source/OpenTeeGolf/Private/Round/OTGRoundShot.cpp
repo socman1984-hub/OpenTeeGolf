@@ -99,6 +99,7 @@ void AOTGRound::OnShot(const FOTGShot& Shot)
 		O.humidity = Weather.Humidity;
 		O.pressureHpa = Weather.PressureHpa;
 		O.wet = Weather.Wetness();
+		O.rainMm = Weather.RainMm;
 	}
 	O.stimp = Data->DefaultStimp;
 	O.hasPin = true;

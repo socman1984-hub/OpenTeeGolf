@@ -326,7 +326,7 @@ void FOTGRoundScene::ApplyWeatherToScene()
 		UExponentialHeightFogComponent* F = It->GetComponent();
 		if (!F) continue;
 		if (BaseFogDensity < 0) BaseFogDensity = F->FogDensity;
-		F->SetFogDensity(FMath::Lerp(BaseFogDensity, 0.25f, float(FMath::Min(1.0, Round->Weather.Fog + (Round->Weather.RainMm > 0.05 ? 0.06 : 0.0)))));
+		F->SetFogDensity(FMath::Lerp(BaseFogDensity, 0.25f, float(FMath::Min(1.0, Round->Weather.Fog + Round->Weather.RainMist()))));
 		break;
 	}
 	// an overcast sky: grey rather than blue - more haze (white), the blue taken out of what the sky

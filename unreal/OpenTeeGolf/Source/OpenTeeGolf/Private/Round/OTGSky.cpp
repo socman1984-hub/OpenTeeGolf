@@ -39,6 +39,7 @@
 DEFINE_LOG_CATEGORY_STATIC(LogOTGSky, Log, All);
 
 static TAutoConsoleVariable<float> CVarSkyFog(TEXT("OTG.Sky.Fog"), 0.4f, TEXT("Meridian's own fog, when the level has none of its own (x the level's fog as the look has it)"));
+static TAutoConsoleVariable<float> CVarMistLight(TEXT("OTG.Weather.MistLight"), 1.f, TEXT("How bright the rain's grey mist is lit (x)"));
 static TAutoConsoleVariable<float> CVarSkyBoost(TEXT("OTG.Sky.CloudBoost"), 1.5f, TEXT("The Meridian sky's sky light under full cloud (x)"));
 
 namespace
@@ -218,7 +219,7 @@ void FOTGRoundScene::ApplySky()
 	S.Storminess = FMath::Max(Storm, 0.2f * Over);
 	// (rain thickens the haze, a storm's most: the far rain, greying a hole's far end smoothly with
 	// distance - no sheet of it standing at one distance)
-	const double RainHaze = Mm > 0.05 ? 0.06 + 0.1 * Storm : 0.0;
+	const double RainHaze = Round->Weather.RainMist();
 	// (Meridian squares its fogginess: the root keeps our fog as thick as it was)
 	S.Fogginess = FMath::Sqrt(float(FMath::Min(1.0, Round->Weather.Fog + RainHaze)));
 	S.Rain = Mm > 0.05 ? float(FMath::Clamp(0.2 + Mm / 7.0, 0.0, 1.0)) : 0.f;
@@ -237,7 +238,17 @@ void FOTGRoundScene::ApplySky()
 	Sky->SkyLightIntensity = OrigSky * Cv(TEXT("OTG.Look.Sky"), 1.3f) * FMath::Lerp(1.f, 0.85f, Over);
 	Sky->FogDensityRange.X = OrigFog * Cv(TEXT("OTG.Look.Fog"), 0.5f) * CVarSkyFog.GetValueOnGameThread();
 	if (UExponentialHeightFogComponent* LF = LevelFog.Get())
+	{
 		LF->SetFogDensity(FMath::Lerp(OrigFog * Cv(TEXT("OTG.Look.Fog"), 0.5f), 0.25f, float(FMath::Min(1.0, Round->Weather.Fog + RainHaze))));
+		// (rain's mist grey, not the sky's colour: lit by the dark storm sky, thicker fog only reads as
+		// a darker blue - grey spray hanging in the air, the far end of the hole washed out, is what
+		// makes heavy rain look heavy)
+		if (OrigFogLight.R < 0) { OrigFogLight = LF->FogInscatteringLuminance; OrigFogSkyScale = LF->SkyAtmosphereAmbientContributionColorScale; }
+		const float Mist = float(FMath::Clamp(RainHaze / 0.4, 0.0, 1.0));
+		const FLinearColor Grey = FLinearColor(0.62f, 0.66f, 0.72f) * FMath::Lerp(0.8f, 0.5f, Storm) * CVarMistLight.GetValueOnGameThread();
+		LF->SetFogInscatteringColor(FMath::Lerp(OrigFogLight, Grey, Mist));
+		LF->SetSkyAtmosphereAmbientContributionColorScale(FMath::Lerp(OrigFogSkyScale, FLinearColor(0.1f, 0.1f, 0.1f), Mist));
+	}
 	Sky->CloudySkyLightBoost = CVarSkyBoost.GetValueOnGameThread();
 	if (UDirectionalLightComponent* Sun = Part<UDirectionalLightComponent>(Sky, TEXT("SunLight")))
 	{
@@ -249,7 +260,8 @@ void FOTGRoundScene::ApplySky()
 	Sky->UpdateSky();
 	if (USkyLightComponent* SL = Part<USkyLightComponent>(Sky, TEXT("SkyLight"))) if (!SL->bRealTimeCapture) SL->RecaptureSky();
 	// (the rain's streaks far off grey under a dark sky; rain and storms are darker days)
-	if (Round->RainFx.RainMat) Round->RainFx.RainMat->SetVectorParameterValue(TEXT("Tint"), FMath::Lerp(FLinearColor(0.75f, 0.78f, 0.82f), FLinearColor(0.58f, 0.61f, 0.66f), Dim));
+	// (and pale against a storm's grey mist, or they're lost in it)
+	if (Round->RainFx.RainMat) Round->RainFx.RainMat->SetVectorParameterValue(TEXT("Tint"), FMath::Lerp(FMath::Lerp(FLinearColor(0.75f, 0.78f, 0.82f), FLinearColor(0.58f, 0.61f, 0.66f), Dim), FLinearColor(0.9f, 0.92f, 0.95f), float(FMath::Clamp(RainHaze / 0.4, 0.0, 1.0))));
 	if (LookVolume)
 	{
 		const float Gloom = float(FMath::Clamp((Mm - 0.05) / 7.0, 0.0, 1.0));

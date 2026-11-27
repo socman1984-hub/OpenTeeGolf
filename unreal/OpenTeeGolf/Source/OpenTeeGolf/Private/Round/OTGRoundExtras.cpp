@@ -254,7 +254,7 @@ void FOTGRoundRain::UpdateRainFar(float Dt, double Mm)
 		SplashCarry -= 1.f;
 		if (Splashes.Num() >= 500) continue;
 		const double D = 300.0 + FMath::Sqrt(FMath::FRand()) * 1500.0;
-		FVector P = Round->Camera.CamPos + Fwd.RotateAngleAxis(FMath::FRandRange(-65.f, 65.f), FVector::UpVector) * D;
+		FVector P = Round->Camera.EyePos() + Fwd.RotateAngleAxis(FMath::FRandRange(-65.f, 65.f), FVector::UpVector) * D;
 		const FVector C = Round->Data->WorldToCourse(P);
 		// (only where a drop would splash: a path's hard top; sand a small low puff; anything grown none)
 		const otg::Surface Su = Round->Course.SurfaceAt(C.X, C.Z);
@@ -276,7 +276,7 @@ void FOTGRoundRain::UpdateRainFar(float Dt, double Mm)
 		if (S.Age > 0.2f) { Splashes.RemoveAtSwap(i); continue; }
 		const float K = S.Age / 0.2f;
 		const double Up = 6.0 * S.Size * FMath::Sin(PI * FMath::Min(1.f, K * 1.4f)), Out = 4.0 * S.Size * K;
-		const FVector ToCam = (Round->Camera.CamPos - S.P).GetSafeNormal();
+		const FVector ToCam = (Round->Camera.EyePos() - S.P).GetSafeNormal();
 		for (int32 k = 0; k < 3; k++)
 		{
 			const FVector Dir = FVector(FMath::Cos(k * 2.1 + i), FMath::Sin(k * 2.1 + i), 0);
@@ -696,7 +696,7 @@ void FOTGRoundWaterFx::UpdateRipples(float Dt)
 		if (R.Age < SprayTime && Round->Camera.Cam)
 		{
 			const float K = R.Age / SprayTime;
-			const FVector ToCam = (Round->Camera.CamPos - R.P).GetSafeNormal();
+			const FVector ToCam = (Round->Camera.EyePos() - R.P).GetSafeNormal();
 			for (int32 k = 0; k < 10; k++)
 			{
 				const FVector Dir(FMath::Cos(k * 0.63 + i), FMath::Sin(k * 0.63 + i), 0);
