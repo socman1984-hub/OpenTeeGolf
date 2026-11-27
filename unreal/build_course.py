@@ -625,7 +625,9 @@ def build_ground(land):
             mel.connect_material_expressions(const(0.4, -1550, y0 + 320), "", nb, "Alpha")
             n = nb
         dk = op(unreal.MaterialExpressionMultiply, r, w, -1200, 1600 + i * 500, "", wout)
-        nk = op(unreal.MaterialExpressionMultiply, n, w, -1200, 1850 + i * 500, "" if k == "lawn" else "RGB", wout)
+        # (the lawn's and the rough's normal is the Lerp of their two repeats - one output, no "RGB": asked
+        # for "RGB" the link failed, the rough's normal came out nothing and it took no sunlight, navy)
+        nk = op(unreal.MaterialExpressionMultiply, n, w, -1200, 1850 + i * 500, "" if k in ("lawn", "rough") else "RGB", wout)
         detail = dk if detail is None else op(unreal.MaterialExpressionAdd, detail, dk, -1000, 1600 + i * 500)
         normal = nk if normal is None else op(unreal.MaterialExpressionAdd, normal, nk, -1000, 1850 + i * 500)
     # (water: no detail, flat)
