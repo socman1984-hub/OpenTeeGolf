@@ -43,6 +43,8 @@ void UOTGUpdateSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
 	Super::Initialize(Collection);
 	if ((GIsEditor && !FParse::Param(FCommandLine::Get(), TEXT("game"))) || FParse::Param(FCommandLine::Get(), TEXT("noupdate"))) return;
+	// (the update step is a Windows batch file: elsewhere, a new release is unzipped by hand)
+	if (!PLATFORM_WINDOWS) { UE_LOG(LogOTGUpdate, Display, TEXT("Updates off: Windows only")); return; }
 	FString Text;
 	if (!FFileHelper::LoadFileToString(Text, *(Root() / TEXT("manifest.json"))) || !Parse(Text, Installed))
 	{

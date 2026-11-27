@@ -23,6 +23,9 @@
 #include "Sockets.h"
 #include "SocketSubsystem.h"
 #include "IPAddress.h"
+#if PLATFORM_UNIX
+#include <sys/stat.h>
+#endif
 
 DEFINE_LOG_CATEGORY_STATIC(LogOTGHelper, Log, All);
 
@@ -241,15 +244,27 @@ FString UOTGHelperSubsystem::HelperDir(bool* bDev) const
 
 FString UOTGHelperSubsystem::NodeExe(const FString& Dir) const
 {
-	const FString Own = FPaths::Combine(Dir, TEXT("node"), TEXT("node.exe"));
-	if (OnDisk(Own)) return Own;
+#if PLATFORM_WINDOWS
+	const TCHAR* NodeName = TEXT("node.exe");
+#else
+	const TCHAR* NodeName = TEXT("node");
+#endif
+	// (its own: node\node.exe on Windows, node/bin/node - the official Linux tarball's layout - or node/node)
+	for (const FString& Own : { FPaths::Combine(Dir, TEXT("node"), NodeName), FPaths::Combine(Dir, TEXT("node"), TEXT("bin"), NodeName) })
+	{
+		if (!OnDisk(Own)) continue;
+#if PLATFORM_UNIX
+		chmod(TCHAR_TO_UTF8(*Own), 0755); // (a zip made on Windows loses the execute bit)
+#endif
+		return Own;
+	}
 	// (else the one on the PATH)
 	const FString Path = FPlatformMisc::GetEnvironmentVariable(TEXT("PATH"));
 	TArray<FString> Parts;
-	Path.ParseIntoArray(Parts, TEXT(";"));
+	Path.ParseIntoArray(Parts, FPlatformMisc::GetPathVarDelimiter());
 	for (const FString& P : Parts)
 	{
-		const FString Exe = FPaths::Combine(P.TrimQuotes(), TEXT("node.exe"));
+		const FString Exe = FPaths::Combine(P.TrimQuotes(), NodeName);
 		if (OnDisk(Exe)) return Exe;
 	}
 	return FString();
@@ -372,12 +387,14 @@ void UOTGHelperSubsystem::Stop()
 		FPlatformProcess::CloseProc(Proc);
 		// (an export's browser isn't in its tree - Edge starts itself again - but runs on a profile
 		// named after the helper: lib/helper.js; the next helper would clear it up too)
+#if PLATFORM_WINDOWS
 		if (Job.IsRunning() && Job.Kind == TEXT("export") && ProcId)
 		{
 			const FString Ps = FString::Printf(TEXT("-NoProfile -NonInteractive -WindowStyle Hidden -Command \"Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*OpenTeeGolf-export-%u-*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }\""), ProcId);
 			FProcHandle K = FPlatformProcess::CreateProc(TEXT("powershell.exe"), *Ps, true, true, true, nullptr, 0, nullptr, nullptr);
 			FPlatformProcess::CloseProc(K);
 		}
+#endif
 	}
 	ProcId = 0;
 	if (PipeRead) FPlatformProcess::ClosePipe(PipeRead, PipeWrite);

@@ -13,5 +13,7 @@ Content/
 Dist/
 # (written by packaging)
 Build/Windows/ChunkLayerInfo/
-# The release build (make_release.ps1)
+Build/Linux/
+# The release build (make_release.ps1; make_release_linux.ps1)
 Release/
+Release-Linux/

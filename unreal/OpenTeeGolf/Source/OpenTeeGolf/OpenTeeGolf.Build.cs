@@ -8,6 +8,10 @@ public class OpenTeeGolf : ModuleRules
 		PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 		// (every header by its folder - "Round/OTGRound.h", "UI/SOTGHud.h" - public or private; see README.md)
 		PrivateIncludePaths.Add(System.IO.Path.Combine(ModuleDirectory, "Private"));
+		// (clang - the Linux build - stops on two things MSVC never sees: "find the first one" loops,
+		// for (It...) { return *It; }, and the round's Res, which GENERATED_BODY's serializer shadows)
+		CppCompileWarningSettings.UnreachableCodeWarningLevel = WarningLevel.Warning;
+		CppCompileWarningSettings.ShadowVariableWarningLevel = WarningLevel.Warning;
 		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "DeveloperSettings" });
 		// (the project's own plugins: the ball physics and the launch monitors - Plugins/OTGBallPhysics,
 		// Plugins/OTGLaunchMonitor. Public: the round's header uses their types)

@@ -17,7 +17,7 @@
 		{ "Name": "PCG", "Enabled": true }
 	],
 	"Modules": [
-		{ "Name": "Greensward", "Type": "Runtime", "LoadingPhase": "Default", "PlatformAllowList": [ "Win64" ] },
-		{ "Name": "GreenswardEditor", "Type": "Editor", "LoadingPhase": "Default", "PlatformAllowList": [ "Win64" ] }
+		{ "Name": "Greensward", "Type": "Runtime", "LoadingPhase": "Default", "PlatformAllowList": [ "Win64", "Linux" ] },
+		{ "Name": "GreenswardEditor", "Type": "Editor", "LoadingPhase": "Default", "PlatformAllowList": [ "Win64", "Linux" ] }
 	]
 }

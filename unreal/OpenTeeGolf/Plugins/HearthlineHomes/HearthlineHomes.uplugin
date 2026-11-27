@@ -14,6 +14,6 @@
 	"IsBetaVersion": false,
 	"Installed": false,
 	"Modules": [
-		{ "Name": "HearthlineHomes", "Type": "Runtime", "LoadingPhase": "Default", "PlatformAllowList": [ "Win64" ] }
+		{ "Name": "HearthlineHomes", "Type": "Runtime", "LoadingPhase": "Default", "PlatformAllowList": [ "Win64", "Linux" ] }
 	]
 }

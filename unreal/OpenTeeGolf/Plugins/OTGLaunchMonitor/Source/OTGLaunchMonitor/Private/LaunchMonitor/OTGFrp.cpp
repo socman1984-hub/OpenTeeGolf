@@ -12,6 +12,9 @@
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
 #include "WebSocketsModule.h"
+#if PLATFORM_UNIX
+#include <sys/stat.h>
+#endif
 
 namespace
 {
@@ -350,7 +353,12 @@ FString FOTGBridgeProcess::NameOf(const FString& Kind)
 
 FString FOTGBridgeProcess::FindProgram(const FString& Kind, FString& Searched)
 {
+	// (the platform's build of each: lib/bridges.js)
+#if PLATFORM_WINDOWS
 	const FString File = Kind == TEXT("r10") ? TEXT("tenover-frp-windows-x86_64.exe") : TEXT("allsquare-frp-windows-x86_64.exe");
+#else
+	const FString File = Kind == TEXT("r10") ? TEXT("tenover-frp-linux-x86_64") : TEXT("allsquare-frp-linux-x86_64");
+#endif
 	// Next to the game, in the game project, or in the web version's bridges folder (which
 	// downloads them on first use)
 	const TArray<FString> Dirs = {
@@ -451,6 +459,10 @@ void FOTGBridgeProcess::Launch()
 			RelaunchAt = FPlatformTime::Seconds() + 30;
 			return;
 		}
+#if PLATFORM_UNIX
+		// (a zip made on Windows loses the program's execute bit)
+		chmod(TCHAR_TO_UTF8(*Exe), 0755);
+#endif
 	}
 	Params += FString::Printf(TEXT(" 127.0.0.1:%d"), Port);
 	for (const FString& A : Args) Params += TEXT(" ") + A;

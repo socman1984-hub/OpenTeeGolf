@@ -774,7 +774,8 @@ ATidewrightWater* ATidewrightWater::GetTidewrightWater(const UObject* WorldConte
 {
 	if (const UWorld* World = GEngine ? GEngine->GetWorldFromContextObject(WorldContextObject, EGetWorldErrorMode::ReturnNull) : nullptr)
 	{
-		for (TActorIterator<ATidewrightWater> It(World); It; ++It)
+		// (the first one: an if, not a loop that returns on its first pass - clang stops on that)
+		if (TActorIterator<ATidewrightWater> It(World); It)
 		{
 			return *It;
 		}

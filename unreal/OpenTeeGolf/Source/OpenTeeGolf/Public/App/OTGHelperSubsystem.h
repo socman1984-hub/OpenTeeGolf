@@ -8,7 +8,7 @@
 // Where it is: -helper=<folder>, else OTG_HELPER_DIR, else the repository round the project (a
 // development copy: courses in its courses folder, as the web version keeps them), else Helper\
 // next to the game (a release: courses' sources in Documents\OpenTeeGolf\CourseSources). Node:
-// <helper>\node\node.exe, else node on the PATH.
+// <helper>\node\node.exe (on Linux <helper>/node/bin/node), else node on the PATH.
 //
 // Console: OTG.Helper.Start, OTG.Helper.Status, OTG.Helper.Search <words>, OTG.Helper.Check
 // <way|relation> <id>, OTG.Helper.Build <way|relation> <id>, OTG.Helper.Export <course id>,
