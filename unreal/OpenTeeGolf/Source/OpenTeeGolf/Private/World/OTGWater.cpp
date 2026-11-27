@@ -45,6 +45,7 @@
 #include "Course/OTGTextures.h"
 #include "World/OTGGrassFwd.h"
 #include "Materials/MaterialInstanceDynamic.h"
+#include "HAL/IConsoleManager.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogOTGWater, Log, All);
 
@@ -55,8 +56,15 @@ namespace
 	constexpr double RiverWiden = 1.15;     // (a river a little wider than its channel: the banks hide the rest)
 	constexpr int32 LakesAlive = 2;         // (ponds simulating at once: the nearest)
 	constexpr double LakeAliveCm = 60000;   // (...within 600 m)
-	const FLinearColor PondScatter(0.0045f, 0.006f, 0.003f, 1.0f);    // (a pond's colour: BuildStillPond)
 	const FLinearColor PondAbsorption(1.6f, 1.05f, 2.0f, 1.0f);
+
+	// (how much light a pond's or creek's water sends back: seen from above, where a flat pond reflects
+	// only a couple of per cent of the sky, this is the colour it shows - at 1 it was black, at 30 a dark
+	// olive green; from the ground the sky's reflection still covers it)
+	TAutoConsoleVariable<float> CVarWaterBright(TEXT("OTG.Water.Bright"), 30.f,TEXT("How much light the ponds' and creeks' water scatters back (x; read as the course is built)"));
+
+	// (a pond's colour: BuildStillPond - olive-brown)
+	FLinearColor PondScatter() { const float K = FMath::Max(0.f, CVarWaterBright.GetValueOnGameThread()); return FLinearColor(0.0045f * K, 0.006f * K, 0.003f * K, 1.0f); }
 
 	// (a river's footprint, its widest half-width round it: WaterTopAt's quick test)
 	FBox2D RiverBox(const ATidewrightRiver* R)
@@ -381,7 +389,7 @@ bool FOTGCourseWater::BuildTidewright(TArray<bool>& OutGone)
 			bShared = true;
 			W->FinishSpawning(FTransform(O + FVector(C.X, C.Y, Level + LiftCm)));
 			W->ApplyPreset(Glass, 0.f);
-			W->Look.ScatterColor = PondScatter;   // (as a still pond's: BuildStillPond)
+			W->Look.ScatterColor = PondScatter();   // (as a still pond's: BuildStillPond)
 			W->Look.Absorption = PondAbsorption;
 			Lakes.Add(W);
 			NLakes++;
@@ -411,7 +419,8 @@ bool FOTGCourseWater::BuildTidewright(TArray<bool>& OutGone)
 			R->River.FoamAmount = 0.2f;
 			// (a river's colour: green-brown, not the sea's cyan - blue taken out as much as red - and
 			// darkening quickly with depth, so its deep middle isn't as clear as its edges)
-			R->River.ScatterColor = FLinearColor(0.005f, 0.007f, 0.004f, 1.0f);
+			R->River.ScatterColor = FLinearColor(0.005f, 0.007f, 0.004f, 1.0f) * FMath::Max(0.f, CVarWaterBright.GetValueOnGameThread());
+			R->River.ScatterColor.A = 1.0f;
 			R->River.Absorption = FLinearColor(1.4f, 0.9f, 1.7f, 1.0f);
 			R->FinishSpawning(FTransform(O + Pts[0] + FVector(0, 0, LiftCm)));
 			USplineComponent* S = R->GetSpline();
@@ -495,7 +504,7 @@ bool FOTGCourseWater::BuildStillPond(const TArray<FVector>& Poly, double Level, 
 	// (a golf pond's water: olive-brown, dark within a metre or so - the plugin's clear blue-green
 	// showed the whole bed down to the middle, a swimming pool. Blue goes first, so what light comes
 	// back is green-brown)
-	R->River.ScatterColor = PondScatter;
+	R->River.ScatterColor = PondScatter();
 	R->River.Absorption = PondAbsorption;
 	R->SegmentLength = 1.0f;
 	R->FinishSpawning(FTransform(O3 + Pts[0] + FVector(0, 0, LiftCm)));
