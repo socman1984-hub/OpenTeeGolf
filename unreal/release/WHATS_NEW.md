@@ -4,6 +4,21 @@ The newest version first. The game shows this on its What's new page. make_relea
 OpenTeeGolf.exe, and publish_release.py puts each version's part on its GitHub release.
 A version's heading is "## <version> - <date>", and its changes are "- " lines under it.
 
+## 0.29.0 - 27 November 2026
+- Online games: play a round with friends on other computers from the new Online page. One of you hosts the Play page's course and round; the others join with the host's address (on the same network, or over the internet with TCP port 7787 forwarded on the host's router). You all need the same version of the game.
+- Anyone without the course gets it from the host, only the files they don't already have. If yours is a different version of it, you choose: keep yours and save the host's beside it as a copy, or overwrite yours.
+- Online, take turns and watch each other's shots, or everyone plays at once with all the balls and tracers on screen; nobody goes on to the next hole until everyone has finished it. The host's weather is everyone's, and nobody can change the course during an online game.
+- Rapsodo MLM2PRO: a new choice in the Launch monitor panel, through the free MLM2PRO Connector. Authorise GSPro in the Rapsodo app, and in the Connector send to this PC, port 921. Putts still come from the game.
+- Course editor, Tall grass: Mark a patch - click a patch of tall grass (found in the photo or painted) and it becomes an area of the grass biome picked, traced round its edge.
+- Course editor, Trees: pick trees yourself for a forest (shift-click them or shift-drag a box), join one forest to another with Join another forest to it, and Go to it to see a forest whole.
+- In a round (R), Trees and rocks: Go to it flies the free view to see the forests picked.
+- Course editor: Save and Close show a list of exactly what you've changed since it was last saved, to confirm, with Save and close, Close without saving or Keep editing.
+- In a round (R), Bridges: click one end, then the other, and pick its shape (flat or arched), rails, look (wood, stone or white) and width. Pick one later to change it or take it out. The ball plays off its deck and bounces off its rails.
+- Rain falls round wherever you're looking, the free view too. Heavy rain and storms bring a grey mist, and heavy rain takes a little carry off the ball (about 5 yards off a 240-yard drive in a storm).
+- Grass biome studio: each grass has a checkbox to grow it, and folds away under +/- (Fold all closes them). A forest's How many goes up to 10 times as many trees.
+- The rough looks smoother from far off, without a faint repeating grid over the deep rough.
+- Building a course: the OpenStreetMap servers are timed and the quickest is asked first, so a busy server slows a build less.
+
 ## 0.28.0 - 26 November 2026
 - Auto-putt: on the Play page, Game > Putting > Auto-putt. Once your ball stops on the green the hole's done: 1 putt from inside the circle round the hole (6, 10, 15 or 20 ft, painted on the green), 2 from further away.
 - Updates as the game starts: if there's a new version the game asks first. Update now downloads it with its progress shown, then installs it and starts the new version; Not now plays this one.
