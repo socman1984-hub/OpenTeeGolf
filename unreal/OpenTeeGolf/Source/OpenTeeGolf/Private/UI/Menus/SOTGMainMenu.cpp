@@ -16,6 +16,7 @@
 #include "Widgets/Notifications/SProgressBar.h"
 #include "App/OTGUpdateSubsystem.h"
 #include "App/OTGHelperSubsystem.h"
+#include "App/OTGNetSubsystem.h"
 #include "UObject/Package.h"
 #include "UObject/StrongObjectPtr.h"
 #include "HAL/PlatformProcess.h"
@@ -66,6 +67,14 @@ void SOTGMainMenu::Tick(const FGeometry& Geometry, const double Time, const floa
 	SCompoundWidget::Tick(Geometry, Time, Dt);
 	// (the rows asked for their photos as they were drawn: one a frame, the latest first)
 	if (ThumbsWanted.Num()) PhotoOf(ThumbsWanted.Pop(), EPhoto::Thumb);
+	// (the online game changed: its page again; and a new course here, the course list again)
+	if (UOTGNetSubsystem* N = Net(); N && N->Revision() != SeenNetRev)
+	{
+		const bool bHadCourse = SeenNetRev >= 0;
+		SeenNetRev = N->Revision();
+		if (bHadCourse && N->CourseReady()) if (UOTGCourseSubsystem* C = Courses()) CourseList = C->ListCourses();
+		if (Page == EPage::Online) Rebuild();
+	}
 }
 
 const FSlateBrush* SOTGMainMenu::PhotoOf(const FString& Id, EPhoto Kind)
@@ -115,6 +124,9 @@ void SOTGMainMenu::Construct(const FArguments&)
 	}
 	Setup = FOTGPlayers::LoadSetup();
 	Profiles = FOTGPlayers::Load();
+	LoadOnline();
+	// (back from an online round, or in a game still: its lobby)
+	if (UOTGNetSubsystem* N = Net(); N && N->InSession()) Page = EPage::Online;
 	Setup.Picked.RemoveAll([&](const FString& Id) { return !Profiles.ContainsByPredicate([&](const FOTGPlayerProfile& P) { return P.Id == Id; }); });
 	if (UOTGCourseSubsystem* C = Courses()) CourseList = C->ListCourses();
 	if (CourseList.Num() && !CourseList.ContainsByPredicate([&](const FOTGCourseInfo& I) { return I.Id == Setup.CourseId; })) Setup.CourseId = CourseList[0].Id;
@@ -208,10 +220,13 @@ void SOTGMainMenu::Construct(const FArguments&)
 					*GetDefault<UGeneralProjectSettings>()->ProjectVersion)))
 			]
 		]
+		// joining an online game with a different version of its course: overwrite yours, or keep it
+		+ SOverlay::Slot()[CourseChoiceWindow()]
 		// on start, over everything: checking for an update, then (one found) Update now or Not now, and
 		// its download - before the game starts
 		+ SOverlay::Slot()[StartupWindow()]
 	];
+	OnlineTest();
 	Rebuild();
 }
 
@@ -374,7 +389,7 @@ void SOTGMainMenu::Rebuild()
 {
 	// the tabs, the page shown lit
 	TSharedRef<SHorizontalBox> Tabs = SNew(SHorizontalBox);
-	const TPair<FString, EPage> Pages[] = { { TEXT("Play"), EPage::Play }, { TEXT("Practice"), EPage::Practice }, { TEXT("Course builder"), EPage::Build }, { TEXT("Players"), EPage::Players }, { TEXT("Launch monitor"), EPage::LaunchMonitor }, { TEXT("Settings"), EPage::Settings }, { TEXT("What's new"), EPage::WhatsNew } };
+	const TPair<FString, EPage> Pages[] = { { TEXT("Play"), EPage::Play }, { TEXT("Practice"), EPage::Practice }, { TEXT("Course builder"), EPage::Build }, { TEXT("Players"), EPage::Players }, { TEXT("Online"), EPage::Online }, { TEXT("Launch monitor"), EPage::LaunchMonitor }, { TEXT("Settings"), EPage::Settings }, { TEXT("What's new"), EPage::WhatsNew } };
 	for (const auto& T : Pages)
 	{
 		const EPage P = T.Value;
@@ -409,6 +424,9 @@ void SOTGMainMenu::Rebuild()
 	else if (Page == EPage::Players) Body->SetContent(PlayersPage());
 	else if (Page == EPage::Settings) Body->SetContent(SettingsPage());
 	else if (Page == EPage::WhatsNew) Body->SetContent(WhatsNewPage());
+	else if (Page == EPage::Online) Body->SetContent(OnlinePage());
+	// (in an online game nobody changes a course: everyone's has to stay the same as the host's)
+	else if ((Page == EPage::Build || Page == EPage::Edit || Page == EPage::Studio) && Net() && Net()->InSession()) Body->SetContent(EditorsOff());
 	else if (Page == EPage::Build)
 	{
 		if (!Builder.IsValid())
@@ -443,6 +461,7 @@ void SOTGMainMenu::Rebuild()
 TSharedRef<SWidget> SOTGMainMenu::EditLink(const FOTGCourseInfo* Info)
 {
 	if (!Info || Info->ExportDir.IsEmpty()) return SNullWidget::NullWidget;
+	if (Net() && Net()->InSession()) return Para(TEXT("Editing is off while you're in an online game"), 12, Dim);
 	UGameInstance* G = GameInstance();
 	UOTGHelperSubsystem* H = G ? G->GetSubsystem<UOTGHelperSubsystem>() : nullptr;
 	if (H && H->HasSource(Info->Id))
@@ -466,6 +485,7 @@ TSharedRef<SWidget> SOTGMainMenu::EditLink(const FOTGCourseInfo* Info)
 
 void SOTGMainMenu::OpenEditor(const FString& Id)
 {
+	if (Net() && Net()->InSession()) return;   // (online: no changing courses)
 	SAssignNew(Editor, SOTGCourseEditor, Id);
 	Editor->OnClose = [this](bool bExported) {
 		if (bExported) if (UOTGCourseSubsystem* S = Courses()) CourseList = S->ListCourses();
@@ -489,7 +509,7 @@ void SOTGMainMenu::OpenStudio(bool bForests)
 void SOTGMainMenu::ShowPage(const FString& Name)
 {
 	if (Name == TEXT("biomes") || Name == TEXT("forests")) { OpenStudio(Name == TEXT("forests")); return; }
-	Page = Name == TEXT("players") ? EPage::Players : Name == TEXT("lm") ? EPage::LaunchMonitor : Name == TEXT("settings") ? EPage::Settings : Name == TEXT("build") ? EPage::Build : Name == TEXT("practice") ? EPage::Practice : Name == TEXT("news") ? EPage::WhatsNew : EPage::Play;
+	Page = Name == TEXT("online") ? EPage::Online : Name == TEXT("players") ? EPage::Players : Name == TEXT("lm") ? EPage::LaunchMonitor : Name == TEXT("settings") ? EPage::Settings : Name == TEXT("build") ? EPage::Build : Name == TEXT("practice") ? EPage::Practice : Name == TEXT("news") ? EPage::WhatsNew : EPage::Play;
 	if (Page == EPage::Players) { Draft = Profiles; ConfirmRemove = -1; }
 	Rebuild();
 }

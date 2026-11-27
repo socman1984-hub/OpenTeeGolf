@@ -497,7 +497,17 @@ TSharedRef<SWidget> SOTGMainMenu::PlayPage()
 				Problem.IsEmpty() ? StaticCastSharedRef<SWidget>(Para(Line2, 13)) : StaticCastSharedRef<SWidget>(Para(Problem, 13, Warn))
 			]
 		]
+		// (an online game with this course and round: the Online page, to host it)
 		+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(20, 0, 0, 0)
+		[
+			SNew(SBox).IsEnabled(Course != nullptr && Info && !Info->ExportDir.IsEmpty())
+			.ToolTipText(FText::FromString(TEXT("Play this course with friends at their own computers: you host, they join with your address")))
+			[
+				SNew(SButton).ButtonStyle(&ButtonStyle(false)).ContentPadding(FMargin(22, 14)).OnClicked_Lambda([this]() { Page = EPage::Online; Rebuild(); return FReply::Handled(); })
+				[Text(TEXT("Host online"), 17, Ink, "Bold")]
+			]
+		]
+		+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(12, 0, 0, 0)
 		[
 			SNew(SBox).IsEnabled(bCanStart)
 			[

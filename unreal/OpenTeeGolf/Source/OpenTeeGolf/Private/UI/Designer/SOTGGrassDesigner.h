@@ -46,6 +46,8 @@ private:
 	TSharedPtr<FString> PlantPick;
 	TSharedPtr<SBox> Body;
 	TSharedPtr<class SScrollBox> Scroll;   // (kept where it was across a Rebuild)
+	TSet<FString> Opened;   // (the kinds, and the fairways' and greens' rows, opened to their sliders: folded otherwise)
+	TSharedRef<SWidget> FoldHead(const FString& Key, const FString& Label, bool bBright);   // (+/- and its name: a click opens or folds it)
 	FString Status;
 	bool bUnsaved = false;
 };

@@ -379,7 +379,12 @@ FReply SOTGEditCanvas::OnMouseButtonDown(const FGeometry& G, const FPointerEvent
 	{
 	case EM::Draw: Ed->DrawPts.Add(W); Drag = EDrag::None; return Reply;
 	case EM::Place: Ed->PlacePoint(W); Drag = EDrag::None; return Reply;
-	case EM::Forest: Ed->MarkForest(W); Drag = EDrag::None; return Reply;
+	// (marking a forest: shift-click or shift-drag picks trees for it instead - Enter makes it)
+	case EM::Forest:
+		if (E.IsShiftDown()) { Drag = EDrag::Box; return Reply; }
+		Ed->MarkForest(W); Drag = EDrag::None; return Reply;
+	case EM::Patch: Ed->MarkPatch(W); Drag = EDrag::None; return Reply;
+	case EM::Join: Ed->JoinForest(W); Drag = EDrag::None; return Reply;
 	case EM::AddTree:
 	{
 		Ed->Change();
@@ -512,13 +517,32 @@ FReply SOTGEditCanvas::OnMouseButtonUp(const FGeometry& G, const FPointerEvent& 
 	{
 		// the found trees in the box: picked
 		const FVector2D A(FMath::Min(DragFrom.X, L.X), FMath::Min(DragFrom.Y, L.Y)), B(FMath::Max(DragFrom.X, L.X), FMath::Max(DragFrom.Y, L.Y));
-		Ed->ClearPick();
-		for (int32 i = 0; i < Ed->Found.Num(); i++) { const FVector2D P = ToScreen(Ed->Found[i].P); if (P.X >= A.X && P.X <= B.X && P.Y >= A.Y && P.Y <= B.Y) Ed->SelMany.Add(i); }
+		if (Ed->Mode == SOTGCourseEditor::EMode::Forest)
+		{
+			// (picking trees for a forest: added to those picked; a click without moving picks the
+			// tree under it, or puts it back)
+			if (!bMoved)
+			{
+				int32 Hit = INDEX_NONE;
+				double Best = 8;
+				for (int32 i = 0; i < Ed->Found.Num(); i++) { const double D = FVector2D::Distance(ToScreen(Ed->Found[i].P), L); if (D < Best) { Best = D; Hit = i; } }
+				if (Hit != INDEX_NONE && Ed->SelMany.Remove(Hit) == 0) Ed->SelMany.Add(Hit);
+			}
+			else for (int32 i = 0; i < Ed->Found.Num(); i++) { const FVector2D P = ToScreen(Ed->Found[i].P); if (P.X >= A.X && P.X <= B.X && P.Y >= A.Y && P.Y <= B.Y) Ed->SelMany.AddUnique(i); }
+		}
+		else
+		{
+			// (shift: added to those picked already)
+			if (!E.IsShiftDown()) Ed->ClearPick();
+			for (int32 i = 0; i < Ed->Found.Num(); i++) { const FVector2D P = ToScreen(Ed->Found[i].P); if (P.X >= A.X && P.X <= B.X && P.Y >= A.Y && P.Y <= B.Y) Ed->SelMany.AddUnique(i); }
+		}
 	}
 	else if (Was == EDrag::Pan && !bMoved && E.GetEffectingButton() == EKeys::LeftMouseButton)
 	{
 		// a click: what's under it (a found tree, a removed one, a building, a shape)
+		const TArray<int32> Many = Ed->SelMany;   // (shift-click adds to those picked)
 		Ed->ClearPick();
+		if (E.IsShiftDown()) Ed->SelMany = Many;
 		bool bHit = false;
 		if (Ed->bShowTrees)
 		{
@@ -580,6 +604,7 @@ FReply SOTGEditCanvas::OnKeyDown(const FGeometry&, const FKeyEvent& E)
 	if (K == EKeys::Z && E.IsControlDown()) { Ed->Undo(); return FReply::Handled(); }
 	if (K == EKeys::Escape) { Ed->SetMode(EM::None); return FReply::Handled(); }
 	if (K == EKeys::Enter && Ed->Mode == EM::Draw) { Ed->FinishDraw(); return FReply::Handled(); }
+	if (K == EKeys::Enter && Ed->Mode == EM::Forest) { const TArray<int32> Many = Ed->SelMany; Ed->ForestOf(Many); return FReply::Handled(); }
 	if (K == EKeys::BackSpace && Ed->Mode == EM::Draw) { if (Ed->DrawPts.Num()) Ed->DrawPts.Pop(); return FReply::Handled(); }
 	if (K == EKeys::Delete || K == EKeys::BackSpace) { Ed->DeleteSelected(); return FReply::Handled(); }
 	return FReply::Unhandled();

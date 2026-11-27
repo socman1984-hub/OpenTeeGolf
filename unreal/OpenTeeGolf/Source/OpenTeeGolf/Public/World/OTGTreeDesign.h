@@ -86,7 +86,7 @@ struct FOTGForest
 	FOTGForestPreset Preset;        // (a copy: the course keeps it as picked, the library may change)
 	float Amount = 1.f, Size = 1.f;
 	bool bFill = false;
-	static constexpr float AmountLo = 0, AmountHi = 3, SizeLo = 0.5f, SizeHi = 2.f;
+	static constexpr float AmountLo = 0, AmountHi = 10, SizeLo = 0.5f, SizeHi = 2.f;
 	bool Contains(double X, double Z) const;
 	FBox2D Bounds() const;
 	double AreaM2() const;

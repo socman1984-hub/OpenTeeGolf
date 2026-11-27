@@ -40,14 +40,20 @@ void SOTGCourseEditor::Construct(const FArguments&, const FString& CourseId)
 	Id = CourseId;
 	ChildSlot
 	[
-		SNew(SVerticalBox)
-		+ SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 8)[SAssignNew(Top, SBox)]
-		+ SVerticalBox::Slot().FillHeight(1)
+		SNew(SOverlay)
+		+ SOverlay::Slot()
 		[
-			SNew(SHorizontalBox)
-			+ SHorizontalBox::Slot().FillWidth(1).Padding(0, 0, 12, 0)[SAssignNew(Canvas, SOTGEditCanvas, this)]
-			+ SHorizontalBox::Slot().AutoWidth()[SAssignNew(Side, SBox).WidthOverride(440)]
+			SNew(SVerticalBox)
+			+ SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 8)[SAssignNew(Top, SBox)]
+			+ SVerticalBox::Slot().FillHeight(1)
+			[
+				SNew(SHorizontalBox)
+				+ SHorizontalBox::Slot().FillWidth(1).Padding(0, 0, 12, 0)[SAssignNew(Canvas, SOTGEditCanvas, this)]
+				+ SHorizontalBox::Slot().AutoWidth()[SAssignNew(Side, SBox).WidthOverride(440)]
+			]
 		]
+		// (a popup over it all: what's changed, before a save or on closing)
+		+ SOverlay::Slot()[SAssignNew(DialogHost, SBox).Visibility(EVisibility::Collapsed)]
 	];
 	Status = TEXT("Loading the course…");
 	Rebuild();
@@ -69,6 +75,7 @@ void SOTGCourseEditor::Loaded()
 {
 	bLoaded = true;
 	Applied = Src;
+	Saved = Src;
 	Status = Src.CourseJson.IsValid() && Src.CourseJson->HasField(TEXT("GolfSimBuilder")) && Src.CourseJson->GetObjectField(TEXT("GolfSimBuilder"))->HasTypedField<EJson::Boolean>(TEXT("needsReview"))
 		&& Src.CourseJson->GetObjectField(TEXT("GolfSimBuilder"))->GetBoolField(TEXT("needsReview")) ? FString(TEXT("Some parts were guessed: check the tees, pins and par on each hole.")) : FString();
 	MakeShade();
@@ -178,11 +185,13 @@ void SOTGCourseEditor::LoadExtras()
 			if (W <= 0 || Hh <= 0 || int64(W) * Hh > 16 * 1024 * 1024) return;
 			TArray<FColor> Px;
 			Px.Init(FColor(0, 0, 0, 0), W * Hh);
+			Self->HeatherPx.Init(0, W * Hh);
 			for (int32 k = 0; k + 1 < Runs->Num(); k += 2)
 			{
 				const int32 A = int32((*Runs)[k]->AsNumber()), L = int32((*Runs)[k + 1]->AsNumber());
-				for (int32 q = A; q < A + L && q < Px.Num(); q++) if (q >= 0) Px[q] = FColor(240, 160, 40, 95);   // (amber)
+				for (int32 q = A; q < A + L && q < Px.Num(); q++) if (q >= 0) { Px[q] = FColor(240, 160, 40, 95); Self->HeatherPx[q] = 1; }   // (amber)
 			}
+			Self->HeatherPxW = W; Self->HeatherPxH = Hh; Self->HeatherRes = Res;
 			UTexture2D* T = UTexture2D::CreateTransient(W, Hh, PF_B8G8R8A8);
 			if (!T) return;
 			void* Data = T->GetPlatformData()->Mips[0].BulkData.Lock(LOCK_READ_WRITE);
@@ -237,12 +246,15 @@ void SOTGCourseEditor::Save(int32 Then)
 	Status = TEXT("Saving…");
 	Changed();
 	TWeakPtr<SOTGCourseEditor> Weak = SharedThis(this);
-	H->SaveSource(Id, Src.SaveBody(), [Weak, Then](int32 Code, TSharedPtr<FJsonValue> J, const FString& Body) {
+	TSharedRef<FOTGCourseSource> Sent = MakeShared<FOTGCourseSource>(Src);
+	H->SaveSource(Id, Src.SaveBody(), [Weak, Then, Sent](int32 Code, TSharedPtr<FJsonValue> J, const FString& Body) {
 		TSharedPtr<SOTGCourseEditor> Self = Weak.Pin();
 		if (!Self.IsValid()) return;
 		if (Code != 200) { Self->Status = FString::Printf(TEXT("Save failed (%d): %s"), Code, *Body.Left(200)); Self->Changed(); return; }
-		Self->bDirty = false;
+		Self->Saved = *Sent;
+		Self->bDirty = Self->ChangeList().Num() > 0;   // (changed again while it saved)
 		Self->Status = FString::Printf(TEXT("Saved %s"), *FDateTime::Now().ToString(TEXT("%H:%M:%S")));
+		if (Then == 3) { if (Self->OnClose) Self->OnClose(Self->bExported); return; }
 		if (Then == 1) Self->Quick();
 		if (Then == 2)
 		{
@@ -352,6 +364,53 @@ EActiveTimerReturnType SOTGCourseEditor::Pulse(double Time, float Dt)
 			Canvas->Cx = Mark.X; Canvas->Cz = Mark.Y; Canvas->Scale = 1.6; Tab = 2;
 			Changed();
 			TestAt = FPlatformTime::Seconds() + 2;
+		}
+		// (-editortestjoin=X1,Z1,X2,Z2: the forest at the first joined by the one at the second;
+		// -editortestpatch=X,Z[,biome]: the tall grass patch there marked; -editortestdialog: a change, then Close)
+		else if (FString Jo; TestStep == 1 && !bExtraTested && (FParse::Value(FCommandLine::Get(), TEXT("editortestjoin="), Jo, false) || FParse::Value(FCommandLine::Get(), TEXT("editortestpatch="), Jo, false)))
+		{
+			bExtraTested = true;
+			TArray<FString> A;
+			if (FParse::Value(FCommandLine::Get(), TEXT("editortestjoin="), Jo, false))
+			{
+				Jo.ParseIntoArray(A, TEXT(","));
+				if (A.Num() >= 4)
+				{
+					const FVector2D P1(FCString::Atod(*A[0]), FCString::Atod(*A[1])), P2(FCString::Atod(*A[2]), FCString::Atod(*A[3]));
+					const int32 N0 = Design.Forests.Num();
+					for (int32 f = 0; f < Design.Forests.Num(); f++) if (Design.Forests[f].Contains(P1.X, P1.Y)) SelForest = f;
+					SetMode(EMode::Join);
+					JoinForest(P2);
+					UE_LOG(LogTemp, Display, TEXT("editortest: join: %d -> %d forests; %s"), N0, Design.Forests.Num(), *Status);
+					if (Design.Forests.IsValidIndex(SelForest)) Canvas->Fit(Design.Forests[SelForest].Pts, 80);
+					Tab = 2;
+				}
+			}
+			if (FParse::Value(FCommandLine::Get(), TEXT("editortestpatch="), Jo, false))
+			{
+				A.Reset();
+				Jo.Replace(TEXT("+"), TEXT(" ")).ParseIntoArray(A, TEXT(","));
+				if (A.Num() >= 2)
+				{
+					if (!LibBiomes.Num()) LibBiomes = OTGLibrary::Biomes();
+					if (A.Num() >= 3) AreaBiome = A[2]; else if (LibBiomes.Num()) AreaBiome = LibBiomes[0].Name;
+					const FVector2D P(FCString::Atod(*A[0]), FCString::Atod(*A[1]));
+					MarkPatch(P);
+					UE_LOG(LogTemp, Display, TEXT("editortest: patch: %d areas, %d points; %s"), Biomes.Areas.Num(), Biomes.Areas.Num() ? Biomes.Areas.Last().Pts.Num() : 0, *Status);
+					Canvas->Cx = P.X; Canvas->Cz = P.Y; Tab = 3;
+				}
+			}
+			Changed();
+			TestAt = FPlatformTime::Seconds() + 2;
+		}
+		else if (TestStep == 1 && FParse::Param(FCommandLine::Get(), TEXT("editortestdialog")) && !bDialogTested)
+		{
+			bDialogTested = true;
+			Change(); Src.Stimp += 1;
+			Change(); FOTGGrassStroke St; St.Pts = { FVector2D(0, 0), FVector2D(10, 0) }; St.R = 4; Src.TallGrass.Add(St);
+			AskClose();
+			UE_LOG(LogTemp, Display, TEXT("editortest: close asks about: %s"), *FString::Join(ChangeList(), TEXT(" | ")));
+			TestAt = FPlatformTime::Seconds() + 1;
 		}
 		else if (TestStep == 1 && FParse::Param(FCommandLine::Get(), TEXT("editortestlook")) && !bColourSpecies) { bColourSpecies = true; Canvas->Scale = 2.5; Changed(); TestAt = FPlatformTime::Seconds() + 2; }
 		else if (TestStep == 1) { Shot(TEXT("editor_open")); TestStep = 2; TestAt = FPlatformTime::Seconds() + 2; }

@@ -214,7 +214,8 @@ void AOTGRound::SetupWeather()
 	{
 		// (breezy until the course's real weather arrives, or if it can't)
 		Weather = FOTGWeather::Preset(TEXT("breezy"));
-		if (Data->Latitude == 0 && Data->Longitude == 0) HudView.Toast(TEXT("This course has no location: breezy weather"), 4.f);
+		if (Online.FollowsWeather()) {}   // (online: the host's weather, sent from there)
+		else if (Data->Latitude == 0 && Data->Longitude == 0) HudView.Toast(TEXT("This course has no location: breezy weather"), 4.f);
 		else
 		{
 			TWeakObjectPtr<AOTGRound> Self(this);

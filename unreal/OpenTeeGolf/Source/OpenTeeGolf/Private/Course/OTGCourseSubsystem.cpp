@@ -5,6 +5,7 @@
 #include "Course/OTGCourseData.h"
 #include "Round/OTGRange.h"
 #include "Round/OTGMiniGolf.h"
+#include "App/OTGCourseSync.h"
 
 #include "Engine/AssetManager.h"
 #include "Engine/GameInstance.h"
@@ -48,6 +49,14 @@ namespace
 		const TArray<TSharedPtr<FJsonValue>>* Holes = nullptr;
 		Out.Holes = Play->TryGetArrayField(TEXT("holes"), Holes) ? Holes->Num() : 0;
 		Out.ExportDir = Dir;
+		// (a saved copy of another player's version of a course, from an online game: its own id and name)
+		otg::sync::FMarker M;
+		if (otg::sync::ReadMarker(Dir, M))
+		{
+			Out.Id = M.Id;
+			if (!M.Name.IsEmpty()) Out.Name = M.Name;
+			Out.SharedFrom = M.From;
+		}
 		return true;
 	}
 
@@ -222,6 +231,8 @@ UOTGCourseData* UOTGCourseSubsystem::LoadCourse(const FString& Id) const
 		FString Why;
 		if (!D->LoadFromExport(C.ExportDir, &Why)) { UE_LOG(LogOTGCourses, Warning, TEXT("%s: %s"), *Id, *Why); return nullptr; }
 		D->ExportDir = C.ExportDir;
+		// (a saved copy: known by its own id and name, not the course's)
+		if (!C.SharedFrom.IsEmpty()) { D->CourseId = C.Id; D->CourseName = C.Name; }
 		D->Level = TSoftObjectPtr<UWorld>(FSoftObjectPath(TemplateLevel));
 		D->LevelOrigin = FVector::ZeroVector;   // (the export's north-west corner, at its base height)
 		LastExport = D;

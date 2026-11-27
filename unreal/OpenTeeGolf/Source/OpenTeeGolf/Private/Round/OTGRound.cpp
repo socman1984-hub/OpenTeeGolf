@@ -10,6 +10,7 @@
 #include "World/OTGRuntimeCourse.h"
 #include "App/OTGHelperSubsystem.h"
 #include "Round/OTGMiniGolf.h"
+#include "App/OTGNetSubsystem.h"
 
 #include "Camera/CameraActor.h"
 #include "Components/DirectionalLightComponent.h"
@@ -52,7 +53,7 @@ DEFINE_LOG_CATEGORY_STATIC(LogOTGRound, Log, All);
 
 AOTGRound::AOTGRound()
 {
-	Turns.Round = Camera.Round = HudView.Round = Scene.Round = Changing.Round = RainFx.Round = WaterFx.Round = Flag.Round = SlopeGrid.Round = RangeMode.Round = this;
+	Turns.Round = Camera.Round = HudView.Round = Scene.Round = Changing.Round = RainFx.Round = WaterFx.Round = Flag.Round = SlopeGrid.Round = RangeMode.Round = Online.Round = this;
 	PrimaryActorTick.bCanEverTick = true;
 	RootComponent = CreateDefaultSubobject<USceneComponent>(TEXT("Root"));
 	static ConstructorHelpers::FObjectFinder<UStaticMesh> Sphere(TEXT("/Engine/BasicShapes/Sphere.Sphere"));
@@ -126,6 +127,7 @@ void AOTGRound::AddReferencedObjects(UObject* InThis, FReferenceCollector& Colle
 	R->Flag.AddReferencedObjects(Collector);
 	R->SlopeGrid.AddReferencedObjects(Collector);
 	R->RangeMode.AddReferencedObjects(Collector);
+	R->Online.AddReferencedObjects(Collector);
 }
 
 void FOTGRoundTurns::AddReferencedObjects(FReferenceCollector& Collector) { Collector.AddReferencedObjects(OtherBalls); }
@@ -166,9 +168,10 @@ void AOTGRound::Setup(UOTGCourseData* InData, const FOTGRoundSetup& InSetup)
 	TeeName = Setup_.Tee.IsEmpty() ? FString(TEXT("White")) : Setup_.Tee;
 	PinName = Setup_.Pin.IsEmpty() ? FString(TEXT("Saturday")) : Setup_.Pin;
 
-	// The players and the game (nobody picked: a round on your own)
+	// The players and the game (nobody picked: a round on your own; an online game: its players)
 	TArray<FOTGGamePlayer> Players;
-	const TArray<FOTGPlayerProfile> Profiles = FOTGPlayers::Load();
+	const bool bOnline = !bRange && !bMini && Online.Begin(Setup_, Players);
+	const TArray<FOTGPlayerProfile> Profiles = bOnline ? TArray<FOTGPlayerProfile>() : FOTGPlayers::Load();
 	for (const FString& Id : Setup_.Picked)
 		for (const FOTGPlayerProfile& P : Profiles)
 			if (P.Id == Id)
@@ -178,7 +181,7 @@ void AOTGRound::Setup(UOTGCourseData* InData, const FOTGRoundSetup& InSetup)
 				G.Team = Setup_.Teams.Contains(Id) ? Setup_.Teams[Id] : TEXT("A");
 				Players.Add(G);
 			}
-	if (!Players.Num() || !FOTGGame::Problem(Setup_.Format, Setup_.Picked, Setup_.Teams).IsEmpty())
+	if (!bOnline && (!Players.Num() || !FOTGGame::Problem(Setup_.Format, Setup_.Picked, Setup_.Teams).IsEmpty()))
 	{
 		if (Players.Num()) UE_LOG(LogOTGRound, Warning, TEXT("%s: playing on your own"), *FOTGGame::Problem(Setup_.Format, Setup_.Picked, Setup_.Teams));
 		Players.Reset();
@@ -349,6 +352,7 @@ void AOTGRound::Setup(UOTGCourseData* InData, const FOTGRoundSetup& InSetup)
 			if (I.Split(TEXT(":"), &At, &Command)) ExecAt.Emplace(FCString::Atod(*At), Command.TrimStartAndEnd());
 		}
 	}
+	Online.AfterSetup();
 	Scene.ApplyLook();
 	SetupWeather();
 	UE_LOG(LogOTGRound, Display, TEXT("Round on %s: %d holes, %d trunks and buildings to hit; %s, %d side(s), %s tees, %s pins"), *Data->CourseName, Data->Holes.Num(), int32(Collider.Count()),
@@ -451,7 +455,9 @@ void AOTGRound::StartHole(int32 Index)
 		const FString Own = S.Members.Num() == 1 ? Turns.Game->Players[S.Members[0]].Tee : FString();
 		return TeeOf(H, Own);
 	});
-	Turns.LoadSide(Turns.Game->Next([this](const otg::V3& B) { return PinDist(B); }));
+	// (everyone at once online: this computer's player, always)
+	Turns.LoadSide(Online.bTogether ? Online.LocalSide : Turns.Game->Next([this](const otg::V3& B) { return PinDist(B); }));
+	Online.OnStartHole();
 	PendingShot.Reset();
 	bHasRes = false;
 	Phase = EPhase::Ready;
@@ -493,7 +499,7 @@ void AOTGRound::StartHole(int32 Index)
 		RangeMode.UpdateRange();
 	}
 	else HudView.Banner(H.Name.IsEmpty() ? FString::Printf(TEXT("Hole %d"), H.Number) : FString::Printf(TEXT("Hole %d  ·  %s"), H.Number, *H.Name), FString::Printf(TEXT("Par %d  ·  %s%s"), H.Par, *HoleLen(LenM),
-		Turns.Game->Single() ? TEXT("") : *FString::Printf(TEXT("  ·  %s to play"), *Turns.Game->SideLabel(Turns.SideIdx))), 3.f);
+		Turns.Game->Single() ? TEXT("") : Online.bTogether ? TEXT("  ·  everyone plays at once") : *FString::Printf(TEXT("  ·  %s to play"), *Turns.Game->SideLabel(Turns.SideIdx))), 3.f);
 	HudView.UpdateHudInfo();
 	TellLaunchMonitor(true);
 	UE_LOG(LogOTGRound, Display, TEXT("Hole %d, par %d, %s"), H.Number, H.Par, *HoleLen(LenM));
@@ -571,7 +577,7 @@ void AOTGRound::TellLaunchMonitor(bool bTurn)
 	{
 		const bool bLeft = Turns.Game && Turns.Game->Sides.IsValidIndex(Turns.SideIdx) ? Turns.Game->Players[Turns.Game->Hitter(Turns.Game->Sides[Turns.SideIdx])].bLeftHanded : false;
 		LM->SetPlayer(Club, (bRange ? AimDist : DistToPin()) * M_TO_YD, bLeft);
-		LM->SetTurn(bTurn);
+		LM->SetTurn(bTurn && Online.MayHit());   // (online, taking turns: only on this computer's player's)
 	}
 }
 
@@ -711,7 +717,8 @@ void AOTGRound::Tick(float Dt)
 			Camera.CamLook = Look;
 			Camera.CamLookNow = Look;
 		}
-		if (N >= int32(Pts.size())) FinishShot();
+		// (online: another computer's shot - where it finished comes from there)
+		if (N >= int32(Pts.size()) && !Online.HoldFinish()) FinishShot();
 	}
 	else if (Phase == EPhase::Resting)
 	{
@@ -721,7 +728,16 @@ void AOTGRound::Tick(float Dt)
 	else if (Phase == EPhase::Between)
 	{
 		PhaseTimer -= Dt;
-		if (PhaseTimer <= 0) Turns.BeginTurn(Turns.NextSide, false);
+		// (everyone at once online: holed out, waiting for the others - then the hole's done)
+		if (Online.bWaiting)
+		{
+			if (Online.AllDone())
+			{
+				Online.bWaiting = false;
+				EveryoneIn(TEXT("Everyone's in"), FString::Printf(TEXT("Hole %d"), Hole().Number));
+			}
+		}
+		else if (PhaseTimer <= 0) Turns.BeginTurn(Turns.NextSide, false);
 	}
 	else if (Phase == EPhase::Holed)
 	{
@@ -753,7 +769,8 @@ void AOTGRound::Tick(float Dt)
 		RangeMode.RangeProps->SetWind(Mps > 0.05 ? FVector(-FMath::Sin(F), FMath::Cos(F), 0) : FVector(1, 0, 0), Mps / 0.44704 / 16.0);
 	}
 	HudView.UpdateMap();
-	Changing.UpdateChanging(Dt);
+	if (!Online.FollowsWeather()) Changing.UpdateChanging(Dt);   // (online: the host's weather, as it changes)
+	Online.Tick(Dt);
 	RainFx.UpdateRain(Dt);
 	RainFx.UpdateWet(Dt);
 	Scene.UpdateStorm(Dt);
@@ -793,6 +810,13 @@ void AOTGRound::TogglePause()
 void AOTGRound::QuitToMenu()
 {
 	TellLaunchMonitor(false);
+	// (online: the round finished, back to the game's lobby; left before the end, out of the game)
+	if (Online.bOn)
+		if (UOTGNetSubsystem* N = UOTGNetSubsystem::Get(this))
+		{
+			if (Phase == EPhase::Done) N->RoundOver();
+			else N->Leave(TEXT("You left the round"));
+		}
 	UGameplayStatics::OpenLevel(this, TEXT("/Engine/Maps/Entry"));
 }
 

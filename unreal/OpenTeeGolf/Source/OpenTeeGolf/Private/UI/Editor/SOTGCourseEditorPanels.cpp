@@ -21,6 +21,7 @@
 #include "Misc/Paths.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
+#include "Brushes/SlateColorBrush.h"
 #include "Widgets/Input/SComboBox.h"
 #include "Widgets/Input/SEditableTextBox.h"
 #include "Widgets/Input/SSlider.h"
@@ -80,7 +81,11 @@ TSharedRef<SWidget> SOTGCourseEditor::TopBar()
 		case EMode::Cut: return FString::Printf(TEXT("Remove trees: click or drag over them (%.0f m wide)  (Esc when done)"), CutR * 2);
 		case EMode::Paint: return FString::Printf(TEXT("Paint tall grass: hold the button and drag (%.0f m wide); right-drag moves the map  (Esc when done)"), BrushR * 2);
 		case EMode::Erase: return FString::Printf(TEXT("Rub tall grass out: hold the button and drag (%.0f m wide)  (Esc when done)"), BrushR * 2);
-		case EMode::Forest: return TEXT("Click inside a group of trees: they're marked as one forest  (Esc to cancel)");
+		case EMode::Forest: return SelMany.Num()
+			? FString::Printf(TEXT("%d trees picked: shift-click or shift-drag picks more, Enter makes them a forest  (Esc to cancel)"), SelMany.Num())
+			: FString(TEXT("Click inside a group of trees: they're marked as one forest. Or shift-click / shift-drag to pick trees, then Enter  (Esc to cancel)"));
+		case EMode::Patch: return TEXT("Click inside a patch of tall grass: it becomes an area of the biome picked  (Esc to cancel)");
+		case EMode::Join: return TEXT("Click the forest to join to the picked one  (Esc to cancel)");
 		default: return Status;
 		}
 	};
@@ -96,13 +101,10 @@ TSharedRef<SWidget> SOTGCourseEditor::TopBar()
 		+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(4, 0)[Button(TEXT("Hole"), [this]() { FitHole(); }, 12)]
 		+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(4, 0)[Button(TEXT("Course"), [this]() { FitAll(); }, 12)]
 		+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(4, 0)[Button(bShowPhoto && PhotoBrush.IsValid() ? TEXT("Photo") : TEXT("Shading"), [this]() { bShowPhoto = !bShowPhoto; Changed(); }, 12)]
-		+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(12, 0, 4, 0)[SNew(SBox).ToolTipText(FText::FromString(TEXT("Keep your changes (the course's source). The game doesn't see them until you update it.")))[Button(TEXT("Save"), [this]() { Save(0); }, 14, bDirty)]]
-		+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(4, 0)[SNew(SBox).ToolTipText(FText::FromString(TEXT("Save, then patch the course the game plays in a few seconds: shapes, trees, tall grass, the ground. Anything it can't patch is named afterwards: that needs Put in the game (full).")))[Button(bQuicking ? TEXT("Updating the game…") : TEXT("Save and update the game"), [this]() { if (!bQuicking && !bExporting) Save(1); }, 14, !bQuicking && !bExporting)]]
-		+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(4, 0)[SNew(SBox).ToolTipText(FText::FromString(TEXT("Save, then rebuild the whole course for the game from scratch (5 to 15 minutes, in the background): needed the first time, and for anything the quick update can't do.")))[Button(bExporting ? TEXT("Putting it in the game…") : TEXT("Put in the game (full)"), [this]() { if (!bExporting && !bQuicking) Save(2); }, 12)]]
-		+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(12, 0, 0, 0)[Button(bDirty && Status == TEXT("Close without saving?") ? TEXT("Yes, close") : TEXT("Close"), [this]() {
-			if (bDirty && Status != TEXT("Close without saving?")) { Status = TEXT("Close without saving?"); Changed(); return; }
-			if (OnClose) OnClose(bExported);
-		}, 13)], FMargin(14, 8), Solid);
+		+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(12, 0, 4, 0)[SNew(SBox).ToolTipText(FText::FromString(TEXT("Keep your changes (the course's source). The game doesn't see them until you update it.")))[Button(TEXT("Save"), [this]() { AskSave(0); }, 14, bDirty)]]
+		+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(4, 0)[SNew(SBox).ToolTipText(FText::FromString(TEXT("Save, then patch the course the game plays in a few seconds: shapes, trees, tall grass, the ground. Anything it can't patch is named afterwards: that needs Put in the game (full).")))[Button(bQuicking ? TEXT("Updating the game…") : TEXT("Save and update the game"), [this]() { if (!bQuicking && !bExporting) AskSave(1); }, 14, !bQuicking && !bExporting)]]
+		+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(4, 0)[SNew(SBox).ToolTipText(FText::FromString(TEXT("Save, then rebuild the whole course for the game from scratch (5 to 15 minutes, in the background): needed the first time, and for anything the quick update can't do.")))[Button(bExporting ? TEXT("Putting it in the game…") : TEXT("Put in the game (full)"), [this]() { if (!bExporting && !bQuicking) AskSave(2); }, 12)]]
+		+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(12, 0, 0, 0)[Button(TEXT("Close"), [this]() { AskClose(); }, 13)], FMargin(14, 8), Solid);
 }
 
 TSharedRef<SWidget> SOTGCourseEditor::CoursePanel()
@@ -508,7 +510,15 @@ TSharedRef<SWidget> SOTGCourseEditor::ForestPanel()
 		+ SHorizontalBox::Slot().AutoWidth().Padding(0, 0, 6, 0)[Button(TEXT("Mark a forest"), [this]() { SetMode(Mode == EMode::Forest ? EMode::None : EMode::Forest); }, 12, Mode == EMode::Forest)]
 		+ SHorizontalBox::Slot().AutoWidth()[Button(TEXT("Draw a forest"), [this]() { const bool bOn = Mode == EMode::Draw && ModeKind == TEXT("forest"); SetMode(bOn ? EMode::None : EMode::Draw, TEXT("forest")); }, 12, Mode == EMode::Draw && ModeKind == TEXT("forest"))]
 	];
-	V->AddSlot().AutoHeight()[Note(TEXT("Mark: click inside a group of trees and they become one forest. Then make it thicker or thinner, its trees bigger or smaller, or give it a forest made in Course builder > Forests."))];
+	// (trees picked - shift-click or shift-drag: made a forest)
+	if (SelMany.Num() >= 2)
+		V->AddSlot().AutoHeight().Padding(0, 2)
+		[
+			SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot().AutoWidth().Padding(0, 0, 6, 0)[Button(FString::Printf(TEXT("Make a forest of the %d trees picked"), SelMany.Num()), [this]() { const TArray<int32> Many = SelMany; ForestOf(Many); }, 12, true)]
+			+ SHorizontalBox::Slot().AutoWidth()[Button(TEXT("Clear the picks"), [this]() { SelMany.Reset(); Changed(); }, 12)]
+		];
+	V->AddSlot().AutoHeight()[Note(TEXT("Mark: click inside a group of trees and they become one forest. Or pick the trees yourself (shift-click them, or shift-drag a box round them; shift-click again puts one back) and make a forest of them. Then make it thicker or thinner, its trees bigger or smaller, or give it a forest made in Course builder > Forests."))];
 	TSharedRef<SWrapBox> List = SNew(SWrapBox).UseAllottedSize(true);
 	for (int32 i = 0; i < Design.Forests.Num(); i++)
 		List->AddSlot().Padding(0, 0, 4, 4)[Button(Design.Forests[i].Name, [this, i]() { ClearPick(); SelForest = i; Changed(); }, 12, i == SelForest)];
@@ -544,18 +554,25 @@ TSharedRef<SWidget> SOTGCourseEditor::ForestPanel()
 				+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(6, 0, 0, 0)
 				[SNew(SBox).WidthOverride(90)[SNew(STextBlock).Font(Font(11, "Bold")).ColorAndOpacity(Ink).Text_Lambda([this, I, Field, Fmt]() { return FText::FromString(Design.Forests.IsValidIndex(I) ? Fmt(Design.Forests[I].*Field) : FString()); })]])];
 		};
-		Slide(TEXT("How many"), FOTGForest::AmountLo, FOTGForest::AmountHi, &FOTGForest::Amount, [](float X) { return FMath::IsNearlyEqual(X, 1.f) ? FString(TEXT("as mapped")) : X <= 0 ? FString(TEXT("none")) : FString::Printf(TEXT("x %.2g"), X); });
+		Slide(TEXT("How many"), FOTGForest::AmountLo, FOTGForest::AmountHi, &FOTGForest::Amount, [](float X) { return FMath::IsNearlyEqual(X, 1.f) ? FString(TEXT("as mapped")) : X <= 0 ? FString(TEXT("none")) : FString::Printf(TEXT("x %g"), FMath::RoundToFloat(X * 10) / 10); });
 		Slide(TEXT("Their size"), FOTGForest::SizeLo, FOTGForest::SizeHi, &FOTGForest::Size, [](float X) { return FString::Printf(TEXT("%d%%"), FMath::RoundToInt(X * 100)); });
 		if (F.Preset.IsSet())
 			V->AddSlot().AutoHeight().Padding(0, 2)[Row(TEXT("Planted out"), Button(F.bFill ? FString::Printf(TEXT("Yes: %d a hectare"), FMath::RoundToInt(F.Preset.PerHa * F.Amount)) : FString(TEXT("No: the trees there only")), [this, I]() {
 				Design.Forests[I].bFill = !Design.Forests[I].bFill;
 				SaveForests(Design.Forests[I].bFill ? TEXT("Planted out to its spacing") : TEXT("Not planted out"));
 			}, 12, F.bFill))];
-		V->AddSlot().AutoHeight().Padding(0, 4, 0, 0)[Button(TEXT("Delete this forest"), [this, I]() {
-			Design.Forests.RemoveAt(I);
-			SelForest = INDEX_NONE;
-			SaveForests(TEXT("Forest deleted (its trees as they were)"));
-		}, 12)];
+		V->AddSlot().AutoHeight().Padding(0, 4, 0, 0)
+		[
+			SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot().AutoWidth().Padding(0, 0, 6, 0)[Button(TEXT("Go to it"), [this, I]() { if (Canvas.IsValid() && Design.Forests.IsValidIndex(I)) Canvas->Fit(Design.Forests[I].Pts, 80); }, 12)]
+			+ SHorizontalBox::Slot().AutoWidth().Padding(0, 0, 6, 0)[Button(TEXT("Join another forest to it"), [this]() { SetMode(Mode == EMode::Join ? EMode::None : EMode::Join); }, 12, Mode == EMode::Join)]
+			+ SHorizontalBox::Slot().AutoWidth()[Button(TEXT("Delete this forest"), [this, I]() {
+				Design.Forests.RemoveAt(I);
+				SelForest = INDEX_NONE;
+				SaveForests(TEXT("Forest deleted (its trees as they were)"));
+			}, 12)]
+		];
+		if (Mode == EMode::Join) V->AddSlot().AutoHeight()[Note(FString::Printf(TEXT("Click the forest to join to %s: they become one (its settings kept), the gap between them filled in, up to 40 m."), *F.Name))];
 		V->AddSlot().AutoHeight()[Note(TEXT("The game draws it as it is here the next time the course is played: no export needed. The ball meets its trees."))];
 	}
 	return Section(TEXT("Forests"), V);
@@ -586,13 +603,14 @@ TSharedRef<SWidget> SOTGCourseEditor::BiomePanel()
 	V->AddSlot().AutoHeight().Padding(0, 4, 0, 2)
 	[
 		SNew(SHorizontalBox)
+		+ SHorizontalBox::Slot().AutoWidth().Padding(0, 0, 6, 0)[Button(TEXT("Mark a patch"), [this]() { SetMode(Mode == EMode::Patch ? EMode::None : EMode::Patch); }, 12, Mode == EMode::Patch)]
 		+ SHorizontalBox::Slot().AutoWidth().Padding(0, 0, 6, 0)[Button(TEXT("Draw an area"), [this]() { const bool bOn = Mode == EMode::Draw && ModeKind == TEXT("biome"); SetMode(bOn ? EMode::None : EMode::Draw, TEXT("biome")); }, 12, Mode == EMode::Draw && ModeKind == TEXT("biome"))]
 		+ SHorizontalBox::Slot().FillWidth(1)[Dropdown(TArray<FString>(Names.GetData() + 1, Names.Num() - 1), Names.IndexOfByKey(AreaBiome) - 1, [this, Names](int32 K) {
 			if (Names.IsValidIndex(K + 1)) AreaBiome = Names[K + 1];
 			Changed();
 		})]
 	];
-	V->AddSlot().AutoHeight()[Note(TEXT("An area grows its biome's grasses instead (where there's tall grass in it). The biomes are made in Course builder > Grass biomes, with a preview; the rough stays one even colour."))];
+	V->AddSlot().AutoHeight()[Note(TEXT("Mark: click inside a patch of tall grass (amber) and it becomes an area of the biome picked here. Or draw one round it. An area only changes what kind of tall grass grows where there's tall grass already: it doesn't add any (paint that below). Click an area on the map to pick it."))];
 	TSharedRef<SWrapBox> List = SNew(SWrapBox).UseAllottedSize(true);
 	for (int32 i = 0; i < Biomes.Areas.Num(); i++)
 		List->AddSlot().Padding(0, 0, 4, 4)[Button(FString::Printf(TEXT("%d. %s"), i + 1, *Biomes.Areas[i].Biome), [this, i]() { ClearPick(); SelArea = i; Changed(); }, 12, i == SelArea)];
@@ -621,4 +639,184 @@ TSharedRef<SWidget> SOTGCourseEditor::BuildingPanel()
 	V->AddSlot().AutoHeight()[Row(TEXT("On the map"), Button(bShowBuildings ? TEXT("Shown") : TEXT("Hidden"), [this]() { bShowBuildings = !bShowBuildings; Changed(); }, 12, bShowBuildings))];
 	V->AddSlot().AutoHeight()[Note(FString::Printf(TEXT("%d buildings round the course. Click one to say what it is (it changes how the game draws it)."), Buildings.Num()))];
 	return Section(TEXT("Buildings"), V);
+}
+
+// ------------------------------------------------------------------ what's changed, and the popup
+
+TArray<FString> SOTGCourseEditor::ChangeList() const
+{
+	TArray<FString> Out;
+	const FOTGCourseSource& A = Saved;
+	const FOTGCourseSource& B = Src;
+	if (A.Name != B.Name) Out.Add(FString::Printf(TEXT("Name: %s -> %s"), *A.Name, *B.Name));
+	if (A.Location != B.Location) Out.Add(FString::Printf(TEXT("Location: %s -> %s"), *A.Location, *B.Location));
+	if (A.Stimp != B.Stimp) Out.Add(FString::Printf(TEXT("Green speed: %g -> %g"), A.Stimp, B.Stimp));
+	// the holes (by their place)
+	if (A.Holes.Num() != B.Holes.Num()) Out.Add(FString::Printf(TEXT("Holes: %d -> %d"), A.Holes.Num(), B.Holes.Num()));
+	auto Near = [](const FVector2D& P, const FVector2D& Q) { return FVector2D::Distance(P, Q) < 0.05; };
+	auto Points = [&](const TMap<FString, FVector2D>& X, const TMap<FString, FVector2D>& Y, const TCHAR* What, TArray<FString>& Bits) {
+		for (const auto& P : Y)
+		{
+			const FVector2D* Q = X.Find(P.Key);
+			if (!Q) Bits.Add(FString::Printf(TEXT("%s %s added"), *P.Key, What));
+			else if (!Near(*Q, P.Value)) Bits.Add(FString::Printf(TEXT("%s %s moved"), *P.Key, What));
+		}
+		for (const auto& P : X) if (!Y.Contains(P.Key)) Bits.Add(FString::Printf(TEXT("%s %s taken off"), *P.Key, What));
+	};
+	for (int32 i = 0; i < FMath::Min(A.Holes.Num(), B.Holes.Num()); i++)
+	{
+		const FOTGSourceHole& X = A.Holes[i];
+		const FOTGSourceHole& Y = B.Holes[i];
+		TArray<FString> Bits;
+		if (X.Par != Y.Par) Bits.Add(FString::Printf(TEXT("par %d -> %d"), X.Par, Y.Par));
+		if (X.Index != Y.Index) Bits.Add(FString::Printf(TEXT("index %d -> %d"), X.Index, Y.Index));
+		Points(X.Tees, Y.Tees, TEXT("tee"), Bits);
+		Points(X.Pins, Y.Pins, TEXT("pin"), Bits);
+		if (!Near(X.Green, Y.Green)) Bits.Add(TEXT("green's centre moved"));
+		if (X.Aims.Num() != Y.Aims.Num()) Bits.Add(FString::Printf(TEXT("aim points %d -> %d"), X.Aims.Num(), Y.Aims.Num()));
+		else for (int32 k = 0; k < X.Aims.Num(); k++) if (!Near(X.Aims[k], Y.Aims[k])) { Bits.Add(TEXT("aim point moved")); break; }
+		if (Bits.Num()) Out.Add(FString::Printf(TEXT("Hole %d: %s"), Y.Number, *FString::Join(Bits, TEXT(", "))));
+	}
+	// the shapes, kind by kind: those not found as they were (changed where there's one new for one gone)
+	auto SameShape = [&](const FOTGSourceShape& X, const FOTGSourceShape& Y) {
+		if (X.Kind != Y.Kind || X.Pts.Num() != Y.Pts.Num() || X.bInner != Y.bInner || X.bFlow != Y.bFlow || X.bInnerOOB != Y.bInnerOOB || X.Density != Y.Density || X.Species != Y.Species) return false;
+		for (int32 k = 0; k < X.Pts.Num(); k++) if (!Near(X.Pts[k], Y.Pts[k])) return false;
+		return true;
+	};
+	TArray<FString> Kinds;
+	for (const FOTGSourceShape& S : A.Shapes) Kinds.AddUnique(S.Kind);
+	for (const FOTGSourceShape& S : B.Shapes) Kinds.AddUnique(S.Kind);
+	for (const FString& K : Kinds)
+	{
+		TArray<const FOTGSourceShape*> Gone, New;
+		for (const FOTGSourceShape& S : A.Shapes) if (S.Kind == K) Gone.Add(&S);
+		for (const FOTGSourceShape& S : B.Shapes)
+		{
+			if (S.Kind != K) continue;
+			const int32 M = Gone.IndexOfByPredicate([&](const FOTGSourceShape* G) { return SameShape(*G, S); });
+			if (M != INDEX_NONE) Gone.RemoveAt(M); else New.Add(&S);
+		}
+		const int32 Ch = FMath::Min(Gone.Num(), New.Num());
+		TArray<FString> Bits;
+		if (New.Num() - Ch) Bits.Add(FString::Printf(TEXT("%d added"), New.Num() - Ch));
+		if (Ch) Bits.Add(FString::Printf(TEXT("%d changed"), Ch));
+		if (Gone.Num() - Ch) Bits.Add(FString::Printf(TEXT("%d deleted"), Gone.Num() - Ch));
+		if (Bits.Num()) Out.Add(FString::Printf(TEXT("%s: %s"), *KindLabel(K), *FString::Join(Bits, TEXT(", "))));
+	}
+	// the trees
+	{
+		TArray<const FOTGSourceTree*> Gone;
+		for (const FOTGSourceTree& T : A.UserTrees) Gone.Add(&T);
+		int32 New = 0;
+		for (const FOTGSourceTree& T : B.UserTrees)
+		{
+			const int32 M = Gone.IndexOfByPredicate([&](const FOTGSourceTree* G) { return Near(G->P, T.P) && G->Size == T.Size && G->Kind == T.Kind; });
+			if (M != INDEX_NONE) Gone.RemoveAt(M); else New++;
+		}
+		const int32 Ch = FMath::Min(Gone.Num(), New);
+		TArray<FString> Bits;
+		if (New - Ch) Bits.Add(FString::Printf(TEXT("%d added"), New - Ch));
+		if (Ch) Bits.Add(FString::Printf(TEXT("%d moved or changed"), Ch));
+		if (Gone.Num() - Ch) Bits.Add(FString::Printf(TEXT("%d deleted"), Gone.Num() - Ch));
+		if (Bits.Num()) Out.Add(TEXT("Your own trees: ") + FString::Join(Bits, TEXT(", ")));
+	}
+	{
+		int32 Removed = 0, Back = 0;
+		for (const FVector2D& P : B.RemovedTrees) if (!A.RemovedTrees.ContainsByPredicate([&](const FVector2D& Q) { return Near(P, Q); })) Removed++;
+		for (const FVector2D& P : A.RemovedTrees) if (!B.RemovedTrees.ContainsByPredicate([&](const FVector2D& Q) { return Near(P, Q); })) Back++;
+		if (Removed) Out.Add(FString::Printf(TEXT("Trees from the photo: %d removed"), Removed));
+		if (Back) Out.Add(FString::Printf(TEXT("Trees from the photo: %d put back"), Back));
+	}
+	// the tall grass: strokes added after those there were, or some taken back
+	{
+		int32 Same = 0;
+		while (Same < A.TallGrass.Num() && Same < B.TallGrass.Num() && A.TallGrass[Same].Pts == B.TallGrass[Same].Pts && A.TallGrass[Same].bErase == B.TallGrass[Same].bErase) Same++;
+		int32 Painted = 0, Rubbed = 0;
+		for (int32 k = Same; k < B.TallGrass.Num(); k++) { if (B.TallGrass[k].bErase) Rubbed++; else Painted++; }
+		if (Painted) Out.Add(FString::Printf(TEXT("Tall grass: %d stroke%s painted"), Painted, Painted == 1 ? TEXT("") : TEXT("s")));
+		if (Rubbed) Out.Add(FString::Printf(TEXT("Tall grass: %d stroke%s rubbed out"), Rubbed, Rubbed == 1 ? TEXT("") : TEXT("s")));
+		if (A.TallGrass.Num() > Same) Out.Add(FString::Printf(TEXT("Tall grass: %d earlier strokes taken back"), A.TallGrass.Num() - Same));
+	}
+	// the buildings
+	for (const auto& P : B.BuildingTypes)
+	{
+		const FString* Was = A.BuildingTypes.Find(P.Key);
+		if (!Was || *Was != P.Value)
+		{
+			const FBuilding* Bd = Buildings.FindByPredicate([&](const FBuilding& X) { return X.Key == P.Key; });
+			const FString Which = Bd && !Bd->Name.IsEmpty() ? Bd->Name : FString::Printf(TEXT("at %s"), *P.Key);
+			Out.Add(FString::Printf(TEXT("Building %s: %s"), *Which, *P.Value));
+		}
+	}
+	for (const auto& P : A.BuildingTypes) if (!B.BuildingTypes.Contains(P.Key)) Out.Add(FString::Printf(TEXT("Building at %s: back to as found"), *P.Key));
+	// the looks
+	auto Look = [&](const TCHAR* What, bool X, bool Y) { if (X != Y) Out.Add(FString::Printf(TEXT("%s: %s"), What, Y ? TEXT("aerial photo colours") : TEXT("game colours"))); };
+	Look(TEXT("Fairways & tees"), A.bPhotoFairway, B.bPhotoFairway);
+	Look(TEXT("Greens"), A.bPhotoGreen, B.bPhotoGreen);
+	Look(TEXT("Rough"), A.bPhotoRough, B.bPhotoRough);
+	if (A.MowFairway != B.MowFairway) Out.Add(FString::Printf(TEXT("Fairway mowing: %s -> %s"), *FOTGCourseSource::MowLabel(A.MowFairway), *FOTGCourseSource::MowLabel(B.MowFairway)));
+	if (A.MowGreen != B.MowGreen) Out.Add(FString::Printf(TEXT("Green mowing: %s -> %s"), *FOTGCourseSource::MowLabel(A.MowGreen), *FOTGCourseSource::MowLabel(B.MowGreen)));
+	if (FOTGCourseSource::RoughCm(A.RoughScale) != FOTGCourseSource::RoughCm(B.RoughScale))
+		Out.Add(FString::Printf(TEXT("Rough height: %d cm -> %d cm"), FOTGCourseSource::RoughCm(A.RoughScale), FOTGCourseSource::RoughCm(B.RoughScale)));
+	if (FOTGCourseSource::NativeCm(A.NativeScale) != FOTGCourseSource::NativeCm(B.NativeScale))
+		Out.Add(FString::Printf(TEXT("Tall grass height: %d cm -> %d cm"), FOTGCourseSource::NativeCm(A.NativeScale), FOTGCourseSource::NativeCm(B.NativeScale)));
+	for (const FString& S : B.TreesOff) if (!A.TreesOff.Contains(S)) Out.Add(FString::Printf(TEXT("Tree species %s: turned off"), *S));
+	for (const FString& S : A.TreesOff) if (!B.TreesOff.Contains(S)) Out.Add(FString::Printf(TEXT("Tree species %s: turned back on"), *S));
+	if (A.PlantsOff.Num() != B.PlantsOff.Num() || !A.PlantsOff.Includes(B.PlantsOff) || A.PlantsExtra.Num() != B.PlantsExtra.Num() || !A.PlantsExtra.Includes(B.PlantsExtra))
+		Out.Add(TEXT("Shrubs, flowers and grasses: changed"));
+	if (!FMath::IsNearlyEqual(A.PlantAmount, B.PlantAmount)) Out.Add(FString::Printf(TEXT("Plants, how many: %d%% -> %d%%"), FMath::RoundToInt(A.PlantAmount * 100), FMath::RoundToInt(B.PlantAmount * 100)));
+	return Out;
+}
+
+void SOTGCourseEditor::HideDialog()
+{
+	if (DialogHost.IsValid()) { DialogHost->SetContent(SNullWidget::NullWidget); DialogHost->SetVisibility(EVisibility::Collapsed); }
+}
+
+void SOTGCourseEditor::ShowDialog(const FString& Title, const FString& Intro, const TArray<FString>& Lines, TArray<TPair<FString, TFunction<void()>>> Buttons)
+{
+	if (!DialogHost.IsValid()) return;
+	static const FSlateColorBrush Dimmer(FLinearColor(0, 0, 0, 0.6f));
+	TSharedRef<SVerticalBox> List = SNew(SVerticalBox);
+	for (const FString& L : Lines) List->AddSlot().AutoHeight().Padding(0, 1)[SNew(STextBlock).Font(Font(12)).ColorAndOpacity(Ink).AutoWrapText(true).Text(FText::FromString(TEXT("-  ") + L))];
+	TSharedRef<SHorizontalBox> Btns = SNew(SHorizontalBox);
+	Btns->AddSlot().FillWidth(1)[SNullWidget::NullWidget];
+	for (int32 k = 0; k < Buttons.Num(); k++)
+	{
+		const TFunction<void()> Do = Buttons[k].Value;
+		Btns->AddSlot().AutoWidth().Padding(8, 0, 0, 0)[Button(Buttons[k].Key, [this, Do]() { HideDialog(); if (Do) Do(); }, 13, k == 0)];
+	}
+	TSharedRef<SVerticalBox> Body = SNew(SVerticalBox)
+		+ SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 6)[Text(Title, 17, Gold, "Bold")]
+		+ SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 8)[SNew(STextBlock).Font(Font(12)).ColorAndOpacity(Soft).AutoWrapText(true).Text(FText::FromString(Intro))];
+	if (Lines.Num()) Body->AddSlot().AutoHeight().Padding(0, 0, 0, 12)[SNew(SBox).MaxDesiredHeight(380)[SNew(SScrollBox) + SScrollBox::Slot()[List]]];
+	Body->AddSlot().AutoHeight()[Btns];
+	DialogHost->SetContent(SNew(SBorder).BorderImage(&Dimmer).Padding(0).HAlign(HAlign_Center).VAlign(VAlign_Center)
+		[SNew(SBox).WidthOverride(560)[Box(Body, FMargin(20, 16), Solid)]]);
+	DialogHost->SetVisibility(EVisibility::Visible);
+}
+
+void SOTGCourseEditor::AskSave(int32 Then)
+{
+	const TArray<FString> L = ChangeList();
+	if (!L.Num())
+	{
+		// (nothing new to keep: the game updated as asked, or nothing to do)
+		if (Then == 0) { Status = TEXT("Nothing has changed since it was last saved"); Changed(); }
+		else Save(Then);
+		return;
+	}
+	const FString Go = Then == 1 ? TEXT("Save and update the game") : Then == 2 ? TEXT("Save and put in the game (full)") : TEXT("Save");
+	ShowDialog(FString::Printf(TEXT("Save %d change%s?"), L.Num(), L.Num() == 1 ? TEXT("") : TEXT("s")),
+		TEXT("Since the course was opened or last saved:"), L,
+		{ { Go, [this, Then]() { Save(Then); } }, { TEXT("Cancel"), nullptr } });
+}
+
+void SOTGCourseEditor::AskClose()
+{
+	const TArray<FString> L = bDirty ? ChangeList() : TArray<FString>();
+	if (!L.Num()) { if (OnClose) OnClose(bExported); return; }
+	ShowDialog(TEXT("Changes not saved"),
+		FString::Printf(TEXT("%d change%s since it was last saved, lost if you close now. (Forests and grass biome areas are kept already: they save as you make them.)"), L.Num(), L.Num() == 1 ? TEXT("") : TEXT("s")), L,
+		{ { TEXT("Save and close"), [this]() { Save(3); } }, { TEXT("Close without saving"), [this]() { if (OnClose) OnClose(bExported); } }, { TEXT("Keep editing"), nullptr } });
 }

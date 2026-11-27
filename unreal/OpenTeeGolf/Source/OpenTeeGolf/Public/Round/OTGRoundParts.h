@@ -15,6 +15,7 @@
 //  - FOTGRoundFlag: the flag's cloth in the wind (OTGRoundExtras.cpp)
 //  - FOTGRoundSlopeGrid: the slope grid on the green (OTGRoundSlopeGrid.cpp)
 //  - FOTGRoundRangeMode: the driving range (OTGRoundRange.cpp)
+//  - FOTGRoundNet: an online game's other players (OTGRoundNet.cpp; UOTGNetSubsystem)
 // The tracer is a plugin of its own (Plugins/OTGShotTracer). They're plain structs; the objects they
 // hold are kept from the garbage collector by the round (AOTGRound::AddReferencedObjects).
 
@@ -40,6 +41,8 @@ class UOTGWeatherSound;
 class UAudioComponent;
 class SOTGRangePanel;
 class AOTGRangeProps;
+class FJsonObject;
+class UOTGShotTracerComponent;
 
 // Players taking turns as in the web version (main.js loadSide, saveSide, roundAfterShot, beginTurn):
 // whoever's away plays next, the others' balls lie where they are, the game's format scores it
@@ -253,4 +256,75 @@ struct FOTGRoundRangeMode
 	TObjectPtr<UInstancedStaticMeshComponent> RangeDots;   // (where the club's last shots stopped)
 	TObjectPtr<UMaterialInstanceDynamic> RangeDotMat;
 	int32 RangeBalls = 0;
+};
+
+// An online game (UOTGNetSubsystem, OTGNetSubsystem.h): the players at the other computers, a side
+// each. Taking turns, every game plays the same round: the shot of whoever's turn it is comes to all
+// of them and flies on each from the same start with the same wind and the same luck (its random
+// numbers seeded), and the hitter's game says where it finished. Everyone at once: your ball is
+// yours to play whenever you're ready; the others' balls fly as their shots come in, each with its
+// own tracer; and nobody goes on to the next hole until everyone has finished this one (someone
+// who leaves counts as picked up). The host's weather is everyone's.
+struct FOTGRoundNet
+{
+	AOTGRound* Round = nullptr;
+
+	// (setting up: true for an online round - the players and the game from the online game's)
+	bool Begin(FOTGRoundSetup& Setup, TArray<FOTGGamePlayer>& Players);
+	void AfterSetup();
+	void OnStartHole();
+	void Tick(float Dt);
+	void AddReferencedObjects(FReferenceCollector& Collector);
+
+	bool MayHit() const;                    // (this computer's player may hit now)
+	bool IsLocalSide(int32 Side) const { return !bOn || Side == LocalSide; }
+	FString SideName(int32 Side) const;
+	bool HoldFinish() const;                // (taking turns: the hitter's game hasn't said where it finished yet)
+	bool AllDone();                         // (everyone at once: everyone's finished the hole)
+	FString WaitingFor() const;
+	bool FollowsWeather() const { return bOn && !bHost; }
+
+	// what this computer's player did
+	void SendShot(const struct FOTGShot& Shot, const otg::Shot& Play, const otg::ShotOptions& O, double FxSpeed, double FxSpin, int32 Seed);
+	void SendUpdate(const otg::Shot& Play, int32 Seed);
+	void SendRest();
+	void SendHoled(int32 Strokes, bool bPicked);
+	void ApplyRest();                       // (taking turns: the hitter's word on where it finished)
+
+	bool bOn = false, bTogether = false, bHost = false;
+	int32 LocalSide = 0;
+	TArray<int32> PlayerOfSide;             // (the online player's id, for each side)
+	bool bRemoteShot = false;               // (taking turns: the shot in the air is another computer's)
+	bool bWaiting = false;                  // (everyone at once: holed out, the others still playing)
+	int32 ShotSeed = 0;
+
+private:
+	int32 SideOf(int32 PlayerId) const;
+	bool Connected(int32 Side) const;
+	void ApplyWeather(const TSharedPtr<FJsonObject>& M);
+	void SendWeather();
+	// (taking turns) / (everyone at once): a message dealt with now (true), or left waiting
+	bool TakeTurns(const TSharedPtr<FJsonObject>& M, int32 Side, const FString& K, int32 Hole);
+	bool TakeTogether(const TSharedPtr<FJsonObject>& M, int32 Side, const FString& K, int32 Hole);
+	void PlaceOthers();
+
+	TArray<TSharedPtr<FJsonObject>> Waiting;
+	TSharedPtr<FJsonObject> PendingRest;
+	// (everyone at once: each side's ball in the air, and its tracer)
+	struct FFlight
+	{
+		otg::ShotResult Res;
+		otg::ShotOptions Opts;
+		otg::V3 From;
+		double T = 0, FxSpeed = 1, FxSpin = 1;
+		bool bFlying = false;
+		TSharedPtr<FJsonObject> Rest;
+	};
+	TArray<FFlight> Flights;
+	TArray<TObjectPtr<UOTGShotTracerComponent>> Tracers;
+	double WxAt = 0;
+	FString WxSent;
+	// (testing, -netbot: a test shot whenever it's this computer's player's to hit)
+	bool bBot = false;
+	double BotIn = 2;
 };
