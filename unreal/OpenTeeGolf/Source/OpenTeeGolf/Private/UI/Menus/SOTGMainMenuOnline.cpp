@@ -93,9 +93,18 @@ void SOTGMainMenu::OnlineTest()
 	}
 	else N->Join(Join, OnlineMe());
 	Page = EPage::Online;
-	RegisterActiveTimer(0.5f, FWidgetActiveTimerDelegate::CreateLambda([this, Choose, StartAt](double, float) {
+	// (-netshot=<name>: the page's screenshot once 2 players are in, 3 s on)
+	FString ShotName;
+	FParse::Value(Cmd, TEXT("netshot="), ShotName);
+	TSharedRef<double> ShotAt = MakeShared<double>(0);
+	RegisterActiveTimer(0.5f, FWidgetActiveTimerDelegate::CreateLambda([this, Choose, StartAt, ShotName, ShotAt](double, float) {
 		UOTGNetSubsystem* X = Net();
 		if (!X) return EActiveTimerReturnType::Stop;
+		if (!ShotName.IsEmpty() && *ShotAt >= 0 && X->Players().Num() >= 2)
+		{
+			if (*ShotAt == 0) *ShotAt = FPlatformTime::Seconds() + 3;
+			else if (FPlatformTime::Seconds() >= *ShotAt && GEngine) { GEngine->Exec(nullptr, *(TEXT("OTG.Shot ") + ShotName)); *ShotAt = -1; }
+		}
 		if (X->NeedsCourseChoice() && !Choose.IsEmpty())
 			X->ChooseCourse(Choose == TEXT("overwrite") ? EOTGCourseChoice::Overwrite : Choose == TEXT("leave") ? EOTGCourseChoice::Leave : EOTGCourseChoice::Copy);
 		FString Why;
