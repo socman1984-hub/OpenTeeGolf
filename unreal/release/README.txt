@@ -56,6 +56,11 @@ Square Golf            Turn it on; the game runs its bridge program (bridges\all
 rela                   rela (docs.rela.golf) connects many launch monitors (SkyTrak, GC2, FlightScope,
                        Nova, Mevo+, R10, Square ...). In rela choose GSPro as the simulator and, in
                        Settings > Simulator Connection, this PC (127.0.0.1) and port 921.
+Rapsodo MLM2PRO        Through the free MLM2PRO Connector (github.com/springbok/MLM2PRO-GSPro-
+                       Connector). In the Rapsodo app authorise GSPro under third-party apps (it
+                       expires; redo it when the Connector says so). In the Connector set the GSPro
+                       address to this PC (127.0.0.1) and port 921, then connect the MLM2PRO
+                       (steady red light). Putts don't come from the MLM2PRO.
 Other (FRP)            Any launch monitor that speaks the Flight Relay Protocol: enter its address.
 
 The status turns green when the launch monitor is ready. No launch monitor? Press T on the course

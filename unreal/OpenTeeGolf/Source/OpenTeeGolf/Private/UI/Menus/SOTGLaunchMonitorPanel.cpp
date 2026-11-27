@@ -84,7 +84,7 @@ void SOTGLaunchMonitorPanel::Rebuild()
 	TSharedRef<SWrapBox> Kinds = SNew(SWrapBox).UseAllottedSize(true);
 	const TPair<EOTGConnection, FString> Options[] = {
 		{ EOTGConnection::FSGolf, TEXT("FS Golf (OpenConnect)") }, { EOTGConnection::Direct, TEXT("Mevo+ directly") },
-		{ EOTGConnection::R10, TEXT("Garmin R10") }, { EOTGConnection::Square, TEXT("Square Golf") }, { EOTGConnection::Rela, TEXT("rēlā") }, { EOTGConnection::Frp, TEXT("Other (FRP)") },
+		{ EOTGConnection::R10, TEXT("Garmin R10") }, { EOTGConnection::Square, TEXT("Square Golf") }, { EOTGConnection::Rela, TEXT("rēlā") }, { EOTGConnection::Rapsodo, TEXT("Rapsodo MLM2PRO") }, { EOTGConnection::Frp, TEXT("Other (FRP)") },
 	};
 	for (const TPair<EOTGConnection, FString>& O : Options)
 	{
@@ -108,6 +108,7 @@ void SOTGLaunchMonitorPanel::Rebuild()
 		case EOTGConnection::R10: return TEXT("Pair the R10 in Windows Bluetooth settings; the game runs its bridge program.");
 		case EOTGConnection::Square: return TEXT("Turn the Square Golf on; the game runs its bridge program.");
 		case EOTGConnection::Rela: return FString::Printf(TEXT("In rēlā (docs.rela.golf), connect your launch monitor, choose GSPro as the simulator, and in Settings > Simulator Connection set the host to this PC (127.0.0.1 if rēlā runs here) and the port to %d. Then start it."), L->GetOpenConnectPort());
+		case EOTGConnection::Rapsodo: return FString::Printf(TEXT("Run the MLM2PRO Connector (github.com/springbok/MLM2PRO-GSPro-Connector). In the Rapsodo app, authorise GSPro under third-party apps (it expires, so redo it when the Connector says so). In the Connector's settings set the GSPro address to this PC (127.0.0.1 if it runs here) and the port to %d, then connect the MLM2PRO (steady red light). Putts don't come from the MLM2PRO."), L->GetOpenConnectPort());
 		default: return TEXT("The device's Flight Relay Protocol address (ws://...).");
 		}
 	};
@@ -209,7 +210,7 @@ void SOTGLaunchMonitorPanel::Rebuild()
 	[
 		SNew(SHorizontalBox)
 		+ SHorizontalBox::Slot().AutoWidth().Padding(0, 0, 6, 0)[Button(TEXT("Test shot"), [this]() { if (UOTGLaunchMonitorSubsystem* X = LM()) X->InjectShot(150, 12, 0, 2700, 0); }, 14)]
-		+ SHorizontalBox::Slot().AutoWidth()[C == EOTGConnection::FSGolf || C == EOTGConnection::Rela ? SNullWidget::NullWidget
+		+ SHorizontalBox::Slot().AutoWidth()[C == EOTGConnection::FSGolf || C == EOTGConnection::Rela || C == EOTGConnection::Rapsodo ? SNullWidget::NullWidget
 			: Button(L->IsDeviceOff() ? TEXT("Connect") : TEXT("Disconnect"), [this]() {
 				if (UOTGLaunchMonitorSubsystem* X = LM()) { if (X->IsDeviceOff()) X->ConnectDevice(); else X->DisconnectDevice(); }
 				Rebuild();

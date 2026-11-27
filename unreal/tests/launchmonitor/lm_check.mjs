@@ -110,7 +110,8 @@ async function mevoRun() {
   check(mevo.length === 2, `two Mevo+ shots (got ${mevo.length})`);
   mevo.forEach((s, i) => sameShot(s, want, `Mevo+ shot ${i + 1}`));
   check(mevo[0] && Math.abs(mevo[0].clubSpeedMph - 45 * 2.23694) < 1e-3, `club speed ${mevo[0]?.clubSpeedMph?.toFixed(2)} mph`);
-  check(JSON.stringify(seen.modes.slice(0, 2)) === '[1,3]', `detection modes: full swing, then putting (got ${JSON.stringify(seen.modes)})`);
+  // (full swing is mode 9, the Mevo+'s for nets and screens: OTGMevoWire ModeNumber)
+  check(JSON.stringify(seen.modes.slice(0, 2)) === '[9,3]', `detection modes: full swing, then putting (got ${JSON.stringify(seen.modes)})`);
   check(seen.arms >= 3, `armed for each shot (arm requests: ${seen.arms}, the first refused as the real one does)`);
   check(!seen.armed, 'left disarmed after the last shot (held until the next turn)');
   const oc = shots.filter((s) => s.source === 'launch-monitor');
@@ -189,7 +190,42 @@ async function mevoDropRun() {
   check(!seen.armed, 'disarmed when the game quit');
 }
 
+// ---------------------------------------------------------------- Rapsodo MLM2PRO (MLM2PRO Connector)
+// The Connector sends to the OpenConnect listener as it would to GSPro; the game shows its own name
+// while it waits and takes the shot like any other OpenConnect one
+async function rapsodoRun() {
+  console.log('Rapsodo MLM2PRO through the MLM2PRO Connector (OpenConnect, as to GSPro)');
+  const ocPort = await freePort();
+  const replies = [];
+  let sent = false;
+  const send = () => {
+    if (sent) return;
+    sent = true;
+    const sock = net.connect(ocPort, '127.0.0.1', () => {
+      const base = { DeviceID: 'Rapsodo MLM2PRO', Units: 'Yards', ShotNumber: 7, APIversion: '1' };
+      sock.write(JSON.stringify({ ...base, ShotDataOptions: { ContainsBallData: false, IsHeartBeat: true, LaunchMonitorIsReady: true } }));
+      setTimeout(() => sock.write(JSON.stringify({ ...base, BallData: { Speed: 132.4, SpinAxis: 3.5, TotalSpin: 4800, HLA: 1.75, VLA: 15.2 }, ClubData: { Speed: 92.1 }, ShotDataOptions: { ContainsBallData: true, ContainsClubData: true, IsHeartBeat: false, LaunchMonitorIsReady: true } })), 300);
+      setTimeout(() => sock.end(), 1500);
+    });
+    sock.setEncoding('utf8');
+    sock.on('data', (d) => replies.push(d));
+    sock.on('error', () => {});
+  };
+  const { shots, lines } = await runGame(['-lm=rapsodo', `-ocport=${ocPort}`, '-execat="2:OTG.LM.Status|10:OTG.LM.Status"'], {
+    seconds: 13,
+    onLine: (l) => { if (/OpenConnect listener on port/.test(l)) setTimeout(send, 4000); },
+  });
+  check(lines.some((l) => /Waiting for the MLM2PRO Connector on port/.test(l)), 'waits for the MLM2PRO Connector (its own name)');
+  const oc = shots.filter((s) => s.source === 'launch-monitor');
+  check(oc.length === 1, `one MLM2PRO shot (got ${oc.length})`);
+  if (oc[0]) sameShot(oc[0], toShot({ Speed: 132.4, SpinAxis: 3.5, TotalSpin: 4800, HLA: 1.75, VLA: 15.2 }), 'MLM2PRO shot');
+  check(oc[0]?.device === 'Rapsodo MLM2PRO', `device "${oc[0]?.device}"`);
+  check(Math.abs((oc[0]?.clubSpeedMph ?? NaN) - 92.1) < 1e-3, `club speed ${oc[0]?.clubSpeedMph?.toFixed(2)} mph`);
+  check((replies.join('').match(/"Code":200/g) || []).length >= 2, 'heartbeat and shot answered');
+}
+
 await mevoRun();
+await rapsodoRun();
 await mevoDropRun();
 await frpRun();
 await bridgeRun();

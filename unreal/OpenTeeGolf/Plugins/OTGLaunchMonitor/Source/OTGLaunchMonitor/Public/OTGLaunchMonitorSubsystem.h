@@ -1,6 +1,7 @@
 // Shots from the launch monitor, inside the game (what server.js does for the web version):
 //
-//  - OpenConnect: FS Golf (or any OpenConnect connector) sends shots to TCP 921; always listening
+//  - OpenConnect: FS Golf (or any OpenConnect connector) sends shots to TCP 921; always listening.
+//    rēlā and the MLM2PRO Connector (Rapsodo) send there too, as they would to GSPro
 //  - Mevo+ directly: the PC on the Mevo+ Wi-Fi, talking to the radar itself (no FS Golf)
 //  - Garmin R10 / Square Golf: through their bridge programs (bridges/), over FRP
 //  - any Flight Relay Protocol device at an address
@@ -11,7 +12,7 @@
 // stays disarmed after each shot until the next turn).
 //
 // The choice of connection and the Mevo+ setup are saved in GameUserSettings.ini
-// [OpenTeeGolf.LaunchMonitor]. Command line (not saved): -lm=fsgolf|direct|r10|square|frp,
+// [OpenTeeGolf.LaunchMonitor]. Command line (not saved): -lm=fsgolf|direct|r10|square|frp|rela|rapsodo,
 // -mevo=host[:port], -frp=ws://..., -ocport=<n>, -bridgecmd="<program> <args>", -lmturn (start on
 // the player's turn), -quitafter=<s>, -execat="<s>:<console command>|<s>:<command>...".
 // Console: OTG.LM.Status, OTG.LM.Connect <kind> [address], OTG.LM.Turn 0|1, OTG.LM.Player <club>

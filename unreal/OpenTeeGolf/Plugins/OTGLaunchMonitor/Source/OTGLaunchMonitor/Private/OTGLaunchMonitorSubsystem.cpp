@@ -33,12 +33,15 @@ namespace
 		case EOTGConnection::Square: return TEXT("square");
 		case EOTGConnection::Frp: return TEXT("frp");
 		case EOTGConnection::Rela: return TEXT("rela");
+		case EOTGConnection::Rapsodo: return TEXT("rapsodo");
 		default: return TEXT("fsgolf");
 		}
 	}
+	// the ones that send to the OpenConnect listener (no device of the game's own to run)
+	bool ViaOpenConnect(EOTGConnection K) { return K == EOTGConnection::FSGolf || K == EOTGConnection::Rela || K == EOTGConnection::Rapsodo; }
 	bool KindOf(const FString& S, EOTGConnection& Out)
 	{
-		for (EOTGConnection K : { EOTGConnection::FSGolf, EOTGConnection::Direct, EOTGConnection::R10, EOTGConnection::Square, EOTGConnection::Frp, EOTGConnection::Rela })
+		for (EOTGConnection K : { EOTGConnection::FSGolf, EOTGConnection::Direct, EOTGConnection::R10, EOTGConnection::Square, EOTGConnection::Frp, EOTGConnection::Rela, EOTGConnection::Rapsodo })
 			if (S.Equals(KindName(K), ESearchCase::IgnoreCase)) { Out = K; return true; }
 		return false;
 	}
@@ -443,14 +446,15 @@ void UOTGLaunchMonitorSubsystem::Compose()
 	const FOTGLMDeviceState Oc = OcOut ? OcOut->Read() : FOTGLMDeviceState();
 	S.PortError = Oc.PortError;
 	const FOTGLMDeviceState D = DevOut ? DevOut->Read() : FOTGLMDeviceState();
-	// (FS Golf and rēlā both send to the OpenConnect listener: rēlā as to GSPro)
-	if (Connection == EOTGConnection::FSGolf || Connection == EOTGConnection::Rela)
+	// (FS Golf, rēlā and the MLM2PRO Connector all send to the OpenConnect listener: the last two as to GSPro)
+	if (ViaOpenConnect(Connection))
 	{
 		S.bConnected = Oc.bConnected;
 		S.bReady = Oc.bConnected && Oc.Ready == 1;
 		S.Device = Oc.Device;
 		S.State = Oc.State;
-		S.Text = !Oc.PortError.IsEmpty() ? Oc.PortError : !Oc.bConnected ? FString::Printf(TEXT("Waiting for %s on port %d"), Connection == EOTGConnection::Rela ? TEXT("rēlā") : TEXT("FS Golf"), OpenConnectPort) : S.bReady ? TEXT("ready") : TEXT("connected, not ready");
+		const TCHAR* Who = Connection == EOTGConnection::Rela ? TEXT("rēlā") : Connection == EOTGConnection::Rapsodo ? TEXT("the MLM2PRO Connector") : TEXT("FS Golf");
+		S.Text = !Oc.PortError.IsEmpty() ? Oc.PortError : !Oc.bConnected ? FString::Printf(TEXT("Waiting for %s on port %d"), Who, OpenConnectPort) : S.bReady ? TEXT("ready") : TEXT("connected, not ready");
 	}
 	else if (bDeviceOff)
 	{
