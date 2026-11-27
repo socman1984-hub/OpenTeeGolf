@@ -163,7 +163,7 @@
         <p class="sub">A game you install and play on your own PC. Courses are built from public map data, in the background while you play.</p>
         <div class="grid">
           <div class="card"><h3><span>🌍</span>Every course on one map</h3><p>All 39,682 golf courses mapped in OpenStreetMap, on a world map. Search, check what's mapped and build it: greens, fairways, bunkers, tees, water, cart paths, roads, car parks and houses, on the real terrain. Queue as many as you like; they build while you play.</p></div>
-          <div class="card"><h3><span>📡</span>Your launch monitor</h3><p>The FlightScope Mevo+ straight over its Wi-Fi or through FS Golf, and the Garmin Approach R10 and Square Golf through the bridges that come with the game. Every shot's numbers as tiles on screen, which ones and where are up to you.</p></div>
+          <div class="card"><h3><span>📡</span>Your launch monitor</h3><p>The FlightScope Mevo+ straight over its Wi-Fi or through FS Golf, the Garmin Approach R10 and Square Golf through the bridges that come with the game, the Rapsodo MLM2PRO through the free MLM2PRO Connector, and many more through rēlā. Every shot's numbers as tiles on screen, which ones and where are up to you.</p></div>
           <div class="card"><h3><span>⛳</span>Ball flight and bounce</h3><p>The open-source OpenFairway physics for carry, spin, wind and altitude. Each surface plays its own way: the ball checks up in the rough, plugs in sand, and bounces and runs on cart paths.</p></div>
           <div class="card"><h3><span>⛈️</span>Weather and time of day</h3><p>Live weather at the course or any preset, from calm to storm. Clouds drift with the wind and shade the course, rain soaks the grass and greys out the far end of the hole, storms bring lightning and thunder, and "Changing" weather brings showers and sun during the round. The sun sits where it really is at any time of day.</p></div>
           <div class="card"><h3><span>🏌️</span>Practice</h3><p>A driving range with target greens from 50 to 250 yards, every shot's numbers and your averages per club, and nine holes of putt-putt with a windmill, tunnel, ramps and a pond.</p></div>
@@ -201,6 +201,7 @@
         <h2>Recently added</h2>
         <p class="sub">OpenTeeGolf is in alpha and changes every week. The <a href="https://github.com/socman1984-hub/OpenTeeGolf/releases">release notes</a> have the full list.</p>
         <ul class="news">
+          <li><b>Coming next: Rapsodo MLM2PRO.</b> Play with the MLM2PRO through the free <a href="https://github.com/springbok/MLM2PRO-GSPro-Connector">MLM2PRO Connector</a>: pick Rapsodo MLM2PRO in the game's Launch monitor panel, authorise GSPro in the Rapsodo app, and in the Connector send to this PC, port 921. Putts still come from the game, not the MLM2PRO.</li>
           <li><b>0.28: auto-putt and updates on start.</b> Turn on auto-putt and the hole ends once you're on the green: 1 putt inside the circle round the hole, 2 outside. The game checks for a new version as it starts and offers to update there and then. The flight camera follows behind the ball again and turns toward the flag as the ball comes down, and trees in the way while you aim are now see-through.</li>
           <li><b>0.27: new ball physics and a TV camera.</b> The latest OpenFairway physics, fitted to real shot data, so carries, landings and roll-out are closer to the real thing. A camera that keeps the green in view as the ball comes down, trees in the way hidden while you aim, pictures of every grass in the biome studio, and forests and grass biomes you can change during a round.</li>
           <li><b>0.26.2: rēlā.</b> Play with any launch monitor rēlā supports, such as SkyTrak, GC2, FlightScope, Nova, Mevo+, R10 or Square: pick rēlā in the game's Launch monitor panel, and in rēlā send to GSPro at this PC, port 921.</li>
@@ -236,7 +237,7 @@
             <li><b>Download the installer</b><span>Use the download button at the top, or get <code>OpenTeeGolf-Setup</code> from the <a href="https://github.com/socman1984-hub/OpenTeeGolf/releases">releases page</a> (about 1 GB).</span></li>
             <li><b>Run it</b><span>The first time, Windows may say “Windows protected your PC”: choose <i>More info → Run anyway</i>. The game updates itself from then on.</span></li>
             <li><b>Build a course</b><span>Open <i>New course</i>, find a course on the world map or search for it by name, and build it. You can keep playing while it builds.</span></li>
-            <li><b>Connect your launch monitor</b><span>Join the PC to the Mevo+ Wi-Fi, or use FS Golf; the Garmin R10 and Square Golf connect through the bridges that come with the game. You can also play with the built-in test shots (Space or T).</span></li>
+            <li><b>Connect your launch monitor</b><span>Join the PC to the Mevo+ Wi-Fi, or use FS Golf; the Garmin R10 and Square Golf connect through the bridges that come with the game, and the Rapsodo MLM2PRO through the MLM2PRO Connector. You can also play with the built-in test shots (Space or T).</span></li>
             <li><b>Tee off</b><span>Pick your course, players, tees and weather, and press Start.</span></li>
           </ol>
         </div>
@@ -247,7 +248,7 @@
             <li>A graphics card from the last few years (DirectX 12)</li>
             <li>A few GB of free disk space</li>
             <li>An internet connection to build courses (playing a built course works offline)</li>
-            <li>A launch monitor to hit real shots (optional): FlightScope Mevo+, Garmin Approach R10 or Square Golf</li>
+            <li>A launch monitor to hit real shots (optional): FlightScope Mevo+, Garmin Approach R10, Square Golf or Rapsodo MLM2PRO, or any launch monitor rēlā supports</li>
           </ul>
         </div>
       </div>
@@ -259,7 +260,7 @@
         <p class="sub">The game's self-contained parts are Unreal Engine plugins, each with a README on how it works and how to use it in your own project. They don't depend on the game, so you can copy one folder into your project's <code>Plugins</code> and use it. The rest of the game's code is organised by area, with a README for each: <a href="https://github.com/socman1984-hub/OpenTeeGolf/tree/main/unreal/OpenTeeGolf/Source/OpenTeeGolf">start here</a>.</p>
         <div class="grid">
           <div class="card"><h3><span>⛳</span>Ball physics</h3><p>The ball's flight, bounce and roll (the OpenFairway model), and a course for it to play on. Plain C++.</p><p class="plugin-link"><a href="https://github.com/socman1984-hub/OpenTeeGolf/tree/main/unreal/OpenTeeGolf/Plugins/OTGBallPhysics">OTGBallPhysics</a></p></div>
-          <div class="card"><h3><span>📡</span>Launch monitor client</h3><p>Shots from FS Golf and other OpenConnect apps, straight from the Mevo+ over its Wi-Fi, and from Flight Relay Protocol devices like the Garmin R10.</p><p class="plugin-link"><a href="https://github.com/socman1984-hub/OpenTeeGolf/tree/main/unreal/OpenTeeGolf/Plugins/OTGLaunchMonitor">OTGLaunchMonitor</a></p></div>
+          <div class="card"><h3><span>📡</span>Launch monitor client</h3><p>Shots from FS Golf and other OpenConnect apps (rēlā and the MLM2PRO Connector among them), straight from the Mevo+ over its Wi-Fi, and from Flight Relay Protocol devices like the Garmin R10.</p><p class="plugin-link"><a href="https://github.com/socman1984-hub/OpenTeeGolf/tree/main/unreal/OpenTeeGolf/Plugins/OTGLaunchMonitor">OTGLaunchMonitor</a></p></div>
           <div class="card"><h3><span>🗺️</span>Minimap</h3><p>A hole's map from its aerial photo, turned so the hole runs up the screen, with the yardages and click or drag to aim.</p><p class="plugin-link"><a href="https://github.com/socman1984-hub/OpenTeeGolf/tree/main/unreal/OpenTeeGolf/Plugins/OTGMinimap">OTGMinimap</a></p></div>
           <div class="card"><h3><span>🧭</span>Wind box</h3><p>An arrow showing how the wind blows against your aim, with its speed and how it plays.</p><p class="plugin-link"><a href="https://github.com/socman1984-hub/OpenTeeGolf/tree/main/unreal/OpenTeeGolf/Plugins/OTGWindIndicator">OTGWindIndicator</a></p></div>
           <div class="card"><h3><span>☄️</span>Shot tracer</h3><p>The ball's flight drawn as a ribbon that faces the camera and stays readable from the tee.</p><p class="plugin-link"><a href="https://github.com/socman1984-hub/OpenTeeGolf/tree/main/unreal/OpenTeeGolf/Plugins/OTGShotTracer">OTGShotTracer</a></p></div>
@@ -285,7 +286,7 @@
 
   <footer>
     <div class="wrap">
-      <p>OpenTeeGolf is free software under the <a href="https://github.com/socman1984-hub/OpenTeeGolf/blob/main/LICENSE">GNU GPL v3</a>. It is not affiliated with FlightScope, Garmin or Square Golf. Built with Unreal Engine 5.</p>
+      <p>OpenTeeGolf is free software under the <a href="https://github.com/socman1984-hub/OpenTeeGolf/blob/main/LICENSE">GNU GPL v3</a>. It is not affiliated with FlightScope, Garmin, Square Golf or Rapsodo. Built with Unreal Engine 5.</p>
       <p>Course data © OpenStreetMap contributors (ODbL). Elevation: USGS 3DEP and Terrarium tiles. Tree heights: Meta &amp; WRI (CC BY 4.0). <a href="https://github.com/socman1984-hub/OpenTeeGolf/blob/main/NOTICE.md">Full credits</a>.</p>
     </div>
   </footer>
