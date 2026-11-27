@@ -4,6 +4,9 @@ The newest version first. The game shows this on its What's new page. make_relea
 OpenTeeGolf.exe, and publish_release.py puts each version's part on its GitHub release.
 A version's heading is "## <version> - <date>", and its changes are "- " lines under it.
 
+## 0.29.1 - 27 November 2026
+- Fixed: the rough took no sunlight, so from high up or far off it showed as a dark navy blue, with a bright line where the course met the land round it.
+
 ## 0.29.0 - 27 November 2026
 - Online games: play a round with friends on other computers from the new Online page. One of you hosts the Play page's course and round; the others join with the host's address (on the same network, or over the internet with TCP port 7787 forwarded on the host's router). You all need the same version of the game.
 - Anyone without the course gets it from the host, only the files they don't already have. If yours is a different version of it, you choose: keep yours and save the host's beside it as a copy, or overwrite yours.
