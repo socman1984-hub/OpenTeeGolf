@@ -202,6 +202,11 @@ private:
 	void ShowAim();
 	void UpdateTracer(int32 Upto, const FVector& Head);
 	void ClearTracer();
+	// (no tracer for a shot played from near the green - a chip or a putt: it only got in the way)
+	bool TracerFrom(const otg::V3& Start) const;
+	// (the tracer once the ball is down: drawn to where it landed, then faded out over TracerFadeS)
+	double TracerLandedAt = -1;
+	static constexpr double TracerFadeS = 1.5;
 	void TellLaunchMonitor(bool bTurn);
 	FString Len(double M) const;       // yards
 	FString Putt(double M) const;      // feet

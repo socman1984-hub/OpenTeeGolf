@@ -90,13 +90,33 @@ void AOTGRound::UpdateTracer(int32 Upto, const FVector& Head)
 	// The path so far (the level's cm), drawn by the tracer (Plugins/OTGShotTracer) as a ribbon facing the camera
 	TArray<FVector> Path;
 	const std::vector<otg::PathPoint>& Pts = Res.points;
+	if (!Pts.empty() && !TracerFrom(otg::V3{ Pts[0].x, Pts[0].y, Pts[0].z })) { TracerMesh->Clear(); return; }
+	if (Res.hasCarryPoint && AnimT >= Res.carryPoint.t)
+	{
+		// down: drawn once more to where it landed, then left to fade (Tick)
+		if (TracerLandedAt >= 0) return;
+		int32 C = 0;
+		while (C < int32(Pts.size()) && Pts[C].t <= Res.carryPoint.t) C++;
+		for (int32 i = 0; i < C; i++) Path.Add(World(otg::V3{ Pts[i].x, Pts[i].y, Pts[i].z }));
+		TracerMesh->Draw(Path, World(otg::V3{ Res.carryPoint.x, Res.carryPoint.y, Res.carryPoint.z }), Camera.CamPos);
+		TracerLandedAt = RoundTime;
+		return;
+	}
 	for (int32 i = 0; i < Upto && i < int32(Pts.size()); i++) Path.Add(World(otg::V3{ Pts[i].x, Pts[i].y, Pts[i].z }));
 	TracerMesh->Draw(Path, Head, Camera.CamPos);
+}
+
+bool AOTGRound::TracerFrom(const otg::V3& Start) const
+{
+	if (bRange || bMini) return true;   // (the range and mini golf: as ever)
+	constexpr double NearGreenM = 30.0 / M_TO_YD;   // (30 yards from the pin)
+	return Dist(Start, Pin()) > NearGreenM;
 }
 
 void AOTGRound::ClearTracer()
 {
 	TracerMesh->Clear();
+	TracerLandedAt = -1;
 }
 
 void FOTGRoundCamera::AddressView(bool bSnap)

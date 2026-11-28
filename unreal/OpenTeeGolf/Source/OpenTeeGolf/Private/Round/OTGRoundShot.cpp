@@ -158,6 +158,8 @@ void AOTGRound::StartShot(const otg::Shot& Play, otg::ShotOptions O, double FxSp
 	Camera.ShotFrom = World(Ball);
 	Camera.FlightTopZ = Camera.ShotFrom.Z;
 	Camera.PinLean = 0;
+	Camera.bChasing = false;
+	Camera.ChaseDir = FVector::ZeroVector;
 	ClearTracer();
 	AimMesh->SetVisibility(false);
 	TellLaunchMonitor(false);

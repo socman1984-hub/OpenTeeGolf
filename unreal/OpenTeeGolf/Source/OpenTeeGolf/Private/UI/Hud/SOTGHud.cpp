@@ -53,7 +53,9 @@ void SOTGHud::Construct(const FArguments&)
 						+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)[SAssignNew(LieText, STextBlock).Font(Font(17, "Bold")).ColorAndOpacity(Ink)]
 					]
 				]
-				+ SVerticalBox::Slot().AutoHeight().Padding(0, 6, 0, 0)[SAssignNew(ClubText, STextBlock).Font(Font(16, "Bold")).ColorAndOpacity(Gold)])
+				+ SVerticalBox::Slot().AutoHeight().Padding(0, 6, 0, 0)[SAssignNew(ClubText, STextBlock).Font(Font(16, "Bold")).ColorAndOpacity(Gold)]
+				// (players together: who's playing, whoever is up ringed - SetPlayers)
+				+ SVerticalBox::Slot().AutoHeight().Padding(0, 10, 0, 0)[SAssignNew(PlayerList, SVerticalBox).Visibility(EVisibility::Collapsed)])
 		]
 		// the pin's yardage and height, over the flag (placed each frame: SetPinTag)
 		+ SOverlay::Slot().HAlign(HAlign_Left).VAlign(VAlign_Top)
@@ -492,6 +494,35 @@ void SOTGHud::SetStandings(const FString& Title, const TArray<FOTGStanding>& Row
 	}
 	if (!Summary.IsEmpty()) StandList->AddSlot().AutoHeight().Padding(0, 4, 0, 0)[Text(Summary, 13, Soft)];
 	StandBox->SetVisibility(Rows.Num() ? EVisibility::HitTestInvisible : EVisibility::Collapsed);
+}
+
+void SOTGHud::SetPlayers(const TArray<FPlayerRow>& Rows)
+{
+	FString Key;
+	for (const FPlayerRow& R : Rows) Key += R.Name + TEXT("|") + R.Note + (R.bUp ? TEXT("*") : TEXT(""));
+	if (Key == PlayersKey || !PlayerList.IsValid()) return;
+	PlayersKey = Key;
+	PlayerList->ClearChildren();
+	for (const FPlayerRow& R : Rows)
+	{
+		// (whoever is up: a gold ring round their row, their name in gold, UP beside it)
+		const TSharedRef<SWidget> Row = SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0, 0, 8, 0)[SNew(SBox).WidthOverride(10).HeightOverride(10)[SNew(SBorder).BorderImage(FCoreStyle::Get().GetBrush("WhiteBrush")).BorderBackgroundColor(R.Colour)]]
+			+ SHorizontalBox::Slot().FillWidth(1).VAlign(VAlign_Center).Padding(0, 0, 12, 0)[Text(R.Name, 15, R.bUp ? Gold : Ink, "Bold")]
+			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0, 0, R.bUp ? 8 : 0, 0)[Text(R.Note, 13, Soft)]
+			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)[Text(R.bUp ? TEXT("UP") : TEXT(""), 12, Gold, "Bold")];
+		PlayerList->AddSlot().AutoHeight().Padding(0, 1)
+		[
+			SNew(SBorder).BorderImage(FCoreStyle::Get().GetBrush("WhiteBrush")).BorderBackgroundColor(R.bUp ? Gold : FLinearColor::Transparent).Padding(2)
+			[
+				SNew(SBorder).BorderImage(FCoreStyle::Get().GetBrush("WhiteBrush")).BorderBackgroundColor(R.bUp ? FLinearColor(0.05f, 0.09f, 0.06f, 0.95f) : FLinearColor::Transparent).Padding(FMargin(6, 3))
+				[
+					Row
+				]
+			]
+		];
+	}
+	PlayerList->SetVisibility(Rows.Num() ? EVisibility::HitTestInvisible : EVisibility::Collapsed);
 }
 
 void SOTGHud::Banner(const FString& Title, const FString& Small, float Seconds)

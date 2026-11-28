@@ -628,6 +628,13 @@ void AOTGRound::Tick(float Dt)
 		}
 		else SeeRC->SeeThrough(FVector::ZeroVector, FVector::ZeroVector, 0);
 	}
+	// (the tracer fading out once the ball is down: UpdateTracer)
+	if (TracerLandedAt >= 0)
+	{
+		const double F = 1.0 - (RoundTime - TracerLandedAt) / TracerFadeS;
+		TracerMesh->SetFade(float(FMath::Max(F, 0.0)), Camera.CamPos);
+		if (F <= 0) TracerLandedAt = -1;
+	}
 	if (bPaused) {} // (everything waits)
 	else if (Phase == EPhase::Flying)
 	{
@@ -685,21 +692,40 @@ void AOTGRound::Tick(float Dt)
 		}
 		else
 		{
-			// A full shot: following the ball, 14 m behind it and 4.5 m over it (or over where it was hit from) -
-			// and from its way down to where it stops, turned toward the pin as far as it can with the ball still
-			// well in the picture, so the flag is in view as it lands and rolls
+			// A full shot: the camera stays where it was, turned to watch the ball climb; once the ball is a
+			// little way down from its top (or has landed, or is getting far off) it goes after it - 14 m behind
+			// it along its path and 4.5 m over it (or over where it was hit from) - and from its way down to
+			// where it stops, turned toward the pin as far as it can with the ball still well in the picture,
+			// so the flag is in view as it lands and rolls
 			Camera.FlightTopZ = FMath::Max(Camera.FlightTopZ, B.Z);
-			if (Flat.Size() > 300)
-			{
-				const FVector U = Flat.GetSafeNormal();
-				Camera.CamGoal = B - U * 1400 + FVector(0, 0, FMath::Max(B.Z, Camera.ShotFrom.Z) - B.Z + 450);
-				Camera.CamSpeed = 3.f;
-			}
 			const bool bLanded = Res.hasCarryPoint && AnimT >= Res.carryPoint.t;
 			const FVector Land = Res.hasCarryPoint ? World(otg::V3{ Res.carryPoint.x, Res.carryPoint.y, Res.carryPoint.z }) : World(Res.rest);
 			// (how far past the apex: 0 at the top, 1 at the landing - and on the ground)
 			const double Top = Camera.FlightTopZ, Down = FMath::Max(1.0, Top - Land.Z);
 			const double Descent = bLanded ? 1.0 : B.Z < Top - 50 ? FMath::Clamp((Top - B.Z) / Down, 0.0, 1.0) : 0.0;
+			// (the way it's going along its path, level, eased - so the camera swings round a curving shot)
+			if (N > 0)
+			{
+				const FVector Prev = World(otg::V3{ Pts[N - 1].x, Pts[N - 1].y, Pts[N - 1].z });
+				const FVector V(B.X - Prev.X, B.Y - Prev.Y, 0);
+				if (V.SizeSquared() > 1.0)
+				{
+					const FVector Vd = V.GetSafeNormal();
+					Camera.ChaseDir = Camera.ChaseDir.IsNearlyZero() ? Vd : (Camera.ChaseDir + (Vd - Camera.ChaseDir) * (1.0 - FMath::Exp(-Dt * 2.0))).GetSafeNormal();
+				}
+			}
+			if (Camera.ChaseDir.IsNearlyZero() && Flat.Size() > 1) Camera.ChaseDir = Flat.GetSafeNormal();
+			if (!Camera.bChasing && (Descent > 0.2 || bLanded || FVector::Dist(Camera.CamPos, B) > 18000.0))
+			{
+				Camera.bChasing = true;
+				Camera.CamSpeed = 1.6f;   // (catching up: a swoop over a second or two)
+			}
+			if (!Camera.bChasing) Camera.CamGoal = Camera.CamPos;   // (staying put, watching it go)
+			else if (!Camera.ChaseDir.IsNearlyZero())
+			{
+				Camera.CamGoal = B - Camera.ChaseDir * 1400 + FVector(0, 0, FMath::Max(B.Z, Camera.ShotFrom.Z) - B.Z + 450);
+				Camera.CamSpeed = FMath::Min(3.f, Camera.CamSpeed + float(Dt) * 0.8f);   // (closing in, then keeping up)
+			}
 			// (the turn toward the pin eased in over about a second: the camera itself stays locked on the ball)
 			const double Want = 0.5 * FMath::SmoothStep(0.0, 1.0, FMath::Min(1.0, Descent * 2.5));
 			Camera.PinLean += (Want - Camera.PinLean) * (1.0 - FMath::Exp(-Dt * 3.0));

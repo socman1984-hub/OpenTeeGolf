@@ -4,7 +4,8 @@
 //
 // Use: add it to an actor, set RibbonMaterial, call Draw with the path's points (the level's cm, in
 // order, up to where the ball is), the ball itself and the camera's position as the ball flies;
-// Clear when the next shot starts.
+// Clear when the next shot starts. Fade (1 .. 0) once the ball is down: the ribbon thins and its
+// tail runs in towards where the ball landed, until it's gone.
 
 #pragma once
 
@@ -22,9 +23,12 @@ public:
 	UPROPERTY() TObjectPtr<UMaterialInterface> RibbonMaterial;
 
 	// The path so far (points in order) and the ball where it is now, seen from CameraPos
-	void Draw(const TArray<FVector>& Path, const FVector& Head, const FVector& CameraPos);
+	void Draw(const TArray<FVector>& Path, const FVector& Head, const FVector& CameraPos, float Fade = 1.f);
+	// (the path last drawn, faded: 1 all of it, 0 gone)
+	void SetFade(float Fade, const FVector& CameraPos);
 	void Clear();
 
 private:
 	TArray<FVector> Points;
+	void Build(const FVector& CameraPos, float Fade);
 };

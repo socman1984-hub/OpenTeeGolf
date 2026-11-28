@@ -185,17 +185,10 @@ int32 SOTGMinimap::OnPaint(const FPaintArgs&, const FGeometry& G, const FSlateRe
 	if (State.Ring.A > 0) RingAt(B, 7, State.Ring);
 	auto Dist = [](const FVector2D& X, const FVector2D& Y) { return (X - Y).Size(); };
 	auto Fmt = [&](double M) { return State.bOnGreen ? Ft(M) : Yd(M); };
-	if (Hover)
-	{
-		const FVector2D H = ToLocal(F, *Hover);
-		Line(B, H, Sky, 1.5f);
-		Line(H, P, Sky, 1.5f, 4);
-		RingAt(H, 5, Sky);
-		const FString Surf = SurfaceName ? SurfaceName(Hover->X, Hover->Y) : FString();
-		Label(Fmt(Dist(State.Ball, *Hover)) + (Surf.IsEmpty() ? FString() : TEXT("  ·  ") + Surf), H - FVector2D(0, 22), Sky);
-		if (Dist(*Hover, State.Pin) > 1) Label(Fmt(Dist(*Hover, State.Pin)) + TEXT(" to pin"), (H + P) / 2, FLinearColor::White);
-	}
-	else if (!State.bOnGreen)
+	// (where the mouse points: only a ring on the map - its distances in the bar under it, so they
+	// don't cover the hole; the map's own labels are the aim's, where you clicked)
+	if (Hover) RingAt(ToLocal(F, *Hover), 5, Sky);
+	if (!State.bOnGreen)
 	{
 		Line(A, P, FLinearColor(1, 1, 1, 0.45f), 1.f, 3);
 		Label(Yd(Dist(State.Ball, State.Aim)), (B + A) / 2, Yellow);
@@ -214,8 +207,18 @@ int32 SOTGMinimap::OnPaint(const FPaintArgs&, const FGeometry& G, const FSlateRe
 	}
 	// the bar along the bottom
 	FSlateDrawElement::MakeBox(Out, L + 5, G.ToPaintGeometry(FVector2D(Size.X, 34), FSlateLayoutTransform(FVector2D(0, Size.Y - 34))), White, ESlateDrawEffect::None, FLinearColor(0, 0, 0, 0.6f));
-	const FString Bar = FString::Printf(TEXT("To pin %s  ·  click to aim"), *Fmt(Dist(State.Ball, State.Pin)));
-	FSlateDrawElement::MakeText(Out, L + 6, G.ToPaintGeometry(FVector2D(Size.X - 16, 20), FSlateLayoutTransform(FVector2D(8, Size.Y - 26))), Bar, Font(12), ESlateDrawEffect::None, FLinearColor::White);
+	FString Bar = FString::Printf(TEXT("To pin %s  ·  click to aim"), *Fmt(Dist(State.Ball, State.Pin)));
+	FLinearColor BarInk = FLinearColor::White;
+	if (Hover)
+	{
+		// (the mouse: how far from the ball, how far on to the pin, what's there)
+		const FString Surf = SurfaceName ? SurfaceName(Hover->X, Hover->Y) : FString();
+		Bar = Fmt(Dist(State.Ball, *Hover));
+		if (Dist(*Hover, State.Pin) > 1) Bar += TEXT("  ·  ") + Fmt(Dist(*Hover, State.Pin)) + TEXT(" to pin");
+		if (!Surf.IsEmpty()) Bar += TEXT("  ·  ") + Surf;
+		BarInk = Sky;
+	}
+	FSlateDrawElement::MakeText(Out, L + 6, G.ToPaintGeometry(FVector2D(Size.X - 16, 20), FSlateLayoutTransform(FVector2D(8, Size.Y - 26))), Bar, Font(12), ESlateDrawEffect::None, BarInk);
 	return L + 6;
 }
 

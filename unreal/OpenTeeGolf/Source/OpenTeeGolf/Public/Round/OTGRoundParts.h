@@ -83,6 +83,10 @@ struct FOTGRoundCamera
 	FVector CamGoal = FVector::ZeroVector, CamLook = FVector::ZeroVector, CamPos = FVector::ZeroVector, CamLookNow = FVector::ZeroVector;
 	FVector ShotFrom = FVector::ZeroVector;
 	double FlightTopZ = 0;   // (the highest the ball has been this shot: how far down from it the ball is)
+	// (a full shot: the camera stays where it was, turning to watch the ball go up, until the ball is a
+	// little way down from its top - then it goes after it, behind it along its path)
+	bool bChasing = false;
+	FVector ChaseDir = FVector::ZeroVector;   // (the way the ball's going, level: eased)
 	double PinLean = 0;   // (how far the flight camera has turned from the ball toward the pin, 0 to 0.5)
 	double OverviewLeft = 0;
 	float CamSpeed = 3.f;

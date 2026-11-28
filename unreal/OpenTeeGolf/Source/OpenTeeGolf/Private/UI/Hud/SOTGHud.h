@@ -67,6 +67,9 @@ public:
 	bool IsShotSettingsShown() const;
 	void SetStatus(const FString& Text, bool bReady);
 	void SetStandings(const FString& Title, const TArray<FOTGStanding>& Rows, const FString& Summary);
+	// Players together: everyone in order of play, top left under the hole, whoever is hitting ringed
+	struct FPlayerRow { FString Name, Note; FLinearColor Colour; bool bUp = false; };
+	void SetPlayers(const TArray<FPlayerRow>& Rows);
 	void Banner(const FString& Title, const FString& Small, float Seconds);
 	void Toast(const FString& Text, float Seconds);
 	void ShowScorecard(const FOTGCard& Card);
@@ -92,7 +95,7 @@ public:
 private:
 	TSharedPtr<STextBlock> Info1, Info2, ClubText, Shot1, Shot2, Status, BannerTitle, BannerSmall, ToastText, Keys;
 	TSharedPtr<SBorder> BannerBox, ToastBox, ShotBox, StandBox;
-	TSharedPtr<SVerticalBox> StandList;
+	TSharedPtr<SVerticalBox> StandList, PlayerList;
 	TSharedPtr<SBox> CardSlot, PauseSlot, MapBox;
 	float BannerLeft = 0, ToastLeft = 0;
 	TSharedPtr<SOTGMinimap> Map;
@@ -103,7 +106,7 @@ private:
 	TSharedPtr<SBorder> PerfBox;
 	TSharedPtr<STextBlock> PerfText;
 	double PerfShown = 0;
-	FString StandKey;
+	FString StandKey, PlayersKey;
 	// the course's name, the lie, the pin's tag
 	TSharedPtr<STextBlock> CourseText, LieText, PinYards, PinElev;
 	TSharedPtr<SBorder> LieDot;

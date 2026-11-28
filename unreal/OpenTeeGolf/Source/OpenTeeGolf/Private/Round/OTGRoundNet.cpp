@@ -388,15 +388,30 @@ void FOTGRoundNet::Tick(float Dt)
 			Ball->SetVisibility(true);
 			Ball->SetWorldScale3D(FVector(Scale));
 			Ball->SetWorldLocation(W + FVector(0, 0, 2.135 * Scale / 0.0427));
-			if (Tracers.IsValidIndex(s) && Tracers[s])
+			if (Tracers.IsValidIndex(s) && Tracers[s] && !Pts->empty() && !Round->TracerFrom(otg::V3{ (*Pts)[0].x, (*Pts)[0].y, (*Pts)[0].z }))
+				Tracers[s]->Clear();
+			else if (Tracers.IsValidIndex(s) && Tracers[s])
 			{
+				// (as the player's own: to where it landed, then fading out - AOTGRound::TracerFadeS)
+				const bool bDown = F.Res.hasCarryPoint && F.T >= F.Res.carryPoint.t;
+				int32 To = Upto;
+				FVector Head = W;
+				if (bDown)
+				{
+					To = 0;
+					while (To < int32(Pts->size()) && (*Pts)[To].t <= F.Res.carryPoint.t) To++;
+					Head = Round->World(otg::V3{ F.Res.carryPoint.x, F.Res.carryPoint.y, F.Res.carryPoint.z });
+				}
 				TArray<FVector> Path;
-				for (int32 j = 0; j < Upto && j < int32(Pts->size()); j++) Path.Add(Round->World(otg::V3{ (*Pts)[j].x, (*Pts)[j].y, (*Pts)[j].z }));
-				Tracers[s]->Draw(Path, W, Round->Camera.CamPos);
+				for (int32 j = 0; j < To && j < int32(Pts->size()); j++) Path.Add(Round->World(otg::V3{ (*Pts)[j].x, (*Pts)[j].y, (*Pts)[j].z }));
+				const double Fade = bDown ? 1.0 - (F.T - F.Res.carryPoint.t) / AOTGRound::TracerFadeS : 1.0;
+				if (Fade <= 0) Tracers[s]->Clear();
+				else Tracers[s]->Draw(Path, Head, Round->Camera.CamPos, float(Fade));
 			}
 			if (Upto >= int32(Pts->size()))
 			{
 				F.bFlying = false;
+				if (F.Res.hasCarryPoint && Tracers.IsValidIndex(s) && Tracers[s]) Tracers[s]->Clear();   // (what's left of its fade)
 				if (F.Rest.IsValid())
 				{
 					const TSharedPtr<FJsonObject> R = F.Rest;

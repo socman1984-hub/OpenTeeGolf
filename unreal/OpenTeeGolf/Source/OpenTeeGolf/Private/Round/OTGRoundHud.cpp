@@ -143,7 +143,24 @@ void FOTGRoundHud::UpdateHudInfo()
 	FString L3 = Round->OnGreen() || Round->Club == TEXT("PT") ? FString(C.Name) : FString::Printf(TEXT("%s  ·  aim %s"), C.Name, *Round->Len(Round->AimDist));
 	UpdateWindBox();
 	Round->Hud->SetInfo(L1, L2, L3);
-	// (players together: who's winning)
+	// (players together: everyone, whoever is up ringed - top left; who's winning - on the right)
+	{
+		TArray<SOTGHud::FPlayerRow> Rows;
+		const FOTGGame& G = *Round->Turns.Game;
+		if (!G.Single())
+			for (int32 i = 0; i < G.Sides.Num(); i++)
+			{
+				const FOTGSide& S = G.Sides[i];
+				const bool bUp = i == Round->Turns.SideIdx && Round->Phase != AOTGRound::EPhase::Done;
+				const int32 Played = G.Sides[i].Scores.IsValidIndex(Round->HoleIndex) ? G.Sides[i].Scores[Round->HoleIndex] : -1;
+				const int32 Stk = bUp ? Round->Strokes : S.Strokes;
+				const FString Note = S.bHoled || Played > 0 ? FString::Printf(TEXT("holed in %d"), Played > 0 ? Played : Stk)
+					: S.bPicked ? FString(TEXT("picked up"))
+					: Stk > 0 ? FString::Printf(TEXT("%d stroke%s"), Stk, Stk == 1 ? TEXT("") : TEXT("s")) : FString(TEXT("on the tee"));
+				Rows.Add({ G.SideLabel(i), Note, S.Colour, bUp });
+			}
+		Round->Hud->SetPlayers(Rows);
+	}
 	if (!Round->Turns.Game->Single())
 	{
 		FString Summary;
