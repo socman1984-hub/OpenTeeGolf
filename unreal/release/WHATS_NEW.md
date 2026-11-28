@@ -4,6 +4,17 @@ The newest version first. The game shows this on its What's new page. make_relea
 OpenTeeGolf.exe, and publish_release.py puts each version's part on its GitHub release.
 A version's heading is "## <version> - <date>", and its changes are "- " lines under it.
 
+## 0.31.0 - 28 November 2026
+- The ground under the rough looks like real ground close up: moss, soil and twigs between the blades, instead of a bright, wavy pattern.
+- The deep rough is a green a little greyer than the rough, no longer a pale straw-coloured patch beside it.
+- No more blocky, checkered shadows across tees and fairways when the sun is low.
+- The windows on the houses no longer seem to blink or sparkle from a distance.
+- Course editor, Buildings: what a building is (house, clubhouse, barn ...) is a dropdown, and The game's guess says what the game thinks it is.
+- Course editor: plants, a forest's Planted out, the tree species and the shot data's items are dropdowns and tick boxes instead of buttons that change when you click them.
+- Settings: Graphics quality shows Custom (mixed) when its parts are set to different levels.
+- The frame-rate bar (P) shows where the camera is, so a screenshot with it on says exactly where something was.
+- Courses put in the game from now on (or again, with Put in the game (full)) get a cleaner fairway map, and the first cut grows all the way along the fairways.
+
 ## 0.30.0 - 27 November 2026
 - The scorecard looks like a club's own card: each hole's yardage from your tees, par and your score, birdies circled and bogeys boxed, Out, In and Total. After each hole it counts down to the next.
 - Go straight to the next hole: tick the box on the scorecard, or turn it on in Settings (Between holes), and the card no longer stops you after each hole. Tab still shows it any time.
