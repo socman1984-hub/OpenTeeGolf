@@ -4,6 +4,13 @@ The newest version first. The game shows this on its What's new page. make_relea
 OpenTeeGolf.exe, and publish_release.py puts each version's part on its GitHub release.
 A version's heading is "## <version> - <date>", and its changes are "- " lines under it.
 
+## 0.32.0 - 28 November 2026
+- Playing with others: everyone's name is listed at the top left, in order of play, with their strokes on the hole. Whoever is up to hit is outlined in gold and marked UP.
+- The camera on a full shot: it stays where you hit from and tilts up to watch the ball climb, then, once the ball is on its way down, goes after it from behind along its flight.
+- The shot tracer stops where the ball lands and fades away, and there's none for shots from close to the green, where it only got in the way.
+- Minimap: pointing at it no longer covers the hole with distances. They show in the bar under the map (how far, how far on to the pin, and what's there), and the map's own labels are for where you clicked to aim.
+- Ponds have a smooth, rounded shoreline, without square teeth along the water's edge, and the grass grows right down to the water instead of stopping short of a bare strip.
+
 ## 0.31.0 - 28 November 2026
 - The ground under the rough looks like real ground close up: moss, soil and twigs between the blades, instead of a bright, wavy pattern.
 - The deep rough is a green a little greyer than the rough, no longer a pale straw-coloured patch beside it.
