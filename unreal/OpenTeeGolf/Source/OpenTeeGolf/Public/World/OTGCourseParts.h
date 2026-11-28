@@ -77,6 +77,7 @@ struct FOTGCourseGround
 
 	TArray<FIntPoint> BermCells;   // (the ground's samples HoldPonds raised: dry grass, not the export's water or stream bed)
 	TArray<uint16> GroundHeights;   // (the heights the ground is drawn with: the course's, the ponds' banks lifted clear of the water)
+	TArray<bool> BankShaped;        // (the samples LiftPondBanks shaped round a pond: SettleWater leaves them be)
 	TArray<TObjectPtr<UStaticMeshComponent>> Tiles;
 	// (the ground's tiles, PrepareGround: their count a side and samples a side)
 	int32 TileCount = 0, TileQuads = 64;

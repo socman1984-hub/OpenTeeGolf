@@ -158,6 +158,7 @@ void FOTGCourseGround::LiftPondBanks()
 	GroundHeights = Course->Data->Heights;
 	const int32 N = Course->Data->HeightSamples;
 	if (GroundHeights.Num() != N * N) return;
+	BankShaped.Init(false, N * N);
 	const TSharedPtr<FJsonValue> J = ReadJson(FPaths::Combine(Course->Data->ExportDir, TEXT("water_bodies.json")));
 	if (!J.IsValid() || J->Type != EJson::Array) return;
 	const double Step = Course->Data->MetresPerSample * 100.0;
@@ -264,6 +265,7 @@ void FOTGCourseGround::LiftPondBanks()
 				}
 				const double D = FMath::Sqrt(D2) * M;   // (metres from the rounded outline)
 				uint16& Hv = GroundHeights[(Y0 + y) * N + (X0 + x)];
+				if (D < 3.0) BankShaped[(Y0 + y) * N + (X0 + x)] = true;
 				const double Z = Hv * ZScale;
 				double Z2 = Z;
 				// (the export carves the bed with a hard step along its raw outline - corners every 5 m -
@@ -450,6 +452,10 @@ void FOTGCourseGround::SettleWater()
 		if (FMath::Abs(Lv - L0[v]) > 0.01f) Moved++;
 		Course->Water.WaterPos[v].Y = Lv;
 		if (Edge[v]) continue;
+		// (not a pond's shore LiftPondBanks shaped: this water's edge is the export's outline, in steps of
+		// the ground's grid, and digging under it after the shore was smoothed cut that comb of steps back
+		// into the bank - the waterline zigzagged in square teeth all along it)
+		if (BankShaped.IsValidIndex(Cell[v]) && BankShaped[Cell[v]]) continue;
 		// (the water is drawn WaterLiftCm up; the heights are cm over the export's base, as its levels)
 		uint16& Hv = GroundHeights[Cell[v]];
 		// (30 cm down a sample in from the edge, then 35 cm more a metre, to 1.6 m)
