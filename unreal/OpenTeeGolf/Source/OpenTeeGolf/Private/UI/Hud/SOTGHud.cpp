@@ -10,6 +10,10 @@
 #include "UI/Designer/SOTGCourseDesigner.h"
 #include "GameFramework/GameUserSettings.h"
 #include "Engine/Engine.h"
+#include "Engine/GameViewportClient.h"
+#include "Engine/World.h"
+#include "GameFramework/PlayerController.h"
+#include "Camera/PlayerCameraManager.h"
 #include "RenderCore.h"
 #include "RHI.h"
 #include "Widgets/Layout/SBox.h"
@@ -418,8 +422,19 @@ void SOTGHud::Tick(const FGeometry& Geometry, const double Time, const float Dt)
 			Quality = Q >= 0 && Q < 5 ? Names[Q] : TEXT("Custom");
 			Res = GS->GetScreenResolution();
 		}
-		PerfText->SetText(FText::FromString(FString::Printf(TEXT("%3.0f fps  %5.1f ms   game %4.1f  draw %4.1f  GPU %4.1f ms   %dx%d  %s"),
-			GAverageFPS, GAverageMS, GameMs, RenderMs, GpuMs, Res.X, Res.Y, *Quality)));
+		// (and where the camera is and which way it looks - centimetres, then pitch and yaw - so a
+		// screenshot with this on says exactly where to look again: -shotpos=X,Y,Z -shotrot=P,Y)
+		FString At;
+		if (UWorld* W = GEngine && GEngine->GameViewport ? GEngine->GameViewport->GetWorld() : nullptr)
+			if (APlayerController* PC = W->GetFirstPlayerController())
+				if (PC->PlayerCameraManager)
+				{
+					const FVector L = PC->PlayerCameraManager->GetCameraLocation();
+					const FRotator R = PC->PlayerCameraManager->GetCameraRotation();
+					At = FString::Printf(TEXT("   at %d,%d,%d  %d,%d"), FMath::RoundToInt(L.X), FMath::RoundToInt(L.Y), FMath::RoundToInt(L.Z), FMath::RoundToInt(R.Pitch), FMath::RoundToInt(R.Yaw));
+				}
+		PerfText->SetText(FText::FromString(FString::Printf(TEXT("%3.0f fps  %5.1f ms   game %4.1f  draw %4.1f  GPU %4.1f ms   %dx%d  %s%s"),
+			GAverageFPS, GAverageMS, GameMs, RenderMs, GpuMs, Res.X, Res.Y, *Quality, *At)));
 		const FLinearColor C = GAverageFPS >= 55 ? FLinearColor(0.6f, 1.f, 0.6f) : GAverageFPS >= 30 ? FLinearColor(1.f, 0.85f, 0.4f) : FLinearColor(1.f, 0.5f, 0.45f);
 		PerfText->SetColorAndOpacity(C);
 	}
