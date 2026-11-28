@@ -31,6 +31,7 @@ OpenTeeGolf is free software under the GNU General Public License v3 (see `LICEN
 | `asphalt_*.jpg` | [ambientCG Asphalt031](https://ambientcg.com/view?id=Asphalt031) | CC0 1.0 |
 | `mud_color.jpg` | [ambientCG Ground094B](https://ambientcg.com/view?id=Ground094B) | CC0 1.0 |
 | `rock_color.jpg` | [ambientCG Rock058](https://ambientcg.com/view?id=Rock058) | CC0 1.0 |
+| `unreal/textures/thatch_*.jpg` (the ground under the rough, close by) | [ambientCG Ground037](https://ambientcg.com/view?id=Ground037) | CC0 1.0 |
 | `trees/maple_leaves.png`, `trees/willow_leaves.png`, `trees/birch_leaves.png` | Twigs made with `scripts/leaf-twigs.py` from [ambientCG LeafSet010](https://ambientcg.com/view?id=LeafSet010), [LeafSet013](https://ambientcg.com/view?id=LeafSet013) and [LeafSet014](https://ambientcg.com/view?id=LeafSet014) | CC0 1.0 |
 | `trees/ash_bark_*.jpg`, `trees/spruce_bark_*.jpg` | [ambientCG Bark001](https://ambientcg.com/view?id=Bark001), [Bark006](https://ambientcg.com/view?id=Bark006) | CC0 1.0 |
 | `trees/maple_bark_*.jpg`, `trees/poplar_bark_*.jpg`, `trees/pine_bark_*.jpg` | [Poly Haven Trident Maple Bark](https://polyhaven.com/a/trident_maple_bark), [Bark Willow 02](https://polyhaven.com/a/bark_willow_02), [Pine Bark](https://polyhaven.com/a/pine_bark) | CC0 1.0 |

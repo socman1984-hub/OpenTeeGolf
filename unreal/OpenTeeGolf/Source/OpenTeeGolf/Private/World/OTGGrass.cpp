@@ -336,10 +336,15 @@ void otg::FGrass::Update(const FVector& Camera)
 			// (no shadow maps from the grass - its blades in them cost more than anything - but contact
 			// shadows: a short screen-space trace along the sun, so each blade shades the ones and the
 			// ground just behind it, at a fraction of the cost. The sun's ContactShadowLength: OTGSky.cpp)
-			ISM->SetCastShadow(true);
+			// Not the mown cuts (fairway, tee, green, collar): their blades are a centimetre or two, with
+			// little to shade, and at a low sun their square tiles came out lit or shaded tile by tile -
+			// a checkerboard across a tee. And no grass in the distance-field scene (shadows and Lumen
+			// traced against it): a tile there is a coarse block, which shades its neighbours in squares
+			ISM->SetCastShadow(!K.bMown);
 			ISM->bCastDynamicShadow = false;
 			ISM->bCastStaticShadow = false;
-			ISM->bCastContactShadow = true;
+			ISM->bCastContactShadow = !K.bMown;
+			ISM->bAffectDistanceFieldLighting = false;
 			ISM->bVisibleInRayTracing = false;   // (rebuilt into the ray-tracing scene each frame, for nothing: ~1 ms)
 			ISM->SetMobility(EComponentMobility::Movable);
 			ISM->InstanceStartCullDistance = int32(K.DrawFrom * 100);

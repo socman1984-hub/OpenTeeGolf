@@ -42,6 +42,14 @@ GAME_TEXTURES = os.path.normpath(os.path.join(EXPORT_DIR, "..", "..", "public", 
 # (the mown turf: unreal/textures/turf_*.jpg, ambientCG Grass005 at its full 2K - the web game's
 # lawn_*.jpg is the same grass at 1K, used when they're missing)
 GROUND_MEAN = {"lawn": (0.137, 0.239, 0.0275), "rough": (0.118, 0.152, 0.03), "sand": (0.462, 0.342, 0.165)}
+# The ground under the rough close by: thatch - moss, soil and twigs (unreal/textures/thatch_*.jpg,
+# ambientCG Ground037, CC0) - in place of the rough's own top-down grass, which seen between the blades
+# read as a bright, wavy pattern. Full up to THATCH_M[0] m off, gone by THATCH_M[1], THATCH_AMOUNT of it;
+# over its own average, so the rough's palette colour still sets its green
+THATCH_MEAN = (0.336, 0.311, 0.110)
+THATCH_TILE_M = 1.6
+THATCH_M = (12.0, 40.0)
+THATCH_AMOUNT = 0.85
 DETAIL_TILE_M = 2.5       # metres each ground texture covers
 DETAIL_FADE_M = (60.0, 220.0)   # the ground textures' detail eased off between these distances...
 DETAIL_FAR = 0.35               # ...to this much of it (0.85 close by)
@@ -513,6 +521,9 @@ def build_ground(land):
             GROUND_MEAN["rough"] = tuple(json.load(open(os.path.join(BED_TEXTURES, "rough_baked.json")))["mean"])
         except Exception:
             warn("rough_baked.json: " + traceback.format_exc().splitlines()[-1])
+    if os.path.exists(os.path.join(BED_TEXTURES, "thatch_color.jpg")):
+        tex["thatch"] = import_texture(os.path.join(BED_TEXTURES, "thatch_color.jpg"), "T_thatch_color")
+        tex["thatch_n"] = import_texture(os.path.join(BED_TEXTURES, "thatch_normal.jpg"), "T_thatch_normal", "normal")
     # (the stream bed's)
     tex["rock"] = import_texture(os.path.join(GAME_TEXTURES, "rock_color.jpg"), "T_rock_color")
     if os.path.exists(os.path.join(BED_TEXTURES, "creekbed_color.png")):
@@ -634,6 +645,31 @@ def build_ground(land):
             mel.connect_material_expressions(n2, "RGB", nb, "B")
             mel.connect_material_expressions(const(0.4, -1550, y0 + 320), "", nb, "Alpha")
             n = nb
+        if k == "rough" and tex.get("thatch") is not None:
+            # (close by, the thatch under the blades: see THATCH_M)
+            try:
+                tuv = coords(THATCH_TILE_M / meta["metresPerSample"], 8200)
+                tc = sample(tex["thatch"], tuv, -1800, 8200, S.SAMPLERTYPE_COLOR)
+                tn = sample(tex["thatch_n"], tuv, -1800, 8450, S.SAMPLERTYPE_NORMAL)
+                tr = op(unreal.MaterialExpressionDivide, tc, const3(THATCH_MEAN, -1650, 8250), -1500, 8200, "RGB")
+                away = E(unreal.MaterialExpressionSmoothStep, -1500, 8600)
+                mel.connect_material_expressions(const(THATCH_M[0] * 100.0, -1650, 8600), "", away, "Min")
+                mel.connect_material_expressions(const(THATCH_M[1] * 100.0, -1650, 8650), "", away, "Max")
+                mel.connect_material_expressions(E(unreal.MaterialExpressionPixelDepth, -1650, 8700), "", away, "Value")
+                near_t = op(unreal.MaterialExpressionMultiply, op(unreal.MaterialExpressionSubtract, const(1.0, -1450, 8650), away, -1400, 8600),
+                            const(THATCH_AMOUNT, -1400, 8700), -1300, 8600)
+                rt = E(unreal.MaterialExpressionLinearInterpolate, -1250, 8200)
+                mel.connect_material_expressions(r, "", rt, "A")
+                mel.connect_material_expressions(tr, "", rt, "B")
+                mel.connect_material_expressions(near_t, "", rt, "Alpha")
+                r = rt
+                nt = E(unreal.MaterialExpressionLinearInterpolate, -1250, 8450)
+                mel.connect_material_expressions(n, "", nt, "A")
+                mel.connect_material_expressions(tn, "RGB", nt, "B")
+                mel.connect_material_expressions(near_t, "", nt, "Alpha")
+                n = nt
+            except Exception:
+                warn("Thatch under the rough skipped:" + chr(10) + traceback.format_exc())
         dk = op(unreal.MaterialExpressionMultiply, r, w, -1200, 1600 + i * 500, "", wout)
         # (the lawn's and the rough's normal is the Lerp of their two repeats - one output, no "RGB": asked
         # for "RGB" the link failed, the rough's normal came out nothing and it took no sunlight, navy)

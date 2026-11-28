@@ -275,7 +275,14 @@ export async function exportForUnreal({ course, scene, id, solids = [], status =
     g.drawImage(src, 0, 0);
     const d = g.getImageData(0, 0, M, M).data, out = new Float32Array(M * M);
     for (let q = 0; q < out.length; q++) {
-      const b = Math.min(0.9995, Math.max(0.0005, d[q * 4] / 255));
+      // (nothing of the shape within the blur's reach: 0 - and all of it: 1. Read through the probit
+      // they came out at a floor of 0.5 + (sigma * -3.29 + grow) / 6: 0.2 for the greens' 1.5 m collar
+      // ring, which went into the fairway map everywhere - just under the first cut's 0.25, so the
+      // rough came and went in patches, bare holes in it)
+      const v = d[q * 4];
+      if (v === 0) { out[q] = 0; continue; }
+      if (v === 255) { out[q] = 1; continue; }
+      const b = Math.min(0.9995, Math.max(0.0005, v / 255));
       out[q] = Math.max(0, Math.min(1, 0.5 + (sigma * probit(b) + grow) / (2 * SDF_M)));
     }
     return out;

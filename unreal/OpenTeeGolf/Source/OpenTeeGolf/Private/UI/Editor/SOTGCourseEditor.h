@@ -76,7 +76,7 @@ public:
 	void SaveForests(const FString& Say);
 	void SaveBiomes(const FString& Say);
 	int32 CurrentTab() const { return Tab; }
-	struct FBuilding { TArray<FVector2D> Pts; FString Name, Kind, Key; double Area = 0; };
+	struct FBuilding { TArray<FVector2D> Pts; FString Name, Kind, Use, Key; double Area = 0; };
 	TArray<FBuilding> Buildings;
 	// the map's picture: the aerial photo over [X0, X0 + SizeM] x [Z1 - SizeM, Z1], or the ground's shading
 	TStrongObjectPtr<UTexture2D> Photo, Shade, Heather;
@@ -134,6 +134,7 @@ private:
 	TSharedRef<SWidget> HolePanel();
 	TSharedRef<SWidget> ShapePanel();
 	TSharedRef<SWidget> SelectionPanel();
+	FString GuessBuildingType(int32 Index) const;   // (what the game draws it as, left to it: buildingtypes.js)
 	TSharedRef<SWidget> TreePanel();
 	TSharedRef<SWidget> PlantPanel();
 	TSharedRef<SWidget> GrassPanel();

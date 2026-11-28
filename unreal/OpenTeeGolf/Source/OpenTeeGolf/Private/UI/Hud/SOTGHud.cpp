@@ -338,10 +338,10 @@ void SOTGHud::BuildShotSettings()
 		const bool bOn = ShotShown.Contains(Id);
 		(k < Half ? C1 : C2)->AddSlot().AutoHeight().Padding(0, 2)
 		[
-			Button(bOn ? FString(TEXT("✓  ")) + I.Label : FString(TEXT("     ")) + I.Label, [this, Id]() {
-				if (!ShotShown.Remove(Id)) ShotShown.Add(Id);
+			Check(I.Label, bOn, [this, Id](bool b) {
+				if (b) ShotShown.Add(Id); else ShotShown.Remove(Id);
 				SaveShotSettings(); BuildTiles(); BuildShotSettings();
-			}, 14, bOn)
+			}, 14)
 		];
 	}
 	Cols->AddSlot().AutoWidth().Padding(0, 0, 10, 0)[C1];

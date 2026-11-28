@@ -197,7 +197,9 @@ KEEP_CODE = {
     "fringe": "k *= step(t, Fringe) * step(Green, t);",
     "fairway": "k *= step(t, max(Fairway, Tee)) * step(Green, t) * step(Fringe, t);",
     # (the first cut: a band FirstCutM wide outside the fairways, tees and collars - none when it's 0)
-    "cut1": "float m = max(max(Fairway, Tee), Fringe); k *= step(t - B, m) * step(m, t) * step(Green, t) * step(Native, 0.5) * step(0.001, B);",
+    # (all of it, tall grass mapped there or not: the rough and the deep rough are kept out of the band,
+    # so where the first cut stood back from the tall grass nothing grew - bare holes beside the fairways)
+    "cut1": "float m = max(max(Fairway, Tee), Fringe); k *= step(t - B, m) * step(m, t) * step(Green, t) * step(0.001, B);",
     "rough": "float m = max(max(Fairway, Tee), Fringe); k *= step(t, Rough) * step(m, t - B) * step(Green, t);",
     "native": "float m = max(max(max(Fairway, Tee), Fringe), Green); k *= step(t, Native) * step(m, t);",
 }

@@ -225,6 +225,7 @@ void SOTGCourseEditor::LoadExtras()
 				for (const TSharedPtr<FJsonValue>& Q : *P) { const TArray<TSharedPtr<FJsonValue>>& A = Q->AsArray(); if (A.Num() >= 2) B.Pts.Add(FVector2D(A[0]->AsNumber(), A[1]->AsNumber())); }
 				O->TryGetStringField(TEXT("name"), B.Name);
 				O->TryGetStringField(TEXT("kind"), B.Kind);
+				O->TryGetStringField(TEXT("use"), B.Use);
 				// (its key: its centre to the metre, as buildingtypes.js buildingKey)
 				const FVector2D Ct = Centroid(B.Pts);
 				B.Key = FString::Printf(TEXT("%d,%d"), FMath::FloorToInt32(Ct.X + 0.5), FMath::FloorToInt32(Ct.Y + 0.5));

@@ -109,8 +109,11 @@ TMap<FString, TArray<TPair<UStaticMesh*, UMaterialInterface*>>> FOTGCourseTurf::
 			// colour - make_turf.py TURF_CUTS' root and tip - with no broad variation across the ground;
 			// the deep rough a greyer green with paler tips, varying (TintGrass puts them in the palette)
 			const bool bDeep = K.Name.StartsWith(TEXT("deep_rough"));
-			const FLinearColor Root = bDeep ? FLinearColor(0.03f, 0.042f, 0.015f) : FLinearColor(0.034f, 0.055f, 0.014f);
-			const FLinearColor Tip = bDeep ? FLinearColor(0.105f, 0.115f, 0.05f) : FLinearColor(0.092f, 0.136f, 0.032f);
+			// (the deep rough a little greyer than the rough, not straw: its tips were a pale yellow-grey,
+			// and beside the rough - darker low down since its blades shade each other - it stood out as
+			// a pale patch)
+			const FLinearColor Root = bDeep ? FLinearColor(0.024f, 0.036f, 0.012f) : FLinearColor(0.034f, 0.055f, 0.014f);
+			const FLinearColor Tip = bDeep ? FLinearColor(0.078f, 0.1f, 0.036f) : FLinearColor(0.092f, 0.136f, 0.032f);
 			UMaterialInterface* GsBase = LoadObject<UMaterialInterface>(nullptr, TEXT("/Greensward/Materials/MI_Greensward_Grass_Static.MI_Greensward_Grass_Static"));
 			for (const FString& Mat : K.GsMats)
 			{

@@ -31,6 +31,7 @@
 #include "DynamicMesh/DynamicMesh3.h"
 #include "DynamicMesh/DynamicMeshAttributeSet.h"
 #include "Engine/StaticMesh.h"
+#include "Materials/MaterialInstanceDynamic.h"
 #include "Engine/World.h"
 #include "MeshDescription.h"
 #include "Misc/CommandLine.h"
@@ -147,6 +148,8 @@ namespace
 		return Best;
 	}
 
+	constexpr float GlassRoughness = 0.32f;   // (the windows' glass, as drawn: see Drawn below)
+
 	// (FHearthlineMaterialSet's Get and SlotName, which the plugin doesn't export: its surfaces in HearthlineSlot's order)
 	UMaterialInterface* SlotMat(const FHearthlineMaterialSet& S, int32 Slot)
 	{
@@ -259,6 +262,16 @@ void FOTGCourseProps::BuildHouses()
 	AHearthlineHouse* House = NewHouse();
 	if (!House) { UE_LOG(LogOTGHouses, Warning, TEXT("Houses: no Hearthline house - the export's buildings as they were")); return; }
 	const FHearthlineMaterialSet Set = House->Materials;
+	// (as drawn: the windows' glass a little matte. The plugin's is a mirror (roughness 0.06 under a clear
+	// coat), and a window a few pixels across, far off, caught the sky and the sun differently each frame -
+	// it seemed to blink)
+	FHearthlineMaterialSet Drawn = Set;
+	if (Set.Glass)
+	{
+		UMaterialInstanceDynamic* G = UMaterialInstanceDynamic::Create(Set.Glass, Course);
+		G->SetScalarParameterValue(TEXT("GlassRoughness"), GlassRoughness);
+		Drawn.Glass = G;
+	}
 
 	struct FCell { TArray<FVector3f> P, N; TArray<FVector2f> UV; TArray<FVector4f> C; TArray<int32> Mat; FVector Origin = FVector::ZeroVector; int32 Houses = 0; };
 	TMap<FIntPoint, FCell> Cells;
@@ -440,7 +453,7 @@ void FOTGCourseProps::BuildHouses()
 		FStaticMeshOperations::ComputeTriangleTangentsAndNormals(MD);
 		FStaticMeshOperations::ComputeTangentsAndNormals(MD, EComputeNTBsFlags::Tangents | EComputeNTBsFlags::IgnoreDegenerateTriangles);
 		UStaticMesh* Mesh = NewObject<UStaticMesh>(Course);
-		for (int32 s : Used) Mesh->GetStaticMaterials().Add(FStaticMaterial(SlotMat(Set, s), SlotName(s)));
+		for (int32 s : Used) Mesh->GetStaticMaterials().Add(FStaticMaterial(SlotMat(Drawn, s), SlotName(s)));
 		UStaticMesh::FBuildMeshDescriptionsParams Params;
 		Params.bBuildSimpleCollision = false;
 		Params.bFastBuild = true;

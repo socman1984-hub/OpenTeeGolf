@@ -250,6 +250,64 @@ TSharedRef<SWidget> SOTGCourseEditor::ShapePanel()
 		+ SVerticalBox::Slot().AutoHeight()[Note(TEXT("Click a shape on the map to pick it: drag its corners, drag a corner's middle for a new one, drag inside it to move it."))]);
 }
 
+// What the game draws a building as when the player leaves it to it (buildingtypes.js classifyBuildings,
+// as the course is put in the game): the map's tags and name, else the clubhouse - 150 m2 or more, the
+// closest on average within 350 m of where the round starts and turns - else a shed under 20 m2, a house
+FString SOTGCourseEditor::GuessBuildingType(int32 Index) const
+{
+	static const TMap<FString, FString> FromTag = {
+		{ TEXT("house"), TEXT("house") }, { TEXT("detached"), TEXT("house") }, { TEXT("residential"), TEXT("house") }, { TEXT("semidetached_house"), TEXT("house") },
+		{ TEXT("terrace"), TEXT("house") }, { TEXT("bungalow"), TEXT("house") }, { TEXT("cabin"), TEXT("house") }, { TEXT("villa"), TEXT("house") },
+		{ TEXT("farm"), TEXT("house") }, { TEXT("static_caravan"), TEXT("house") }, { TEXT("apartments"), TEXT("commercial") }, { TEXT("dormitory"), TEXT("commercial") },
+		{ TEXT("garage"), TEXT("garage") }, { TEXT("garages"), TEXT("garage") },
+		{ TEXT("shed"), TEXT("shed") }, { TEXT("hut"), TEXT("shed") }, { TEXT("storage_tank"), TEXT("shed") }, { TEXT("service"), TEXT("shed") }, { TEXT("toilets"), TEXT("shed") }, { TEXT("kiosk"), TEXT("shed") },
+		{ TEXT("barn"), TEXT("barn") }, { TEXT("farm_auxiliary"), TEXT("barn") }, { TEXT("stable"), TEXT("barn") }, { TEXT("cowshed"), TEXT("barn") }, { TEXT("greenhouse"), TEXT("barn") },
+		{ TEXT("roof"), TEXT("porch") }, { TEXT("carport"), TEXT("porch") }, { TEXT("shelter"), TEXT("porch") }, { TEXT("pavilion"), TEXT("porch") }, { TEXT("canopy"), TEXT("porch") },
+		{ TEXT("clubhouse"), TEXT("clubhouse") },
+		{ TEXT("commercial"), TEXT("commercial") }, { TEXT("retail"), TEXT("commercial") }, { TEXT("industrial"), TEXT("commercial") }, { TEXT("warehouse"), TEXT("commercial") },
+		{ TEXT("office"), TEXT("commercial") }, { TEXT("school"), TEXT("commercial") }, { TEXT("hotel"), TEXT("commercial") }, { TEXT("church"), TEXT("commercial") },
+		{ TEXT("civic"), TEXT("commercial") }, { TEXT("public"), TEXT("commercial") }, { TEXT("hospital"), TEXT("commercial") }, { TEXT("university"), TEXT("commercial") },
+		{ TEXT("kindergarten"), TEXT("commercial") }, { TEXT("sports_hall"), TEXT("commercial") }, { TEXT("government"), TEXT("commercial") }, { TEXT("supermarket"), TEXT("commercial") } };
+	auto Tagged = [](const FBuilding& B) -> FString {
+		const FString Tag = B.Kind.ToLower(), Use = B.Use.ToLower(), Name = B.Name.ToLower();
+		if (Name.Contains(TEXT("clubhouse")) || Name.Contains(TEXT("club house")) || Name.Contains(TEXT("pro shop")) || Name.Contains(TEXT("proshop")) || Use == TEXT("club") || Tag == TEXT("clubhouse")) return TEXT("clubhouse");
+		if (const FString* T = FromTag.Find(Tag)) return *T;
+		for (const TCHAR* U : { TEXT("restaurant"), TEXT("cafe"), TEXT("bar"), TEXT("pub"), TEXT("golf_course"), TEXT("sports_centre") }) if (Use == U) return TEXT("clubhouse");
+		return FString();
+	};
+	TArray<FString> G;
+	for (const FBuilding& B : Buildings) G.Add(Tagged(B));
+	if (!G.Contains(TEXT("clubhouse")))
+	{
+		// (where the round starts and turns: hole 1's tee, 9's green, 10's tee, 18's green)
+		TArray<FVector2D> Start;
+		auto Tee = [this](int32 h) -> const FVector2D* {
+			if (!Src.Holes.IsValidIndex(h)) return nullptr;
+			for (const FString& N : FOTGCourseSource::TeesOrder()) if (const FVector2D* P = Src.Holes[h].Tees.Find(N)) return P;
+			return nullptr;
+		};
+		if (const FVector2D* P = Tee(0)) Start.Add(*P);
+		if (Src.Holes.IsValidIndex(8)) Start.Add(Src.Holes[8].Green);
+		if (const FVector2D* P = Tee(9)) Start.Add(*P);
+		if (Src.Holes.IsValidIndex(17)) Start.Add(Src.Holes[17].Green);
+		int32 Best = INDEX_NONE;
+		double BestD = TNumericLimits<double>::Max();
+		for (int32 i = 0; Start.Num() && i < Buildings.Num(); i++)
+		{
+			if (!G[i].IsEmpty() && G[i] != TEXT("house") && G[i] != TEXT("commercial")) continue;
+			if (Buildings[i].Area < 150) continue;
+			const FVector2D C = Centroid(Buildings[i].Pts);
+			double D = 0;
+			for (const FVector2D& P : Start) D += FVector2D::Distance(P, C);
+			D /= Start.Num();
+			if (D < 350 && D < BestD) { BestD = D; Best = i; }
+		}
+		if (Best != INDEX_NONE) G[Best] = TEXT("clubhouse");
+	}
+	if (!G.IsValidIndex(Index)) return TEXT("house");
+	return !G[Index].IsEmpty() ? G[Index] : Buildings[Index].Area < 20 ? FString(TEXT("shed")) : FString(TEXT("house"));
+}
+
 TSharedRef<SWidget> SOTGCourseEditor::SelectionPanel()
 {
 	TSharedRef<SVerticalBox> V = SNew(SVerticalBox);
@@ -269,18 +327,21 @@ TSharedRef<SWidget> SOTGCourseEditor::SelectionPanel()
 	{
 		const FBuilding& B = Buildings[SelBuilding];
 		const FString* T = Src.BuildingTypes.Find(B.Key);
-		FString Label = TEXT("The game's guess");
-		for (const auto& BT : BuildingTypes()) if (T && BT.Key == *T) Label = BT.Value;
-		V->AddSlot().AutoHeight()[Row(TEXT("It's a"), Button(Label, [this]() {
-			Change();
-			const FString Key = Buildings[SelBuilding].Key;
-			const FString* Cur = Src.BuildingTypes.Find(Key);
-			int32 I = INDEX_NONE;
-			for (int32 k = 0; k < BuildingTypes().Num(); k++) if (Cur && BuildingTypes()[k].Key == *Cur) I = k;
-			// (the guess, then each type)
-			if (I + 1 >= BuildingTypes().Num()) Src.BuildingTypes.Remove(Key); else Src.BuildingTypes.Add(Key, BuildingTypes()[I + 1].Key);
-			Changed();
-		}, 12))];
+		auto TypeLabel = [](const FString& K) { for (const auto& BT : BuildingTypes()) if (BT.Key == K) return BT.Value; return K; };
+		// (the guess named: what the game draws it as when it's left to it - buildingtypes.js)
+		const FString Guess = GuessBuildingType(SelBuilding);
+		TArray<FString> Choices = { FString() };
+		for (const auto& BT : BuildingTypes()) Choices.Add(BT.Key);
+		V->AddSlot().AutoHeight()[Row(TEXT("It's a"), Dropdown(Choices, T ? *T : FString(),
+			[TypeLabel, Guess](const FString& K) { return K.IsEmpty() ? TEXT("The game's guess: ") + TypeLabel(Guess) : TypeLabel(K); },
+			[this](const FString& K) {
+				const FString Key = Buildings[SelBuilding].Key;
+				const FString* Cur = Src.BuildingTypes.Find(Key);
+				if ((Cur ? *Cur : FString()) == K) return;
+				Change();
+				if (K.IsEmpty()) Src.BuildingTypes.Remove(Key); else Src.BuildingTypes.Add(Key, K);
+				Changed();
+			}))];
 		V->AddSlot().AutoHeight()[Note(FString::Printf(TEXT("%s%s about %d m²%s"), *B.Name, B.Name.IsEmpty() ? TEXT("") : TEXT(" ·"), FMath::RoundToInt(B.Area), B.Kind.IsEmpty() || B.Kind == TEXT("yes") ? TEXT("") : *(TEXT(" · mapped as ") + B.Kind)))];
 		return Section(TEXT("Building"), V);
 	}
@@ -413,7 +474,7 @@ TSharedRef<SWidget> SOTGCourseEditor::TreePanel()
 	{
 		int32 Off = 0;
 		for (const auto& KV : Count) Off += Src.TreesOff.Contains(KV.Key) ? 1 : 0;
-		V->AddSlot().AutoHeight().Padding(0, 8, 0, 2)[Button(FString::Printf(TEXT("%s Tree species on this course (%d%s)"), bSpeciesOpen ? TEXT("\u25BE") : TEXT("\u25B8"), Count.Num(),
+		V->AddSlot().AutoHeight().Padding(0, 8, 0, 2)[Button(FString::Printf(TEXT("%s Tree species on this course (%d%s)"), bSpeciesOpen ? TEXT("-") : TEXT("+"), Count.Num(),
 			Off ? *FString::Printf(TEXT(", %d off"), Off) : TEXT("")), [this]() { bSpeciesOpen = !bSpeciesOpen; Changed(); }, 12)];
 		if (!bSpeciesOpen) return Section(TEXT("Trees"), V);
 		Count.ValueSort([](int32 A, int32 B) { return A > B; });
@@ -422,10 +483,10 @@ TSharedRef<SWidget> SOTGCourseEditor::TreePanel()
 		{
 			const FString K = KV.Key;
 			const bool bOff = Src.TreesOff.Contains(K);
-			W->AddSlot().Padding(0, 0, 4, 4)[Button(FString::Printf(TEXT("%s %d"), *FOTGTreeDesign::SpeciesLabel(K), KV.Value), [this, K]() { Change(); if (!Src.TreesOff.Remove(K)) Src.TreesOff.Add(K); Changed(); }, 11, !bOff)];
+			W->AddSlot().Padding(0, 0, 10, 4)[Check(FString::Printf(TEXT("%s %d"), *FOTGTreeDesign::SpeciesLabel(K), KV.Value), !bOff, [this, K](bool bOn) { Change(); if (bOn) Src.TreesOff.Remove(K); else Src.TreesOff.Add(K); Changed(); }, 11)];
 		}
 		V->AddSlot().AutoHeight()[W];
-		V->AddSlot().AutoHeight()[Note(TEXT("Lit: grown on this course. A species turned off has its trees become others."))];
+		V->AddSlot().AutoHeight()[Note(TEXT("Ticked: grown on this course. A species unticked has its trees become others."))];
 	}
 	return Section(TEXT("Trees"), V);
 }
@@ -449,14 +510,16 @@ TSharedRef<SWidget> SOTGCourseEditor::PlantPanel()
 		}
 		const FString Pid = P.Id;
 		const bool bOff = Src.PlantsOff.Contains(Pid), bExtra = Src.PlantsExtra.Contains(Pid);
-		W->AddSlot().Padding(0, 0, 4, 4)[Button(FString(P.Label) + (bOff ? TEXT(": off") : bExtra ? TEXT(": added") : TEXT("")), [this, Pid, bOff, bExtra]() {
-			// (as the region has it, then off, then added)
-			Change();
-			if (!bOff && !bExtra) Src.PlantsOff.Add(Pid);
-			else if (bOff) { Src.PlantsOff.Remove(Pid); Src.PlantsExtra.Add(Pid); }
-			else Src.PlantsExtra.Remove(Pid);
-			Changed();
-		}, 11, bExtra)];
+		// (each: as the course's region grows it, off, or added)
+		static const TArray<FString> States = { TEXT("region"), TEXT("off"), TEXT("added") };
+		W->AddSlot().Padding(0, 0, 4, 4)[Row(P.Label, SNew(SBox).WidthOverride(190)[Dropdown(States, bOff ? TEXT("off") : bExtra ? TEXT("added") : TEXT("region"),
+			[](const FString& St) { return St == TEXT("off") ? FString(TEXT("Off")) : St == TEXT("added") ? FString(TEXT("Added")) : FString(TEXT("As the region grows it")); },
+			[this, Pid](const FString& St) {
+				Change();
+				Src.PlantsOff.Remove(Pid); Src.PlantsExtra.Remove(Pid);
+				if (St == TEXT("off")) Src.PlantsOff.Add(Pid); else if (St == TEXT("added")) Src.PlantsExtra.Add(Pid);
+				Changed();
+			}, 11)], 150)];
 	}
 	V->AddSlot().AutoHeight()[Note(TEXT("Each as the course's region grows it, turned off, or added. (Drawn by the web version's game; the Unreal game doesn't draw them yet.)"))];
 	return Section(TEXT("Shrubs, flowers and grasses"), V);
@@ -558,10 +621,11 @@ TSharedRef<SWidget> SOTGCourseEditor::ForestPanel()
 		Slide(TEXT("How many"), FOTGForest::AmountLo, FOTGForest::AmountHi, &FOTGForest::Amount, [](float X) { return FMath::IsNearlyEqual(X, 1.f) ? FString(TEXT("as mapped")) : X <= 0 ? FString(TEXT("none")) : FString::Printf(TEXT("x %g"), FMath::RoundToFloat(X * 10) / 10); });
 		Slide(TEXT("Their size"), FOTGForest::SizeLo, FOTGForest::SizeHi, &FOTGForest::Size, [](float X) { return FString::Printf(TEXT("%d%%"), FMath::RoundToInt(X * 100)); });
 		if (F.Preset.IsSet())
-			V->AddSlot().AutoHeight().Padding(0, 2)[Row(TEXT("Planted out"), Button(F.bFill ? FString::Printf(TEXT("Yes: %d a hectare"), FMath::RoundToInt(F.Preset.PerHa * F.Amount)) : FString(TEXT("No: the trees there only")), [this, I]() {
-				Design.Forests[I].bFill = !Design.Forests[I].bFill;
-				SaveForests(Design.Forests[I].bFill ? TEXT("Planted out to its spacing") : TEXT("Not planted out"));
-			}, 12, F.bFill))];
+			V->AddSlot().AutoHeight().Padding(0, 2)[Row(TEXT("Planted out"), Dropdown(F.bFill, FString(TEXT("No: the trees there only")), FString::Printf(TEXT("Yes: %d a hectare"), FMath::RoundToInt(F.Preset.PerHa * F.Amount)), [this, I](bool b) {
+				if (Design.Forests[I].bFill == b) return;
+				Design.Forests[I].bFill = b;
+				SaveForests(b ? TEXT("Planted out to its spacing") : TEXT("Not planted out"));
+			}))];
 		V->AddSlot().AutoHeight().Padding(0, 4, 0, 0)
 		[
 			SNew(SHorizontalBox)
