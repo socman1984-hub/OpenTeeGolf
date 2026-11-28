@@ -154,6 +154,10 @@ bool FOTGRoundScene::EnsureSky()
 		Sun->CloudShadowOnSurfaceStrength = 0.85f;
 		Sun->CloudShadowMapResolutionScale = 0.5f;   // (soft shadows anyway: a quarter of the cost)
 		Sun->bUseRayTracedDistanceFieldShadows = bDfShadows;
+		// (contact shadows: the grass's blades shading each other and the ground at their roots - it casts
+		// no shadow maps. A share of the screen: short, close up; OTGGrass.cpp)
+		Sun->ContactShadowLength = 0.04f;
+		Sun->ContactShadowLengthInWS = false;
 		if (ShadowDist > 0) Sun->DynamicShadowDistanceMovableLight = ShadowDist;
 		if (DfDist > 0) Sun->DistanceFieldShadowDistance = DfDist;
 		if (Cascades >= 0) Sun->DynamicShadowCascades = Cascades;

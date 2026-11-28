@@ -640,13 +640,11 @@ TSharedRef<SWidget> SOTGStudio::ForestPanel()
 		[
 			SNew(SHorizontalBox)
 			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)[SNew(SBox).WidthOverride(120)[Text(TEXT("Drawn as"), 12, Soft)]]
-			+ SHorizontalBox::Slot().AutoWidth()[Button(FOTGTreeDesign::ModelLabel(S.Model.IsEmpty() ? FString(TEXT("auto")) : S.Model), [this, i]() {
+			+ SHorizontalBox::Slot().AutoWidth()[SNew(SBox).MinDesiredWidth(200)[Dropdown(FOTGTreeDesign::Models(), S.Model.IsEmpty() ? FString(TEXT("auto")) : S.Model, [](const FString& M) { return FOTGTreeDesign::ModelLabel(M); }, [this, i](const FString& M) {
 				if (!Forest.Species.IsValidIndex(i)) return;
-				const TArray<FString>& M = FOTGTreeDesign::Models();
-				FString& Cur = Forest.Species[i].Model;
-				Cur = M[(M.IndexOfByKey(Cur.IsEmpty() ? FString(TEXT("auto")) : Cur) + 1) % M.Num()];
+				Forest.Species[i].Model = M;
 				Changed(); Rebuild();
-			}, 12)]
+			})]]
 		];
 	}
 	// a species added
@@ -686,10 +684,10 @@ TSharedRef<SWidget> SOTGStudio::ForestPanel()
 	[
 		SNew(SHorizontalBox)
 		+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)[SNew(SBox).WidthOverride(120)[Text(TEXT("Grass under"), 12, Soft)]]
-		+ SHorizontalBox::Slot().AutoWidth()[Button(Forest.Under.IsEmpty() ? FString(TEXT("The course's own")) : Forest.Under, [this, Under]() {
-			Forest.Under = Under[(Under.IndexOfByKey(Forest.Under) + 1) % Under.Num()];
+		+ SHorizontalBox::Slot().AutoWidth()[SNew(SBox).MinDesiredWidth(200)[Dropdown(Under, Forest.Under, [](const FString& U) { return U.IsEmpty() ? FString(TEXT("The course's own")) : U; }, [this](const FString& U) {
+			Forest.Under = U;
 			Changed(); Rebuild();
-		}, 12)]
+		})]]
 	];
 	return L;
 }

@@ -174,6 +174,10 @@ float otg::FGrass::Chance(const FGrassKind& K, double X, double Y) const
 	P *= FMath::Clamp((0.45f - Mask(TEXT("water"), X, Y)) * 10.f, 0.f, 1.f);
 	P *= FMath::Clamp((0.85f - Mask(TEXT("path"), X, Y)) * 2.f, 0.f, 1.f);
 	P *= FMath::Clamp((0.85f - Mask(TEXT("road"), X, Y)) * 2.f, 0.f, 1.f);   // (roads and car parks: layer_road.png)
+	// (never in a bunker: a tuft rooted in the sand - the sand sits lower than the grass round it - had
+	// its blades' tips poking up through it where the material didn't cut them off. Any kind, past a few
+	// cm inside the outline; the blades of tufts just outside still lean over it and are cut there)
+	if (Mask(TEXT("bunker"), X, Y) > 0.5f + 0.04f / 6.f) return 0.f;
 	// (a mown cut's own blades: on its surface - the material folds away any past its outline)
 	if (K.bMown) return P;
 	// (Greensward's mats aren't cut off by the masks as our blades are, by their material: they're kept
@@ -329,7 +333,13 @@ void otg::FGrass::Update(const FVector& Camera)
 					if (UMaterialInterface* const* To = Swaps.Find(SM[m].MaterialInterface)) ISM->SetMaterial(m, *To);
 			}
 			ISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-			ISM->SetCastShadow(false);
+			// (no shadow maps from the grass - its blades in them cost more than anything - but contact
+			// shadows: a short screen-space trace along the sun, so each blade shades the ones and the
+			// ground just behind it, at a fraction of the cost. The sun's ContactShadowLength: OTGSky.cpp)
+			ISM->SetCastShadow(true);
+			ISM->bCastDynamicShadow = false;
+			ISM->bCastStaticShadow = false;
+			ISM->bCastContactShadow = true;
 			ISM->bVisibleInRayTracing = false;   // (rebuilt into the ray-tracing scene each frame, for nothing: ~1 ms)
 			ISM->SetMobility(EComponentMobility::Movable);
 			ISM->InstanceStartCullDistance = int32(K.DrawFrom * 100);

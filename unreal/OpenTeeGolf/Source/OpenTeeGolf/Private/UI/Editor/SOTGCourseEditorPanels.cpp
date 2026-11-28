@@ -100,7 +100,7 @@ TSharedRef<SWidget> SOTGCourseEditor::TopBar()
 		+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(4, 0)[Button(TEXT("Undo"), [this]() { Undo(); }, 12)]
 		+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(4, 0)[Button(TEXT("Hole"), [this]() { FitHole(); }, 12)]
 		+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(4, 0)[Button(TEXT("Course"), [this]() { FitAll(); }, 12)]
-		+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(4, 0)[Button(bShowPhoto && PhotoBrush.IsValid() ? TEXT("Photo") : TEXT("Shading"), [this]() { bShowPhoto = !bShowPhoto; Changed(); }, 12)]
+		+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(4, 0)[SNew(SBox).WidthOverride(110)[Dropdown(bShowPhoto && PhotoBrush.IsValid(), TEXT("Shading"), TEXT("Photo"), [this](bool b) { bShowPhoto = b; Changed(); })]]
 		+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(12, 0, 4, 0)[SNew(SBox).ToolTipText(FText::FromString(TEXT("Keep your changes (the course's source). The game doesn't see them until you update it.")))[Button(TEXT("Save"), [this]() { AskSave(0); }, 14, bDirty)]]
 		+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(4, 0)[SNew(SBox).ToolTipText(FText::FromString(TEXT("Save, then patch the course the game plays in a few seconds: shapes, trees, tall grass, the ground. Anything it can't patch is named afterwards: that needs Put in the game (full).")))[Button(bQuicking ? TEXT("Updating the game…") : TEXT("Save and update the game"), [this]() { if (!bQuicking && !bExporting) AskSave(1); }, 14, !bQuicking && !bExporting)]]
 		+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(4, 0)[SNew(SBox).ToolTipText(FText::FromString(TEXT("Save, then rebuild the whole course for the game from scratch (5 to 15 minutes, in the background): needed the first time, and for anything the quick update can't do.")))[Button(bExporting ? TEXT("Putting it in the game…") : TEXT("Put in the game (full)"), [this]() { if (!bExporting && !bQuicking) AskSave(2); }, 12)]]
@@ -117,7 +117,7 @@ TSharedRef<SWidget> SOTGCourseEditor::CoursePanel()
 	V->AddSlot().AutoHeight().Padding(0, 2)[Row(TEXT("Green speed (stimp)"), SNew(SBox).WidthOverride(100)[SNew(SSpinBox<double>).MinValue(6).MaxValue(14).Delta(0.5).Value(Src.Stimp)
 		.OnValueCommitted_Lambda([this](double X, ETextCommit::Type) { if (X != Src.Stimp) { Change(); Src.Stimp = FMath::Clamp(X, 6.0, 14.0); Changed(); } })])];
 	auto Look = [this, &V](const FString& Label, bool* Photo) {
-		V->AddSlot().AutoHeight().Padding(0, 2)[Row(Label, Button(*Photo ? TEXT("Aerial photo colours") : TEXT("Game colours (even, groomed)"), [this, Photo]() { Change(); *Photo = !*Photo; Changed(); }, 12))];
+		V->AddSlot().AutoHeight().Padding(0, 2)[Row(Label, Dropdown(*Photo, TEXT("Game colours (even, groomed)"), TEXT("Aerial photo colours"), [this, Photo](bool b) { if (b == *Photo) return; Change(); *Photo = b; Changed(); }))];
 	};
 	Look(TEXT("Fairways & tees"), &Src.bPhotoFairway);
 	Look(TEXT("Greens"), &Src.bPhotoGreen);
@@ -133,7 +133,7 @@ TSharedRef<SWidget> SOTGCourseEditor::CoursePanel()
 	Slide(TEXT("Tall grass height"), &Src.NativeScale, 0.4f, 1.8f, [](float S) { return FString::Printf(TEXT("%d cm"), FOTGCourseSource::NativeCm(S)); });
 	auto Mow = [this, &V](const FString& Label, FString* Id, double WidthM) {
 		V->AddSlot().AutoHeight().Padding(0, 2)[Row(Label, SNew(SHorizontalBox)
-			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)[Button(FOTGCourseSource::MowLabel(*Id), [this, Id]() { Change(); *Id = Next(FOTGCourseSource::MowPatterns(), *Id); Changed(); }, 12)]
+			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)[SNew(SBox).WidthOverride(190)[Dropdown(FOTGCourseSource::MowPatterns(), *Id, [](const FString& P) { return FOTGCourseSource::MowLabel(P); }, [this, Id](const FString& P) { if (P == *Id) return; Change(); *Id = P; Changed(); })]]
 			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(8, 0, 0, 0)[SNew(SOTGMowSwatch).Pattern(*Id).WidthM(WidthM)])];
 	};
 	Mow(TEXT("Fairway mowing"), &Src.MowFairway, 3.5);
@@ -258,9 +258,9 @@ TSharedRef<SWidget> SOTGCourseEditor::SelectionPanel()
 		FOTGSourceTree& T = Src.UserTrees[SelTree];
 		static const TArray<FString> Sizes = { TEXT("small"), TEXT("medium"), TEXT("large") };
 		TArray<FString> Kinds = FOTGCourseSource::Mixes(); Kinds.Append(FOTGCourseSource::Species());
-		V->AddSlot().AutoHeight()[Row(TEXT("Size"), Button(T.Size, [this]() { Change(); Src.UserTrees[SelTree].Size = Next(Sizes, Src.UserTrees[SelTree].Size); Changed(); }, 12))];
-		V->AddSlot().AutoHeight().Padding(0, 2)[Row(TEXT("Species"), Button(T.Kind == TEXT("auto") || FOTGCourseSource::Mixes().Contains(T.Kind) ? FOTGCourseSource::MixLabel(T.Kind) : FOTGTreeDesign::SpeciesLabel(T.Kind),
-			[this, Kinds]() { Change(); Src.UserTrees[SelTree].Kind = Next(Kinds, Src.UserTrees[SelTree].Kind); Changed(); }, 12))];
+		V->AddSlot().AutoHeight()[Row(TEXT("Size"), Dropdown(Sizes, T.Size, nullptr, [this](const FString& P) { Change(); Src.UserTrees[SelTree].Size = P; Changed(); }))];
+		V->AddSlot().AutoHeight().Padding(0, 2)[Row(TEXT("Species"), Dropdown(Kinds, T.Kind, [](const FString& K) { return K == TEXT("auto") || FOTGCourseSource::Mixes().Contains(K) ? FOTGCourseSource::MixLabel(K) : FOTGTreeDesign::SpeciesLabel(K); },
+			[this](const FString& P) { Change(); Src.UserTrees[SelTree].Kind = P; Changed(); }))];
 		V->AddSlot().AutoHeight()[Note(TEXT("Drag it to move it."))];
 		V->AddSlot().AutoHeight().Padding(0, 4)[Button(TEXT("Delete tree"), [this]() { DeleteSelected(); }, 12)];
 		return Section(TEXT("Your tree"), V);
@@ -333,20 +333,21 @@ TSharedRef<SWidget> SOTGCourseEditor::SelectionPanel()
 	if (!Src.Shapes.IsValidIndex(SelShape)) return SNullWidget::NullWidget;
 	FOTGSourceShape& S = Src.Shapes[SelShape];
 	TArray<FString> Kinds = DrawKinds; Kinds.Add(TEXT("trees"));
-	V->AddSlot().AutoHeight()[Row(TEXT("It's a"), Button(KindLabel(S.Kind), [this, Kinds]() {
+	V->AddSlot().AutoHeight()[Row(TEXT("It's a"), Dropdown(Kinds, S.Kind, [this](const FString& K) { return KindLabel(K); }, [this](const FString& P) {
+		if (P == Src.Shapes[SelShape].Kind) return;
 		Change();
 		FOTGSourceShape& Sh = Src.Shapes[SelShape];
-		Sh.Kind = Next(Kinds, Sh.Kind);
+		Sh.Kind = P;
 		if (Sh.Kind == TEXT("oob")) { const FOTGSourceShape Keep = Sh; Src.Shapes.RemoveAll([](const FOTGSourceShape& X) { return X.Kind == TEXT("oob"); }); Src.Shapes.Add(Keep); SelShape = Src.Shapes.Num() - 1; }
 		Changed();
-	}, 12))];
+	}))];
 	if (S.Kind == TEXT("trees"))
 	{
 		static const TArray<FString> Dens = { TEXT("sparse"), TEXT("medium"), TEXT("dense") };
 		TArray<FString> Sp = FOTGCourseSource::Mixes(); Sp.Append(FOTGCourseSource::Species());
-		V->AddSlot().AutoHeight().Padding(0, 2)[Row(TEXT("Tree density"), Button(S.Density, [this]() { Change(); Src.Shapes[SelShape].Density = Next(Dens, Src.Shapes[SelShape].Density); Changed(); }, 12))];
-		V->AddSlot().AutoHeight().Padding(0, 2)[Row(TEXT("Species"), Button(FOTGCourseSource::Mixes().Contains(S.Species) ? FOTGCourseSource::MixLabel(S.Species) : FOTGTreeDesign::SpeciesLabel(S.Species),
-			[this, Sp]() { Change(); Src.Shapes[SelShape].Species = Next(Sp, Src.Shapes[SelShape].Species); Changed(); }, 12))];
+		V->AddSlot().AutoHeight().Padding(0, 2)[Row(TEXT("Tree density"), Dropdown(Dens, S.Density, nullptr, [this](const FString& P) { Change(); Src.Shapes[SelShape].Density = P; Changed(); }))];
+		V->AddSlot().AutoHeight().Padding(0, 2)[Row(TEXT("Species"), Dropdown(Sp, S.Species, [](const FString& K) { return FOTGCourseSource::Mixes().Contains(K) ? FOTGCourseSource::MixLabel(K) : FOTGTreeDesign::SpeciesLabel(K); },
+			[this](const FString& P) { Change(); Src.Shapes[SelShape].Species = P; Changed(); }))];
 		auto H = [this](double* Val) {
 			return SNew(SBox).WidthOverride(70)[SNew(SSpinBox<double>).MinValue(2).MaxValue(40).Delta(1).Value(FMath::IsFinite(*Val) ? *Val : 0)
 				.OnValueCommitted_Lambda([this, Val](double X, ETextCommit::Type) { Change(); *Val = X; Changed(); })];
@@ -357,11 +358,11 @@ TSharedRef<SWidget> SOTGCourseEditor::SelectionPanel()
 	}
 	if (S.Kind == TEXT("water") && !S.bInner)
 	{
-		V->AddSlot().AutoHeight().Padding(0, 2)[Row(TEXT("Water"), Button(S.bFlow ? TEXT("A stream or river") : TEXT("A pond or lake"), [this]() { Change(); Src.Shapes[SelShape].bFlow = !Src.Shapes[SelShape].bFlow; Changed(); }, 12))];
+		V->AddSlot().AutoHeight().Padding(0, 2)[Row(TEXT("Water"), Dropdown(S.bFlow, TEXT("A pond or lake"), TEXT("A stream or river"), [this](bool b) { if (b == Src.Shapes[SelShape].bFlow) return; Change(); Src.Shapes[SelShape].bFlow = b; Changed(); }))];
 		V->AddSlot().AutoHeight()[Note(S.bFlow ? TEXT("Runs downhill: the water slopes with its banks.") : TEXT("Lies flat."))];
 	}
 	if (S.Kind == TEXT("penalty"))
-		V->AddSlot().AutoHeight().Padding(0, 2)[Row(TEXT("Inside it"), Button(S.bInnerOOB ? TEXT("Out of bounds") : TEXT("A penalty area"), [this]() { Change(); Src.Shapes[SelShape].bInnerOOB = !Src.Shapes[SelShape].bInnerOOB; Changed(); }, 12))];
+		V->AddSlot().AutoHeight().Padding(0, 2)[Row(TEXT("Inside it"), Dropdown(S.bInnerOOB, TEXT("A penalty area"), TEXT("Out of bounds"), [this](bool b) { if (b == Src.Shapes[SelShape].bInnerOOB) return; Change(); Src.Shapes[SelShape].bInnerOOB = b; Changed(); }))];
 	V->AddSlot().AutoHeight().Padding(0, 4)[Note(FString::Printf(TEXT("%d points · %s m²%s"), S.Pts.Num(), *FText::AsNumber(FMath::RoundToInt(PolyArea(S.Pts))).ToString(), S.bInner ? TEXT(" · a cut-out") : TEXT("")))];
 	V->AddSlot().AutoHeight().Padding(0, 4)[Button(TEXT("Delete shape"), [this]() { DeleteSelected(); }, 12)];
 	return Section(TEXT("Shape"), V);
@@ -375,15 +376,15 @@ TSharedRef<SWidget> SOTGCourseEditor::TreePanel()
 	TArray<FString> Kinds = FOTGCourseSource::Mixes(); Kinds.Append(FOTGCourseSource::Species());
 	auto KLabel = [](const FString& K) { return FOTGCourseSource::Mixes().Contains(K) ? FOTGCourseSource::MixLabel(K) : FOTGTreeDesign::SpeciesLabel(K); };
 	V->AddSlot().AutoHeight()[Row(TEXT("On the map"), SNew(SHorizontalBox)
-		+ SHorizontalBox::Slot().AutoWidth().Padding(0, 0, 6, 0)[Button(bShowTrees ? TEXT("Shown") : TEXT("Hidden"), [this]() { bShowTrees = !bShowTrees; Changed(); }, 12, bShowTrees)]
-		+ SHorizontalBox::Slot().AutoWidth()[Button(TEXT("Colour by species"), [this]() { bColourSpecies = !bColourSpecies; Changed(); }, 12, bColourSpecies)])];
+		+ SHorizontalBox::Slot().AutoWidth().Padding(0, 0, 6, 0)[Check(TEXT("Shown"), bShowTrees, [this](bool b) { bShowTrees = b; Changed(); })]
+		+ SHorizontalBox::Slot().AutoWidth().Padding(8, 0, 0, 0)[Check(TEXT("Colour by species"), bColourSpecies, [this](bool b) { bColourSpecies = b; Changed(); })])];
 	if (!Found.Num()) V->AddSlot().AutoHeight()[Note(TEXT("The trees the game plants show once the course is in the game (Save and put in the game)."))];
 	V->AddSlot().AutoHeight().Padding(0, 6, 0, 2)
 	[
 		SNew(SHorizontalBox)
 		+ SHorizontalBox::Slot().AutoWidth().Padding(0, 0, 6, 0)[Button(TEXT("Add trees"), [this]() { SetMode(Mode == EMode::AddTree ? EMode::None : EMode::AddTree); }, 12, Mode == EMode::AddTree)]
-		+ SHorizontalBox::Slot().AutoWidth().Padding(0, 0, 6, 0)[Button(TreeSize, [this]() { TreeSize = Next(Sizes, TreeSize); Changed(); }, 12)]
-		+ SHorizontalBox::Slot().AutoWidth()[Button(KLabel(TreeKind), [this, Kinds]() { TreeKind = Next(Kinds, TreeKind); Changed(); }, 12)]
+		+ SHorizontalBox::Slot().AutoWidth().Padding(0, 0, 6, 0)[Dropdown(Sizes, TreeSize, nullptr, [this](const FString& P) { TreeSize = P; Changed(); })]
+		+ SHorizontalBox::Slot().AutoWidth()[Dropdown(Kinds, TreeKind, KLabel, [this](const FString& P) { TreeKind = P; Changed(); })]
 	];
 	V->AddSlot().AutoHeight().Padding(0, 4, 0, 2)
 	[
@@ -396,8 +397,8 @@ TSharedRef<SWidget> SOTGCourseEditor::TreePanel()
 	[
 		SNew(SHorizontalBox)
 		+ SHorizontalBox::Slot().AutoWidth().Padding(0, 0, 6, 0)[Button(TEXT("Draw tree area"), [this]() { const bool bOn = Mode == EMode::Draw && ModeKind == TEXT("trees"); SetMode(bOn ? EMode::None : EMode::Draw, TEXT("trees")); }, 12, Mode == EMode::Draw && ModeKind == TEXT("trees"))]
-		+ SHorizontalBox::Slot().AutoWidth().Padding(0, 0, 6, 0)[Button(AreaDensity, [this]() { AreaDensity = Next(Dens, AreaDensity); Changed(); }, 12)]
-		+ SHorizontalBox::Slot().AutoWidth()[Button(KLabel(AreaKind), [this, Kinds]() { AreaKind = Next(Kinds, AreaKind); Changed(); }, 12)]
+		+ SHorizontalBox::Slot().AutoWidth().Padding(0, 0, 6, 0)[Dropdown(Dens, AreaDensity, nullptr, [this](const FString& P) { AreaDensity = P; Changed(); })]
+		+ SHorizontalBox::Slot().AutoWidth()[Dropdown(Kinds, AreaKind, KLabel, [this](const FString& P) { AreaKind = P; Changed(); })]
 	];
 	auto H = [this](double* Val) { return SNew(SBox).WidthOverride(70)[SNew(SSpinBox<double>).MinValue(2).MaxValue(40).Delta(1).Value(*Val).OnValueCommitted_Lambda([Val](double X, ETextCommit::Type) { *Val = X; })]; };
 	V->AddSlot().AutoHeight().Padding(0, 2)[Row(TEXT("New areas' heights"), SNew(SHorizontalBox)
@@ -464,7 +465,7 @@ TSharedRef<SWidget> SOTGCourseEditor::PlantPanel()
 TSharedRef<SWidget> SOTGCourseEditor::GrassPanel()
 {
 	TSharedRef<SVerticalBox> V = SNew(SVerticalBox);
-	V->AddSlot().AutoHeight()[Row(TEXT("On the map"), Button(bShowGrass ? TEXT("Shown") : TEXT("Hidden"), [this]() { bShowGrass = !bShowGrass; Changed(); }, 12, bShowGrass))];
+	V->AddSlot().AutoHeight()[Row(TEXT("On the map"), Check(TEXT("Shown"), bShowGrass, [this](bool b) { bShowGrass = b; Changed(); }))];
 	V->AddSlot().AutoHeight().Padding(0, 4, 0, 2)
 	[
 		SNew(SHorizontalBox)
@@ -636,7 +637,7 @@ TSharedRef<SWidget> SOTGCourseEditor::BiomePanel()
 TSharedRef<SWidget> SOTGCourseEditor::BuildingPanel()
 {
 	TSharedRef<SVerticalBox> V = SNew(SVerticalBox);
-	V->AddSlot().AutoHeight()[Row(TEXT("On the map"), Button(bShowBuildings ? TEXT("Shown") : TEXT("Hidden"), [this]() { bShowBuildings = !bShowBuildings; Changed(); }, 12, bShowBuildings))];
+	V->AddSlot().AutoHeight()[Row(TEXT("On the map"), Check(TEXT("Shown"), bShowBuildings, [this](bool b) { bShowBuildings = b; Changed(); }))];
 	V->AddSlot().AutoHeight()[Note(FString::Printf(TEXT("%d buildings round the course. Click one to say what it is (it changes how the game draws it)."), Buildings.Num()))];
 	return Section(TEXT("Buildings"), V);
 }

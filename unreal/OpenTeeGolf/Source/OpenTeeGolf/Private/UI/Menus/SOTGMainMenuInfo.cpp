@@ -159,8 +159,12 @@ TSharedRef<SWidget> SOTGMainMenu::SettingsPage()
 				GS->SetResolutionScaleValueEx(Keep);
 				Apply();
 			}, 14, Level == i)];
+		// (the parts set to different levels - by Pick for this PC, or by hand: no one level, shown as such)
+		if (Level < 0) W->AddSlot().Padding(0, 0, 6, 6)[Button(TEXT("Custom (mixed)"), []() {}, 14, true)];
 		W->AddSlot().Padding(8, 0, 6, 6)[Button(TEXT("Pick for this PC"), [GS, Apply]() { GS->RunHardwareBenchmark(); GS->ApplyHardwareBenchmarkResults(); Apply(); }, 13)];
 		Row2(TEXT("Graphics quality"), W);
+		if (Level < 0)
+			V->AddSlot().AutoHeight().Padding(0, 2)[Text(TEXT("Custom: shadows, effects, foliage and view distance are at different levels. Pick one above to set them all the same."), 12, Soft)];
 		V->AddSlot().AutoHeight().Padding(0, 2)[Text(TEXT("Lower it if the game runs slowly: the grass, trees and shadows cost the most."), 12, Soft)];
 	}
 	// render resolution: the picture drawn smaller and sharpened up to the screen (TSR) - the

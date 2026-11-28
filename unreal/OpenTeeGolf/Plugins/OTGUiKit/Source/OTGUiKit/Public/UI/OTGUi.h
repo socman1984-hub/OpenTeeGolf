@@ -7,6 +7,8 @@
 #include "Styling/CoreStyle.h"
 #include "Styling/SlateTypes.h"
 #include "Widgets/Input/SButton.h"
+#include "Widgets/Input/SCheckBox.h"
+#include "Widgets/Input/SComboBox.h"
 #include "Widgets/Layout/SBorder.h"
 #include "Widgets/Text/STextBlock.h"
 
@@ -54,5 +56,35 @@ namespace otg::ui
 			.ContentPadding(FMargin(12, 6))
 			.OnClicked_Lambda([OnClick]() { if (OnClick) OnClick(); return FReply::Handled(); })
 			[SNew(STextBlock).Text(FText::FromString(Label)).Font(Font(Size, bOn ? "Bold" : "Regular")).ColorAndOpacity(Ink)];
+	}
+
+	// A choice of several: a dropdown list showing every option (never a button that steps through
+	// them). Values as stored, Label how each reads (unset: as stored); OnPick when the player picks one
+	inline TSharedRef<SWidget> Dropdown(const TArray<FString>& Values, const FString& Current, TFunction<FString(const FString&)> Label, TFunction<void(const FString&)> OnPick, int32 Size = 12)
+	{
+		// (the options live as long as the list: held by its own lambdas)
+		TSharedRef<TArray<TSharedPtr<FString>>> Opts = MakeShared<TArray<TSharedPtr<FString>>>();
+		TSharedPtr<FString> Sel;
+		for (const FString& V : Values) { Opts->Add(MakeShared<FString>(V)); if (V == Current) Sel = Opts->Last(); }
+		auto Show = [Label](const FString& V) { return Label ? Label(V) : V; };
+		return SNew(SComboBox<TSharedPtr<FString>>)
+			.OptionsSource(&Opts.Get())
+			.InitiallySelectedItem(Sel)
+			.OnGenerateWidget_Lambda([Opts, Show, Size](TSharedPtr<FString> P) { return StaticCastSharedRef<SWidget>(SNew(STextBlock).Text(FText::FromString(Show(*P))).Font(Font(Size)).ColorAndOpacity(Ink)); })
+			.OnSelectionChanged_Lambda([OnPick](TSharedPtr<FString> P, ESelectInfo::Type How) { if (P.IsValid() && How != ESelectInfo::Direct && OnPick) OnPick(*P); })
+			[SNew(STextBlock).Text(FText::FromString(Show(Current))).Font(Font(Size)).ColorAndOpacity(Ink)];
+	}
+	// Two choices, the same way (false: A, true: B)
+	inline TSharedRef<SWidget> Dropdown(bool bCurrent, const FString& A, const FString& B, TFunction<void(bool)> OnPick, int32 Size = 12)
+	{
+		return Dropdown({ A, B }, bCurrent ? B : A, nullptr, [B, OnPick](const FString& V) { if (OnPick) OnPick(V == B); }, Size);
+	}
+	// Something on or off: a tick box with its label
+	inline TSharedRef<SWidget> Check(const FString& LabelText, bool bOn, TFunction<void(bool)> OnChange, int32 Size = 12)
+	{
+		return SNew(SCheckBox)
+			.IsChecked(bOn ? ECheckBoxState::Checked : ECheckBoxState::Unchecked)
+			.OnCheckStateChanged_Lambda([OnChange](ECheckBoxState St) { if (OnChange) OnChange(St == ECheckBoxState::Checked); })
+			[SNew(STextBlock).Text(FText::FromString(LabelText)).Font(Font(Size)).ColorAndOpacity(Ink)];
 	}
 }

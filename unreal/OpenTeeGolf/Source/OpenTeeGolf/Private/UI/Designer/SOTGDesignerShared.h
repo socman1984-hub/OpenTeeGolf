@@ -15,24 +15,7 @@ using namespace otg::ui;
 
 namespace
 {
-	// A drop-down of choices (Values, shown by Label), the current one shown; Set when one's picked
-	TSharedRef<SWidget> Dropdown(const TArray<FString>& Values, const FString& Current, TFunction<FString(const FString&)> Label, TFunction<void(const FString&)> Set)
-	{
-		// (the options outlive this call: the combo box holds them by pointer, the lambdas keep them)
-		TSharedRef<TArray<TSharedPtr<FString>>> Opts = MakeShared<TArray<TSharedPtr<FString>>>();
-		TSharedPtr<FString> Sel;
-		for (const FString& V : Values)
-		{
-			Opts->Add(MakeShared<FString>(V));
-			if (V == Current) Sel = Opts->Last();
-		}
-		return SNew(SComboBox<TSharedPtr<FString>>)
-			.OptionsSource(&Opts.Get())
-			.InitiallySelectedItem(Sel)
-			.OnGenerateWidget_Lambda([Opts, Label](TSharedPtr<FString> P) { return StaticCastSharedRef<SWidget>(Text(Label(*P), 12)); })
-			.OnSelectionChanged_Lambda([Opts, Set](TSharedPtr<FString> P, ESelectInfo::Type How) { if (P.IsValid() && How != ESelectInfo::Direct) Set(*P); })
-			[SNew(STextBlock).Font(Font(12)).Text(FText::FromString(Label(Current)))];
-	}
+	// (a drop-down of choices: otg::ui::Dropdown, in the UI kit)
 
 	// The tall grass's patches: the noise's lightness runs 0.27..0.46 (OTGGrass.cpp Place); a kind
 	// grows where it is past the middle of its Lo..Hi (or short of it, inverted)

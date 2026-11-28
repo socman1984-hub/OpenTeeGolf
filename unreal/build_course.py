@@ -102,6 +102,8 @@ ROAD_TINT = (0.062, 0.061, 0.058)
 MOW_WIDTH_M = (3.2, 1.2)
 MOW_CONTRAST = (0.11, 0.08)
 FRINGE = (0.036, 0.057, 0.015)   # (the cart paths' concrete, as prop_material's)
+ROUGH_SHADE = 0.55        # the ground under the rough's blades: this much of its colour close by,
+ROUGH_SHADE_M = (35, 85)  # back to all of it between these distances (m; the rough's blades: 70-100 m)
 TURF_AMOUNT = 0.88        # how much of the turf colour over the photo's (the rest the photo's own)
 WET_BANK = (0.4, 0.55)   # the ground darkens towards the water from 0.6 m out (mask 0.4), to this much at the edge
 EDGE_SOFT_M = 0.3         # how wide the blend is at the edge of each surface
@@ -726,6 +728,26 @@ def build_ground(land):
         except Exception:
             warn("Mowing stripes skipped:\n" + traceback.format_exc())
     turf = op(unreal.MaterialExpressionMultiply, turf, shade, -800, -400)
+    # (the ground under the rough's blades, near enough for them to be drawn: in their shade - darker,
+    # fading back to the rough's own colour where the blades thin away. Seen between the blades as the
+    # same bright green as the far rough, the rough looked thin and painted)
+    try:
+        dpx = E(unreal.MaterialExpressionPixelDepth, -1400, 7400)
+        near_k = E(unreal.MaterialExpressionSmoothStep, -1250, 7400)
+        mel.connect_material_expressions(const(ROUGH_SHADE_M[0] * 100.0, -1400, 7460), "", near_k, "Min")
+        mel.connect_material_expressions(const(ROUGH_SHADE_M[1] * 100.0, -1400, 7500), "", near_k, "Max")
+        mel.connect_material_expressions(dpx, "", near_k, "Value")
+        under = E(unreal.MaterialExpressionLinearInterpolate, -1100, 7400)
+        mel.connect_material_expressions(const(ROUGH_SHADE, -1250, 7550), "", under, "A")
+        mel.connect_material_expressions(const(1.0, -1250, 7590), "", under, "B")
+        mel.connect_material_expressions(near_k, "", under, "Alpha")
+        rk = E(unreal.MaterialExpressionLinearInterpolate, -950, 7400)
+        mel.connect_material_expressions(const(1.0, -1100, 7650), "", rk, "A")
+        mel.connect_material_expressions(under, "", rk, "B")
+        mel.connect_material_expressions(m["rough"], "", rk, "Alpha")
+        turf = op(unreal.MaterialExpressionMultiply, turf, rk, -750, -350)
+    except Exception:
+        warn("Rough's shade under its blades skipped:" + chr(10) + traceback.format_exc())
     # the cart paths, in the ground itself (their own mesh can sit a touch above or below it): the
     # game's concrete grain, as the paths' mesh has it
     if "path" in m:

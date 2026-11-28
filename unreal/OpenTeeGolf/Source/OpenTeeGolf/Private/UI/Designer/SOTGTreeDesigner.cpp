@@ -519,7 +519,7 @@ void SOTGTreeDesigner::Rebuild()
 	List->AddSlot().AutoHeight().Padding(0, 12, 0, 0)
 	[
 		SNew(SHorizontalBox)
-		+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0, 0, 8, 0)[Button(Edit.bRocks ? TEXT("On") : TEXT("Off"), [this]() { Edit.bRocks = !Edit.bRocks; Apply(); Rebuild(); }, 12, Edit.bRocks)]
+		+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0, 0, 8, 0)[SNew(SCheckBox).IsChecked(Edit.bRocks ? ECheckBoxState::Checked : ECheckBoxState::Unchecked).OnCheckStateChanged_Lambda([this](ECheckBoxState St) { Edit.bRocks = St == ECheckBoxState::Checked; Apply(); Rebuild(); })]
 		+ SHorizontalBox::Slot().FillWidth(1).VAlign(VAlign_Center)[Text(TEXT("Rocks"), 15, Gold, "Bold")]
 		+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(4, 0, 0, 0)[Button(TEXT("Show me"), [this]() { if (OnShow) OnShow(TEXT("rock")); }, 11)]
 	];

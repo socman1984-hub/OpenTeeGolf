@@ -162,6 +162,7 @@ export async function exportForUnreal({ course, scene, id, solids = [], status =
   // found the fairways on, and Unreal shades the turf by the photo's light and dark)
   const clean = scene.imagery?.clean, cw = scene.courseCanvas?.width, ch = scene.courseCanvas?.height;
   const src = clean?.naturalWidth && clean.naturalWidth === cw && clean.naturalHeight === ch ? clean : scene.courseCanvas;
+  let photoCanvas = null;   // (put once the surfaces are known: see evenMownPhoto)
   if (src) {
     // (about 0.5 m a pixel, up to 8192; a power of two, so Unreal gives it mips - the ground reads
     // the photo's light and shade from a blurred one, not its pixels)
@@ -186,7 +187,7 @@ export async function exportForUnreal({ course, scene, id, solids = [], status =
       g.drawImage(scene.surroundCanvas, (sx0 - x0) * k, (z1 - sz1) * k, (sx1 - sx0) * k, (sz1 - sz0) * k);
     }
     g.drawImage(src, (minX - x0) * k, (z1 - maxZ) * k, W * k, H * k);
-    await put('photo.jpg', await new Promise((r) => c.toBlob(r, 'image/jpeg', 0.9)), 'image/jpeg');
+    photoCanvas = c;
   }
 
   // ---- the land to the horizon, as the game draws it: real heights and satellite photos over a
@@ -318,6 +319,12 @@ export async function exportForUnreal({ course, scene, id, solids = [], status =
   // the rough: everything the others aren't
   F.rough = new Float32Array(M * M);
   for (let q = 0; q < M * M; q++) F.rough[q] = 1 - Math.max(F.fairway[q], F.green[q], F.tee[q], F.bunker[q], F.water[q]);
+  // the photo, its mown grass evened out where the course has game colours (see evenMownPhoto)
+  if (photoCanvas) {
+    evenMownPhoto(photoCanvas, F, M, course.surface);
+    await put('photo.jpg', await new Promise((r) => photoCanvas.toBlob(r, 'image/jpeg', 0.9)), 'image/jpeg');
+  }
+  await tick();
   let waterLayer = null;
   for (const [k, v] of Object.entries(F)) {
     const b = new Uint8Array(M * M);
@@ -993,4 +1000,58 @@ function chunk(type, data) {
   out.set(data, 8);
   dv.setUint32(8 + data.length, crc32(out.subarray(4, 8 + data.length)));
   return out;
+}
+
+// Unreal lights the turf by the photo's light and shade (and keeps a little of its colour), so on
+// fairways, tees and greens with the game's own colours anything in the photo showed through - parked
+// carts on a tee as dark blotches, the pale straw of the rough along a fairway's edge as a washed-out
+// strip. There the photo is made one even colour (each surface's own average), so the game's colours,
+// mowing stripes and lighting are all that show. Surfaces set to the photo's own colours keep it as taken.
+function evenMownPhoto(c, F, M, surface) {
+  const game = (k) => surface?.[k] !== 'photo';
+  const groups = [];
+  if (game('fairway')) groups.push([F.fairway, F.tee]);
+  if (game('green')) groups.push([F.green]);
+  const P = c.width, g = c.getContext('2d');
+  // (the photo small, to average from)
+  const S = 512, sc = document.createElement('canvas');
+  sc.width = sc.height = S;
+  const sg = sc.getContext('2d', { willReadFrequently: true });
+  sg.drawImage(c, 0, 0, S, S);
+  const small = sg.getImageData(0, 0, S, S).data;
+  for (const parts of groups) {
+    // the mask (M x M, the layers' square = the photo's), as alpha: a little inside the outline
+    const mc = document.createElement('canvas');
+    mc.width = mc.height = M;
+    const mg = mc.getContext('2d');
+    const id = mg.createImageData(M, M);
+    let any = false;
+    for (let q = 0; q < M * M; q++) {
+      let v = 0;
+      for (const f of parts) v = Math.max(v, f[q]);
+      const a = Math.max(0, Math.min(1, (v - 0.5) * 4));
+      if (a > 0) any = true;
+      id.data[q * 4 + 3] = Math.round(a * 255);
+    }
+    if (!any) continue;
+    mg.putImageData(id, 0, 0);
+    // its average colour, from well inside it
+    let r = 0, gr = 0, b = 0, n = 0;
+    for (let j = 0; j < S; j++) for (let i = 0; i < S; i++) {
+      const mi = Math.floor((i + 0.5) * M / S), mj = Math.floor((j + 0.5) * M / S);
+      if (id.data[(mj * M + mi) * 4 + 3] < 250) continue;
+      const o = (j * S + i) * 4;
+      r += small[o]; gr += small[o + 1]; b += small[o + 2]; n++;
+    }
+    if (!n) continue;
+    const t = document.createElement('canvas');
+    t.width = t.height = P;
+    const tg = t.getContext('2d');
+    tg.fillStyle = `rgb(${Math.round(r / n)},${Math.round(gr / n)},${Math.round(b / n)})`;
+    tg.fillRect(0, 0, P, P);
+    tg.globalCompositeOperation = 'destination-in';
+    tg.imageSmoothingEnabled = true;
+    tg.drawImage(mc, 0, 0, P, P);
+    g.drawImage(t, 0, 0);
+  }
 }

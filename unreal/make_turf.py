@@ -62,7 +62,8 @@ TURF_CUTS = {
                 "root": (0.03, 0.046, 0.012), "tip": (0.058, 0.089, 0.023), "dry": (0.11, 0.12, 0.045), "dry_share": 0.01, "vary": 0.1},
     "cut1": {"keep": "cut1", "square": True, "masks": ["rough"], "height_cm": (2.2, 3.4), "width_mm": (2.0, 3.0), "lean": 0.3, "blades": 340, "segs": 3, "cut": 0.6, "up": 0.94,
              "patch_cm": 20, "density": 2500, "draw_m": (40, 60), "shade": (0.85, 1.15),
-             "root": (0.034, 0.052, 0.014), "tip": (0.075, 0.11, 0.027), "dry": (0.11, 0.12, 0.045), "dry_share": 0.01, "vary": 0.1},
+             "root": (0.034, 0.052, 0.014), "tip": (0.075, 0.11, 0.027), "dry": (0.11, 0.12, 0.045), "dry_share": 0.01, "vary": 0.1,
+             "depth": (0.65, 0.7)},
     # the rough: longer, clumpier, pointed (it grows back between cuts), still one even green
     # (each blade its own: lighter or darker, yellower or bluer, a few dry; lit as blades, not as a
     # surface - "up" 0.92 lit every blade as the ground, an even flat green - with a waxy sheen and
@@ -70,7 +71,7 @@ TURF_CUTS = {
     "rough": {"keep": "rough", "masks": ["rough"], "height_cm": (7.0, 16.0), "width_mm": (3.5, 7.5), "lean": 0.55, "blades": 300, "segs": 5, "up": 0.6,
               "patch_cm": 30, "density": 2400, "draw_m": (70, 100), "clumps": 6, "clump_cm": 4.5, "clump_mix": 0.55,
               "root": (0.022, 0.036, 0.011), "tip": (0.085, 0.122, 0.038), "dry": (0.14, 0.13, 0.06), "dry_share": 0.06, "vary": 0.22,
-              "hue": 1.0, "ao_root": 0.3, "rough": 0.48, "spec": 0.5, "sss": 1.8},
+              "hue": 1.0, "ao_root": 0.3, "rough": 0.48, "spec": 0.5, "sss": 1.8, "depth": (0.55, 0.7)},
 }
 # (build_course.py's own kinds: the rough's tufts, the far-off rough and the tall grass. Kept, made
 # again here with these blades: opaque, more segments up the long ones)
@@ -395,11 +396,25 @@ def cut_material(kind, land_size_cm):
         p.set_editor_property("parameter_name", pname)
         p.set_editor_property("default_value", unreal.LinearColor(1, 1, 1, 1))
         col = op(unreal.MaterialExpressionMultiply, col, p, -700, 350 - i * 40, "", "RGB")
+    # (depth: low down among the others a blade is in their shade, sun or not - the grass casts no
+    # shadows, so its lower blade is darkened here, from depth[0] at the root to none depth[1] of the
+    # way up; and lit through from behind only up where the light reaches. Without it the rough was lit
+    # evenly root to tip, and read as painted)
+    sss_col = col
+    if cfg.get("depth"):
+        d0_, d1_ = cfg["depth"]
+        deep = E(unreal.MaterialExpressionSmoothStep, -800, 150)
+        mel.connect_material_expressions(const(0.0, -950, 120), "", deep, "Min")
+        mel.connect_material_expressions(const(d1_, -950, 160), "", deep, "Max")
+        mel.connect_material_expressions(t_up, "", deep, "Value")
+        k_d = lerp(const(d0_, -800, 100), const(1.0, -800, 60), deep, -650, 120)
+        col = op(unreal.MaterialExpressionMultiply, col, k_d, -550, 300)
+        sss_col = op(unreal.MaterialExpressionMultiply, col, deep, -550, 520)
     mel.connect_material_property(col, "", unreal.MaterialProperty.MP_BASE_COLOR)
     # lit through from behind: a warmer, yellower green
     # (sss: how strongly - the rough's long blades glow lime against the sun, as a real lawn's do)
     k_ = cfg.get("sss", 1.0)
-    mel.connect_material_property(op(unreal.MaterialExpressionMultiply, col, const3((0.95 * k_, 1.05 * k_, 0.5 * k_), -650, 600), -500, 560), "", unreal.MaterialProperty.MP_SUBSURFACE_COLOR)
+    mel.connect_material_property(op(unreal.MaterialExpressionMultiply, sss_col, const3((0.95 * k_, 1.05 * k_, 0.5 * k_), -650, 600), -500, 560), "", unreal.MaterialProperty.MP_SUBSURFACE_COLOR)
     # (in the turf's own shade low down)
     ao = lerp(const(cfg.get("ao_root", 0.6), -650, 750), const(1.0, -650, 790), up_c, -500, 760)
     try:

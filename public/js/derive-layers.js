@@ -8,7 +8,7 @@
 //                      0.5 on the outline
 //   layer_path.png     the cart paths, crisp edged; layer_fringe.png the fringes, the same
 //   layer_mow.png      on and near the mown surfaces, which way the mower ran (along the nearest hole's
-//                      tee -> aims -> green line): red, green = 0.5 + 0.5 x the direction (x east, y south)
+//                      tee -> aims -> green line: one way over each joined piece of mown grass): red, green = 0.5 + 0.5 x the direction (x east, y south)
 //   layer_stream.png   where the water's surface slopes (> STREAM_SLOPE per metre): a soft field
 //   boulders.json      stones along the creeks' banks (a few by the ponds), in groups:
 //                      [x, y, z (cm: east, south, up from the heightmap's base), size cm, yaw, flat, kind]
@@ -134,14 +134,15 @@ function boxBlur(a, r) {
 }
 
 function mowLayer(mown, holes, mpp) {
-  const segs = [];
+  const segs = [], segHole = [];
   for (const h of holes) {
     const tees = Object.values(h.tees || {}).filter(Boolean);
     if (!tees.length || !h.green) continue;
     const g = h.green;
     const tee = tees.reduce((a, t) => ((t.x - g.x) ** 2 + (t.y - g.y) ** 2 > (a.x - g.x) ** 2 + (a.y - g.y) ** 2 ? t : a));
     const pts = [tee, ...(h.aims || []), g];
-    for (let k = 0; k + 1 < pts.length; k++) segs.push([pts[k].x / 100, pts[k].y / 100, pts[k + 1].x / 100, pts[k + 1].y / 100]);
+    for (let k = 0; k + 1 < pts.length; k++) segs.push([pts[k].x / 100, pts[k].y / 100, pts[k + 1].x / 100, pts[k + 1].y / 100, segHole.length]);
+    segHole.push(0);
   }
   const data = new Uint8Array(SIZE * SIZE * 3);
   for (let q = 0; q < SIZE * SIZE; q++) { data[q * 3] = 255; data[q * 3 + 1] = 128; data[q * 3 + 2] = 128; }
@@ -149,21 +150,53 @@ function mowLayer(mown, holes, mpp) {
   if (!segs.length) return layer;
   // (the mown surfaces and a few metres round them, so the edges have a direction too)
   const near = boxBlur(mown, 6);
-  const L = segs.map(([ax, ay, bx, by]) => { const vx = bx - ax, vy = by - ay, l2 = Math.max(vx * vx + vy * vy, 1e-6); return [ax, ay, vx, vy, l2, Math.sqrt(l2)]; });
+  const L = segs.map(([ax, ay, bx, by, hole]) => { const vx = bx - ax, vy = by - ay, l2 = Math.max(vx * vx + vy * vy, 1e-6); return [ax, ay, vx, vy, l2, Math.sqrt(l2), hole]; });
   // (numpy's round: halves to even)
   const rnd = (v) => { const f = Math.floor(v), d = v - f; return d > 0.5 || (d === 0.5 && f % 2 !== 0) ? f + 1 : f; };
+  // each pixel's nearest stretch of a hole's line
+  const nearest = new Int32Array(SIZE * SIZE).fill(-1);
   for (let j = 0; j < SIZE; j++) for (let i = 0; i < SIZE; i++) {
     const q = j * SIZE + i;
     if (!(near[q] > 0)) continue;
     const px = (i + 0.5) * mpp, py = (j + 0.5) * mpp;
-    let best = 1e18, dx = 1, dy = 0;
-    for (const [ax, ay, vx, vy, l2, l] of L) {
+    let best = 1e18, bi = 0;
+    for (let s = 0; s < L.length; s++) {
+      const [ax, ay, vx, vy, l2] = L[s];
       const t = Math.min(1, Math.max(0, ((px - ax) * vx + (py - ay) * vy) / l2));
       const d2 = (px - ax - t * vx) ** 2 + (py - ay - t * vy) ** 2;
-      if (d2 < best) { best = d2; dx = vx / l; dy = vy / l; }
+      if (d2 < best) { best = d2; bi = s; }
     }
-    data[q * 3] = Math.min(255, Math.max(0, rnd(127.5 + 127.5 * dx)));
-    data[q * 3 + 1] = Math.min(255, Math.max(0, rnd(127.5 + 127.5 * dy)));
+    nearest[q] = bi;
+  }
+  // A mower runs straight across a whole tee, fairway or green: each piece of mown grass (joined
+  // pixels nearest the same hole) takes one direction - the stretch of the hole's line most of it is
+  // nearest - instead of turning wherever the line bends (where it did, the stripes met at an angle and
+  // smeared into each other)
+  const piece = new Int32Array(SIZE * SIZE).fill(-1), queue = new Int32Array(SIZE * SIZE);
+  const way = [];   // (each piece's stretch)
+  for (let q0 = 0; q0 < SIZE * SIZE; q0++) {
+    if (nearest[q0] < 0 || piece[q0] >= 0) continue;
+    const id = way.length, hole = L[nearest[q0]][6], count = new Map();
+    let head = 0, tail = 0;
+    queue[tail++] = q0; piece[q0] = id;
+    while (head < tail) {
+      const q = queue[head++];
+      count.set(nearest[q], (count.get(nearest[q]) || 0) + 1);
+      const i = q % SIZE, j = (q - i) / SIZE;
+      for (const n of [i > 0 ? q - 1 : -1, i + 1 < SIZE ? q + 1 : -1, j > 0 ? q - SIZE : -1, j + 1 < SIZE ? q + SIZE : -1]) {
+        if (n < 0 || piece[n] >= 0 || nearest[n] < 0 || L[nearest[n]][6] !== hole) continue;
+        piece[n] = id; queue[tail++] = n;
+      }
+    }
+    let bestS = nearest[q0], bestN = -1;
+    for (const [s, n] of count) if (n > bestN) { bestN = n; bestS = s; }
+    way.push(bestS);
+  }
+  for (let q = 0; q < SIZE * SIZE; q++) {
+    if (piece[q] < 0) continue;
+    const [, , vx, vy, , l] = L[way[piece[q]]];
+    data[q * 3] = Math.min(255, Math.max(0, rnd(127.5 + 127.5 * vx / l)));
+    data[q * 3 + 1] = Math.min(255, Math.max(0, rnd(127.5 + 127.5 * vy / l)));
   }
   return layer;
 }

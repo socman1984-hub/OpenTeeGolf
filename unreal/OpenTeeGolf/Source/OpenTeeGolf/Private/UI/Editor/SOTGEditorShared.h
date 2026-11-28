@@ -99,6 +99,4 @@ namespace
 	{
 		return SNew(STextBlock).Font(Font(11)).ColorAndOpacity(Soft).WrapTextAt(400).Text(FText::FromString(S));
 	}
-	// the next of a list, at a click
-	template <typename T> T Next(const TArray<T>& L, const T& V) { const int32 I = L.IndexOfByKey(V); return L[(I + 1) % L.Num()]; }
 }
