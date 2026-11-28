@@ -37,19 +37,83 @@ void SOTGMinimap::SetCourse(UTexture2D* InPhoto, double InX0, double InZ1, doubl
 	}
 }
 
-SOTGMinimap::FFrame SOTGMinimap::Frame(const FVector2D& Size) const
+namespace
+{
+	constexpr double ZOOM_STEP = 1.5;
+	constexpr int32 ZOOM_MIN = -3, ZOOM_MAX = 5;
+	constexpr double BUTTON = 26, BUTTON_GAP = 4;
+}
+
+SOTGMinimap::FFrame SOTGMinimap::Turned(const FVector2D& Size) const
 {
 	FFrame F;
 	F.C = FVector2D(Size.X / 2, (Size.Y - 34) / 2);
 	F.Mid = (State.Tee + State.Pin) / 2;
-	// (the hole up the map, tee to green filling most of it)
+	// (the hole up the map: the tee at the bottom, the green at the top)
 	const FVector2D D(State.Pin.X - State.Tee.X, State.Tee.Y - State.Pin.Y); // (screen: x right, y down; course z up)
-	const double Len = D.Size();
-	F.K = (Size.Y - 34) * 0.8 / (Len + 40);
 	const double Theta = -UE_DOUBLE_HALF_PI - FMath::Atan2(D.Y, D.X);
 	F.Cos = FMath::Cos(Theta);
 	F.Sin = FMath::Sin(Theta);
 	return F;
+}
+
+SOTGMinimap::FFrame SOTGMinimap::Target(const FVector2D& Size) const
+{
+	FFrame F = Turned(Size);
+	const double H = FMath::Max(Size.Y - 34, 1.0), W = FMath::Max(Size.X, 1.0);
+	// (the farthest out it frames by itself: the whole hole, tee to green, as from the tee)
+	const double KHole = H * 0.8 / ((State.Pin - State.Tee).Size() + 40);
+	// the ball and the pin, with room round the green, turned with the hole (in metres)
+	FFrame U = F; U.K = 1; U.C = FVector2D::ZeroVector;
+	const FVector2D Bu = ToLocal(U, State.Ball), Pu = ToLocal(U, State.Pin);
+	const double Room = 22;   // (the green and what is round it)
+	const FVector2D Lo(FMath::Min(Bu.X, Pu.X) - Room, FMath::Min(Bu.Y - 8, Pu.Y - Room));
+	const FVector2D Hi(FMath::Max(Bu.X, Pu.X) + Room, FMath::Max(Bu.Y + 8, Pu.Y + Room));
+	const FVector2D Span = Hi - Lo;
+	// (closer in as the ball nears the hole, never closer than about 60 m top to bottom)
+	const double K = FMath::Max(KHole, FMath::Min(H * 0.86 / FMath::Max(Span.Y, 60.0), W * 0.9 / FMath::Max(Span.X, 1.0)));
+	F.Mid = K <= KHole * 1.0001 ? (State.Tee + State.Pin) / 2 : ToCourse(U, (Lo + Hi) / 2);
+	// the player's zoom on that, keeping the ball on the map when zoomed in
+	const double Z = FMath::Pow(ZOOM_STEP, double(ZoomSteps));
+	F.K = K * Z;
+	if (ZoomSteps > 0) F.Mid = F.Mid + (State.Ball - F.Mid) * (1 - 1 / Z) * 0.6;
+	return F;
+}
+
+SOTGMinimap::FFrame SOTGMinimap::Frame(const FVector2D& Size) const
+{
+	if (Held) return *Held;
+	if (!bShown) return Target(Size);
+	FFrame F = Turned(Size);
+	F.Mid = ShownMid;
+	F.K = ShownK;
+	return F;
+}
+
+void SOTGMinimap::Tick(const FGeometry& Geometry, const double, const float DeltaTime)
+{
+	if (!State.bValid) return;
+	// (a new hole: the player's zoom starts again, and the map jumps to it)
+	if (!ZoomHole.Equals(State.Pin, 0.5)) { ZoomHole = State.Pin; ZoomSteps = 0; bShown = false; }
+	const FFrame T = Target(Geometry.GetLocalSize());
+	if (!bShown) { ShownMid = T.Mid; ShownK = T.K; bShown = true; return; }
+	if (Held) return;
+	// (eases there: most of the way in about half a second)
+	const double A = 1 - FMath::Exp(-6.0 * FMath::Clamp(double(DeltaTime), 0.0, 0.25));
+	ShownMid = FMath::Lerp(ShownMid, T.Mid, A);
+	ShownK = FMath::Exp(FMath::Lerp(FMath::Loge(ShownK), FMath::Loge(T.K), A));
+}
+
+FSlateRect SOTGMinimap::ZoomButton(bool bIn) const
+{
+	// (top left: + over -)
+	const double Top = 6 + (bIn ? 0 : BUTTON + BUTTON_GAP);
+	return FSlateRect(6, Top, 6 + BUTTON, Top + BUTTON);
+}
+
+void SOTGMinimap::ZoomBy(int32 Steps)
+{
+	ZoomSteps = FMath::Clamp(ZoomSteps + Steps, ZOOM_MIN, ZOOM_MAX);
 }
 
 FVector2D SOTGMinimap::ToLocal(const FFrame& F, const FVector2D& P) const
@@ -82,10 +146,10 @@ int32 SOTGMinimap::OnPaint(const FPaintArgs&, const FGeometry& G, const FSlateRe
 			float(FMath::Atan2(F.Sin, F.Cos)), FVector2f(Pivot), FSlateDrawElement::RelativeToElement, FLinearColor::White);
 	}
 	const int32 L = Layer + 2;
-	auto Line = [&](const FVector2D& A, const FVector2D& B, const FLinearColor& C, float W, double Dash = 0) {
+	auto Line = [&](const FVector2D& A, const FVector2D& B, const FLinearColor& C, float W, double Dash = 0, int32 At = -1) {
 		if (Dash <= 0)
 		{
-			FSlateDrawElement::MakeLines(Out, L, G.ToPaintGeometry(), TArray<FVector2f>{ FVector2f(A), FVector2f(B) }, ESlateDrawEffect::None, C, true, W);
+			FSlateDrawElement::MakeLines(Out, At >= 0 ? At : L, G.ToPaintGeometry(), TArray<FVector2f>{ FVector2f(A), FVector2f(B) }, ESlateDrawEffect::None, C, true, W);
 			return;
 		}
 		const double Len = (B - A).Size();
@@ -137,6 +201,17 @@ int32 SOTGMinimap::OnPaint(const FPaintArgs&, const FGeometry& G, const FSlateRe
 		Label(Yd(Dist(State.Ball, State.Aim)), (B + A) / 2, Yellow);
 		if (Dist(State.Aim, State.Pin) > 5) Label(Yd(Dist(State.Aim, State.Pin)) + TEXT(" left"), (A + P) / 2, FLinearColor::White);
 	}
+	// zoom in and out
+	for (const bool bIn : { true, false })
+	{
+		const FSlateRect R = ZoomButton(bIn);
+		const bool bLive = bIn ? ZoomSteps < ZOOM_MAX : ZoomSteps > ZOOM_MIN;
+		FSlateDrawElement::MakeBox(Out, L + 5, G.ToPaintGeometry(R.GetSize(), FSlateLayoutTransform(R.GetTopLeft())), &Dot, ESlateDrawEffect::None, FLinearColor(0, 0, 0, 0.62f));
+		const FLinearColor C(1, 1, 1, bLive ? 0.95f : 0.35f);
+		const FVector2D M = R.GetCenter();
+		Line(M - FVector2D(6, 0), M + FVector2D(6, 0), C, 2.f, 0, L + 6);
+		if (bIn) Line(M - FVector2D(0, 6), M + FVector2D(0, 6), C, 2.f, 0, L + 6);
+	}
 	// the bar along the bottom
 	FSlateDrawElement::MakeBox(Out, L + 5, G.ToPaintGeometry(FVector2D(Size.X, 34), FSlateLayoutTransform(FVector2D(0, Size.Y - 34))), White, ESlateDrawEffect::None, FLinearColor(0, 0, 0, 0.6f));
 	const FString Bar = FString::Printf(TEXT("To pin %s  ·  click to aim"), *Fmt(Dist(State.Ball, State.Pin)));
@@ -156,7 +231,11 @@ void SOTGMinimap::AimFrom(const FGeometry& Geometry, const FPointerEvent& Event)
 FReply SOTGMinimap::OnMouseButtonDown(const FGeometry& Geometry, const FPointerEvent& Event)
 {
 	if (Event.GetEffectingButton() != EKeys::LeftMouseButton) return FReply::Unhandled();
+	const FVector2D Local = Geometry.AbsoluteToLocal(Event.GetScreenSpacePosition());
+	for (const bool bIn : { true, false })
+		if (ZoomButton(bIn).ContainsPoint(Local)) { ZoomBy(bIn ? 1 : -1); return FReply::Handled(); }
 	bDragging = true;
+	Held = Frame(Geometry.GetLocalSize());
 	AimFrom(Geometry, Event);
 	return FReply::Handled().CaptureMouse(SharedThis(this));
 }
@@ -164,7 +243,9 @@ FReply SOTGMinimap::OnMouseButtonDown(const FGeometry& Geometry, const FPointerE
 FReply SOTGMinimap::OnMouseButtonUp(const FGeometry&, const FPointerEvent& Event)
 {
 	if (Event.GetEffectingButton() != EKeys::LeftMouseButton) return FReply::Unhandled();
+	if (!bDragging) return FReply::Handled();
 	bDragging = false;
+	Held.Reset();
 	return FReply::Handled().ReleaseMouseCapture();
 }
 
@@ -176,8 +257,16 @@ FReply SOTGMinimap::OnMouseMove(const FGeometry& Geometry, const FPointerEvent& 
 		return FReply::Handled();
 	}
 	const FVector2D Local = Geometry.AbsoluteToLocal(Event.GetScreenSpacePosition());
-	if (State.bValid && Local.Y <= Geometry.GetLocalSize().Y - 34) Hover = ToCourse(Frame(Geometry.GetLocalSize()), Local);
+	const bool bOnButton = ZoomButton(true).ContainsPoint(Local) || ZoomButton(false).ContainsPoint(Local);
+	if (State.bValid && !bOnButton && Local.Y <= Geometry.GetLocalSize().Y - 34) Hover = ToCourse(Frame(Geometry.GetLocalSize()), Local);
 	else Hover.Reset();
+	return FReply::Handled();
+}
+
+FReply SOTGMinimap::OnMouseWheel(const FGeometry&, const FPointerEvent& Event)
+{
+	if (!State.bValid || bDragging) return FReply::Unhandled();
+	ZoomBy(Event.GetWheelDelta() > 0 ? 1 : -1);
 	return FReply::Handled();
 }
 

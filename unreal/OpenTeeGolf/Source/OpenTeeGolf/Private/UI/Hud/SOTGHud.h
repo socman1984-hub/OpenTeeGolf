@@ -22,7 +22,7 @@ class SVerticalBox;
 
 struct FOTGScoreRow
 {
-	int32 Number = 0, Par = 0;
+	int32 Number = 0, Par = 0, Yards = 0;   // (Yards 0: not shown - the putt-putt)
 };
 
 struct FOTGCard
@@ -33,6 +33,8 @@ struct FOTGCard
 	struct FSide { FString Name; FLinearColor Colour; TArray<int32> Scores; };
 	TArray<FSide> Sides;
 	TArray<FOTGStanding> Standings;
+	FString Tee;                          // (the tees played: the yardage row's name)
+	TFunction<float()> SecondsLeft;       // (after holing out: the countdown to the next hole; unset: none)
 };
 
 class SOTGHud : public SCompoundWidget

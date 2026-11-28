@@ -553,6 +553,14 @@ namespace otg
 			{
 				return scale(w, std::exp((-8 * kPi * viscosity * std::pow(RADIUS, 3) / INERTIA) * dt));
 			}
+			// (a slowing ball settles down into longer grass, which grabs it harder: the surface's rolling
+			// friction plus its settle friction, faded in below its settle speed - so a fairway lets a ball run
+			// but holds one on a slope instead of letting it creep down for a minute)
+			double rollingAt(const SurfaceParams& surf, double speed)
+			{
+				if (surf.settleFriction <= 0 || surf.settleSpeed <= 0) return surf.rollingFriction;
+				return surf.rollingFriction + surf.settleFriction * (1 - smooth01(speed / surf.settleSpeed));
+			}
 			V3 resistContactSpin(const V3& w, const V3& n, double rollingFriction, double load, double dt)
 			{
 				const double ns = dot(w, n);
@@ -569,7 +577,8 @@ namespace otg
 			const double load = MASS * G * std::max(0.0, n.y);
 			const V3 slope = add(vec(0, -MASS * G, 0), n, load);
 			const double slopeL = len(slope);
-			const double staticCap = surf.rollingFriction * R::slopeResistanceRatio * load;
+			const double rolling = rollingAt(surf, len(vel));
+			const double staticCap = rolling * R::slopeResistanceRatio * load;
 			const V3 rollingSpin = tangent(spin, n);
 			if (dot(vel, vel) < REST_SPEED * REST_SPEED && dot(rollingSpin, rollingSpin) < STOP_SPIN * STOP_SPIN && slopeL <= staticCap)
 			{
@@ -579,7 +588,7 @@ namespace otg
 			if (dot(vel, vel) < 1e-4 && dot(slip, slip) < 1e-4 && slopeL <= staticCap)
 			{
 				v = vec(0, 0, 0);
-				spin = resistContactSpin(dampenSpin(spin, surf.grassViscosity, dt), n, surf.rollingFriction, load, dt);
+				spin = resistContactSpin(dampenSpin(spin, surf.grassViscosity, dt), n, rolling, load, dt);
 				return;
 			}
 			const double mult = SpinFrictionMultiplier(std::max(impactRpm, len(rollingSpin) / RAD_PER_RPM), len(vel));
@@ -603,11 +612,11 @@ namespace otg
 			}
 			// rolling resistance, then the slope
 			const double rollMult = 1 + (mult - 1) * surf.rollingSpinScale;
-			const double rollDelta = surf.rollingFriction * rollMult * load / MASS * dt;
+			const double rollDelta = rolling * rollMult * load / MASS * dt;
 			const double dragged = len(nv);
 			if (dragged > 0) nv = scale(nv, std::max(0.0, dragged - rollDelta) / dragged);
 			nv = add(nv, slope, dt / MASS);
-			V3 nw = resistContactSpin(dampenSpin(spin, surf.grassViscosity, dt), n, surf.rollingFriction, load, dt);
+			V3 nw = resistContactSpin(dampenSpin(spin, surf.grassViscosity, dt), n, rolling, load, dt);
 			// the contact: a Coulomb-capped impulse toward rolling without slipping
 			const V3 arm = scale(n, -RADIUS);
 			const V3 nslip = tangent(add(nv, cross(nw, arm)), n);
@@ -626,7 +635,7 @@ namespace otg
 			const V3 n = validNormal(nIn);
 			if (dot(tangent(spin, n), tangent(spin, n)) >= 0.5 * 0.5) return false;
 			const V3 g = vec(0, -MASS * G, 0);
-			return len(tangent(g, n)) <= surf.rollingFriction * R::slopeResistanceRatio * MASS * G * std::max(0.0, n.y);
+			return len(tangent(g, n)) <= rollingAt(surf, 0) * R::slopeResistanceRatio * MASS * G * std::max(0.0, n.y);
 		}
 	}
 
@@ -652,19 +661,29 @@ namespace otg
 		// (physics.js SURFACES: longer grass cushions, grabs and stops the ball sooner; sand all but plugs
 		// it; a cart path bounces it high and lets it run. The grass is OpenFairway's turf - of::Turf - each
 		// cut keeping its own drag and grab on top)
+		// (the settle frictions: a ball slowing to a stop settles into the grass. With them a fairway rolls
+		// about 5.3 ft on the stimpmeter and holds a ball on a slope of up to about 6 degrees - steeper banks
+		// still feed it down - the collar a little quicker than the fairway, the cut and the rough slower)
+		const double FR_ROLL = 0.05, FR_VISC = 0.0019, FR_SET = 0.07, FR_SPD = 1.8;
+		const double FW_SET = 0.1, FW_SPD = 2.0;
+		const double FC_SET = 0.08, FC_SPD = 1.0;
+		const double RO_SET = 0.12, RO_SPD = 1.0;
+		const double DR_SET = 0.2;
 		of::SurfaceParams SurfaceFor(Surface s)
 		{
 			auto with = [](of::SurfaceParams p, double restitution, double impactRetention, double landingKeep) {
 				p.restitutionScale = restitution; p.impactRetentionScale = impactRetention; p.landingKeepScale = landingKeep; return p;
 			};
+			// (the grass a slowing ball settles into: see of::rollingAt)
+			auto settle = [](of::SurfaceParams p, double friction, double speed) { p.settleFriction = friction; p.settleSpeed = speed; return p; };
 			switch (s)
 			{
 			case Surface::Green: return of::Preset("green");
-			case Surface::Fringe: return with(of::Turf(of::MakeSurface(0.56, 0.085, 0.0028, 0.3, 0.85)), 0.92, 0.95, 1);
-			case Surface::Fairway: case Surface::Tee: return of::Preset("fairway");
-			case Surface::FirstCut: return with(of::Turf(of::MakeSurface(0.58, 0.12, 0.0038, 0.33, 0.68)), 0.85, 0.85, 0.9);
-			case Surface::DeepRough: return with(of::Turf(of::MakeSurface(0.72, 0.55, 0.018, 0.42, 0.35)), 0.38, 0.4, 0.4);
-			case Surface::Native: return with(of::Turf(of::MakeSurface(0.74, 0.65, 0.022, 0.44, 0.3)), 0.33, 0.35, 0.35);
+			case Surface::Fringe: return settle(with(of::Turf(of::MakeSurface(0.56, FR_ROLL, FR_VISC, 0.3, 0.85)), 0.92, 0.95, 1), FR_SET, FR_SPD);
+			case Surface::Fairway: case Surface::Tee: return settle(of::Preset("fairway"), FW_SET, FW_SPD);
+			case Surface::FirstCut: return settle(with(of::Turf(of::MakeSurface(0.58, 0.12, 0.0038, 0.33, 0.68)), 0.85, 0.85, 0.9), FC_SET, FC_SPD);
+			case Surface::DeepRough: return settle(with(of::Turf(of::MakeSurface(0.72, 0.55, 0.018, 0.42, 0.35)), 0.38, 0.4, 0.4), DR_SET, 1.0);
+			case Surface::Native: return settle(with(of::Turf(of::MakeSurface(0.74, 0.65, 0.022, 0.44, 0.3)), 0.33, 0.35, 0.35), DR_SET, 1.0);
 			case Surface::Path:
 			{
 				of::SurfaceParams p = with(of::MakeSurface(0.22, 0.028, 0.0002, 0.25, 0.2), 2.8, 1, 1.7);
@@ -678,7 +697,7 @@ namespace otg
 				p.hasBounce = true; p.firstImpactMinimumSpeed = 0.15; p.laterImpactMinimumSpeed = 0.15; p.laterImpactScale = 0.6; p.minimumBounceHeight = 0.001;
 				return p;
 			}
-			default: return with(of::Turf(of::MakeSurface(0.66, 0.2, 0.007, 0.38, 0.5)), 0.62, 0.65, 0.75); // rough, oob, anything else
+			default: return settle(with(of::Turf(of::MakeSurface(0.66, 0.2, 0.007, 0.38, 0.5)), 0.62, 0.65, 0.75), RO_SET, RO_SPD); // rough, oob, anything else
 			}
 		}
 

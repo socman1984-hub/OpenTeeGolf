@@ -5,6 +5,7 @@
 #include "Round/OTGMiniGolf.h"
 #include "UI/Builder/SOTGCourseBuilder.h"
 #include "UI/Editor/SOTGCourseEditor.h"
+#include "App/OTGPrefs.h"
 
 #include "Engine/Engine.h"
 #include "Engine/GameInstance.h"
@@ -214,6 +215,19 @@ TSharedRef<SWidget> SOTGMainMenu::SettingsPage()
 		W->AddSlot().AutoHeight()[Btns];
 		W->AddSlot().AutoHeight().Padding(0, 4)[Text(TEXT("The web version's Export to Unreal puts courses in the usual place (Documents\\OpenTeeGolf\\Courses)."), 12, Soft)];
 		Row2(TEXT("Courses folder"), W);
+	}
+	// playing: the scorecard after each hole, or straight on
+	{
+		TSharedRef<SVerticalBox> W = SNew(SVerticalBox);
+		W->AddSlot().AutoHeight()
+		[
+			SNew(SCheckBox)
+			.IsChecked_Lambda([]() { return otg::prefs::SkipScorecard() ? ECheckBoxState::Checked : ECheckBoxState::Unchecked; })
+			.OnCheckStateChanged_Lambda([](ECheckBoxState St) { otg::prefs::SetSkipScorecard(St == ECheckBoxState::Checked); })
+			[Text(TEXT("Go straight to the next hole after holing out (skip the scorecard)"), 14, Ink)]
+		];
+		W->AddSlot().AutoHeight().Padding(0, 4)[Text(TEXT("Tab shows the scorecard any time. Off: it shows after each hole, counting down to the next."), 12, Soft)];
+		Row2(TEXT("Between holes"), W);
 	}
 	V->AddSlot().AutoHeight().Padding(0, 8)
 	[

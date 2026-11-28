@@ -181,6 +181,7 @@ private:
 	double AutoPuttRadiusM() const { return FMath::Max(0.3, Setup_.AutoPuttFt * 0.3048); }
 	void AutoPutt();
 	void ShowPuttCircle();
+	void SetPuttCircleIn(bool bIn);
 	bool bAutoPuttDue = false;
 	void NextHole();
 	bool WaterDrop(otg::V3& Out) const;

@@ -300,6 +300,9 @@ void AOTGRound::FinishShotHere()
 	if (AutoPutting() && Lie == otg::Surface::Green && Title.IsEmpty())
 	{
 		bAutoPuttDue = true;
+		// (the circle turns green when the ball's stopped inside it: one putt)
+		const otg::V3 Pn = Pin();
+		SetPuttCircleIn(Dist(Ball, Pn) <= AutoPuttRadiusM());
 		Phase = EPhase::Resting;
 		PhaseTimer = 1.4;
 		HudView.UpdateHudInfo();
@@ -497,10 +500,19 @@ void AOTGRound::ShowPuttCircle()
 		// (each dash along the circle: its direction there, from this point to the next)
 		const otg::V3 G2 = OnGround(P.x + FMath::Cos(A + 0.01) * R, P.z + FMath::Sin(A + 0.01) * R);
 		const FVector Along = (World(G2) - World(G)).GetSafeNormal();
-		Xfs.Add(FTransform(Along.Rotation(), At, FVector(0.10, 0.025, 0.004)));   // (the cube's a metre: 10 cm by 2.5 cm)
+		Xfs.Add(FTransform(Along.Rotation(), At, FVector(0.12, 0.055, 0.006)));   // (the cube's a metre: 12 cm by 5.5 cm)
 	}
 	PuttCircle->AddInstances(Xfs, false, true);
 	PuttCircle->SetVisibility(true);
+	SetPuttCircleIn(false);
+}
+
+// The circle's colour: white, or bright green with the ball stopped inside it (a one-putt)
+void AOTGRound::SetPuttCircleIn(bool bIn)
+{
+	if (!PuttCircle) return;
+	if (UMaterialInstanceDynamic* M = Cast<UMaterialInstanceDynamic>(PuttCircle->GetMaterial(0)))
+		M->SetVectorParameterValue(TEXT("Color"), bIn ? FLinearColor(0.15f, 1.f, 0.25f) : FLinearColor(0.9f, 0.9f, 0.9f));
 }
 
 void AOTGRound::NextHole()

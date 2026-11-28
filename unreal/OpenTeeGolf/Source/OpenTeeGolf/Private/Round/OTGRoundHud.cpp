@@ -238,7 +238,28 @@ void FOTGRoundHud::ShowScorecard(bool bShow)
 	Card.Course = Round->Data->CourseName;
 	Card.Format = Round->Turns.Game->Single() ? FString() : Round->Turns.Game->F.Name;
 	Card.bFinal = Round->Phase == AOTGRound::EPhase::Done;
-	for (int32 i = 0; i < Round->Data->Holes.Num(); i++) Card.Holes.Add(FOTGScoreRow{ Round->Data->Holes[i].Number, Round->Data->Holes[i].Par });
+	for (int32 i = 0; i < Round->Data->Holes.Num(); i++)
+	{
+		const FOTGHole& H = Round->Data->Holes[i];
+		// (the yardage: these tees to the day's pin, as the HUD has it)
+		int32 Yards = 0;
+		if (!Round->bMini)
+		{
+			const FVector* Pn = H.Pins.Find(Round->PinName);
+			if (!Pn && H.Pins.Num()) Pn = &H.Pins.CreateConstIterator()->Value;
+			const FVector Q = Pn ? *Pn : H.GreenCenter;
+			const otg::V3 T = Round->TeeOf(H, Round->TeeName);
+			Yards = FMath::RoundToInt(FMath::Sqrt(FMath::Square(T.x - Q.X) + FMath::Square(T.z - Q.Z)) * 1.09361);
+		}
+		Card.Holes.Add(FOTGScoreRow{ H.Number, H.Par, Yards });
+	}
+	Card.Tee = Round->bMini ? FString() : Round->TeeName + TEXT(" tees");
+	// (after holing out, waiting for the next hole: its countdown)
+	if (Round->Phase == AOTGRound::EPhase::Holed && !Round->bScorecardAuto)
+	{
+		TWeakObjectPtr<AOTGRound> Weak(Round);
+		Card.SecondsLeft = [Weak]() { return Weak.IsValid() ? float(Weak->PhaseTimer) : 0.f; };
+	}
 	for (const FOTGSide& S : Round->Turns.Game->Sides) Card.Sides.Add(FOTGCard::FSide{ Round->Turns.Game->Single() ? FString(TEXT("Score")) : S.Name, S.Colour, S.Scores });
 	if (!Round->Turns.Game->Single()) Card.Standings = Round->Turns.Game->Standings(Card.Summary);
 	Round->Hud->ShowScorecard(Card);

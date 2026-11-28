@@ -219,6 +219,21 @@ TSharedRef<SWidget> SOTGTreeDesigner::PickPanel()
 		+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Bottom).Padding(6, 0, 0, 1)
 			[Text(FString::Printf(TEXT("%d m tall%s%s"), FMath::RoundToInt(Picked.HeightM), Picked.bAdded ? TEXT("  ·  added") : TEXT(""), E0 && !Picked.bAdded ? TEXT("  ·  changed") : TEXT("")), 11, Soft)]
 	];
+	// the forest (or forests) it grows in: a button picks it, in Forests above
+	{
+		TArray<int32> In;
+		for (int32 i = 0; i < Edit.Forests.Num(); i++) if (Edit.Forests[i].Contains(X, Z)) In.Add(i);
+		TSharedRef<SWrapBox> W = SNew(SWrapBox).UseAllottedSize(true).InnerSlotPadding(FVector2D(4, 4));
+		W->AddSlot().VAlign(VAlign_Center)[Text(In.Num() ? TEXT("In") : TEXT("Not in a forest"), 12, Soft)];
+		for (int32 i : In)
+			W->AddSlot()[Button(SelForests.Num() == 1 && SelForests.Contains(i) ? Edit.Forests[i].Name + TEXT("  (picked)") : TEXT("Pick ") + Edit.Forests[i].Name, [this, i]() {
+				SelForests.Reset();
+				SelForests.Add(i);
+				Status = FString::Printf(TEXT("%s picked: outlined on the course, its settings in Forests"), *Edit.Forests[i].Name);
+				Rebuild();
+			}, 11, SelForests.Contains(i))];
+		V->AddSlot().AutoHeight().Padding(0, 0, 0, 4)[W];
+	}
 	// its species (the model family it's drawn from follows)
 	Row(TEXT("Species"),
 		SNew(SComboBox<TSharedPtr<FString>>)

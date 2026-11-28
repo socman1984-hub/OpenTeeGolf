@@ -22,6 +22,7 @@
 #include "Engine/PostProcessVolume.h"
 #include "Engine/Texture2D.h"
 #include "Minimap/SOTGMinimap.h"
+#include "App/OTGPrefs.h"
 #include "UI/Hud/SOTGPanels.h"
 #include "Engine/DirectionalLight.h"
 #include "Engine/ExponentialHeightFog.h"
@@ -745,8 +746,13 @@ void AOTGRound::Tick(float Dt)
 		if (bScorecardAuto && PhaseTimer <= 0)
 		{
 			bScorecardAuto = false;
-			HudView.ShowScorecard(true);
-			PhaseTimer = 8.0; // (then the next hole, or Enter sooner)
+			// (the player chose to go straight on: no card - the last hole's still shows, the round's done)
+			if (otg::prefs::SkipScorecard()) NextHole();
+			else
+			{
+				PhaseTimer = 10.0; // (then the next hole, or Enter sooner)
+				HudView.ShowScorecard(true);
+			}
 		}
 		else if (!bScorecardAuto && PhaseTimer <= 0) NextHole();
 	}

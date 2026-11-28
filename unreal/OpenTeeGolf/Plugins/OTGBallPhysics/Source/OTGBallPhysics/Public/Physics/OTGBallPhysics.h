@@ -44,6 +44,8 @@ namespace otg
 			// (turf: the landing loss read from the impact - exp(-landingAngleLoss vn/vt), and backspin's grip -
 			// the speed-squared grass drag along the ground, and the drag shares of a shot struck along the ground)
 			double landingAngleLoss = 0, landingSpinLoss = 0, grassFormDrag = 0, struckViscosityScale = 1, struckFormDragScale = 1;
+			// (grass a slowing ball settles into: this much more rolling friction, faded in below settleSpeed m/s)
+			double settleFriction = 0, settleSpeed = 0;
 			bool hasBounce = false;
 			double firstImpactMinimumSpeed = 0, laterImpactMinimumSpeed = 0, laterImpactScale = 0, minimumBounceHeight = 0;
 		};

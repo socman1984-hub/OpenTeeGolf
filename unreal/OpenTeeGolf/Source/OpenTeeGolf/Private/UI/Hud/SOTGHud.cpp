@@ -17,6 +17,9 @@
 #include "Widgets/Layout/SWrapBox.h"
 #include "Widgets/SBoxPanel.h"
 #include "Widgets/SOverlay.h"
+#include "Widgets/Input/SCheckBox.h"
+#include "Brushes/SlateRoundedBoxBrush.h"
+#include "App/OTGPrefs.h"
 
 using namespace otg::ui;
 
@@ -494,57 +497,122 @@ void SOTGHud::Toast(const FString& TextS, float Seconds)
 	ToastLeft = Seconds;
 }
 
+// The scorecard: a printed club card - the course's name on a green band, a ruled paper grid of hole,
+// yardage, par and score (a birdie ringed, a bogey boxed, as players mark them), Out / In / Total, and
+// a green foot with the totals, the countdown to the next hole and the choice to skip the card
 void SOTGHud::ShowScorecard(const FOTGCard& Card)
 {
+	const FLinearColor Paper(0.97f, 0.96f, 0.91f, 1.f), PaperShade(0.89f, 0.91f, 0.84f, 1.f), Rule(0.62f, 0.66f, 0.58f, 1.f);
+	const FLinearColor Band(0.07f, 0.27f, 0.14f, 0.97f), BandText(0.97f, 0.96f, 0.88f, 1.f), CardInk(0.10f, 0.14f, 0.10f, 1.f), CardSoft(0.36f, 0.42f, 0.35f, 1.f);
+	const FLinearColor Under(0.75f, 0.12f, 0.12f, 1.f), Over(0.12f, 0.24f, 0.55f, 1.f);
+	// (the outline takes its own colour, not the image's tint: a brush each)
+	static const FSlateRoundedBoxBrush Circle(FLinearColor::Transparent, 13.f, FLinearColor(0.75f, 0.12f, 0.12f, 1.f), 2.f);
+	static const FSlateRoundedBoxBrush Square(FLinearColor::Transparent, 1.f, FLinearColor(0.12f, 0.24f, 0.55f, 1.f), 2.f);
+	static const FSlateRoundedBoxBrush Dot(FLinearColor::White, 5.f);
+	const FSlateBrush* White = FCoreStyle::Get().GetBrush("WhiteBrush");
+
 	TSharedRef<SGridPanel> Grid = SNew(SGridPanel);
-	auto Cell = [&](int32 Col, int32 Row, const FString& S, const FLinearColor& C, bool bBold = false) {
-		Grid->AddSlot(Col, Row).Padding(FMargin(7, 3)).HAlign(HAlign_Center)[Text(S, 15, C, bBold ? "Bold" : "Regular")];
+	// (each cell paper on the rule colour, a pixel apart: the card's lines)
+	auto Cell = [&](int32 Col, int32 Row, const TSharedRef<SWidget>& W, const FLinearColor& Bg, float Width) {
+		Grid->AddSlot(Col, Row).Padding(FMargin(0, 0, 1, 1))
+		[
+			SNew(SBorder).BorderImage(White).BorderBackgroundColor(Bg).Padding(0)
+			[
+				SNew(SBox).WidthOverride(Width).HeightOverride(32).HAlign(HAlign_Center).VAlign(VAlign_Center)[W]
+			]
+		];
 	};
-	// front and back nine in rows of their own (a short course: one row)
+	auto T = [&](const FString& S, const FLinearColor& C, bool bBold = false, int32 Size = 15) { return StaticCastSharedRef<SWidget>(Text(S, Size, C, bBold ? "Bold" : "Regular")); };
+	// a score as it's marked: eagle two rings, birdie a ring, par plain, bogey a box, double bogey or worse two boxes
+	auto Mark = [&](int32 V, int32 Par) -> TSharedRef<SWidget> {
+		if (V < 0) return T(FString(), CardInk);
+		const int32 D = V - Par;
+		const FLinearColor C = D < 0 ? Under : D > 0 ? Over : CardInk;
+		TSharedRef<SOverlay> O = SNew(SOverlay);
+		const FSlateBrush* Shape = D < 0 ? &Circle : D > 0 ? &Square : nullptr;
+		if (Shape)
+		{
+			O->AddSlot().HAlign(HAlign_Center).VAlign(VAlign_Center)[SNew(SBox).WidthOverride(30).HeightOverride(30)[SNew(SImage).Image(Shape)]];
+			if (D <= -2 || D >= 2) O->AddSlot().HAlign(HAlign_Center).VAlign(VAlign_Center)[SNew(SBox).WidthOverride(24).HeightOverride(24)[SNew(SImage).Image(Shape)]];
+		}
+		O->AddSlot().HAlign(HAlign_Center).VAlign(VAlign_Center)[Text(FString::FromInt(V), 15, C, "Bold")];
+		return O;
+	};
+
 	const int32 N = Card.Holes.Num();
-	const int32 PerRow = N > 9 ? 9 : N;
-	int32 Row = 0;
-	TArray<int32> Totals;
+	const bool bNines = N > 9;
+	const int32 PerRow = bNines ? 9 : N;
+	const bool bYards = N > 0 && Card.Holes[0].Yards > 0;
+	const float LabelW = 112, HoleW = 40, SubW = 52;
+	TArray<int32> Totals, PlayedPar;
 	Totals.Init(0, Card.Sides.Num());
-	TArray<int32> PlayedPar;
 	PlayedPar.Init(0, Card.Sides.Num());
+	int32 AllPar = 0, AllYards = 0;
+	int32 Row = 0;
 	for (int32 Start = 0; Start < N; Start += PerRow)
 	{
 		const int32 End = FMath::Min(N, Start + PerRow);
-		Cell(0, Row, TEXT("Hole"), Soft, true);
-		Cell(0, Row + 1, TEXT("Par"), Soft, true);
-		int32 SubPar = 0;
-		for (int32 i = Start; i < End; i++)
+		const bool bLast = End >= N;
+		const int32 SubCol = 1 + PerRow, TotCol = SubCol + 1;
+		const FString SubName = bNines ? (Start == 0 ? TEXT("OUT") : TEXT("IN")) : TEXT("TOT");
+		// hole numbers: on the green band
+		Cell(0, Row, T(TEXT("HOLE"), BandText, true, 13), Band, LabelW);
+		for (int32 i = Start; i < End; i++) Cell(1 + i - Start, Row, T(FString::FromInt(Card.Holes[i].Number), BandText, true), Band, HoleW);
+		for (int32 i = End; i < Start + PerRow; i++) Cell(1 + i - Start, Row, T(FString(), BandText), Band, HoleW);
+		Cell(SubCol, Row, T(SubName, BandText, true, 13), Band, SubW);
+		if (bNines) Cell(TotCol, Row, T(bLast ? TEXT("TOT") : FString(), BandText, true, 13), Band, SubW);
+		Row++;
+		int32 SubPar = 0, SubYards = 0;
+		for (int32 i = Start; i < End; i++) { SubPar += Card.Holes[i].Par; SubYards += Card.Holes[i].Yards; }
+		AllPar += SubPar; AllYards += SubYards;
+		auto Filler = [&](int32 R) { for (int32 i = End; i < Start + PerRow; i++) Cell(1 + i - Start, R, T(FString(), CardInk), Paper, HoleW); };
+		if (bYards)
 		{
-			Cell(1 + i - Start, Row, FString::FromInt(Card.Holes[i].Number), Soft);
-			Cell(1 + i - Start, Row + 1, FString::FromInt(Card.Holes[i].Par), Ink);
-			SubPar += Card.Holes[i].Par;
+			Cell(0, Row, T(Card.Tee.IsEmpty() ? FString(TEXT("YARDS")) : Card.Tee.ToUpper(), CardSoft, true, 12), Paper, LabelW);
+			for (int32 i = Start; i < End; i++) Cell(1 + i - Start, Row, T(FString::FromInt(Card.Holes[i].Yards), CardSoft, false, 12), Paper, HoleW);
+			Filler(Row);
+			Cell(SubCol, Row, T(FString::FromInt(SubYards), CardSoft, true, 12), PaperShade, SubW);
+			if (bNines) Cell(TotCol, Row, T(bLast ? FString::FromInt(AllYards) : FString(), CardSoft, true, 12), PaperShade, SubW);
+			Row++;
 		}
-		const FString SubName = N > 9 ? (Start == 0 ? TEXT("Out") : TEXT("In")) : TEXT("Total");
-		Cell(1 + PerRow, Row, SubName, Soft, true);
-		Cell(1 + PerRow, Row + 1, FString::FromInt(SubPar), Ink, true);
+		Cell(0, Row, T(TEXT("PAR"), CardInk, true, 13), PaperShade, LabelW);
+		for (int32 i = Start; i < End; i++) Cell(1 + i - Start, Row, T(FString::FromInt(Card.Holes[i].Par), CardInk), PaperShade, HoleW);
+		for (int32 i = End; i < Start + PerRow; i++) Cell(1 + i - Start, Row, T(FString(), CardInk), PaperShade, HoleW);
+		Cell(SubCol, Row, T(FString::FromInt(SubPar), CardInk, true), PaperShade, SubW);
+		if (bNines) Cell(TotCol, Row, T(bLast ? FString::FromInt(AllPar) : FString(), CardInk, true), PaperShade, SubW);
+		Row++;
 		for (int32 k = 0; k < Card.Sides.Num(); k++)
 		{
 			const FOTGCard::FSide& S = Card.Sides[k];
-			Cell(0, Row + 2 + k, S.Name, Card.Sides.Num() > 1 ? S.Colour : Soft, true);
+			const bool bMany = Card.Sides.Num() > 1;
+			TSharedRef<SHorizontalBox> Who = SNew(SHorizontalBox);
+			if (bMany) Who->AddSlot().AutoWidth().VAlign(VAlign_Center).Padding(0, 0, 6, 0)[SNew(SBox).WidthOverride(10).HeightOverride(10)[SNew(SImage).Image(&Dot).ColorAndOpacity(S.Colour)]];
+			Who->AddSlot().AutoWidth().VAlign(VAlign_Center)[Text(bMany ? S.Name : FString(TEXT("SCORE")), bMany ? 14 : 13, CardInk, "Bold")];
+			Cell(0, Row, Who, Paper, LabelW);
 			int32 Sub = 0;
 			for (int32 i = Start; i < End; i++)
 			{
 				const int32 V = S.Scores.IsValidIndex(i) ? S.Scores[i] : -1;
-				const int32 Par = Card.Holes[i].Par;
-				const FLinearColor C = V < 0 ? Soft : V < Par ? FLinearColor(1.f, 0.45f, 0.4f) : V > Par ? FLinearColor(0.55f, 0.75f, 1.f) : Ink;
-				Cell(1 + i - Start, Row + 2 + k, V < 0 ? TEXT("-") : FString::FromInt(V), C, true);
-				if (V >= 0) { Sub += V; Totals[k] += V; PlayedPar[k] += Par; }
+				Cell(1 + i - Start, Row, Mark(V, Card.Holes[i].Par), Paper, HoleW);
+				if (V >= 0) { Sub += V; Totals[k] += V; PlayedPar[k] += Card.Holes[i].Par; }
 			}
-			Cell(1 + PerRow, Row + 2 + k, FString::FromInt(Sub), Ink, true);
+			Filler(Row);
+			Cell(SubCol, Row, T(Sub > 0 ? FString::FromInt(Sub) : FString(), CardInk, true), PaperShade, SubW);
+			if (bNines) Cell(TotCol, Row, T(bLast && Totals[k] > 0 ? FString::FromInt(Totals[k]) : FString(), CardInk, true), PaperShade, SubW);
+			Row++;
 		}
-		Row += 3 + Card.Sides.Num();
+		// (a gap between the nines)
+		if (!bLast) { Grid->AddSlot(0, Row)[SNew(SBox).HeightOverride(10)]; Row++; }
 	}
+	const TSharedRef<SWidget> Ruled = SNew(SBorder).BorderImage(White).BorderBackgroundColor(Rule).Padding(FMargin(1, 1, 0, 0))[Grid];
+
+	// the foot: the totals, the countdown, the choice to skip
 	TSharedRef<SVerticalBox> Foot = SNew(SVerticalBox);
 	if (Card.Sides.Num() == 1)
 	{
 		const int32 ToPar = Totals[0] - PlayedPar[0];
-		Foot->AddSlot().AutoHeight().HAlign(HAlign_Center)[Text(FString::Printf(TEXT("%d strokes, %s"), Totals[0], ToPar == 0 ? TEXT("even par") : *FString::Printf(TEXT("%+d"), ToPar)), 18, Gold, "Bold")];
+		const FString Rel = ToPar == 0 ? FString(TEXT("Even par")) : FString::Printf(TEXT("%+d"), ToPar);
+		Foot->AddSlot().AutoHeight().HAlign(HAlign_Center)[Text(FString::Printf(TEXT("%d strokes  ·  %s"), Totals[0], *Rel), 20, Gold, "Bold")];
 	}
 	else
 	{
@@ -552,15 +620,48 @@ void SOTGHud::ShowScorecard(const FOTGCard& Card)
 			Foot->AddSlot().AutoHeight().HAlign(HAlign_Center)[Text(FString::Printf(TEXT("%s  %s  %s"), *R.Name, *R.Value, *R.Sub), 16, R.Colour, "Bold")];
 		if (!Card.Summary.IsEmpty()) Foot->AddSlot().AutoHeight().HAlign(HAlign_Center).Padding(0, 4, 0, 0)[Text(Card.Summary, 15, Gold, "Bold")];
 	}
-	const FString Heading = (Card.bFinal ? Card.Course + TEXT(": round complete") : Card.Course) + (Card.Format.IsEmpty() ? FString() : TEXT("  ·  ") + Card.Format);
+	if (Card.SecondsLeft && !Card.bFinal)
+	{
+		const TFunction<float()> Left = Card.SecondsLeft;
+		Foot->AddSlot().AutoHeight().HAlign(HAlign_Center).Padding(0, 8, 0, 0)
+		[
+			SNew(STextBlock).Font(Font(15, "Bold")).ColorAndOpacity(BandText)
+			.Text_Lambda([Left]() { return FText::FromString(FString::Printf(TEXT("Next hole in %d"), FMath::Max(0, FMath::CeilToInt(Left())))); })
+		];
+		Foot->AddSlot().AutoHeight().HAlign(HAlign_Center).Padding(0, 6, 0, 0)
+		[
+			SNew(SCheckBox)
+			.IsChecked_Lambda([]() { return otg::prefs::SkipScorecard() ? ECheckBoxState::Checked : ECheckBoxState::Unchecked; })
+			.OnCheckStateChanged_Lambda([](ECheckBoxState St) { otg::prefs::SetSkipScorecard(St == ECheckBoxState::Checked); })
+			[Text(TEXT("Go straight to the next hole from now on (no scorecard)"), 13, Soft)]
+		];
+	}
+	Foot->AddSlot().AutoHeight().HAlign(HAlign_Center).Padding(0, 6, 0, 0)[Text(Card.bFinal ? TEXT("Enter: back to the menu") : Card.SecondsLeft ? TEXT("Enter: next hole now") : TEXT("Tab: close"), 12, Soft)];
+
+	const FString Heading = Card.bFinal ? Card.Course + TEXT("  ·  Round complete") : Card.Course;
 	CardSlot->SetContent(
-		Box(SNew(SVerticalBox)
-			+ SVerticalBox::Slot().AutoHeight().HAlign(HAlign_Center).Padding(0, 0, 0, 10)[Text(Heading, 24, Ink, "Bold")]
-			+ SVerticalBox::Slot().AutoHeight()[Grid]
-			+ SVerticalBox::Slot().AutoHeight().HAlign(HAlign_Center).Padding(0, 10, 0, 0)[Foot]
-			+ SVerticalBox::Slot().AutoHeight().HAlign(HAlign_Center).Padding(0, 6, 0, 0)[Text(Card.bFinal ? TEXT("Enter: back to the menu") : TEXT("Enter: next hole"), 13, Soft)],
-			FMargin(28, 18), Solid));
-	CardSlot->SetVisibility(EVisibility::HitTestInvisible);
+		SNew(SVerticalBox)
+		// the green band, the club's name on it
+		+ SVerticalBox::Slot().AutoHeight()
+		[
+			SNew(SBorder).BorderImage(White).BorderBackgroundColor(Band).Padding(FMargin(24, 12))
+			[
+				SNew(SVerticalBox)
+				+ SVerticalBox::Slot().AutoHeight().HAlign(HAlign_Center)[Text(Heading.ToUpper(), 22, BandText, "Bold")]
+				+ SVerticalBox::Slot().AutoHeight().HAlign(HAlign_Center)[Text(Card.Format.IsEmpty() ? FString(TEXT("Official scorecard")) : Card.Format, 12, Gold)]
+			]
+		]
+		// the paper
+		+ SVerticalBox::Slot().AutoHeight()
+		[
+			SNew(SBorder).BorderImage(White).BorderBackgroundColor(Paper).Padding(FMargin(18, 16))[Ruled]
+		]
+		+ SVerticalBox::Slot().AutoHeight()
+		[
+			SNew(SBorder).BorderImage(White).BorderBackgroundColor(Band).Padding(FMargin(24, 10))[Foot]
+		]);
+	// (the checkbox takes the mouse; the rest of the card lets clicks through)
+	CardSlot->SetVisibility(EVisibility::SelfHitTestInvisible);
 }
 
 void SOTGHud::HideScorecard()
