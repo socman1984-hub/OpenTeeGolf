@@ -4,6 +4,20 @@ The newest version first. The game shows this on its What's new page. make_relea
 OpenTeeGolf.exe, and publish_release.py puts each version's part on its GitHub release.
 A version's heading is "## <version> - <date>", and its changes are "- " lines under it.
 
+## 0.30.0 - 27 November 2026
+- The scorecard looks like a club's own card: each hole's yardage from your tees, par and your score, birdies circled and bogeys boxed, Out, In and Total. After each hole it counts down to the next.
+- Go straight to the next hole: tick the box on the scorecard, or turn it on in Settings (Between holes), and the card no longer stops you after each hole. Tab still shows it any time.
+- The ball stops sooner on sloping fairways: as it slows it settles into the grass, so a wedge onto a bank no longer creeps back down for ages. Each cut holds it a little more, from the fringe to the deep rough.
+- The minimap zooms in as you get closer to the hole, and its + and - buttons (or the mouse wheel) zoom in or out further.
+- Auto-putt's circle has thicker dashes, and turns green when your ball stops inside it.
+- The rough looks deeper: its blades shade each other and the ground, darker down among the roots, and the same for the rough's tufts and the tall grass.
+- No more grass poking up through the sand in the bunkers.
+- Tees, fairways and greens with the game's colours no longer show what was in the aerial photo (parked carts, straw-coloured rough along the edges), and their mowing stripes run one way across each one instead of turning partway. To see these on a course you already have, open it in the course editor and use Put in the game (full).
+- Ponds and creeks are a dark olive green from above, not black.
+- Every choice in the course editor and the grass biome studio is now a dropdown list showing all the options, and on/off settings are tick boxes.
+- Trees and rocks designer (R in a round): a tree you pick shows the forest it belongs to, with a button to pick that forest.
+- Settings: Graphics quality shows Custom (mixed) when its parts are set to different levels.
+
 ## 0.29.1 - 27 November 2026
 - Fixed: the rough took no sunlight, so from high up or far off it showed as a dark navy blue, with a bright line where the course met the land round it.
 
