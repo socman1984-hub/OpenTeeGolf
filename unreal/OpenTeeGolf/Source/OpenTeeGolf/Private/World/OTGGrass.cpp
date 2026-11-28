@@ -122,7 +122,8 @@ double otg::FGrass::GroundZ(double X, double Y, FVector* OutNormal) const
 	const double U = X / Step, V = Y / Step;
 	const int32 I = FMath::Clamp(FMath::FloorToInt(U), 0, N - 2), J = FMath::Clamp(FMath::FloorToInt(V), 0, N - 2);
 	const double FU = FMath::Clamp(U - I, 0.0, 1.0), FV = FMath::Clamp(V - J, 0.0, 1.0);
-	auto H = [&](int32 a, int32 b) { return Data->Heights[b * N + a] * ZS; };
+	const TArray<uint16>& Hs = DrawnHeights.Num() == N * N ? DrawnHeights : Data->Heights;
+	auto H = [&](int32 a, int32 b) { return Hs[b * N + a] * ZS; };
 	const double H00 = H(I, J), H10 = H(I + 1, J), H01 = H(I, J + 1), H11 = H(I + 1, J + 1);
 	if (OutNormal) *OutNormal = FVector((H00 - H10 + H01 - H11) / (2 * Step), (H00 - H01 + H10 - H11) / (2 * Step), 1.0).GetSafeNormal();
 	return FMath::Lerp(FMath::Lerp(H00, H10, FU), FMath::Lerp(H01, H11, FU), FV);

@@ -118,6 +118,8 @@ namespace otg
 		// land, each a biome's number (0 the course's own tall grass). Kinds with a Biome grow only in
 		// their own; none set: every kind everywhere its surface is
 		void SetBiomeMap(TArray<uint8> Map, int32 Size);
+		// The heights the ground is drawn with (the ponds' banks lifted): the blades stand on them
+		void SetDrawnHeights(const TArray<uint16>& Heights) { DrawnHeights = Heights; }
 
 	private:
 		struct FCellKey { int32 Kind, X, Y; bool operator==(const FCellKey& O) const { return Kind == O.Kind && X == O.X && Y == O.Y; } };
@@ -135,6 +137,10 @@ namespace otg
 		TMap<UMaterialInterface*, UMaterialInterface*> Swaps;
 		float Mask(const FString& Name, double X, double Y) const;
 		double GroundZ(double X, double Y, FVector* OutNormal) const;
+		// (the heights the ground is drawn with, when the course has its own - the ponds' banks lifted
+		// clear of the water: on the course's heights the blades there stood under the bank, buried, and a
+		// bare strip ran round every pond)
+		TArray<uint16> DrawnHeights;
 
 		TWeakObjectPtr<AActor> Owner;
 		UOTGCourseData* Data = nullptr;

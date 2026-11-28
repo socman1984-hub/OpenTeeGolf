@@ -173,6 +173,7 @@ void FOTGCourseTurf::BuildGrassFrom(const TArray<otg::FGrassKind>& Kinds)
 	if (Grass.IsValid()) { SetGrassKinds(Own()); return; }
 	Grass = MakeShared<otg::FGrass>();
 	Grass->Init(Course, Course->Data, Course->MaskPixels, Course->LandCm, Own(), GrassMeshes(Own()));
+	Grass->SetDrawnHeights(Course->Ground.GroundHeights);
 	Grass->SetSwaps(GrassSwaps);
 	TintGrass();
 }
@@ -186,6 +187,7 @@ void FOTGCourseTurf::BuildGrass()
 	const TMap<FString, TArray<TPair<UStaticMesh*, UMaterialInterface*>>> Have = GrassMeshes(Kinds);
 	Grass = MakeShared<otg::FGrass>();
 	Grass->Init(Course, Course->Data, Course->MaskPixels, Course->LandCm, Kinds, Have);
+	Grass->SetDrawnHeights(Course->Ground.GroundHeights);   // (on the ground as it's drawn: OTGGrass.h)
 	Grass->SetSwaps(GrassSwaps);
 	if (Biomes->Areas.Num())
 	{
