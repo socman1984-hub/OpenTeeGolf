@@ -110,6 +110,7 @@ EDGE_SOFT_M = 0.3         # how wide the blend is at the edge of each surface
 TREE_CULL_CM = (90000, 130000)   # trees fade out between 900 and 1300 m
 CONIFERS = {"pine", "loblolly", "redcedar", "douglasfir", "ponderosa", "spruce", "cypress", "baldcypress", "hemlock", "juniper", "holly"}
 
+
 # Unreal's own trees (from Fab), used in place of the game's broadleaf trees: every whole-tree mesh
 # in these folders (the wind-animated ones). Each game tree gets the one closest to its height, so
 # small trees aren't stretched giants; conifers (none in these packs) keep the game's models.
@@ -183,6 +184,13 @@ TURF_GRASS = {
                        "head_len": (0.02, 0.035), "head_w": (0.01, 0.016), "patch": (7.0, 0.44, 0.5, False),
                        "root": (0.02, 0.035, 0.008), "tip": (0.06, 0.09, 0.02), "dry": (0.3, 0.07, 0.36), "dry_share": 0.0, "vary": 0.2},
 }
+# (low down among the others a blade is in their shade, sun or not - the grass casts no shadow maps:
+# make_turf.py's cut_material darkens it from depth[0] at the root to none depth[1] of the way up. The
+# tall grasses deepest. Not the wildflowers: their heads aren't at the top of
+# the blade's rise, and darkened they all but vanished)
+for _k, _d in {"rough_clump": (0.55, 0.7), "native": (0.45, 0.6), "native_short": (0.5, 0.65), "fescue_gold": (0.5, 0.6),
+               "tussock": (0.45, 0.65)}.items():
+    TURF_GRASS[_k]["depth"] = _d
 # The tall grass far off (150 to 450 m: past where the near grass fades): each kind again, with a
 # third of the blades but twice as wide, a fifth as many patches, each bigger - cheap enough to draw
 # that far, so the meadows keep their texture into the distance instead of going flat (the game
